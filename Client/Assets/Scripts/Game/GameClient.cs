@@ -17,15 +17,22 @@ namespace ProjectH.Client.Game
         private const double InterpolationSnapshots = 2.0;
 
         private GameObject _world;
-        private NetClient _net;
+        private Material _worldMaterial;
         private InputReader _input;
-        private ThirdPersonCamera _camera;
+        private ShoulderCamera _camera;
+        private Crosshair _crosshair;
+        private LocalFireEffects _fireEffects;
+        private NetClient _net;
         private LocalPlayerPredictor _predictor;
         private Transform _localView;
         private readonly RemotePlayers _remotePlayers = new RemotePlayers();
         private ServerClock _clock;
         private int _simHz;
         private double _interpolationDelaySeconds;
+        private bool _aiming;
+        private bool _fireHeld;
+        // D12: the click that locks the cursor must not also fire; fire waits for that button's release.
+        private bool _fireBlockedUntilRelease;
 
         public ClientState State => _net.State;
         public string LastError => _net.LastError;
@@ -38,7 +45,7 @@ namespace ProjectH.Client.Game
 
         private void Awake()
         {
-            _world = TestWorld.Build();
+            _world = TestWorld.Build(out _worldMaterial);
             _input = new InputReader();
 
             Camera main = Camera.main;
@@ -48,7 +55,9 @@ namespace ProjectH.Client.Game
                 main = cameraGo.AddComponent<Camera>();
                 cameraGo.AddComponent<AudioListener>();
             }
-            _camera = new ThirdPersonCamera(main.transform);
+            _camera = new ShoulderCamera(main);
+            _crosshair = new Crosshair();
+            _fireEffects = new LocalFireEffects();
 
             _net = new NetClient();
             _net.Joined += OnJoined;
@@ -62,14 +71,14 @@ namespace ProjectH.Client.Game
         {
             _net.Poll();
             _input.Update();
-            UpdateCursorLock();
+            UpdateCursorAndButtons();
 
             if (_clock != null && _clock.IsReady)
                 _remotePlayers.Render(_clock.RenderTick(Time.unscaledTimeAsDouble, _interpolationDelaySeconds));
 
             if (_predictor == null) return;
 
-            _camera.ApplyLook(_input.LookDelta);
+            _camera.ApplyLook(_input.LookDelta, _aiming);
             bool jump = _input.JumpQueued;
             int steps = _predictor.Advance(Time.deltaTime, _input.Move, _camera.Yaw, _input.Sprint, ref jump);
             _input.JumpQueued = jump;
@@ -80,7 +89,11 @@ namespace ProjectH.Client.Game
 
         private void LateUpdate()
         {
-            if (_predictor != null) _camera.Follow(_predictor.RenderPosition);
+            if (_predictor == null) return;
+            _camera.Follow(_predictor.RenderPosition, _aiming, Time.deltaTime);
+            _crosshair.SetVisible(true);
+            // After the camera moved, so the shot goes where the crosshair is this frame.
+            _fireEffects.Tick(Time.deltaTime, _fireHeld, _camera.AimRay, _predictor.RenderPosition, _camera.Yaw, Time.time);
         }
 
         private void OnDestroy()
@@ -92,15 +105,34 @@ namespace ProjectH.Client.Game
             _net.Disconnected -= OnDisconnected;
             _net.Dispose();
             ClearMatchState();
+            _fireEffects.Dispose();
+            _crosshair.Dispose();
             _input.Dispose();
             PlayerViewFactory.ReleaseMaterials();
             if (_world != null) Destroy(_world);
+            if (_worldMaterial != null) Destroy(_worldMaterial);
         }
 
-        private void UpdateCursorLock()
+        // Left click locks a free cursor (only once joined) and fires while it is locked (D12).
+        // Aim and fire only count while the cursor is locked, i.e. while the mouse controls the game.
+        private void UpdateCursorAndButtons()
         {
-            if (_input.UnlockCursorPressed) Cursor.lockState = CursorLockMode.None;
-            else if (_input.LockCursorPressed && State == ClientState.Joined) Cursor.lockState = CursorLockMode.Locked;
+            bool locked = Cursor.lockState == CursorLockMode.Locked;
+            if (_input.UnlockCursorPressed)
+            {
+                Cursor.lockState = CursorLockMode.None;
+                locked = false;
+            }
+            else if (!locked && _input.FirePressed && State == ClientState.Joined)
+            {
+                Cursor.lockState = CursorLockMode.Locked;
+                locked = true;
+                _fireBlockedUntilRelease = true;
+            }
+
+            if (!_input.FireHeld) _fireBlockedUntilRelease = false;
+            _fireHeld = locked && _input.FireHeld && !_fireBlockedUntilRelease;
+            _aiming = locked && _input.AimHeld;
         }
 
         private void OnJoined(JoinMatchResponse response)
@@ -170,6 +202,8 @@ namespace ProjectH.Client.Game
             _localView = null;
             _remotePlayers.Clear();
             _clock = null;
+            _crosshair.SetVisible(false);
+            _fireEffects.HideAll();
         }
     }
 }

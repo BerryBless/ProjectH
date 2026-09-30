@@ -3,7 +3,7 @@ namespace ProjectH.Shared.Protocol
     public static class ProtocolConstants
     {
         // Bump whenever any packet layout changes; the server rejects other versions at connect time.
-        public const ushort ProtocolVersion = 1;
+        public const ushort ProtocolVersion = 2;   // 2: Phase 1 box collision changed movement results
 
         public const int MaxDevPlayerIdBytes = 32;
         public const int MaxInputsPerPacket = 3;

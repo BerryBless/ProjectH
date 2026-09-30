@@ -7,6 +7,7 @@ using UnityEngine;
 namespace ProjectH.Client.Game
 {
     // Client-side prediction for the local player (Docs/Networking.md).
+    // Collides with Shared TestArena.Boxes, the same boxes the server passes in Match.Tick.
     // Runs MovementSimulation at the server's tick rate, keeps a fixed 64-entry history of inputs and
     // results, and on each snapshot replays the inputs the server has not processed yet.
     public sealed class LocalPlayerPredictor
@@ -61,7 +62,7 @@ namespace ProjectH.Client.Game
 
                 var command = new InputCommand { Seq = ++LastSeq, MoveX = move.x, MoveY = move.y, Yaw = yaw, Buttons = buttons };
                 _previous = _state;
-                MovementSimulation.Step(ref _state, command, _stepSeconds);
+                MovementSimulation.Step(ref _state, command, _stepSeconds, TestArena.Boxes);
 
                 int slot = (int)(command.Seq % HistorySize);
                 _inputs[slot] = command;
@@ -132,7 +133,7 @@ namespace ProjectH.Client.Game
             {
                 int slot = (int)(seq % HistorySize);
                 _previous = _state;
-                MovementSimulation.Step(ref _state, _inputs[slot], _stepSeconds);
+                MovementSimulation.Step(ref _state, _inputs[slot], _stepSeconds, TestArena.Boxes);
                 _results[slot] = _state;
             }
 

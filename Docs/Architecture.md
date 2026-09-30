@@ -1,17 +1,18 @@
 # Architecture
 
-Phase 0 + 네트워크 이동 동기화 기준. 설계 근거: `Docs/specs/2026-09-30-phase0-network-sync-design.md`.
+Phase 1 Character Prototype 기준. 설계 근거: `Docs/specs/2026-09-30-phase0-network-sync-design.md`, `Docs/specs/2026-09-30-phase1-character-prototype-design.md`.
 
 ```mermaid
 flowchart LR
     subgraph Client[Unity Client]
         Input[InputReader] --> Predictor[LocalPlayerPredictor]
+        Input --> Camera[ShoulderCamera]
         Net[NetClient] --> Remote[RemotePlayers]
         Net --> Predictor
     end
     subgraph Shared[/Shared UPM package/]
         Protocol[Protocol: packets]
-        Sim[Simulation: MovementSimulation]
+        Sim[Simulation: MovementSimulation, TestArena]
     end
     subgraph Server[.NET 10 Server]
         Listener[NetworkListener] -->|Channels| Loop[GameLoop thread]
@@ -24,9 +25,9 @@ flowchart LR
 
 | 폴더 | 역할 |
 |---|---|
-| `Client/` | Unity. 입력·표시·예측·보간. 결과를 확정하지 않는다 |
+| `Client/` | Unity. 입력·표시·예측·보간. 결과를 확정하지 않는다. 카메라·조준점·발사 연출은 Client 표시 전용이다(서버로 가지 않음) |
 | `Server/` | .NET 10 Dedicated Server. 이동 결과를 결정한다 |
-| `Shared/` | 패킷 DTO, 프로토콜 상수, 이동 계산(유일한 로직 예외) |
+| `Shared/` | 패킷 DTO, 프로토콜 상수, 이동 계산과 그 지형 박스·충돌(`Simulation/`, 유일한 로직 예외: `game-core-rules` 4절) |
 | `Docs/` | 이 문서들 |
 
 ## Shared 소비 방식

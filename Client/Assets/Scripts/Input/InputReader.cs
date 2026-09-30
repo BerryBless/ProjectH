@@ -12,7 +12,8 @@ namespace ProjectH.Client.Input
         private readonly InputAction _look;
         private readonly InputAction _jump;
         private readonly InputAction _sprint;
-        private readonly InputAction _lockCursor;
+        private readonly InputAction _fire;
+        private readonly InputAction _aim;
         private readonly InputAction _unlockCursor;
 
         public InputReader()
@@ -26,21 +27,26 @@ namespace ProjectH.Client.Input
             _look = new InputAction("Look", InputActionType.Value, "<Mouse>/delta");
             _jump = new InputAction("Jump", InputActionType.Button, "<Keyboard>/space");
             _sprint = new InputAction("Sprint", InputActionType.Button, "<Keyboard>/leftShift");
-            _lockCursor = new InputAction("LockCursor", InputActionType.Button, "<Mouse>/leftButton");
+            // Left click: locks the cursor while it is free, fires while it is locked (D12, GameClient).
+            _fire = new InputAction("Fire", InputActionType.Button, "<Mouse>/leftButton");
+            _aim = new InputAction("Aim", InputActionType.Button, "<Mouse>/rightButton");
             _unlockCursor = new InputAction("UnlockCursor", InputActionType.Button, "<Keyboard>/escape");
 
             _move.Enable();
             _look.Enable();
             _jump.Enable();
             _sprint.Enable();
-            _lockCursor.Enable();
+            _fire.Enable();
+            _aim.Enable();
             _unlockCursor.Enable();
         }
 
         public Vector2 Move => _move.ReadValue<Vector2>();
         public Vector2 LookDelta => _look.ReadValue<Vector2>();
         public bool Sprint => _sprint.IsPressed();
-        public bool LockCursorPressed => _lockCursor.WasPressedThisFrame();
+        public bool FirePressed => _fire.WasPressedThisFrame();
+        public bool FireHeld => _fire.IsPressed();
+        public bool AimHeld => _aim.IsPressed();
         public bool UnlockCursorPressed => _unlockCursor.WasPressedThisFrame();
 
         // Set when Jump is pressed, cleared by the simulation step that uses it. Rendering runs faster
@@ -59,7 +65,8 @@ namespace ProjectH.Client.Input
             _look.Dispose();
             _jump.Dispose();
             _sprint.Dispose();
-            _lockCursor.Dispose();
+            _fire.Dispose();
+            _aim.Dispose();
             _unlockCursor.Dispose();
         }
     }

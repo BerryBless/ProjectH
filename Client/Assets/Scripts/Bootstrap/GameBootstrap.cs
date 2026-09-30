@@ -10,6 +10,11 @@ namespace ProjectH.Client.Bootstrap
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
         {
+            // A networked client must keep simulating, sending input and receiving snapshots while its
+            // window is unfocused; otherwise the other Multiplayer Play Mode player (or a background
+            // window) freezes. Set in code so every Editor clone and build gets it regardless of settings.
+            Application.runInBackground = true;
+
             if (Object.FindAnyObjectByType<GameClient>() != null) return;
             var go = new GameObject("GameClient");
             Object.DontDestroyOnLoad(go);

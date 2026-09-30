@@ -119,7 +119,8 @@ public sealed class Match
                 // instead of repeating the last move until the disconnect timeout. Gravity still applies.
                 input = new InputCommand { Seq = player.LastInput.Seq, Yaw = player.LastInput.Yaw };
             }
-            MovementSimulation.Step(ref player.State, input, _tickSeconds);
+            // Same boxes as client prediction (LocalPlayerPredictor), so predictions match.
+            MovementSimulation.Step(ref player.State, input, _tickSeconds, TestArena.Boxes);
         }
 
         ServerTick++;
@@ -192,7 +193,8 @@ public sealed class Match
     }
 
     // Spread players on a circle (golden angle) so they do not spawn inside each other.
-    private static Vector3 SpawnPosition(ushort entityId)
+    // The 5 m ring lies inside TestArena.ClearRadius (checked by TestArenaTests).
+    internal static Vector3 SpawnPosition(ushort entityId)
     {
         float angle = entityId * 2.39996f;
         return new Vector3(MathF.Cos(angle) * SpawnRadius, 0f, MathF.Sin(angle) * SpawnRadius);

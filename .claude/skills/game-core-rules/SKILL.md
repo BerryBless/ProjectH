@@ -93,7 +93,7 @@ Shared가 필요한 경우 다음 정도만 공유한다.
 
 Shared에 게임 로직을 넣지 않는다.
 
-예외: `Shared/Runtime/Simulation`의 이동 계산(`MovementSimulation`과 그 입력·상태·상수 타입)만 둔다. Client Prediction과 서버 시뮬레이션이 같은 코드를 실행해야 예측이 어긋나지 않기 때문이다. 이 폴더에는 `System.Numerics`만 쓰는 순수 계산만 두고, 전투·인벤토리 등 다른 게임 규칙은 넣지 않는다.
+예외: `Shared/Runtime/Simulation`의 이동 계산만 둔다. 여기에는 `MovementSimulation`과 그 입력·상태·상수 타입, 이동 계산이 읽는 지형 박스 데이터(`Box`, `TestArena`)와 캐릭터–박스 충돌 계산이 포함된다. Client Prediction과 서버 시뮬레이션이 같은 코드와 같은 지형으로 계산해야 예측이 어긋나지 않기 때문이다. 이 폴더에는 `System.Numerics`만 쓰는 순수 계산과 그 계산이 읽는 상수 데이터만 두고, 전투·인벤토리 등 다른 게임 규칙은 넣지 않는다.
 
 ## 5. 기존 구조를 먼저 확인한다
 

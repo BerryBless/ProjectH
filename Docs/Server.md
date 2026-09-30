@@ -37,6 +37,8 @@ Lock을 추가하게 되면 이 문서에 순서를 적는다.
 
 Tick 루프: `DrainControl` → `DrainInput` → `RemoveStalePeers` → `Match.Tick`. Tick이 5 Tick 이상 밀리면 밀린 분을 건너뛴다(`lateTicksSkipped`). Tick 예외는 삼키고 계속 진행한다.
 
+`Match.Tick`은 플레이어마다 `MovementSimulation.Step(ref state, input, 1/SimHz, TestArena.Boxes)`를 호출한다(Shared 지형 박스와 충돌. 규칙은 `Networking.md` "이동 충돌"). 박스 20개 × 50명 × 30 Hz라 비용은 무시할 수준이고 할당이 없다. Spawn은 반경 5 m 원 위이고 아레나는 중앙 반경 7 m를 비워 둔다(`TestArenaTests`).
+
 ## Queue
 
 | Queue | 크기 | 가득 찼을 때 |

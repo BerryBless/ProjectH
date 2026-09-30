@@ -42,7 +42,7 @@ namespace ProjectH.Client.Tests
 
             // Server processed inputs 1..2 exactly as the client did.
             var server = new MoveState();
-            for (int i = 0; i < 2; i++) MovementSimulation.Step(ref server, new InputCommand { MoveY = 1f }, Step);
+            for (int i = 0; i < 2; i++) MovementSimulation.Step(ref server, new InputCommand { MoveY = 1f }, Step, TestArena.Boxes);
             predictor.Reconcile(new SnapshotEntity { Position = server.Position, VelocityY = server.VelocityY, Yaw = server.Yaw }, 2);
 
             Assert.AreEqual(before.z, predictor.PredictedPosition.z, 1e-4f);
@@ -57,7 +57,7 @@ namespace ProjectH.Client.Tests
 
             // Server says that after input 1 the player was 1 m further along +X (e.g. pushed).
             var server = new MoveState();
-            MovementSimulation.Step(ref server, new InputCommand { MoveY = 1f }, Step);
+            MovementSimulation.Step(ref server, new InputCommand { MoveY = 1f }, Step, TestArena.Boxes);
             server.Position.X += 1f;
             predictor.Reconcile(new SnapshotEntity { Position = server.Position, VelocityY = server.VelocityY, Yaw = server.Yaw }, 1);
 

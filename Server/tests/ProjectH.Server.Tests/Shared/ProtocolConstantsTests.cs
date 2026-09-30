@@ -14,8 +14,9 @@ public class ProtocolConstantsTests
     }
 
     [Fact]
-    public void ProtocolVersion_IsOne()
+    public void ProtocolVersion_IsTwo()
     {
-        Assert.Equal((ushort)1, ProtocolConstants.ProtocolVersion);
+        // Phase 1 changed movement results (box collision); v1 clients must be rejected at connect.
+        Assert.Equal((ushort)2, ProtocolConstants.ProtocolVersion);
     }
 }

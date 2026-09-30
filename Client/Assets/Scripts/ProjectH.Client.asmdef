@@ -3,7 +3,8 @@
   "rootNamespace": "ProjectH.Client",
   "references": [
     "ProjectH.Shared",
-    "Unity.InputSystem"
+    "Unity.InputSystem",
+    "UnityEngine.UI"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],
