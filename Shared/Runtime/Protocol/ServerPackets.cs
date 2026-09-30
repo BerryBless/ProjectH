@@ -78,16 +78,18 @@ namespace ProjectH.Shared.Protocol
         }
     }
 
-    // Layout: [PacketId 1][ServerTick 4][AckInputSeq 4][Count 2] then Count x SnapshotEntity.
-    // The server writes one payload for everyone and patches AckInputSeq per recipient.
+    // Layout: [PacketId 1][ServerTick 4][AckInputSeq 4][Count 2][SnapshotSelf 6] then Count x SnapshotEntity.
+    // The server writes one payload for everyone and patches AckInputSeq and Self per recipient (D10).
     public struct WorldSnapshotHeader
     {
-        public const int Size = 11;
+        public const int Size = 17;
         public const int AckInputSeqOffset = 5;
+        public const int SelfOffset = 11;
 
         public uint ServerTick;
         public uint AckInputSeq;
         public ushort Count;
+        public SnapshotSelf Self;
 
         public static void Write(ref PacketWriter writer, in WorldSnapshotHeader h)
         {
@@ -95,6 +97,7 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt32(h.ServerTick);
             writer.WriteUInt32(h.AckInputSeq);
             writer.WriteUInt16(h.Count);
+            SnapshotSelf.Write(ref writer, h.Self);
         }
 
         public static bool TryRead(ref PacketReader reader, out WorldSnapshotHeader h)
@@ -104,24 +107,66 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadUInt32(out h.ServerTick);
             reader.TryReadUInt32(out h.AckInputSeq);
             reader.TryReadUInt16(out h.Count);
+            SnapshotSelf.TryRead(ref reader, out h.Self);
             if (h.Count > ProtocolConstants.MaxSnapshotEntities) return false;
             return reader.Remaining >= h.Count * SnapshotEntity.Size;
         }
 
-        public static void PatchAckInputSeq(Span<byte> packet, uint ackInputSeq)
+        // packet is the whole written snapshot, starting with its PacketId byte.
+        public static void PatchRecipient(Span<byte> packet, uint ackInputSeq, in SnapshotSelf self)
         {
             BinaryPrimitives.WriteUInt32LittleEndian(packet.Slice(AckInputSeqOffset, 4), ackInputSeq);
+            var writer = new PacketWriter(packet.Slice(SelfOffset, SnapshotSelf.Size));
+            SnapshotSelf.Write(ref writer, self);
+        }
+    }
+
+    // The recipient's own combat values (D10). Sent in every snapshot, so the HUD recovers even when a
+    // Reliable combat event is late.
+    public struct SnapshotSelf
+    {
+        public const int Size = 6;
+
+        public byte Health;
+        public byte Shield;
+        public byte WeaponSlot;             // loadout index: 0 = Slot1, 1 = Slot2
+        public byte Ammo;                   // rounds in the current weapon's magazine
+        public ushort ReloadRemainingTicks; // 0 = not reloading; at least 1 while a reload is running
+
+        public static void Write(ref PacketWriter writer, in SnapshotSelf s)
+        {
+            writer.WriteByte(s.Health);
+            writer.WriteByte(s.Shield);
+            writer.WriteByte(s.WeaponSlot);
+            writer.WriteByte(s.Ammo);
+            writer.WriteUInt16(s.ReloadRemainingTicks);
+        }
+
+        public static bool TryRead(ref PacketReader reader, out SnapshotSelf s)
+        {
+            s = default;
+            if (reader.Remaining < Size) return false;
+            reader.TryReadByte(out s.Health);
+            reader.TryReadByte(out s.Shield);
+            reader.TryReadByte(out s.WeaponSlot);
+            reader.TryReadByte(out s.Ammo);
+            reader.TryReadUInt16(out s.ReloadRemainingTicks);
+            return true;
         }
     }
 
     public struct SnapshotEntity
     {
-        public const int Size = 22; // id 2 + position 12 + velocityY 4 + yaw 4
+        public const int Size = 23; // id 2 + position 12 + velocityY 4 + yaw 4 + flags 1
+        public const byte AliveFlag = 1;
 
         public ushort EntityId;
         public Vector3 Position;
         public float VelocityY;
         public float Yaw;
+        public byte Flags;
+
+        public bool IsAlive => (Flags & AliveFlag) != 0;
 
         public static void Write(ref PacketWriter writer, in SnapshotEntity e)
         {
@@ -129,6 +174,7 @@ namespace ProjectH.Shared.Protocol
             writer.WriteVector3(e.Position);
             writer.WriteSingle(e.VelocityY);
             writer.WriteSingle(e.Yaw);
+            writer.WriteByte(e.Flags);
         }
 
         public static bool TryRead(ref PacketReader reader, out SnapshotEntity e)
@@ -139,6 +185,7 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadVector3(out e.Position);
             reader.TryReadSingle(out e.VelocityY);
             reader.TryReadSingle(out e.Yaw);
+            reader.TryReadByte(out e.Flags);
             return true;
         }
     }

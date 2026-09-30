@@ -54,7 +54,9 @@ namespace ProjectH.Client.CameraControl
             AimRay = new Ray(pose.Shoulder, pose.Forward);
         }
 
-        // Single-result SphereCast: no allocation. Player views have no colliders, so only the world is hit.
+        // Single-result SphereCast: no allocation. Only the world is hit: the local view has no collider, and
+        // remote views' box colliders are on the Ignore Raycast layer (PlayerViewFactory.RemoteHitLayer), which
+        // DefaultRaycastLayers excludes.
         // The pivot (feet + 1.6 m) is inside the character's collision box, which the simulation keeps
         // out of every box, and 0.2 m < 0.35 m half-width, so stage 1 normally starts outside a wall.
         // The pose uses RenderPosition, which carries the decaying reconcile offset, so for about

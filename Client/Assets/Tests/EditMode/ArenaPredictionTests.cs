@@ -21,12 +21,12 @@ namespace ProjectH.Client.Tests
         // loops never gain an extra step from rounding slop (Advance also caps one call at 0.25 s).
         private static void AdvanceOneStep(LocalPlayerPredictor predictor, Vector2 move)
         {
-            bool jump = false;
-            Assert.AreEqual(1, predictor.Advance(Step, move, 0f, false, ref jump));
+            InputButtons queued = InputButtons.None;
+            Assert.AreEqual(1, predictor.Advance(Step, move, 0f, InputButtons.None, ref queued));
         }
 
         private static SnapshotEntity ToEntity(in MoveState s)
-            => new SnapshotEntity { Position = s.Position, VelocityY = s.VelocityY, Yaw = s.Yaw };
+            => new SnapshotEntity { Position = s.Position, VelocityY = s.VelocityY, Yaw = s.Yaw, Flags = SnapshotEntity.AliveFlag };
 
         private static Num.Vector3 ToNumerics(Vector3 v) => new Num.Vector3(v.x, v.y, v.z);
 
@@ -91,7 +91,7 @@ namespace ProjectH.Client.Tests
             for (int i = 0; i < 3; i++) AdvanceOneStep(predictor, Vector2.zero);
 
             // Pillar (9, 1.5, 9) size 1 x 3 x 1: this position is its centre.
-            predictor.Reconcile(new SnapshotEntity { Position = new Num.Vector3(9f, 0f, 9f) }, 1);
+            predictor.Reconcile(new SnapshotEntity { Position = new Num.Vector3(9f, 0f, 9f), Flags = SnapshotEntity.AliveFlag }, 1);
 
             Assert.IsFalse(MovementSimulation.OverlapsAny(ToNumerics(predictor.PredictedPosition), TestArena.Boxes));
         }

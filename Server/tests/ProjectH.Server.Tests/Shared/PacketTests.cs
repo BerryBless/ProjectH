@@ -18,6 +18,18 @@ public class PacketTests
         return reader;
     }
 
+    private static InputCommand FullCommand(uint seq) => new InputCommand
+    {
+        Seq = seq,
+        MoveX = 0.5f,
+        MoveY = -1f,
+        Yaw = 90f + seq,
+        Buttons = InputButtons.Jump | InputButtons.Fire | InputButtons.Slot2,
+        AimYaw = 12.5f + seq,
+        AimPitch = -30f,
+        ViewTick = 1000.25f + seq,
+    };
+
     [Fact]
     public void ConnectRequestData_RoundTrip()
     {
@@ -39,32 +51,48 @@ public class PacketTests
     }
 
     [Fact]
-    public void PlayerInput_RoundTrip_KeepsOrder()
+    public void PlayerInput_RoundTrip_KeepsOrderAndAimFields()
     {
         var packet = new PlayerInputPacket { Count = 3 };
-        for (int i = 0; i < 3; i++)
-            packet.Set(i, new InputCommand { Seq = (uint)(10 + i), MoveX = 0.5f, MoveY = -1f, Yaw = 90f + i, Buttons = InputButtons.Jump });
+        for (int i = 0; i < 3; i++) packet.Set(i, FullCommand((uint)(10 + i)));
 
         var writer = new PacketWriter(_buffer);
         PlayerInputPacket.Write(ref writer, packet);
+        Assert.Equal(PlayerInputPacket.MaxSize, writer.Length);
         var reader = ReaderAfterId(writer.Length, PacketId.PlayerInput);
         Assert.True(PlayerInputPacket.TryRead(ref reader, out var read));
 
         Assert.Equal(3, read.Count);
         for (int i = 0; i < 3; i++)
         {
-            Assert.Equal((uint)(10 + i), read.Get(i).Seq);
-            Assert.Equal(90f + i, read.Get(i).Yaw);
-            Assert.Equal(InputButtons.Jump, read.Get(i).Buttons);
+            InputCommand expected = FullCommand((uint)(10 + i));
+            InputCommand actual = read.Get(i);
+            Assert.Equal(expected.Seq, actual.Seq);
+            Assert.Equal(expected.Yaw, actual.Yaw);
+            Assert.Equal(expected.Buttons, actual.Buttons);
+            Assert.Equal(expected.AimYaw, actual.AimYaw);
+            Assert.Equal(expected.AimPitch, actual.AimPitch);
+            Assert.Equal(expected.ViewTick, actual.ViewTick);
         }
+        Assert.Equal(0, reader.Remaining);
+    }
+
+    [Fact]
+    public void PlayerInput_Sizes_ArePinned()
+    {
+        // 29 bytes per command; the largest input packet (3 commands) stays small (D2).
+        Assert.Equal(29, PlayerInputPacket.CommandSize);
+        Assert.Equal(89, PlayerInputPacket.MaxSize);
     }
 
     [Theory]
     [InlineData(0)]
     [InlineData(4)]
+    [InlineData(255)]
     public void PlayerInput_InvalidCount_IsRejected(byte count)
     {
-        var bytes = new byte[2 + 17 * 4];
+        // Enough payload for 4 commands, so only the count rule can reject it.
+        var bytes = new byte[2 + PlayerInputPacket.CommandSize * 4];
         bytes[0] = (byte)PacketId.PlayerInput;
         bytes[1] = count;
         var reader = new PacketReader(bytes);
@@ -72,10 +100,17 @@ public class PacketTests
         Assert.False(PlayerInputPacket.TryRead(ref reader, out _));
     }
 
-    [Fact]
-    public void PlayerInput_Truncated_IsRejected()
+    [Theory]
+    [InlineData(1, 0)]
+    [InlineData(1, 17)]    // a Phase 1 sized command is now one command short
+    [InlineData(1, 28)]
+    [InlineData(2, 29)]
+    [InlineData(3, 86)]
+    public void PlayerInput_Truncated_IsRejected(byte count, int payloadBytes)
     {
-        var bytes = new byte[] { (byte)PacketId.PlayerInput, 2, 1, 0, 0, 0 };
+        var bytes = new byte[2 + payloadBytes];
+        bytes[0] = (byte)PacketId.PlayerInput;
+        bytes[1] = count;
         var reader = new PacketReader(bytes);
         reader.TryReadPacketId(out _);
         Assert.False(PlayerInputPacket.TryRead(ref reader, out _));
@@ -90,7 +125,8 @@ public class PacketTests
         PlayerInputPacket.Write(ref writer, packet);
         var reader = ReaderAfterId(writer.Length, PacketId.PlayerInput);
         Assert.True(PlayerInputPacket.TryRead(ref reader, out var read));
-        Assert.Equal(InputButtons.Jump | InputButtons.Sprint, read.Get(0).Buttons);
+        Assert.Equal(InputButtons.Jump | InputButtons.Sprint | InputButtons.Fire | InputButtons.Reload |
+                     InputButtons.Slot1 | InputButtons.Slot2, read.Get(0).Buttons);
     }
 
     [Fact]
@@ -125,26 +161,58 @@ public class PacketTests
     }
 
     [Fact]
-    public void Snapshot_RoundTrip_AndAckPatch()
+    public void Snapshot_RoundTrip_AndRecipientPatch()
     {
         var writer = new PacketWriter(_buffer);
         WorldSnapshotHeader.Write(ref writer, new WorldSnapshotHeader { ServerTick = 7, AckInputSeq = 0, Count = 2 });
-        SnapshotEntity.Write(ref writer, new SnapshotEntity { EntityId = 1, Position = new Vector3(1, 2, 3), VelocityY = -1f, Yaw = 10f });
-        SnapshotEntity.Write(ref writer, new SnapshotEntity { EntityId = 2, Position = new Vector3(4, 5, 6), VelocityY = 0f, Yaw = 20f });
+        SnapshotEntity.Write(ref writer, new SnapshotEntity { EntityId = 1, Position = new Vector3(1, 2, 3), VelocityY = -1f, Yaw = 10f, Flags = SnapshotEntity.AliveFlag });
+        SnapshotEntity.Write(ref writer, new SnapshotEntity { EntityId = 2, Position = new Vector3(4, 5, 6), VelocityY = 0f, Yaw = 20f, Flags = 0 });
         Assert.Equal(WorldSnapshotHeader.Size + 2 * SnapshotEntity.Size, writer.Length);
 
-        WorldSnapshotHeader.PatchAckInputSeq(_buffer.AsSpan(0, writer.Length), 42);
+        var self = new SnapshotSelf { Health = 70, Shield = 5, WeaponSlot = 1, Ammo = 3, ReloadRemainingTicks = 300 };
+        WorldSnapshotHeader.PatchRecipient(_buffer.AsSpan(0, writer.Length), 42, self);
 
         var reader = ReaderAfterId(writer.Length, PacketId.WorldSnapshot);
         Assert.True(WorldSnapshotHeader.TryRead(ref reader, out var h));
         Assert.Equal(7u, h.ServerTick);
         Assert.Equal(42u, h.AckInputSeq);
         Assert.Equal(2, h.Count);
+        Assert.Equal(70, h.Self.Health);
+        Assert.Equal(5, h.Self.Shield);
+        Assert.Equal(1, h.Self.WeaponSlot);
+        Assert.Equal(3, h.Self.Ammo);
+        Assert.Equal(300, h.Self.ReloadRemainingTicks);
         Assert.True(SnapshotEntity.TryRead(ref reader, out var e1));
         Assert.True(SnapshotEntity.TryRead(ref reader, out var e2));
         Assert.Equal(new Vector3(1, 2, 3), e1.Position);
         Assert.Equal(-1f, e1.VelocityY);
+        Assert.True(e1.IsAlive);
         Assert.Equal(2, e2.EntityId);
+        Assert.False(e2.IsAlive);
+        Assert.Equal(0, reader.Remaining);
+    }
+
+    // D10: 11 + 6 + 23 * 50 = 1167 bytes must fit one unfragmented datagram (1200).
+    [Fact]
+    public void Snapshot_WithMaxEntities_Is1167Bytes_AndFitsOneDatagram()
+    {
+        var writer = new PacketWriter(_buffer);
+        WorldSnapshotHeader.Write(ref writer, new WorldSnapshotHeader { ServerTick = uint.MaxValue, Count = ProtocolConstants.MaxSnapshotEntities });
+        for (int i = 0; i < ProtocolConstants.MaxSnapshotEntities; i++)
+        {
+            SnapshotEntity.Write(ref writer, new SnapshotEntity
+            {
+                EntityId = (ushort)(i + 1),
+                Position = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue),
+                VelocityY = float.MaxValue,
+                Yaw = 359f,
+                Flags = SnapshotEntity.AliveFlag,
+            });
+        }
+
+        Assert.False(writer.Overflowed);
+        Assert.Equal(1167, writer.Length);
+        Assert.True(writer.Length <= ProtocolConstants.MaxPacketSize);
     }
 
     [Fact]
@@ -163,6 +231,17 @@ public class PacketTests
         WorldSnapshotHeader.Write(ref writer, new WorldSnapshotHeader { ServerTick = 1, Count = 3 });
         SnapshotEntity.Write(ref writer, new SnapshotEntity { EntityId = 1 });
         var reader = ReaderAfterId(writer.Length, PacketId.WorldSnapshot);
+        Assert.False(WorldSnapshotHeader.TryRead(ref reader, out _));
+    }
+
+    [Fact]
+    public void Snapshot_HeaderWithoutSelfBlock_IsRejected()
+    {
+        // A Phase 1 sized header (11 bytes) must not be read as a v3 header.
+        var bytes = new byte[11];
+        bytes[0] = (byte)PacketId.WorldSnapshot;
+        var reader = new PacketReader(bytes);
+        reader.TryReadPacketId(out _);
         Assert.False(WorldSnapshotHeader.TryRead(ref reader, out _));
     }
 }

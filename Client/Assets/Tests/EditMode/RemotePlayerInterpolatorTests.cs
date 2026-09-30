@@ -87,6 +87,21 @@ namespace ProjectH.Client.Tests
         }
 
         [Test]
+        public void Clear_DropsHistory_SoNextSampleIsTheNewPosition()
+        {
+            var interp = new RemotePlayerInterpolator();
+            interp.Push(10, new Vector3(9f, 0f, 0f), 0f);
+            interp.Push(12, new Vector3(9f, 0f, 0f), 0f);
+            interp.Clear();
+            Assert.IsFalse(interp.TrySample(11.0, out _, out _));
+
+            interp.Push(20, new Vector3(-5f, 0f, 0f), 0f);
+            // Rendering lags behind the newest tick: with one sample it is shown at once, no slide.
+            Assert.IsTrue(interp.TrySample(16.0, out Vector3 position, out _));
+            Assert.AreEqual(-5f, position.x, 1e-4f);
+        }
+
+        [Test]
         public void ServerClock_RenderTick_NeverGoesBackwards()
         {
             var clock = new ServerClock(30);

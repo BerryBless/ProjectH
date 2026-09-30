@@ -10,6 +10,7 @@ using ProjectH.Shared.Simulation;
 namespace ProjectH.Server.Tests.Integration;
 
 // Minimal client for tests: same wire protocol as the Unity client, no prediction or rendering.
+// Every received combat event is kept in a list; a test client lives for one test only.
 public sealed class HeadlessClient : IDisposable
 {
     private readonly EventBasedNetListener _listener = new();
@@ -43,7 +44,17 @@ public sealed class HeadlessClient : IDisposable
     public HashSet<ushort> Despawned { get; } = new();
     public Dictionary<ushort, SnapshotEntity> LastSnapshot { get; } = new();
     public uint LastAckInputSeq { get; private set; }
+    public uint LastServerTick { get; private set; }
     public int SnapshotsReceived { get; private set; }
+
+    public WeaponInfo[]? Weapons { get; private set; }
+    public SnapshotSelf LastSelf { get; private set; }
+    public List<SnapshotSelf> SelfHistory { get; } = new();
+    public List<ShotFired> Shots { get; } = new();
+    public List<HitConfirmed> Hits { get; } = new();
+    public List<DamageTaken> DamageEvents { get; } = new();
+    public List<PlayerDied> Deaths { get; } = new();
+    public List<PlayerRespawned> Respawns { get; } = new();
 
     public void Connect(int port, string devPlayerId, ushort protocolVersion = ProtocolConstants.ProtocolVersion)
     {
@@ -63,8 +74,15 @@ public sealed class HeadlessClient : IDisposable
 
     public void SendMove(float moveX, float moveY, float yaw, InputButtons buttons = InputButtons.None)
     {
+        SendInput(new InputCommand { MoveX = moveX, MoveY = moveY, Yaw = yaw, Buttons = buttons });
+    }
+
+    // Sends one input; Seq is assigned here.
+    public void SendInput(InputCommand command)
+    {
+        command.Seq = _nextSeq++;
         var packet = new PlayerInputPacket { Count = 1 };
-        packet.Set(0, new InputCommand { Seq = _nextSeq++, MoveX = moveX, MoveY = moveY, Yaw = yaw, Buttons = buttons });
+        packet.Set(0, command);
         var writer = new PacketWriter(_buffer);
         PlayerInputPacket.Write(ref writer, packet);
         _peer.Send(writer.WrittenSpan, DeliveryMethod.Unreliable);
@@ -102,7 +120,28 @@ public sealed class HeadlessClient : IDisposable
                     if (SnapshotEntity.TryRead(ref r, out var e)) LastSnapshot[e.EntityId] = e;
                 }
                 LastAckInputSeq = header.AckInputSeq;
+                LastServerTick = header.ServerTick;
+                LastSelf = header.Self;
+                SelfHistory.Add(header.Self);
                 SnapshotsReceived++;
+                break;
+            case PacketId.WeaponCatalog:
+                if (WeaponCatalogPacket.TryRead(ref r, out var weapons)) Weapons = weapons;
+                break;
+            case PacketId.ShotFired:
+                if (ShotFired.TryRead(ref r, out var shot)) Shots.Add(shot);
+                break;
+            case PacketId.HitConfirmed:
+                if (HitConfirmed.TryRead(ref r, out var hit)) Hits.Add(hit);
+                break;
+            case PacketId.DamageTaken:
+                if (DamageTaken.TryRead(ref r, out var damage)) DamageEvents.Add(damage);
+                break;
+            case PacketId.PlayerDied:
+                if (PlayerDied.TryRead(ref r, out var died)) Deaths.Add(died);
+                break;
+            case PacketId.PlayerRespawned:
+                if (PlayerRespawned.TryRead(ref r, out var respawned)) Respawns.Add(respawned);
                 break;
         }
     }

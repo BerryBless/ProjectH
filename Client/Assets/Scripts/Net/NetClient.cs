@@ -47,6 +47,14 @@ namespace ProjectH.Client.Net
         public event Action<ushort> DespawnReceived;
         public event SnapshotHandler SnapshotReceived;
         public event Action<string> Disconnected;
+        // Phase 3 combat (D4, D9, D11). Payloads are structs, so raising them does not allocate
+        // (the catalog array is allocated once per join by its reader).
+        public event Action<WeaponInfo[]> CatalogReceived;
+        public event Action<ShotFired> ShotReceived;
+        public event Action<HitConfirmed> HitConfirmedReceived;
+        public event Action<DamageTaken> DamageTakenReceived;
+        public event Action<PlayerDied> PlayerDiedReceived;
+        public event Action<PlayerRespawned> PlayerRespawnedReceived;
 
         public ClientState State { get; private set; } = ClientState.Disconnected;
         public string LastError { get; private set; }
@@ -168,6 +176,30 @@ namespace ProjectH.Client.Net
                         count++;
                     }
                     SnapshotReceived?.Invoke(header, _snapshotEntities, count);
+                    break;
+
+                case PacketId.WeaponCatalog:
+                    if (WeaponCatalogPacket.TryRead(ref packet, out var weapons)) CatalogReceived?.Invoke(weapons);
+                    break;
+
+                case PacketId.ShotFired:
+                    if (ShotFired.TryRead(ref packet, out var shot)) ShotReceived?.Invoke(shot);
+                    break;
+
+                case PacketId.HitConfirmed:
+                    if (HitConfirmed.TryRead(ref packet, out var hit)) HitConfirmedReceived?.Invoke(hit);
+                    break;
+
+                case PacketId.DamageTaken:
+                    if (DamageTaken.TryRead(ref packet, out var damage)) DamageTakenReceived?.Invoke(damage);
+                    break;
+
+                case PacketId.PlayerDied:
+                    if (PlayerDied.TryRead(ref packet, out var died)) PlayerDiedReceived?.Invoke(died);
+                    break;
+
+                case PacketId.PlayerRespawned:
+                    if (PlayerRespawned.TryRead(ref packet, out var respawned)) PlayerRespawnedReceived?.Invoke(respawned);
                     break;
             }
         }

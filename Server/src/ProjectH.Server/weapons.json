@@ -1,0 +1,28 @@
+{
+  "weapons": [
+    {
+      "id": 1,
+      "name": "Vesper AR",
+      "damage": 20,
+      "fireIntervalSeconds": 0.1,
+      "magazineSize": 30,
+      "reloadSeconds": 2.0,
+      "range": 150,
+      "automatic": true,
+      "spread": 0,
+      "recoil": 0
+    },
+    {
+      "id": 2,
+      "name": "Kestrel LR",
+      "damage": 90,
+      "fireIntervalSeconds": 1.25,
+      "magazineSize": 5,
+      "reloadSeconds": 2.5,
+      "range": 300,
+      "automatic": false,
+      "spread": 0,
+      "recoil": 0
+    }
+  ]
+}

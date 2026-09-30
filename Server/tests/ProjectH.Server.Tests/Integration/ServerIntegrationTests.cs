@@ -20,7 +20,7 @@ public sealed class ServerIntegrationTests : IDisposable
             MaxPlayers = maxPlayers,
             DisconnectTimeoutMs = 1000,
             StatsIntervalSeconds = 60,
-        }, NullLogger.Instance);
+        }, TestWeapons.Create(), NullLogger.Instance);
         loop.Start();
         return loop;
     }
@@ -171,7 +171,7 @@ public sealed class ServerIntegrationTests : IDisposable
     [Fact]
     public void FullMatch_SnapshotWithMaxEntities_IsDelivered()
     {
-        // A 50-entity snapshot is 11 + 22 * 50 = 1111 bytes, sent Sequenced (never fragmented):
+        // A 50-entity snapshot is 17 + 23 * 50 = 1167 bytes, sent Sequenced (never fragmented):
         // the server's MTU must allow a single packet of ProtocolConstants.MaxPacketSize.
         int max = ProtocolConstants.MaxSnapshotEntities;
         using var server = StartServer(maxPlayers: max);

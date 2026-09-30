@@ -76,7 +76,7 @@ public class PacketWriterReaderTests
 
     [Theory]
     [InlineData(0)]
-    [InlineData(7)]
+    [InlineData(13)]   // one above PacketId.PlayerRespawned
     [InlineData(255)]
     public void PacketId_OutOfRange_IsRejected(byte raw)
     {
@@ -84,11 +84,14 @@ public class PacketWriterReaderTests
         Assert.False(reader.TryReadPacketId(out _));
     }
 
-    [Fact]
-    public void PacketId_InRange_IsAccepted()
+    [Theory]
+    [InlineData(PacketId.PlayerInput)]
+    [InlineData(PacketId.WeaponCatalog)]
+    [InlineData(PacketId.PlayerRespawned)]
+    public void PacketId_InRange_IsAccepted(PacketId expected)
     {
-        var reader = new PacketReader(new[] { (byte)PacketId.PlayerInput });
+        var reader = new PacketReader(new[] { (byte)expected });
         Assert.True(reader.TryReadPacketId(out PacketId id));
-        Assert.Equal(PacketId.PlayerInput, id);
+        Assert.Equal(expected, id);
     }
 }

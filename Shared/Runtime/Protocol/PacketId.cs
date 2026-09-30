@@ -10,5 +10,11 @@ namespace ProjectH.Shared.Protocol
         PlayerDespawned = 4,
         PlayerInput = 5,
         WorldSnapshot = 6,
+        WeaponCatalog = 7,
+        ShotFired = 8,
+        HitConfirmed = 9,
+        DamageTaken = 10,
+        PlayerDied = 11,
+        PlayerRespawned = 12,
     }
 }

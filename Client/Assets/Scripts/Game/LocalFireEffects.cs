@@ -2,16 +2,15 @@ using UnityEngine;
 
 namespace ProjectH.Client.Game
 {
-    // Client-only fire presentation (D11, D13, D14): tracers and impact marks, no packet, no damage.
+    // Fire presentation: tracers and impact marks, no damage (D12). Own shots are drawn at once when the
+    // local WeaponState says the server will fire them; other players' shots come from ShotFired.
     // Everything is created once in the constructor and reused through fixed ring pools, so firing
-    // 10 times a second allocates nothing and memory stays constant. Dispose destroys it all.
+    // allocates nothing and memory stays constant. Dispose destroys it all.
     public sealed class LocalFireEffects : System.IDisposable
     {
         public const int TracerPoolSize = 16;
         public const int ImpactPoolSize = 32;
-        private const float ShotsPerSecond = 10f;
-        private const int MaxShotsPerFrame = 3;
-        private const float Range = 200f;
+        private const int MaxShotsPerFrame = 3;   // a hitch frame never bursts a pile of effects
         private const float TracerSeconds = 0.05f;
         private const float TracerWidth = 0.02f;
         private const float ImpactSize = 0.1f;
@@ -25,7 +24,6 @@ namespace ProjectH.Client.Game
         private const float MuzzleRight = 0.24f;
         private const float MuzzleForward = 0.24f;
 
-        private readonly FireRateAccumulator _rate = new FireRateAccumulator(ShotsPerSecond, MaxShotsPerFrame);
         private readonly GameObject _root;
         private readonly Material _material;
         private readonly LineRenderer[] _tracers = new LineRenderer[TracerPoolSize];
@@ -73,17 +71,27 @@ namespace ProjectH.Client.Game
             }
         }
 
-        // Call once per frame after the camera has moved (LateUpdate).
-        public void Tick(float deltaTime, bool triggerHeld, Ray aimRay, Vector3 feet, float yaw, float now)
+        // Own shots this frame (from WeaponState), drawn after the camera moved (LateUpdate). aimPoint is what
+        // the crosshair is on; the first thing between the muzzle and it is where the shot lands (Phase 1 D13).
+        public void FireLocal(int shots, Vector3 aimPoint, Vector3 feet, float yaw, float now)
         {
-            if (_root == null) return;   // pool destroyed externally (e.g. scene unload): nothing to draw
-            int shots = _rate.Consume(deltaTime, triggerHeld);
-            if (shots > 0)
-            {
-                Vector3 muzzle = MuzzlePosition(feet, yaw);
-                for (int i = 0; i < shots; i++) FireOne(aimRay, muzzle, now);
-            }
+            if (_root == null || shots <= 0) return;   // pool destroyed externally (e.g. scene unload)
+            if (shots > MaxShotsPerFrame) shots = MaxShotsPerFrame;
+            Vector3 muzzle = MuzzlePosition(feet, yaw);
+            for (int i = 0; i < shots; i++) FireOne(aimPoint, muzzle, now);
+        }
 
+        // D11: another player's shot as the server resolved it, from its eye to where it stopped.
+        public void ShowRemoteShot(Vector3 start, Vector3 end, float now)
+        {
+            if (_root == null) return;
+            ShowTracer(start, end, now);
+        }
+
+        // Call once per frame: hides tracers whose time is up.
+        public void Tick(float now)
+        {
+            if (_root == null) return;
             for (int i = 0; i < TracerPoolSize; i++)
             {
                 if (_tracers[i].enabled && now >= _tracerHideTime[i]) _tracers[i].enabled = false;
@@ -117,21 +125,16 @@ namespace ProjectH.Client.Game
                 feet.z - sin * MuzzleRight + cos * MuzzleForward);
         }
 
-        private void FireOne(Ray aimRay, Vector3 muzzle, float now)
+        private void FireOne(Vector3 aimPoint, Vector3 muzzle, float now)
         {
-            // 1) Screen-centre ray: what the crosshair is on.
-            Vector3 aimPoint = Physics.Raycast(aimRay, out RaycastHit aimHit, Range, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore)
-                ? aimHit.point
-                : aimRay.GetPoint(Range);
-
-            // 2) Muzzle -> aim point: the first thing in between is where the shot lands (D13).
             Vector3 toAim = aimPoint - muzzle;
             float distance = toAim.magnitude;
             if (distance < 0.01f) return;
             Vector3 direction = toAim / distance;
 
-            // A little past the aim point so a shot aimed at a surface registers the hit on it.
-            if (Physics.Raycast(muzzle, direction, out RaycastHit hit, distance + 0.05f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+            // A little past the aim point so a shot aimed at a surface registers the hit on it. Remote players
+            // are on PlayerViewFactory.RemoteHitLayer, so the mask includes that layer.
+            if (Physics.Raycast(muzzle, direction, out RaycastHit hit, distance + 0.05f, PlayerViewFactory.AimRaycastMask, QueryTriggerInteraction.Ignore))
             {
                 ShowTracer(muzzle, hit.point, now);
                 ShowImpact(hit.point, hit.normal);

@@ -1,6 +1,6 @@
 # Architecture
 
-Phase 1 Character Prototype 기준. 설계 근거: `Docs/specs/2026-09-30-phase0-network-sync-design.md`, `Docs/specs/2026-09-30-phase1-character-prototype-design.md`.
+Phase 3 Combat 기준. 설계 근거: `Docs/specs/2026-09-30-phase0-network-sync-design.md`, `Docs/specs/2026-09-30-phase1-character-prototype-design.md`, `Docs/specs/2026-10-01-phase3-combat-design.md`.
 
 ```mermaid
 flowchart LR
@@ -9,6 +9,7 @@ flowchart LR
         Input --> Camera[ShoulderCamera]
         Net[NetClient] --> Remote[RemotePlayers]
         Net --> Predictor
+        Net --> Hud[CombatHud, WeaponState]
     end
     subgraph Shared[/Shared UPM package/]
         Protocol[Protocol: packets]
@@ -17,6 +18,7 @@ flowchart LR
     subgraph Server[.NET 10 Server]
         Listener[NetworkListener] -->|Channels| Loop[GameLoop thread]
         Loop --> Match
+        Match --> Combat[Combat: WeaponRules, HitScan, PositionHistory]
     end
     Client <-->|UDP / LiteNetLib| Server
     Client -.uses.-> Shared
@@ -25,8 +27,8 @@ flowchart LR
 
 | 폴더 | 역할 |
 |---|---|
-| `Client/` | Unity. 입력·표시·예측·보간. 결과를 확정하지 않는다. 카메라·조준점·발사 연출은 Client 표시 전용이다(서버로 가지 않음) |
-| `Server/` | .NET 10 Dedicated Server. 이동 결과를 결정한다 |
+| `Client/` | Unity. 입력·표시·예측·보간. 결과를 확정하지 않는다. 카메라·조준점은 Client 표시 전용이고, 발사는 입력에 조준 방향만 실어 보낸다(누구를 맞혔는지는 보내지 않는다) |
+| `Server/` | .NET 10 Dedicated Server. 이동 결과와 명중·피해·사망·부활을 결정한다. 무기 수치는 `weapons.json` |
 | `Shared/` | 패킷 DTO, 프로토콜 상수, 이동 계산과 그 지형 박스·충돌(`Simulation/`, 유일한 로직 예외: `game-core-rules` 4절) |
 | `Docs/` | 이 문서들 |
 

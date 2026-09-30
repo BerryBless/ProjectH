@@ -58,7 +58,7 @@ namespace ProjectH.Client.Bootstrap
                 _client.Disconnect();
             }
 
-            GUILayout.Label("F1: panel   Left click: lock mouse, then fire   Right click: aim   Esc: unlock");
+            GUILayout.Label("F1: panel   Left click: lock mouse, then fire   Right click: aim   R: reload   1/2: weapon   Esc: unlock");
             GUILayout.EndArea();
         }
 

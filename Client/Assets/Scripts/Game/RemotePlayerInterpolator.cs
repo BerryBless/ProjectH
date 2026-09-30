@@ -29,6 +29,13 @@ namespace ProjectH.Client.Game
             if (_count < Capacity) _count++;
         }
 
+        // Forget all samples (respawn teleport): the next Push starts a new history.
+        public void Clear()
+        {
+            _count = 0;
+            _newest = -1;
+        }
+
         public bool TrySample(double renderTick, out Vector3 position, out float yaw)
         {
             position = default;

@@ -8,15 +8,17 @@ public class ProtocolConstantsTests
     [Fact]
     public void SnapshotEntityLimit_FitsInOneDatagram()
     {
-        const int headerBytes = 11;
-        const int entityBytes = 22;
-        Assert.True(headerBytes + ProtocolConstants.MaxSnapshotEntities * entityBytes <= ProtocolConstants.MaxPacketSize);
+        // D10: header 11 + self block 6, then 23 bytes per entity.
+        Assert.Equal(17, WorldSnapshotHeader.Size);
+        Assert.Equal(6, SnapshotSelf.Size);
+        Assert.Equal(23, SnapshotEntity.Size);
+        Assert.True(WorldSnapshotHeader.Size + ProtocolConstants.MaxSnapshotEntities * SnapshotEntity.Size <= ProtocolConstants.MaxPacketSize);
     }
 
     [Fact]
-    public void ProtocolVersion_IsTwo()
+    public void ProtocolVersion_IsThree()
     {
-        // Phase 1 changed movement results (box collision); v1 clients must be rejected at connect.
-        Assert.Equal((ushort)2, ProtocolConstants.ProtocolVersion);
+        // Phase 3 changed the input, snapshot and packet set; v2 clients must be rejected at connect.
+        Assert.Equal((ushort)3, ProtocolConstants.ProtocolVersion);
     }
 }

@@ -21,7 +21,7 @@ public class MatchTests
 
     public MatchTests()
     {
-        _match = new Match(new ServerOptions { MaxPlayers = 3, SnapshotEveryTicks = 2 },
+        _match = new Match(new ServerOptions { MaxPlayers = 3, SnapshotEveryTicks = 2 }, TestWeapons.Create(),
             (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)));
     }
 
@@ -69,6 +69,31 @@ public class MatchTests
         Assert.Equal(2, _sent.Count(s => s.PeerId == 1 && s.Id == PacketId.PlayerSpawned));
         Assert.Equal(2, _sent.Count(s => s.PeerId == 2 && s.Id == PacketId.PlayerSpawned));
         Assert.Equal(2, _match.PlayerCount);
+    }
+
+    [Fact]
+    public void Join_SendsWeaponCatalog_AfterResponse_BeforeSpawns()
+    {
+        _match.TryJoin(1, "a");
+
+        var toPeer = _sent.Where(s => s.PeerId == 1).ToList();
+        Assert.Equal(PacketId.JoinMatchResponse, toPeer[0].Id);
+        Assert.Equal(PacketId.WeaponCatalog, toPeer[1].Id);
+        Assert.Equal(DeliveryMethod.ReliableOrdered, toPeer[1].Method);
+        Assert.Equal(PacketId.PlayerSpawned, toPeer[2].Id);
+
+        var reader = new PacketReader(toPeer[1].Data);
+        reader.TryReadPacketId(out _);
+        Assert.True(WeaponCatalogPacket.TryRead(ref reader, out var weapons));
+        Assert.Equal("Test Auto", weapons[0].Name);
+        Assert.Equal(TestWeapons.AutoInterval, weapons[0].FireIntervalTicks);
+    }
+
+    [Fact]
+    public void Constructor_RejectsCatalogBuiltForOtherSimHz()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            new Match(new ServerOptions { SimHz = 60 }, TestWeapons.Create(simHz: 30), (_, _, _) => { }));
     }
 
     [Fact]

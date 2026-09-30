@@ -1,4 +1,5 @@
 using System;
+using ProjectH.Shared.Simulation;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -14,6 +15,9 @@ namespace ProjectH.Client.Input
         private readonly InputAction _sprint;
         private readonly InputAction _fire;
         private readonly InputAction _aim;
+        private readonly InputAction _reload;
+        private readonly InputAction _slot1;
+        private readonly InputAction _slot2;
         private readonly InputAction _unlockCursor;
 
         public InputReader()
@@ -30,6 +34,9 @@ namespace ProjectH.Client.Input
             // Left click: locks the cursor while it is free, fires while it is locked (D12, GameClient).
             _fire = new InputAction("Fire", InputActionType.Button, "<Mouse>/leftButton");
             _aim = new InputAction("Aim", InputActionType.Button, "<Mouse>/rightButton");
+            _reload = new InputAction("Reload", InputActionType.Button, "<Keyboard>/r");
+            _slot1 = new InputAction("Slot1", InputActionType.Button, "<Keyboard>/1");
+            _slot2 = new InputAction("Slot2", InputActionType.Button, "<Keyboard>/2");
             _unlockCursor = new InputAction("UnlockCursor", InputActionType.Button, "<Keyboard>/escape");
 
             _move.Enable();
@@ -38,6 +45,9 @@ namespace ProjectH.Client.Input
             _sprint.Enable();
             _fire.Enable();
             _aim.Enable();
+            _reload.Enable();
+            _slot1.Enable();
+            _slot2.Enable();
             _unlockCursor.Enable();
         }
 
@@ -49,14 +59,18 @@ namespace ProjectH.Client.Input
         public bool AimHeld => _aim.IsPressed();
         public bool UnlockCursorPressed => _unlockCursor.WasPressedThisFrame();
 
-        // Set when Jump is pressed, cleared by the simulation step that uses it. Rendering runs faster
-        // than the fixed simulation, so a press between two steps must be remembered, not lost.
-        public bool JumpQueued { get; set; }
+        // Jump, Reload, Slot1 and Slot2 presses since the last simulation step that used them. Rendering runs
+        // faster than the fixed simulation, so a press between two steps must be remembered, not lost;
+        // LocalPlayerPredictor.Advance clears the bits it puts into an input.
+        public InputButtons QueuedButtons { get; set; }
 
         // Call once per rendered frame.
         public void Update()
         {
-            if (_jump.WasPressedThisFrame()) JumpQueued = true;
+            if (_jump.WasPressedThisFrame()) QueuedButtons |= InputButtons.Jump;
+            if (_reload.WasPressedThisFrame()) QueuedButtons |= InputButtons.Reload;
+            if (_slot1.WasPressedThisFrame()) QueuedButtons |= InputButtons.Slot1;
+            if (_slot2.WasPressedThisFrame()) QueuedButtons |= InputButtons.Slot2;
         }
 
         public void Dispose()
@@ -67,6 +81,9 @@ namespace ProjectH.Client.Input
             _sprint.Dispose();
             _fire.Dispose();
             _aim.Dispose();
+            _reload.Dispose();
+            _slot1.Dispose();
+            _slot2.Dispose();
             _unlockCursor.Dispose();
         }
     }

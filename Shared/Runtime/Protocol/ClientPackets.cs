@@ -37,8 +37,13 @@ namespace ProjectH.Shared.Protocol
     // every packet means one lost datagram does not lose an input. The server drops seqs it already has.
     public struct PlayerInputPacket
     {
-        private const int CommandSize = 17; // seq 4 + moveX 4 + moveY 4 + yaw 4 + buttons 1
-        private const byte KnownButtons = (byte)(InputButtons.Jump | InputButtons.Sprint);
+        // seq 4 + moveX 4 + moveY 4 + yaw 4 + buttons 1 + aimYaw 4 + aimPitch 4 + viewTick 4
+        public const int CommandSize = 29;
+        // PacketId 1 + count 1 + 3 commands = 89 bytes, far below one datagram.
+        public const int MaxSize = 2 + ProtocolConstants.MaxInputsPerPacket * CommandSize;
+
+        private const byte KnownButtons = (byte)(InputButtons.Jump | InputButtons.Sprint | InputButtons.Fire |
+                                                 InputButtons.Reload | InputButtons.Slot1 | InputButtons.Slot2);
 
         public byte Count;
         public InputCommand Input0;
@@ -78,9 +83,14 @@ namespace ProjectH.Shared.Protocol
                 writer.WriteSingle(c.MoveY);
                 writer.WriteSingle(c.Yaw);
                 writer.WriteByte((byte)c.Buttons);
+                writer.WriteSingle(c.AimYaw);
+                writer.WriteSingle(c.AimPitch);
+                writer.WriteSingle(c.ViewTick);
             }
         }
 
+        // Only the layout is checked here. Values (NaN aim, huge ViewTick, ...) are checked where they are
+        // used: MovementSimulation for movement, the server's combat code for aim and ViewTick (D14).
         public static bool TryRead(ref PacketReader reader, out PlayerInputPacket packet)
         {
             packet = default;
@@ -98,6 +108,9 @@ namespace ProjectH.Shared.Protocol
                 reader.TryReadSingle(out c.Yaw);
                 reader.TryReadByte(out byte buttons);
                 c.Buttons = (InputButtons)(buttons & KnownButtons);
+                reader.TryReadSingle(out c.AimYaw);
+                reader.TryReadSingle(out c.AimPitch);
+                reader.TryReadSingle(out c.ViewTick);
                 packet.Set(i, c);
             }
             return true;
