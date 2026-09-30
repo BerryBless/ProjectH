@@ -29,7 +29,7 @@ namespace ProjectH.Client.Game
         private int _shield = -1;
         private string _weaponName;
         private int _ammo = -1;
-        private int _magazine = -1;
+        private int _reserve = -1;
         private bool _reloading;
         private float _hitHideTime;
         private float _damageHideTime;
@@ -89,15 +89,16 @@ namespace ProjectH.Client.Game
             _vitals.text = "HP " + health + "   SH " + shield;
         }
 
-        public void SetWeapon(string name, int ammo, int magazine, bool reloading)
+        // Phase 4: magazine / reserve rounds of the weapon's ammo type.
+        public void SetWeapon(string name, int ammo, int reserve, bool reloading)
         {
             if (_root == null) return;
-            if (ReferenceEquals(name, _weaponName) && ammo == _ammo && magazine == _magazine && reloading == _reloading) return;
+            if (ReferenceEquals(name, _weaponName) && ammo == _ammo && reserve == _reserve && reloading == _reloading) return;
             _weaponName = name;
             _ammo = ammo;
-            _magazine = magazine;
+            _reserve = reserve;
             _reloading = reloading;
-            _weapon.text = reloading ? name + "   reloading..." : name + "   " + ammo + " / " + magazine;
+            _weapon.text = reloading ? name + "   reloading..." : name + "   " + ammo + " / " + reserve;
         }
 
         public void ClearWeapon()

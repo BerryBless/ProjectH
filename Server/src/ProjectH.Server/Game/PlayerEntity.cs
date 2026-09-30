@@ -1,4 +1,5 @@
 using ProjectH.Server.Game.Combat;
+using ProjectH.Server.Game.Items;
 using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Server.Game;
@@ -33,11 +34,10 @@ public sealed class PlayerEntity
     public bool Alive;
     public uint RespawnAtTick;
 
-    // Loadout slot (0 = Slot1, 1 = Slot2). Ammo and NextFireTick are per slot, so switching weapons
-    // neither refills a magazine nor skips the other weapon's fire interval.
-    public int WeaponSlot;
-    public readonly int[] Ammo = new int[WeaponCatalog.SlotCount];
-    public readonly uint[] NextFireTick = new uint[WeaponCatalog.SlotCount];
+    // Phase 4 (D10): weapons, magazines, per-slot fire intervals, ammo reserves and consumables. Replaced
+    // by the starting loadout at join and respawn.
+    public readonly Inventory Inventory = new();
+    // The reload of the current slot (a switch cancels it).
     public bool Reloading;
     public uint ReloadEndTick;
     // Fire bit of the previous input the client sent: a semi-automatic weapon fires on the press only.

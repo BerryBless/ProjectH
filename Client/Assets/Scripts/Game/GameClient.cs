@@ -25,6 +25,8 @@ namespace ProjectH.Client.Game
         private ShoulderCamera _camera;
         private Crosshair _crosshair;
         private CombatHud _hud;
+        private InventoryHud _inventoryHud;
+        private WorldItemViews _worldItems;
         private LocalFireEffects _fireEffects;
         private NetClient _net;
         private LocalPlayerPredictor _predictor;
@@ -33,6 +35,11 @@ namespace ProjectH.Client.Game
         private readonly RemotePlayers _remotePlayers = new RemotePlayers();
         private ServerClock _clock;
         private WeaponState _weapons;
+        private WeaponInfo[] _weaponCatalog;
+        private ItemCatalogData _itemCatalog;
+        private InventoryState _inventory;   // the newest server InventoryState (heals and the use channel)
+        private float _useEndTime;           // local time the running heal ends (from UseRemainingTicks)
+        private float _useSeconds;           // its whole channel time
         private int _simHz;
         private double _interpolationDelaySeconds;
         private double _renderTick;       // server tick remote players are drawn at this frame (ViewTick, D6)
@@ -68,6 +75,8 @@ namespace ProjectH.Client.Game
             _camera = new ShoulderCamera(main);
             _crosshair = new Crosshair();
             _hud = new CombatHud();
+            _inventoryHud = new InventoryHud();
+            _worldItems = new WorldItemViews();
             _fireEffects = new LocalFireEffects();
 
             _net = new NetClient();
@@ -82,6 +91,11 @@ namespace ProjectH.Client.Game
             _net.DamageTakenReceived += OnDamageTaken;
             _net.PlayerDiedReceived += OnPlayerDied;
             _net.PlayerRespawnedReceived += OnPlayerRespawned;
+            _net.InventoryReceived += OnInventory;
+            _net.ItemCatalogReceived += OnItemCatalog;
+            _net.ItemReceived += OnItem;
+            _net.ItemRemovedReceived += OnItemRemoved;
+            _net.PickupResultReceived += OnPickupResult;
         }
 
         private void Update()
@@ -113,6 +127,8 @@ namespace ProjectH.Client.Game
 
         private void LateUpdate()
         {
+            // Before the early return: items spin (and are visible) before the local player has spawned. No allocation.
+            _worldItems.Tick(Time.time);
             if (_predictor == null) return;
             float now = Time.time;
             bool alive = !_predictor.IsDead;
@@ -148,9 +164,60 @@ namespace ProjectH.Client.Game
             _fireEffects.Tick(now);
 
             _hud.SetVitals(_health, _shield);
-            if (_weapons != null) _hud.SetWeapon(_weapons.Current.Name, _weapons.Ammo, _weapons.Current.MagazineSize, _weapons.Reloading);
+            if (_weapons != null && _weapons.HasWeapon) _hud.SetWeapon(_weapons.Current.Name, _weapons.Ammo, _weapons.Reserve, _weapons.Reloading);
             else _hud.ClearWeapon();
             _hud.Tick(_camera.Yaw, now);
+
+            UpdateInventoryHud(alive, now);
+        }
+
+        // D15: slots, heals, the heal bar and the "[E]" prompt. Strings are rebuilt only on change (InventoryHudText).
+        private void UpdateInventoryHud(bool alive, float now)
+        {
+            _inventoryHud.Tick(now);
+            if (_weapons == null || _itemCatalog == null) return;
+
+            for (int i = 0; i < WeaponState.SlotCount; i++)
+            {
+                if (_weapons.TryGetSlot(i, out WeaponInfo weapon, out int rarity, out int ammo))
+                    _inventoryHud.SetSlot(i, i == _weapons.Slot, weapon.Name, _itemCatalog.Rarities[rarity].Name, rarity, ammo, _weapons.GetReserve(weapon.AmmoType));
+                else
+                    _inventoryHud.SetSlot(i, i == _weapons.Slot, null, null, 0, 0, 0);
+            }
+            _inventoryHud.SetConsumables(_inventory.Medkits, _inventory.ShieldCells);
+
+            bool channel = alive && _inventory.Using != ConsumableType.None && _useSeconds > 0f;
+            _inventoryHud.SetUseProgress(channel ? 1f - Mathf.Clamp01((_useEndTime - now) / _useSeconds) : -1f);
+
+            // Same rule as the server (PickupRule): the prompt names the item E will take.
+            int target = alive ? PickupRule.FindNearest(_worldItems.Items, _predictor.PredictedPosition.ToNumerics()) : -1;
+            if (target < 0)
+            {
+                _inventoryHud.SetPrompt(0, 0, null, null);
+                return;
+            }
+            WorldItemData item = _worldItems.Items[target];
+            switch (item.Kind)
+            {
+                case ItemKind.Weapon:
+                    _inventoryHud.SetPrompt(item.ItemId, item.Amount, WeaponName(item.DefId), _itemCatalog.Rarities[item.Rarity].Name);
+                    break;
+                case ItemKind.Ammo:
+                    _inventoryHud.SetPrompt(item.ItemId, item.Amount, _itemCatalog.Ammo[item.DefId - 1].Name, null);
+                    break;
+                default:
+                    _inventoryHud.SetPrompt(item.ItemId, item.Amount, _itemCatalog.Consumables[item.DefId - 1].Name, null);
+                    break;
+            }
+        }
+
+        private string WeaponName(byte weaponId)
+        {
+            for (int i = 0; i < _weaponCatalog.Length; i++)
+            {
+                if (_weaponCatalog[i].WeaponId == weaponId) return _weaponCatalog[i].Name;
+            }
+            return "?";
         }
 
         private void OnDestroy()
@@ -166,9 +233,16 @@ namespace ProjectH.Client.Game
             _net.DamageTakenReceived -= OnDamageTaken;
             _net.PlayerDiedReceived -= OnPlayerDied;
             _net.PlayerRespawnedReceived -= OnPlayerRespawned;
+            _net.InventoryReceived -= OnInventory;
+            _net.ItemCatalogReceived -= OnItemCatalog;
+            _net.ItemReceived -= OnItem;
+            _net.ItemRemovedReceived -= OnItemRemoved;
+            _net.PickupResultReceived -= OnPickupResult;
             _net.Dispose();
             ClearMatchState();
             _fireEffects.Dispose();
+            _worldItems.Dispose();
+            _inventoryHud.Dispose();
             _hud.Dispose();
             _crosshair.Dispose();
             _input.Dispose();
@@ -203,7 +277,7 @@ namespace ProjectH.Client.Game
         // point can be on a player; the server then shoots from our eye towards it (D2).
         private Vector3 FindAimPoint()
         {
-            float range = _weapons != null ? _weapons.Current.Range : DefaultAimRange;
+            float range = _weapons != null && _weapons.HasWeapon ? _weapons.Current.Range : DefaultAimRange;
             Ray ray = _camera.AimRay;
             // Remote views moved in Update. Physics.autoSyncTransforms is off by default, so without this the
             // ray would test their colliders where the last physics step left them.
@@ -246,7 +320,44 @@ namespace ProjectH.Client.Game
 
         private void OnCatalog(WeaponInfo[] weapons)
         {
+            _weaponCatalog = weapons;
             _weapons = new WeaponState(weapons);
+        }
+
+        private void OnItemCatalog(ItemCatalogData items)
+        {
+            _itemCatalog = items;
+        }
+
+        private void OnItem(WorldItemData item)
+        {
+            _worldItems.Upsert(item);
+        }
+
+        private void OnItemRemoved(ushort itemId)
+        {
+            _worldItems.Remove(itemId);
+        }
+
+        // Feedback only (the inventory changes through InventoryState). Constant strings: no allocation.
+        private void OnPickupResult(PickupResult result)
+        {
+            if (result.Result == PickupResultCode.Full) _inventoryHud.ShowNotice("Inventory full", Time.time);
+            else if (result.Result == PickupResultCode.NothingInRange) _inventoryHud.ShowNotice("Nothing to pick up", Time.time);
+        }
+
+        // Phase 4: what sits in each slot, the reserves, heals and the heal channel (D14). The current slot
+        // comes with snapshots. The channel is shown from the remaining ticks at arrival; the server decides it.
+        private void OnInventory(InventoryState inventory)
+        {
+            _inventory = inventory;
+            if (_weapons != null) _weapons.ApplyInventory(inventory);
+            _useSeconds = 0f;
+            if (inventory.Using != ConsumableType.None && _itemCatalog != null && _simHz > 0)
+            {
+                _useSeconds = (float)_itemCatalog.Consumables[(int)inventory.Using - 1].UseTicks / _simHz;
+                _useEndTime = Time.time + (float)inventory.UseRemainingTicks / _simHz;
+            }
         }
 
         private void OnSpawned(PlayerSpawned spawned)
@@ -262,6 +373,7 @@ namespace ProjectH.Client.Game
                 _health = 0;
                 _shield = 0;
                 _hud.SetVisible(true);
+                _inventoryHud.SetVisible(true);
                 return;
             }
             _remotePlayers.Spawn(spawned, _clock != null ? _clock.LatestTick : 0);
@@ -326,7 +438,8 @@ namespace ProjectH.Client.Game
             if (respawned.EntityId != MyEntityId || _predictor == null) return;
             _predictor.Respawn(new MoveState { Position = respawned.Position, Yaw = respawned.Yaw });
             _input.QueuedButtons = InputButtons.None;
-            if (_weapons != null) _weapons.Refill();
+            // Empty until the server's InventoryState for the new life arrives (sent right after this event).
+            if (_weapons != null) _weapons.Clear();
             PlayerViewFactory.SetAlive(_localRenderer, null, true, true);
             _hud.HideDeath();
         }
@@ -348,11 +461,19 @@ namespace ProjectH.Client.Game
             _remotePlayers.Clear();
             _clock = null;
             _weapons = null;
+            _weaponCatalog = null;
+            _itemCatalog = null;
+            _inventory = default;
+            _useSeconds = 0f;
+            _worldItems.Clear();
             _pendingSteps = 0;
             _renderTick = 0;
             _crosshair.SetVisible(false);
             _hud.HideDeath();
             _hud.SetVisible(false);
+            _inventoryHud.SetUseProgress(-1f);
+            _inventoryHud.SetPrompt(0, 0, null, null);
+            _inventoryHud.SetVisible(false);
             _fireEffects.HideAll();
         }
     }

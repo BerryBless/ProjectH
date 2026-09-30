@@ -24,7 +24,7 @@ public class PacketTests
         MoveX = 0.5f,
         MoveY = -1f,
         Yaw = 90f + seq,
-        Buttons = InputButtons.Jump | InputButtons.Fire | InputButtons.Slot2,
+        Buttons = InputButtons.Jump | InputButtons.Fire | InputButtons.Slot2 | InputButtons.Interact | InputButtons.UseShieldCell,
         AimYaw = 12.5f + seq,
         AimPitch = -30f,
         ViewTick = 1000.25f + seq,
@@ -80,9 +80,9 @@ public class PacketTests
     [Fact]
     public void PlayerInput_Sizes_ArePinned()
     {
-        // 29 bytes per command; the largest input packet (3 commands) stays small (D2).
-        Assert.Equal(29, PlayerInputPacket.CommandSize);
-        Assert.Equal(89, PlayerInputPacket.MaxSize);
+        // Phase 4 (D14): buttons are 2 bytes, so 30 bytes per command; 3 commands = 92 bytes.
+        Assert.Equal(30, PlayerInputPacket.CommandSize);
+        Assert.Equal(92, PlayerInputPacket.MaxSize);
     }
 
     [Theory]
@@ -103,9 +103,9 @@ public class PacketTests
     [Theory]
     [InlineData(1, 0)]
     [InlineData(1, 17)]    // a Phase 1 sized command is now one command short
-    [InlineData(1, 28)]
-    [InlineData(2, 29)]
-    [InlineData(3, 86)]
+    [InlineData(1, 29)]    // a Phase 3 sized command (1-byte buttons) is one byte short
+    [InlineData(2, 30)]
+    [InlineData(3, 89)]
     public void PlayerInput_Truncated_IsRejected(byte count, int payloadBytes)
     {
         var bytes = new byte[2 + payloadBytes];
@@ -120,13 +120,15 @@ public class PacketTests
     public void PlayerInput_UnknownButtonBits_AreMasked()
     {
         var packet = new PlayerInputPacket { Count = 1 };
-        packet.Set(0, new InputCommand { Seq = 1, Buttons = (InputButtons)0xFF });
+        packet.Set(0, new InputCommand { Seq = 1, Buttons = (InputButtons)0xFFFF });
         var writer = new PacketWriter(_buffer);
         PlayerInputPacket.Write(ref writer, packet);
         var reader = ReaderAfterId(writer.Length, PacketId.PlayerInput);
         Assert.True(PlayerInputPacket.TryRead(ref reader, out var read));
         Assert.Equal(InputButtons.Jump | InputButtons.Sprint | InputButtons.Fire | InputButtons.Reload |
-                     InputButtons.Slot1 | InputButtons.Slot2, read.Get(0).Buttons);
+                     InputButtons.Slot1 | InputButtons.Slot2 | InputButtons.Slot3 | InputButtons.Interact |
+                     InputButtons.Drop | InputButtons.UseMedkit | InputButtons.UseShieldCell, read.Get(0).Buttons);
+        Assert.Equal(0x07FF, (int)read.Get(0).Buttons);
     }
 
     [Fact]

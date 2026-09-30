@@ -16,5 +16,11 @@ namespace ProjectH.Shared.Protocol
         DamageTaken = 10,
         PlayerDied = 11,
         PlayerRespawned = 12,
+        ItemCatalog = 13,
+        WorldItems = 14,
+        ItemSpawned = 15,
+        ItemRemoved = 16,
+        InventoryState = 17,
+        PickupResult = 18,
     }
 }

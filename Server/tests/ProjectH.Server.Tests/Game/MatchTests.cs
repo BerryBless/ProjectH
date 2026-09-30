@@ -21,7 +21,7 @@ public class MatchTests
 
     public MatchTests()
     {
-        _match = new Match(new ServerOptions { MaxPlayers = 3, SnapshotEveryTicks = 2 }, TestWeapons.Create(),
+        _match = new Match(new ServerOptions { MaxPlayers = 3, SnapshotEveryTicks = 2 }, TestGameData.Create(),
             (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)));
     }
 
@@ -72,7 +72,7 @@ public class MatchTests
     }
 
     [Fact]
-    public void Join_SendsWeaponCatalog_AfterResponse_BeforeSpawns()
+    public void Join_SendsCatalogs_AfterResponse_BeforeSpawns()
     {
         _match.TryJoin(1, "a");
 
@@ -80,20 +80,31 @@ public class MatchTests
         Assert.Equal(PacketId.JoinMatchResponse, toPeer[0].Id);
         Assert.Equal(PacketId.WeaponCatalog, toPeer[1].Id);
         Assert.Equal(DeliveryMethod.ReliableOrdered, toPeer[1].Method);
-        Assert.Equal(PacketId.PlayerSpawned, toPeer[2].Id);
+        Assert.Equal(PacketId.ItemCatalog, toPeer[2].Id);
+        Assert.Equal(DeliveryMethod.ReliableOrdered, toPeer[2].Method);
+        Assert.Equal(PacketId.WorldItems, toPeer[3].Id);   // 17 loot points: one chunk
+        Assert.Equal(PacketId.InventoryState, toPeer[4].Id);
+        Assert.Equal(PacketId.PlayerSpawned, toPeer[5].Id);
 
         var reader = new PacketReader(toPeer[1].Data);
         reader.TryReadPacketId(out _);
         Assert.True(WeaponCatalogPacket.TryRead(ref reader, out var weapons));
         Assert.Equal("Test Auto", weapons[0].Name);
         Assert.Equal(TestWeapons.AutoInterval, weapons[0].FireIntervalTicks);
+        Assert.Equal(AmmoType.Medium, weapons[0].AmmoType);
+
+        reader = new PacketReader(toPeer[2].Data);
+        reader.TryReadPacketId(out _);
+        Assert.True(ItemCatalogPacket.TryRead(ref reader, out var items));
+        Assert.Equal("Legendary", items.Rarities[4].Name);
+        Assert.Equal(TestGameData.MedkitUseTicks, items.Consumables[0].UseTicks);
     }
 
     [Fact]
-    public void Constructor_RejectsCatalogBuiltForOtherSimHz()
+    public void Constructor_RejectsDataBuiltForOtherSimHz()
     {
         Assert.Throws<ArgumentException>(() =>
-            new Match(new ServerOptions { SimHz = 60 }, TestWeapons.Create(simHz: 30), (_, _, _) => { }));
+            new Match(new ServerOptions { SimHz = 60 }, TestGameData.Create(simHz: 30), (_, _, _) => { }));
     }
 
     [Fact]

@@ -6,5 +6,10 @@ namespace ProjectH.Client.Net
         {
             return new UnityEngine.Vector3(value.X, value.Y, value.Z);
         }
+
+        public static System.Numerics.Vector3 ToNumerics(this UnityEngine.Vector3 value)
+        {
+            return new System.Numerics.Vector3(value.x, value.y, value.z);
+        }
     }
 }

@@ -18,6 +18,11 @@ namespace ProjectH.Client.Input
         private readonly InputAction _reload;
         private readonly InputAction _slot1;
         private readonly InputAction _slot2;
+        private readonly InputAction _slot3;
+        private readonly InputAction _interact;
+        private readonly InputAction _drop;
+        private readonly InputAction _useMedkit;
+        private readonly InputAction _useShieldCell;
         private readonly InputAction _unlockCursor;
 
         public InputReader()
@@ -37,6 +42,12 @@ namespace ProjectH.Client.Input
             _reload = new InputAction("Reload", InputActionType.Button, "<Keyboard>/r");
             _slot1 = new InputAction("Slot1", InputActionType.Button, "<Keyboard>/1");
             _slot2 = new InputAction("Slot2", InputActionType.Button, "<Keyboard>/2");
+            // Phase 4 (D8, D11, D12): 3 = third slot, E = pick up, G = drop, 4 = Medkit, 5 = Shield Cell.
+            _slot3 = new InputAction("Slot3", InputActionType.Button, "<Keyboard>/3");
+            _interact = new InputAction("Interact", InputActionType.Button, "<Keyboard>/e");
+            _drop = new InputAction("Drop", InputActionType.Button, "<Keyboard>/g");
+            _useMedkit = new InputAction("UseMedkit", InputActionType.Button, "<Keyboard>/4");
+            _useShieldCell = new InputAction("UseShieldCell", InputActionType.Button, "<Keyboard>/5");
             _unlockCursor = new InputAction("UnlockCursor", InputActionType.Button, "<Keyboard>/escape");
 
             _move.Enable();
@@ -48,6 +59,11 @@ namespace ProjectH.Client.Input
             _reload.Enable();
             _slot1.Enable();
             _slot2.Enable();
+            _slot3.Enable();
+            _interact.Enable();
+            _drop.Enable();
+            _useMedkit.Enable();
+            _useShieldCell.Enable();
             _unlockCursor.Enable();
         }
 
@@ -59,7 +75,8 @@ namespace ProjectH.Client.Input
         public bool AimHeld => _aim.IsPressed();
         public bool UnlockCursorPressed => _unlockCursor.WasPressedThisFrame();
 
-        // Jump, Reload, Slot1 and Slot2 presses since the last simulation step that used them. Rendering runs
+        // Jump, Reload, Slot1-3, Interact, Drop and the two heal presses since the last simulation step that
+        // used them. Rendering runs
         // faster than the fixed simulation, so a press between two steps must be remembered, not lost;
         // LocalPlayerPredictor.Advance clears the bits it puts into an input.
         public InputButtons QueuedButtons { get; set; }
@@ -71,6 +88,11 @@ namespace ProjectH.Client.Input
             if (_reload.WasPressedThisFrame()) QueuedButtons |= InputButtons.Reload;
             if (_slot1.WasPressedThisFrame()) QueuedButtons |= InputButtons.Slot1;
             if (_slot2.WasPressedThisFrame()) QueuedButtons |= InputButtons.Slot2;
+            if (_slot3.WasPressedThisFrame()) QueuedButtons |= InputButtons.Slot3;
+            if (_interact.WasPressedThisFrame()) QueuedButtons |= InputButtons.Interact;
+            if (_drop.WasPressedThisFrame()) QueuedButtons |= InputButtons.Drop;
+            if (_useMedkit.WasPressedThisFrame()) QueuedButtons |= InputButtons.UseMedkit;
+            if (_useShieldCell.WasPressedThisFrame()) QueuedButtons |= InputButtons.UseShieldCell;
         }
 
         public void Dispose()
@@ -84,6 +106,11 @@ namespace ProjectH.Client.Input
             _reload.Dispose();
             _slot1.Dispose();
             _slot2.Dispose();
+            _slot3.Dispose();
+            _interact.Dispose();
+            _drop.Dispose();
+            _useMedkit.Dispose();
+            _useShieldCell.Dispose();
             _unlockCursor.Dispose();
         }
     }

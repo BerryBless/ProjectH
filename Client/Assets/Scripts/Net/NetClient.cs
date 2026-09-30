@@ -55,6 +55,13 @@ namespace ProjectH.Client.Net
         public event Action<DamageTaken> DamageTakenReceived;
         public event Action<PlayerDied> PlayerDiedReceived;
         public event Action<PlayerRespawned> PlayerRespawnedReceived;
+        // Phase 4 items (D14). WorldItems chunks and ItemSpawned both arrive as ItemReceived (an upsert).
+        // The item catalog is allocated once per join by its reader; the rest are structs.
+        public event Action<ItemCatalogData> ItemCatalogReceived;
+        public event Action<WorldItemData> ItemReceived;
+        public event Action<ushort> ItemRemovedReceived;
+        public event Action<InventoryState> InventoryReceived;
+        public event Action<PickupResult> PickupResultReceived;
 
         public ClientState State { get; private set; } = ClientState.Disconnected;
         public string LastError { get; private set; }
@@ -200,6 +207,35 @@ namespace ProjectH.Client.Net
 
                 case PacketId.PlayerRespawned:
                     if (PlayerRespawned.TryRead(ref packet, out var respawned)) PlayerRespawnedReceived?.Invoke(respawned);
+                    break;
+
+                case PacketId.ItemCatalog:
+                    if (ItemCatalogPacket.TryRead(ref packet, out var items)) ItemCatalogReceived?.Invoke(items);
+                    break;
+
+                case PacketId.WorldItems:
+                    if (!WorldItemsPacket.TryReadHeader(ref packet, out int itemCount)) return;
+                    for (int i = 0; i < itemCount; i++)
+                    {
+                        if (!WorldItemData.TryRead(ref packet, out var listed)) break;
+                        ItemReceived?.Invoke(listed);
+                    }
+                    break;
+
+                case PacketId.ItemSpawned:
+                    if (ItemSpawnedPacket.TryRead(ref packet, out var item)) ItemReceived?.Invoke(item);
+                    break;
+
+                case PacketId.ItemRemoved:
+                    if (ItemRemoved.TryRead(ref packet, out var removed)) ItemRemovedReceived?.Invoke(removed.ItemId);
+                    break;
+
+                case PacketId.InventoryState:
+                    if (InventoryState.TryRead(ref packet, out var inventory)) InventoryReceived?.Invoke(inventory);
+                    break;
+
+                case PacketId.PickupResult:
+                    if (PickupResult.TryRead(ref packet, out var pickup)) PickupResultReceived?.Invoke(pickup);
                     break;
             }
         }

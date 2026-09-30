@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using ProjectH.Server.Game.Combat;
+using ProjectH.Shared.Protocol;
 using Xunit;
 
 namespace ProjectH.Server.Tests.Game;
@@ -11,7 +12,7 @@ public class WeaponCatalogTests
 
     private const string ValidFields =
         "\"id\": 1, \"name\": \"Vesper AR\", \"damage\": 20, \"fireIntervalSeconds\": 0.1, \"magazineSize\": 30, " +
-        "\"reloadSeconds\": 2.0, \"range\": 150, \"automatic\": true";
+        "\"reloadSeconds\": 2.0, \"range\": 150, \"automatic\": true, \"ammoType\": \"Medium\"";
 
     private static string Parse(string json, int simHz = 30)
     {
@@ -25,8 +26,7 @@ public class WeaponCatalogTests
     public void Valid_ConvertsSecondsToTicks()
     {
         Assert.True(WeaponCatalog.TryParse(TestWeapons.Json(), 30, out var catalog, out string? error), error);
-        Assert.Equal(2, catalog!.Count);
-        Assert.Equal(2, catalog.LoadoutCount);
+        Assert.Equal(3, catalog!.Count);
         Assert.Equal(30, catalog.SimHz);
         Assert.Equal("Test Auto", catalog[0].Name);
         Assert.Equal(3, catalog[0].FireIntervalTicks);
@@ -35,19 +35,33 @@ public class WeaponCatalogTests
         Assert.Equal(60, catalog[1].ReloadTicks);
         Assert.False(catalog[1].Automatic);
         Assert.Equal(0f, catalog[1].Spread);
-        Assert.Equal(2, catalog.WireInfos.Length);
+        Assert.Equal(3, catalog.WireInfos.Length);
         Assert.Equal("Test Semi", catalog.WireInfos[1].Name);
+        Assert.Equal(AmmoType.Heavy, catalog[1].AmmoType);
+        Assert.Equal(AmmoType.Heavy, catalog.WireInfos[1].AmmoType);
+    }
+
+    [Fact]
+    public void TryGetById_FindsEveryWeapon_AndNothingElse()
+    {
+        var catalog = TestWeapons.Create();
+        Assert.True(catalog.TryGetById(TestWeapons.LightId, out var light));
+        Assert.Equal("Test Light", light.Name);
+        Assert.Equal(AmmoType.Light, light.AmmoType);
+        Assert.False(catalog.TryGetById(0, out _));
+        Assert.False(catalog.TryGetById(4, out _));
+        Assert.False(catalog.TryGetById(255, out _));
     }
 
     [Fact]
     public void HalfTick_RoundsAwayFromZero_AndTinyTimesBecomeOneTick()
     {
         string json = "{ \"weapons\": [ { \"id\": 1, \"name\": \"A\", \"damage\": 1, \"fireIntervalSeconds\": 1.25, " +
-                      "\"magazineSize\": 1, \"reloadSeconds\": 0.001, \"range\": 1 } ] }";
+                      "\"magazineSize\": 1, \"reloadSeconds\": 0.001, \"range\": 1, \"ammoType\": \"Light\" } ] }";
         Assert.True(WeaponCatalog.TryParse(json, 30, out var catalog, out _));
         Assert.Equal(38, catalog![0].FireIntervalTicks);   // 37.5
         Assert.Equal(1, catalog[0].ReloadTicks);
-        Assert.Equal(1, catalog.LoadoutCount);
+        Assert.Equal(1, catalog.Count);
     }
 
     [Theory]
@@ -79,6 +93,10 @@ public class WeaponCatalogTests
     [InlineData("\"spread\": -1")]
     [InlineData("\"id\": 0")]
     [InlineData("\"id\": 256")]
+    [InlineData("\"ammoType\": \"None\"")]
+    [InlineData("\"ammoType\": \"light\"")]
+    [InlineData("\"ammoType\": \"2\"")]
+    [InlineData("\"ammoType\": null")]
     public void BadNumber_IsRejected(string overrideField)
     {
         // A later duplicate key overrides the valid value (System.Text.Json keeps the last one).
@@ -88,7 +106,8 @@ public class WeaponCatalogTests
     [Fact]
     public void MissingField_IsRejected()
     {
-        Parse(One("\"id\": 1, \"name\": \"A\", \"damage\": 20, \"magazineSize\": 30, \"reloadSeconds\": 2, \"range\": 150"));
+        Parse(One("\"id\": 1, \"name\": \"A\", \"damage\": 20, \"magazineSize\": 30, \"reloadSeconds\": 2, \"range\": 150, \"ammoType\": \"Light\""));
+        Parse(One(ValidFields.Replace(", \"ammoType\": \"Medium\"", "")));
     }
 
     [Theory]
@@ -105,6 +124,13 @@ public class WeaponCatalogTests
     public void SixteenByteName_IsAccepted()
     {
         Assert.True(WeaponCatalog.TryParse(One(ValidFields.Replace("Vesper AR", "1234567890123456")), 30, out _, out _));
+    }
+
+    [Fact]
+    public void DuplicateName_IsRejected()
+    {
+        string json = "{ \"weapons\": [ { " + ValidFields + " }, { " + ValidFields.Replace("\"id\": 1", "\"id\": 2") + " } ] }";
+        Assert.Contains("duplicate name", Parse(json));
     }
 
     [Fact]
@@ -130,13 +156,13 @@ public class WeaponCatalogTests
     }
 
     // The file shipped next to the server (copied to this test's output through the project reference)
-    // must load and match spec D5.
+    // must load and match Phase 3 spec D5 and Phase 4 spec D3.
     [Fact]
     public void ShippedWeaponsJson_MatchesSpec()
     {
         var catalog = WeaponCatalog.LoadFile(Path.Combine(AppContext.BaseDirectory, "weapons.json"), 30);
 
-        Assert.Equal(2, catalog.Count);
+        Assert.Equal(3, catalog.Count);
         Assert.Equal("Vesper AR", catalog[0].Name);
         Assert.Equal(20, catalog[0].Damage);
         Assert.Equal(3, catalog[0].FireIntervalTicks);    // 10 rounds/s
@@ -144,6 +170,7 @@ public class WeaponCatalogTests
         Assert.Equal(60, catalog[0].ReloadTicks);         // 2.0 s
         Assert.Equal(150f, catalog[0].Range);
         Assert.True(catalog[0].Automatic);
+        Assert.Equal(AmmoType.Medium, catalog[0].AmmoType);
 
         Assert.Equal("Kestrel LR", catalog[1].Name);
         Assert.Equal(90, catalog[1].Damage);
@@ -152,5 +179,17 @@ public class WeaponCatalogTests
         Assert.Equal(75, catalog[1].ReloadTicks);         // 2.5 s
         Assert.Equal(300f, catalog[1].Range);
         Assert.False(catalog[1].Automatic);
+        Assert.Equal(AmmoType.Heavy, catalog[1].AmmoType);
+
+        // Wisp SMG: 12 damage, 15 rounds/s (2 ticks at 30 Hz), 25 rounds, 1.6 s reload, 80 m, automatic, Light.
+        Assert.Equal(3, catalog[2].Id);
+        Assert.Equal("Wisp SMG", catalog[2].Name);
+        Assert.Equal(12, catalog[2].Damage);
+        Assert.Equal(2, catalog[2].FireIntervalTicks);
+        Assert.Equal(25, catalog[2].MagazineSize);
+        Assert.Equal(48, catalog[2].ReloadTicks);
+        Assert.Equal(80f, catalog[2].Range);
+        Assert.True(catalog[2].Automatic);
+        Assert.Equal(AmmoType.Light, catalog[2].AmmoType);
     }
 }

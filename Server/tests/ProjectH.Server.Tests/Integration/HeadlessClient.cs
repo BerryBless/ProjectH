@@ -10,7 +10,7 @@ using ProjectH.Shared.Simulation;
 namespace ProjectH.Server.Tests.Integration;
 
 // Minimal client for tests: same wire protocol as the Unity client, no prediction or rendering.
-// Every received combat event is kept in a list; a test client lives for one test only.
+// Every received combat and item event is kept in a list; a test client lives for one test only.
 public sealed class HeadlessClient : IDisposable
 {
     private readonly EventBasedNetListener _listener = new();
@@ -48,6 +48,7 @@ public sealed class HeadlessClient : IDisposable
     public int SnapshotsReceived { get; private set; }
 
     public WeaponInfo[]? Weapons { get; private set; }
+    public ItemCatalogData? Items { get; private set; }
     public SnapshotSelf LastSelf { get; private set; }
     public List<SnapshotSelf> SelfHistory { get; } = new();
     public List<ShotFired> Shots { get; } = new();
@@ -55,6 +56,14 @@ public sealed class HeadlessClient : IDisposable
     public List<DamageTaken> DamageEvents { get; } = new();
     public List<PlayerDied> Deaths { get; } = new();
     public List<PlayerRespawned> Respawns { get; } = new();
+
+    // Phase 4: the world item list as this client sees it (WorldItems at join, then upserts and removals),
+    // plus every item event in arrival order.
+    public Dictionary<ushort, WorldItemData> WorldItems { get; } = new();
+    public List<WorldItemData> ItemsSpawned { get; } = new();
+    public List<ushort> ItemsRemoved { get; } = new();
+    public List<InventoryState> Inventories { get; } = new();
+    public List<PickupResult> PickupResults { get; } = new();
 
     public void Connect(int port, string devPlayerId, ushort protocolVersion = ProtocolConstants.ProtocolVersion)
     {
@@ -128,6 +137,9 @@ public sealed class HeadlessClient : IDisposable
             case PacketId.WeaponCatalog:
                 if (WeaponCatalogPacket.TryRead(ref r, out var weapons)) Weapons = weapons;
                 break;
+            case PacketId.ItemCatalog:
+                if (ItemCatalogPacket.TryRead(ref r, out var items)) Items = items;
+                break;
             case PacketId.ShotFired:
                 if (ShotFired.TryRead(ref r, out var shot)) Shots.Add(shot);
                 break;
@@ -142,6 +154,33 @@ public sealed class HeadlessClient : IDisposable
                 break;
             case PacketId.PlayerRespawned:
                 if (PlayerRespawned.TryRead(ref r, out var respawned)) Respawns.Add(respawned);
+                break;
+            case PacketId.WorldItems:
+                if (!WorldItemsPacket.TryReadHeader(ref r, out int count)) return;
+                for (int i = 0; i < count; i++)
+                {
+                    if (WorldItemData.TryRead(ref r, out var listed)) WorldItems[listed.ItemId] = listed;
+                }
+                break;
+            case PacketId.ItemSpawned:
+                if (ItemSpawnedPacket.TryRead(ref r, out var item))
+                {
+                    WorldItems[item.ItemId] = item;
+                    ItemsSpawned.Add(item);
+                }
+                break;
+            case PacketId.ItemRemoved:
+                if (ItemRemoved.TryRead(ref r, out var removed))
+                {
+                    WorldItems.Remove(removed.ItemId);
+                    ItemsRemoved.Add(removed.ItemId);
+                }
+                break;
+            case PacketId.InventoryState:
+                if (InventoryState.TryRead(ref r, out var inventory)) Inventories.Add(inventory);
+                break;
+            case PacketId.PickupResult:
+                if (PickupResult.TryRead(ref r, out var pickup)) PickupResults.Add(pickup);
                 break;
         }
     }

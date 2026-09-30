@@ -37,13 +37,15 @@ namespace ProjectH.Shared.Protocol
     // every packet means one lost datagram does not lose an input. The server drops seqs it already has.
     public struct PlayerInputPacket
     {
-        // seq 4 + moveX 4 + moveY 4 + yaw 4 + buttons 1 + aimYaw 4 + aimPitch 4 + viewTick 4
-        public const int CommandSize = 29;
-        // PacketId 1 + count 1 + 3 commands = 89 bytes, far below one datagram.
+        // seq 4 + moveX 4 + moveY 4 + yaw 4 + buttons 2 + aimYaw 4 + aimPitch 4 + viewTick 4
+        public const int CommandSize = 30;
+        // PacketId 1 + count 1 + 3 commands = 92 bytes, far below one datagram.
         public const int MaxSize = 2 + ProtocolConstants.MaxInputsPerPacket * CommandSize;
 
-        private const byte KnownButtons = (byte)(InputButtons.Jump | InputButtons.Sprint | InputButtons.Fire |
-                                                 InputButtons.Reload | InputButtons.Slot1 | InputButtons.Slot2);
+        private const ushort KnownButtons = (ushort)(InputButtons.Jump | InputButtons.Sprint | InputButtons.Fire |
+                                                     InputButtons.Reload | InputButtons.Slot1 | InputButtons.Slot2 |
+                                                     InputButtons.Slot3 | InputButtons.Interact | InputButtons.Drop |
+                                                     InputButtons.UseMedkit | InputButtons.UseShieldCell);
 
         public byte Count;
         public InputCommand Input0;
@@ -82,7 +84,7 @@ namespace ProjectH.Shared.Protocol
                 writer.WriteSingle(c.MoveX);
                 writer.WriteSingle(c.MoveY);
                 writer.WriteSingle(c.Yaw);
-                writer.WriteByte((byte)c.Buttons);
+                writer.WriteUInt16((ushort)c.Buttons);
                 writer.WriteSingle(c.AimYaw);
                 writer.WriteSingle(c.AimPitch);
                 writer.WriteSingle(c.ViewTick);
@@ -106,7 +108,7 @@ namespace ProjectH.Shared.Protocol
                 reader.TryReadSingle(out c.MoveX);
                 reader.TryReadSingle(out c.MoveY);
                 reader.TryReadSingle(out c.Yaw);
-                reader.TryReadByte(out byte buttons);
+                reader.TryReadUInt16(out ushort buttons);
                 c.Buttons = (InputButtons)(buttons & KnownButtons);
                 reader.TryReadSingle(out c.AimYaw);
                 reader.TryReadSingle(out c.AimPitch);

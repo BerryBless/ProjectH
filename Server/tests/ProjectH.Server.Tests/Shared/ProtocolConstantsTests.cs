@@ -16,9 +16,10 @@ public class ProtocolConstantsTests
     }
 
     [Fact]
-    public void ProtocolVersion_IsThree()
+    public void ProtocolVersion_IsFour()
     {
-        // Phase 3 changed the input, snapshot and packet set; v2 clients must be rejected at connect.
-        Assert.Equal((ushort)3, ProtocolConstants.ProtocolVersion);
+        // Phase 4 changed the input command and the weapon catalog and added item packets; v3 clients
+        // must be rejected at connect.
+        Assert.Equal((ushort)4, ProtocolConstants.ProtocolVersion);
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using LiteNetLib;
 using ProjectH.Server.Game.Combat;
+using ProjectH.Server.Game.Items;
 using ProjectH.Shared.Protocol;
 using ProjectH.Shared.Simulation;
 
@@ -22,6 +23,10 @@ public sealed class Match
     private readonly byte[] _sendBuffer = new byte[ProtocolConstants.MaxPacketSize];
     private readonly SendPacket _send;
     private readonly WeaponCatalog _weapons;
+    private readonly ItemCatalog _items;
+    private readonly WorldItems _worldItems = new();
+    private readonly LootSpawner _loot;
+    private readonly StartingLoadout _loadout;
     private readonly int _maxPlayers;
     private readonly int _snapshotEveryTicks;
     private readonly int _inputCapacity;
@@ -32,12 +37,19 @@ public sealed class Match
     private readonly int _maxRewindTicks;
     private ushort _nextEntityId = 1;
 
-    public Match(ServerOptions options, WeaponCatalog weapons, SendPacket send)
+    // Test seams: loadout null = StartingLoadout.Empty (the production start, D1); lootPoints null = the
+    // map's LootPoints.All.
+    public Match(ServerOptions options, GameData data, SendPacket send, StartingLoadout? loadout = null, LootPoint[]? lootPoints = null)
     {
         _send = send ?? throw new ArgumentNullException(nameof(send));
-        _weapons = weapons ?? throw new ArgumentNullException(nameof(weapons));
-        if (weapons.SimHz != options.SimHz)
-            throw new ArgumentException($"Weapon catalog was built for SimHz {weapons.SimHz}, the match runs at {options.SimHz}.", nameof(weapons));
+        ArgumentNullException.ThrowIfNull(data);
+        if (data.SimHz != options.SimHz)
+            throw new ArgumentException($"Game data was built for SimHz {data.SimHz}, the match runs at {options.SimHz}.", nameof(data));
+        _weapons = data.Weapons;
+        _items = data.Items;
+        _loadout = loadout ?? StartingLoadout.Empty;
+        string? loadoutError = _loadout.Validate(data);
+        if (loadoutError != null) throw new ArgumentException("Invalid starting loadout: " + loadoutError, nameof(loadout));
         _maxPlayers = options.MaxPlayers;
         _snapshotEveryTicks = options.SnapshotEveryTicks;
         _inputCapacity = options.InputBufferPerPlayer;
@@ -46,6 +58,11 @@ public sealed class Match
         _tickSeconds = 1f / options.SimHz;
         _respawnTicks = CombatRules.TicksFromSeconds(CombatRules.RespawnSeconds, options.SimHz);
         _maxRewindTicks = CombatRules.MaxRewindTicks(options.SimHz);
+
+        // D6: the server fills every spawn point when the match starts; clients get the list at join.
+        _loot = new LootSpawner(lootPoints is null ? LootPoints.All : new ReadOnlySpan<LootPoint>(lootPoints), data, options.LootSeed,
+            (uint)options.LootRespawnSeconds * (uint)options.SimHz);
+        for (int point = 0; point < _loot.Count; point++) SpawnItem(_loot.Roll(point), _loot.Position(point), point);
     }
 
     public uint ServerTick { get; private set; }
@@ -62,6 +79,9 @@ public sealed class Match
     }
 
     public bool TryGetPlayer(int peerId, out PlayerEntity player) => _playersByPeer.TryGetValue(peerId, out player!);
+
+    // Test seam (InternalsVisibleTo): the store itself. Match is the only writer.
+    internal WorldItems WorldItems => _worldItems;
 
     public JoinResult TryJoin(int peerId, string devPlayerId)
     {
@@ -80,8 +100,10 @@ public sealed class Match
         _players.Add(player);
 
         SendJoinResponse(peerId, JoinResult.Ok, player.EntityId);
-        // Before any spawn: the client needs the weapon data before it can show its own weapon (D4).
-        SendCatalog(peerId);
+        // Before any spawn: the client needs the weapon and item data before it can show them (D4, D2).
+        SendCatalogs(peerId);
+        SendWorldItems(peerId);
+        SendInventory(player);
         // Everyone (including itself) to the newcomer, then the newcomer to everyone else.
         foreach (var other in _players) SendSpawned(peerId, other);
         foreach (var other in _players)
@@ -117,6 +139,7 @@ public sealed class Match
         {
             if (!player.Alive && now >= player.RespawnAtTick) Respawn(player);
         }
+        RefillLootPoints(now);
 
         foreach (var player in _players)
         {
@@ -127,13 +150,15 @@ public sealed class Match
 
             // Same boxes as client prediction (LocalPlayerPredictor), so predictions match.
             MovementSimulation.Step(ref player.State, input, _tickSeconds, TestArena.Boxes);
-            WeaponRules.UpdateReload(player, _weapons, now);
-            // Only an input the client really sent can fire, switch or reload: the missed-input repeat
-            // must never invent shots.
-            if (sent) ProcessWeapons(player, input, now);
+            WeaponRules.UpdateReload(player, now);
+            // Only an input the client really sent can act: the missed-input repeat copies the last input's
+            // buttons and must never invent a switch, reload or shot.
+            if (sent) ProcessActions(player, input, now);
+            ConsumableRules.Complete(player, _items, now);   // step 9: every tick, input or not
         }
 
         ServerTick++;
+        SendInventoryChanges();
         // After every move of this tick, so all players are recorded at the same moment. A snapshot with
         // ServerTick N shows exactly the positions recorded at N, which is what ViewTick refers to.
         foreach (var player in _players) player.History.Record(ServerTick, player.State.Position);
@@ -165,11 +190,20 @@ public sealed class Match
         return false;
     }
 
-    private void ProcessWeapons(PlayerEntity shooter, in InputCommand input, uint now)
+    // One real input of a living player, in the spec §2 order: cancel use -> slot -> drop -> pickup ->
+    // reload -> fire -> start use. (Movement came first; finishing a use comes after, every tick.)
+    private void ProcessActions(PlayerEntity player, in InputCommand input, uint now)
     {
+        ConsumableRules.CancelIfInterrupted(player, input.Buttons);
+        WeaponRules.SelectSlot(player, input.Buttons);
+        if ((input.Buttons & InputButtons.Drop) != 0) DropCurrentWeapon(player);
+        if ((input.Buttons & InputButtons.Interact) != 0) Pickup(player);
+
         bool aimValid = CombatRules.TryAimDirection(input.AimYaw, input.AimPitch, out Vector3 direction);
-        if (WeaponRules.Apply(shooter, _weapons, input.Buttons, aimValid, now))
-            FireShot(shooter, direction, input.ViewTick);
+        if (WeaponRules.Apply(player, input.Buttons, aimValid, now))
+            FireShot(player, direction, input.ViewTick);
+
+        ConsumableRules.TryStart(player, _items, input.Buttons, now);
     }
 
     // D7: from the eye along the aim, the nearest arena surface or living player stops the shot. The
@@ -178,7 +212,9 @@ public sealed class Match
     // _maxRewindTicks ticks). The shooter itself and the arena are not rewound.
     private void FireShot(PlayerEntity shooter, Vector3 direction, float viewTick)
     {
-        WeaponDefinition weapon = _weapons[shooter.WeaponSlot];
+        ref HeldWeapon held = ref shooter.Inventory.Current;
+        WeaponDefinition weapon = held.Weapon!;   // Apply only fires a filled slot
+        ushort damage = CombatRules.ScaledDamage(weapon.Damage, _items.DamageMultiplier(held.Rarity));
         Vector3 origin = shooter.State.Position + new Vector3(0f, CombatRules.EyeHeight, 0f);
         float nearest = HitScan.TraceWorld(origin, direction, weapon.Range, TestArena.Boxes);
         double rewindTick = CombatRules.ClampViewTick(viewTick, ServerTick, _maxRewindTicks);
@@ -200,7 +236,7 @@ public sealed class Match
         ShotFired.Write(ref writer, new ShotFired { ShooterId = shooter.EntityId, Start = origin, End = origin + direction * nearest });
         Broadcast(writer.WrittenSpan, DeliveryMethod.Unreliable);
 
-        if (target != null) ApplyHit(shooter, target, weapon.Damage);
+        if (target != null) ApplyHit(shooter, target, damage);
     }
 
     private void ApplyHit(PlayerEntity shooter, PlayerEntity target, ushort damage)
@@ -225,6 +261,175 @@ public sealed class Match
         if (killed) Kill(target, shooter);
     }
 
+    // D8, D9: the server picks the nearest item in range itself; the client never names one, so it cannot
+    // reach for a far item. Items are processed in player order within a tick, so when two players reach
+    // for the same item the first one takes it and the second finds it gone.
+    private void Pickup(PlayerEntity player)
+    {
+        int index = _worldItems.FindNearest(player.State.Position, ItemRules.PickupRange, ItemRules.PickupHeight);
+        if (index < 0)
+        {
+            SendPickupResult(player, PickupResultCode.NothingInRange, 0);
+            return;
+        }
+
+        WorldItemData item = _worldItems[index].Data;
+        if (item.Kind == ItemKind.Weapon)
+        {
+            bool taken = PickupWeapon(player, index, item);
+            SendPickupResult(player, taken ? PickupResultCode.Ok : PickupResultCode.Full, item.ItemId);
+            return;
+        }
+
+        int take = Math.Min(item.Amount, ItemRules.Room(player.Inventory, _items, item.Kind, item.DefId));
+        if (take == 0)
+        {
+            SendPickupResult(player, PickupResultCode.Full, item.ItemId);
+            return;
+        }
+        ItemRules.AddStack(player.Inventory, item.Kind, item.DefId, take);
+        player.Inventory.Changed = true;
+        // D9: what does not fit stays on the ground, with the smaller amount.
+        if (take == item.Amount) RemoveItemAt(index);
+        else SetItemAmount(index, (ushort)(item.Amount - take));
+        SendPickupResult(player, PickupResultCode.Ok, item.ItemId);
+    }
+
+    // D9: the first empty slot, or, with all three full, the current slot; the weapon it held goes on the
+    // ground in front of the player (like a G-drop). Empty-handed (current slot empty), the player also takes it in hand.
+    // Returns false when nothing changed hands (see the swap below).
+    private bool PickupWeapon(PlayerEntity player, int index, in WorldItemData item)
+    {
+        Inventory inventory = player.Inventory;
+        int spawnPoint = _worldItems[index].SpawnPoint;
+        _weapons.TryGetById(item.DefId, out WeaponDefinition weapon);   // items are made from this catalog
+        var picked = new HeldWeapon
+        {
+            Weapon = weapon,
+            Rarity = item.Rarity,
+            MagAmmo = Math.Min(item.Amount, (int)weapon.MagazineSize),
+            NextFireTick = inventory.DroppedFireLockTick,
+        };
+        RemoveItemAt(index);
+
+        int slot = -1;
+        for (int i = 0; i < Inventory.SlotCount && slot < 0; i++)
+        {
+            if (inventory.Slots[i].IsEmpty) slot = i;
+        }
+
+        if (slot >= 0)
+        {
+            inventory.Slots[slot] = picked;
+            if (inventory.Current.IsEmpty)
+            {
+                inventory.CurrentSlot = slot;
+                player.Reloading = false;
+            }
+        }
+        else
+        {
+            // The ground weapon was removed first, so its record is free for the old one: spawning first
+            // could evict the very item being picked up (D13). The old weapon leaves the hand only once it
+            // lies in the world, so no item is lost (conservation).
+            HeldWeapon old = inventory.Current;
+            // It is placed like a G-drop (in front of the player), not on the loot point: the point rolls a new
+            // item there after its respawn delay and the two would overlap.
+            Vector3 dropOffset = ItemRules.Offset(player.State.Yaw, ItemRules.DropDistance);
+            Vector3 dropAt = ItemRules.DropPosition(player.State.Position, dropOffset, TestArena.Boxes);
+            if (SpawnItem(new LootRoll(ItemKind.Weapon, old.Weapon!.Id, old.Rarity, (ushort)old.MagAmmo), dropAt, -1) == 0)
+            {
+                // Impossible: RemoveItemAt above just freed a record, so the store is below Capacity and
+                // TryAdd cannot fail. Kept so a future change to the store cannot lose an item silently:
+                // put the ground weapon back as it was and keep the old one in hand.
+                SpawnItem(new LootRoll(ItemKind.Weapon, item.DefId, item.Rarity, item.Amount), item.Position, spawnPoint);
+                return false;
+            }
+            inventory.DroppedFireLockTick = Math.Max(inventory.DroppedFireLockTick, old.NextFireTick);
+            picked.NextFireTick = inventory.DroppedFireLockTick;
+            inventory.Current = picked;
+            player.Reloading = false;   // the reload belonged to the weapon that left the hand
+        }
+        inventory.Changed = true;
+        return true;
+    }
+
+    // D12: G drops the current weapon 1 m in front of the feet, magazine included.
+    private void DropCurrentWeapon(PlayerEntity player)
+    {
+        Inventory inventory = player.Inventory;
+        ref HeldWeapon held = ref inventory.Current;
+        if (held.IsEmpty) return;
+
+        var roll = new LootRoll(ItemKind.Weapon, held.Weapon!.Id, held.Rarity, (ushort)held.MagAmmo);
+        Vector3 offset = ItemRules.Offset(player.State.Yaw, ItemRules.DropDistance);
+        // Conservation: the weapon leaves the hand only once it lies in the world. SpawnItem touches the
+        // world list only, so the ref into the inventory stays valid.
+        if (SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, TestArena.Boxes), -1) == 0) return;
+
+        inventory.DroppedFireLockTick = Math.Max(inventory.DroppedFireLockTick, held.NextFireTick);
+        held = default;
+        player.Reloading = false;
+        inventory.Changed = true;
+    }
+
+    // D12 (request §21): everything the player carried goes on a circle around the body, one item per
+    // weapon, per ammo type and per consumable type, so they do not lie on one point. Then the inventory
+    // is empty. Dropped items are not respawn points and can be evicted when the world is full (D13).
+    // Conservation: each piece leaves the inventory only once it lies in the world. A piece the world
+    // refused (unreachable: at most Capacity / 2 records are spawn-point items, so a full store always has
+    // a drop to evict) stays with the body until the respawn resets the inventory.
+    // Kill has already cancelled the reload, so taking the reserve here cannot feed a reload (WeaponRules).
+    private void DropEverything(PlayerEntity player)
+    {
+        Inventory inventory = player.Inventory;
+        int count = 0;
+        for (int i = 0; i < Inventory.SlotCount; i++) if (!inventory.Slots[i].IsEmpty) count++;
+        for (int t = 1; t <= ItemConstants.AmmoTypeCount; t++) if (inventory.GetAmmo((AmmoType)t) > 0) count++;
+        if (inventory.Medkits > 0) count++;
+        if (inventory.ShieldCells > 0) count++;
+
+        int n = 0;
+        for (int i = 0; i < Inventory.SlotCount; i++)
+        {
+            ref HeldWeapon held = ref inventory.Slots[i];
+            if (held.IsEmpty) continue;
+            if (DropAround(player, n++, count, new LootRoll(ItemKind.Weapon, held.Weapon!.Id, held.Rarity, (ushort)held.MagAmmo)))
+                held = default;
+        }
+        for (int t = 1; t <= ItemConstants.AmmoTypeCount; t++)
+        {
+            int rounds = inventory.GetAmmo((AmmoType)t);
+            if (rounds > 0 && DropAround(player, n++, count, new LootRoll(ItemKind.Ammo, (byte)t, 0, (ushort)rounds)))
+                inventory.SetAmmo((AmmoType)t, 0);
+        }
+        if (inventory.Medkits > 0 &&
+            DropAround(player, n++, count, new LootRoll(ItemKind.Consumable, (byte)ConsumableType.Medkit, 0, (ushort)inventory.Medkits)))
+            inventory.Medkits = 0;
+        if (inventory.ShieldCells > 0 &&
+            DropAround(player, n++, count, new LootRoll(ItemKind.Consumable, (byte)ConsumableType.ShieldCell, 0, (ushort)inventory.ShieldCells)))
+            inventory.ShieldCells = 0;
+
+        // The rest of Inventory.Clear: with every piece placed, the inventory is exactly a cleared one.
+        inventory.CurrentSlot = 0;
+        inventory.DroppedFireLockTick = 0;
+        inventory.Changed = true;
+    }
+
+    // Returns false when the world could not take the item.
+    private bool DropAround(PlayerEntity player, int n, int count, in LootRoll roll)
+    {
+        Vector3 offset = ItemRules.Offset(player.State.Yaw + 360f * n / count, ItemRules.DeathDropRadius);
+        return SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, TestArena.Boxes), -1) != 0;
+    }
+
+    private void SendPickupResult(PlayerEntity player, PickupResultCode result, ushort itemId)
+    {
+        var writer = new PacketWriter(_sendBuffer);
+        PickupResult.Write(ref writer, new PickupResult { Result = result, ItemId = itemId });
+        _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
     // D9: death is decided here. The same ReliableOrdered channel carries DamageTaken, PlayerDied and
     // PlayerRespawned, so every client sees them in that order.
     private void Kill(PlayerEntity victim, PlayerEntity killer)
@@ -234,10 +439,16 @@ public sealed class Match
         // The reload dies with the player; otherwise the corpse's snapshots would report it (D10).
         victim.Reloading = false;
         victim.ReloadEndTick = 0;
+        // Likewise the heal channel: DropEverything does not call Inventory.Clear, and a late Complete
+        // must not heal the corpse or the respawned player.
+        ConsumableRules.Cancel(victim.Inventory);
 
         var writer = new PacketWriter(_sendBuffer);
         PlayerDied.Write(ref writer, new PlayerDied { VictimId = victim.EntityId, KillerId = killer.EntityId });
         Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+
+        // After PlayerDied, so every client hears of the death before the items appear.
+        DropEverything(victim);
     }
 
     private void Respawn(PlayerEntity player)
@@ -261,8 +472,9 @@ public sealed class Match
     {
         player.Alive = true;
         player.Health = CombatRules.MaxHealth;
-        player.Shield = CombatRules.MaxShield;
-        WeaponRules.Equip(player, _weapons);
+        player.Shield = _loadout.Shield;
+        _loadout.ApplyTo(player.Inventory, _weapons);
+        WeaponRules.ResetState(player);
     }
 
     private void Broadcast(ReadOnlySpan<byte> data, DeliveryMethod method)
@@ -311,8 +523,8 @@ public sealed class Match
         {
             Health = (byte)Math.Clamp(p.Health, 0, byte.MaxValue),
             Shield = (byte)Math.Clamp(p.Shield, 0, byte.MaxValue),
-            WeaponSlot = (byte)p.WeaponSlot,
-            Ammo = (byte)p.Ammo[p.WeaponSlot],
+            WeaponSlot = (byte)p.Inventory.CurrentSlot,
+            Ammo = (byte)p.Inventory.Current.MagAmmo,   // 0 for an empty slot
             ReloadRemainingTicks = reloadRemaining,
         };
     }
@@ -331,11 +543,104 @@ public sealed class Match
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
-    private void SendCatalog(int peerId)
+    private void SendCatalogs(int peerId)
     {
         var writer = new PacketWriter(_sendBuffer);
         WeaponCatalogPacket.Write(ref writer, _weapons.WireInfos);
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+
+        writer = new PacketWriter(_sendBuffer);
+        ItemCatalogPacket.Write(ref writer, _items.Wire);
+        _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
+    // D14: the owner's inventory, only at the end of a tick in which it changed (shots do not count).
+    private void SendInventoryChanges()
+    {
+        foreach (var p in _players)
+        {
+            if (p.Inventory.Changed) SendInventory(p);
+        }
+    }
+
+    private void SendInventory(PlayerEntity player)
+    {
+        player.Inventory.Changed = false;
+        var writer = new PacketWriter(_sendBuffer);
+        InventoryState.Write(ref writer, player.Inventory.ToWire(ServerTick));
+        _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
+    // D13, D14: the whole list in chunks of WorldItemsPacket.MaxItems (at most 256 items = 6 packets).
+    private void SendWorldItems(int peerId)
+    {
+        for (int start = 0; start < _worldItems.Count; start += WorldItemsPacket.MaxItems)
+        {
+            int count = Math.Min(WorldItemsPacket.MaxItems, _worldItems.Count - start);
+            var writer = new PacketWriter(_sendBuffer);
+            WorldItemsPacket.WriteHeader(ref writer, count);
+            for (int i = 0; i < count; i++) WorldItemData.Write(ref writer, _worldItems[start + i].Data);
+            _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+        }
+    }
+
+    // Every change to the world item list goes through these three, so each one reaches every client.
+    // Each finishes its send before returning: none of them keeps a PacketWriter on _sendBuffer open
+    // across another send. Returns the new id, or 0 when the store could not take the item.
+    internal ushort SpawnItem(in LootRoll roll, Vector3 position, int spawnPoint)
+    {
+        if (!_worldItems.TryAdd(roll.Kind, roll.DefId, roll.Rarity, roll.Amount, position, spawnPoint, out ushort itemId, out ushort evictedId))
+            return 0;
+        if (evictedId != 0) BroadcastItemRemoved(evictedId);
+
+        var writer = new PacketWriter(_sendBuffer);
+        ItemSpawnedPacket.Write(ref writer, _worldItems[_worldItems.Count - 1].Data);
+        Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+        return itemId;
+    }
+
+    internal void RemoveItemAt(int index)
+    {
+        ushort itemId = _worldItems[index].Data.ItemId;
+        int spawnPoint = _worldItems[index].SpawnPoint;
+        _worldItems.RemoveAt(index);
+        BroadcastItemRemoved(itemId);
+        if (spawnPoint >= 0) _loot.OnTaken(spawnPoint, ServerTick);
+    }
+
+    // D7: a looted spawn point gets a new roll from its table once its timer is up. A point never holds two
+    // items (the death-drop guarantee relies on at most one live item per point): if one is in the world
+    // (a partial-pickup remainder, or the swap rollback that puts the item back), the timer is dropped.
+    private void RefillLootPoints(uint now)
+    {
+        for (int point = 0; point < _loot.Count; point++)
+        {
+            if (!_loot.IsDue(point, now)) continue;
+            if (PointHasItem(point) || SpawnItem(_loot.Roll(point), _loot.Position(point), point) != 0) _loot.OnRefilled(point);
+        }
+    }
+
+    private bool PointHasItem(int point)
+    {
+        for (int i = 0; i < _worldItems.Count; i++)
+            if (_worldItems[i].SpawnPoint == point) return true;
+        return false;
+    }
+
+    // Partial pickup (D9): the rest stays where it was. Sent as ItemSpawned, which clients treat as an upsert.
+    internal void SetItemAmount(int index, ushort amount)
+    {
+        _worldItems.SetAmount(index, amount);
+        var writer = new PacketWriter(_sendBuffer);
+        ItemSpawnedPacket.Write(ref writer, _worldItems[index].Data);
+        Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
+    private void BroadcastItemRemoved(ushort itemId)
+    {
+        var writer = new PacketWriter(_sendBuffer);
+        ItemRemoved.Write(ref writer, new ItemRemoved { ItemId = itemId });
+        Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
     private void SendSpawned(int recipientPeerId, PlayerEntity player)

@@ -15,6 +15,10 @@ public sealed class ServerOptions
     public int BadPacketDisconnectThreshold { get; set; } = 20;
     public int DisconnectTimeoutMs { get; set; } = 5000;
     public int StatsIntervalSeconds { get; set; } = 10;
+    // Phase 4 (D5, D7): seed of the game loop's loot Random (same seed = same loot), and how long a
+    // looted spawn point stays empty. 0 turns respawning off (the battle royale rule, Match Flow phase).
+    public int LootSeed { get; set; } = 1;
+    public int LootRespawnSeconds { get; set; } = 30;
 
     // Each connection produces at most Connected + JoinRequested + Disconnected.
     public int ControlChannelCapacity => MaxPlayers * 3;
@@ -37,6 +41,8 @@ public sealed class ServerOptions
         if (BadPacketDisconnectThreshold < 1) return "BadPacketDisconnectThreshold must be positive.";
         if (DisconnectTimeoutMs < 500) return "DisconnectTimeoutMs must be at least 500.";
         if (StatsIntervalSeconds < 1) return "StatsIntervalSeconds must be positive.";
+        if (LootSeed < 0) return "LootSeed must be 0 or more.";
+        if (LootRespawnSeconds < 0 || LootRespawnSeconds > 3600) return "LootRespawnSeconds must be 0-3600 (0 = off).";
         return null;
     }
 }

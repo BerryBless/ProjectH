@@ -7,7 +7,8 @@ namespace ProjectH.Server.Game.Combat;
 public static class CombatRules
 {
     public const int MaxHealth = 100;   // D8 test values
-    public const int MaxShield = 50;
+    // Phase 4 D11: Shield Cells fill up to 100. Players start with the loadout's shield (0 in production, D1).
+    public const int MaxShield = 100;
     // Shots start at feet + 1.6 m. The client aims from the same height (AimSolver.EyeHeight).
     public const float EyeHeight = 1.6f;
     public const float MaxPitch = 89f;
@@ -26,6 +27,15 @@ public static class CombatRules
         shield -= absorbed;
         health = Math.Max(0, health - (damage - absorbed));
         return health == 0;
+    }
+
+    // Phase 4 D4: a weapon's damage times its rarity multiplier, rounded half away from zero, at least 1.
+    // decimal, not float: 1.15f is 1.1499999..., and 90 x 1.15 must round to 104 as written in the data.
+    // Casting the float to decimal keeps its 7 significant digits (1.15).
+    public static ushort ScaledDamage(ushort damage, float multiplier)
+    {
+        decimal scaled = Math.Round(damage * (decimal)multiplier, MidpointRounding.AwayFromZero);
+        return (ushort)Math.Clamp(scaled, 1m, ushort.MaxValue);
     }
 
     // D14: non-finite angles are no shot. Pitch is clamped to +-89 degrees. Same convention as the

@@ -1,0 +1,17 @@
+{
+  "rarityWeights": { "Common": 50, "Uncommon": 25, "Rare": 15, "Epic": 7, "Legendary": 3 },
+  "tables": {
+    "Floor": [
+      { "kind": "Weapon", "weight": 35 },
+      { "kind": "Ammo", "weight": 35 },
+      { "kind": "Medkit", "weight": 15 },
+      { "kind": "ShieldCell", "weight": 15 }
+    ],
+    "Tower": [
+      { "kind": "Weapon", "weight": 60 },
+      { "kind": "Ammo", "weight": 10 },
+      { "kind": "Medkit", "weight": 15 },
+      { "kind": "ShieldCell", "weight": 15 }
+    ]
+  }
+}

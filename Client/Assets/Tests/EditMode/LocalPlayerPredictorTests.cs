@@ -137,6 +137,22 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual(InputButtons.None, queued);
         }
 
+        // Phase 4: the new presses (3, E, G, 4, 5) are queued presses too. A mask that forgot one would drop
+        // the key silently.
+        [Test]
+        public void Phase4Presses_RideOnTheLastStep()
+        {
+            var predictor = NewPredictor();
+            InputButtons presses = InputButtons.Slot3 | InputButtons.Interact | InputButtons.Drop |
+                                   InputButtons.UseMedkit | InputButtons.UseShieldCell;
+            InputButtons queued = presses;
+            predictor.Advance(2 * Step + 0.0005f, Vector2.zero, 0f, presses, ref queued);
+
+            Assert.AreEqual(InputButtons.None, predictor.InputAt(1).Buttons);   // never "held"
+            Assert.AreEqual(presses, predictor.InputAt(2).Buttons);
+            Assert.AreEqual(InputButtons.None, queued);
+        }
+
         // PredictedPosition (and each step's result SetAim aims from) must be the state the server's Step
         // produces after the newest input, not the interpolated RenderPosition that trails it mid-step.
         [Test]

@@ -11,8 +11,9 @@ using Xunit;
 
 namespace ProjectH.Server.Tests.Integration;
 
-// Spec §5: two headless clients over real UDP. The server runs the test catalog, whose automatic
-// weapon does 30 damage every 3 ticks, so five hits take shield 50 + health 100 to 0.
+// Phase 3 spec §5: two headless clients over real UDP. The server runs the test catalog and the combat
+// loadout (TestGameData.CombatLoadout), whose automatic weapon does 30 damage every 3 ticks, so five hits
+// take shield 50 + health 100 to 0.
 public sealed class CombatIntegrationTests : IDisposable
 {
     private readonly GameLoop _server;
@@ -25,7 +26,7 @@ public sealed class CombatIntegrationTests : IDisposable
             MaxPlayers = 4,
             DisconnectTimeoutMs = 1000,
             StatsIntervalSeconds = 60,
-        }, TestWeapons.Create(), NullLogger.Instance);
+        }, TestGameData.Create(), NullLogger.Instance, TestGameData.CombatLoadout);
         _server.Start();
     }
 
@@ -47,12 +48,12 @@ public sealed class CombatIntegrationTests : IDisposable
     {
         using var a = Join("shooter");
         using var b = Join("target");
-        Assert.True(Pump.Until(() => a.Weapons != null && b.Weapons != null &&
+        Assert.True(Pump.Until(() => a.Weapons != null && b.Weapons != null && a.Items != null && b.Items != null &&
                                      a.LastSnapshot.ContainsKey(a.MyEntityId) && a.LastSnapshot.ContainsKey(b.MyEntityId) &&
                                      b.SnapshotsReceived > 0, 3000, a, b), "catalog and first snapshots");
         Assert.Equal("Test Auto", a.Weapons![0].Name);
         Assert.Equal(CombatRules.MaxHealth, b.LastSelf.Health);
-        Assert.Equal(CombatRules.MaxShield, b.LastSelf.Shield);
+        Assert.Equal(TestGameData.LoadoutShield, b.LastSelf.Shield);
 
         // Both stand on the 5 m spawn ring, which has nothing between its points (TestArena.ClearRadius 7 m).
         Vector3 shooterFeet = a.LastSnapshot[a.MyEntityId].Position;
@@ -71,7 +72,7 @@ public sealed class CombatIntegrationTests : IDisposable
         // B: five DamageTaken from A, and its own snapshot block showed the loss before the death.
         Assert.Equal(5, b.DamageEvents.Count);
         Assert.All(b.DamageEvents, d => Assert.Equal(a.MyEntityId, d.AttackerId));
-        Assert.Contains(b.SelfHistory, s => s.Shield < CombatRules.MaxShield);
+        Assert.Contains(b.SelfHistory, s => s.Shield < TestGameData.LoadoutShield);
         Assert.Contains(b.SelfHistory, s => s.Health > 0 && s.Health < CombatRules.MaxHealth);
 
         // A: five HitConfirmed, the last one the kill; everyone saw A's tracers.
@@ -93,7 +94,7 @@ public sealed class CombatIntegrationTests : IDisposable
         var respawned = Assert.Single(b.Respawns);
         Assert.Equal(b.MyEntityId, respawned.EntityId);
         Assert.Equal(Match.SpawnPosition(b.MyEntityId), respawned.Position);
-        Assert.True(Pump.Until(() => b.LastSelf.Health == CombatRules.MaxHealth && b.LastSelf.Shield == CombatRules.MaxShield &&
+        Assert.True(Pump.Until(() => b.LastSelf.Health == CombatRules.MaxHealth && b.LastSelf.Shield == TestGameData.LoadoutShield &&
                                      b.LastSnapshot.TryGetValue(b.MyEntityId, out var self) && self.IsAlive, 3000, a, b), "alive again");
     }
 }

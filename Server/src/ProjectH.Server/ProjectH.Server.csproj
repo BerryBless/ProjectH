@@ -24,6 +24,8 @@
   <ItemGroup>
     <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="weapons.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="items.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="loot.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

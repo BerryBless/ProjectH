@@ -1,11 +1,10 @@
 using System;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using ProjectH.Server.Game.Combat;
+using ProjectH.Server.Game;
 
 namespace ProjectH.Server;
 
@@ -17,10 +16,10 @@ public sealed class GameServerService : IHostedService, System.IDisposable
 
     public GameServerService(IOptions<ServerOptions> options, ILogger<GameLoop> logger)
     {
-        // weapons.json is copied next to appsettings.json. A missing or invalid file throws here, so the
-        // host refuses to start, the same as an invalid ServerOptions value (D4).
-        var weapons = WeaponCatalog.LoadFile(Path.Combine(AppContext.BaseDirectory, "weapons.json"), options.Value.SimHz);
-        _loop = new GameLoop(options.Value, weapons, logger);
+        // The data files are copied next to appsettings.json. A missing or invalid file throws here, so the
+        // host refuses to start, the same as an invalid ServerOptions value (Phase 3 D4, Phase 4 D2).
+        var data = GameData.LoadDirectory(AppContext.BaseDirectory, options.Value.SimHz);
+        _loop = new GameLoop(options.Value, data, logger);
     }
 
     public Task StartAsync(CancellationToken cancellationToken)

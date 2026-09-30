@@ -95,6 +95,8 @@ Shared에 게임 로직을 넣지 않는다.
 
 예외: `Shared/Runtime/Simulation`의 이동 계산만 둔다. 여기에는 `MovementSimulation`과 그 입력·상태·상수 타입, 이동 계산이 읽는 지형 박스 데이터(`Box`, `TestArena`)와 캐릭터–박스 충돌 계산이 포함된다. Client Prediction과 서버 시뮬레이션이 같은 코드와 같은 지형으로 계산해야 예측이 어긋나지 않기 때문이다. 이 폴더에는 `System.Numerics`만 쓰는 순수 계산과 그 계산이 읽는 상수 데이터만 두고, 전투·인벤토리 등 다른 게임 규칙은 넣지 않는다.
 
+예외 2: 맵 배치 데이터(좌표 상수). Loot Spawn Point 좌표처럼 맵과 함께 바뀌어야 하는 좌표 상수(`LootPoints`)는 `TestArena` 옆 `Shared/Runtime/Simulation`에 둔다. 맵을 바꿀 때 박스와 함께 고치기 위해서다. 좌표와 이름 같은 상수만 두고, Loot Table·난수·줍기 판정 같은 규칙은 넣지 않는다. 서버만 읽고, Client는 위치를 서버 이벤트로만 받는다.
+
 ## 5. 기존 구조를 먼저 확인한다
 
 코드를 변경하기 전에 관련 코드를 먼저 읽는다.

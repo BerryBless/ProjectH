@@ -2,8 +2,9 @@ using System;
 
 namespace ProjectH.Shared.Simulation
 {
+    // 2 bytes on the wire since Phase 4 (D14). Values are the wire format: never renumber.
     [Flags]
-    public enum InputButtons : byte
+    public enum InputButtons : ushort
     {
         None = 0,
         Jump = 1,
@@ -12,6 +13,11 @@ namespace ProjectH.Shared.Simulation
         Reload = 8,
         Slot1 = 16,
         Slot2 = 32,
+        Slot3 = 64,
+        Interact = 128,       // E: pick up the nearest item (the server chooses it, D8)
+        Drop = 256,           // G: drop the current weapon (D12)
+        UseMedkit = 512,      // 4
+        UseShieldCell = 1024, // 5
     }
 
     // One fixed-tick input. Seq increases by one per client simulation step and is how the

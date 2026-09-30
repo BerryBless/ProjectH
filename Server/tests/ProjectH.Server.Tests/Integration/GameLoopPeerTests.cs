@@ -24,7 +24,7 @@ public sealed class GameLoopPeerTests
         newPeer.Tag = new PeerState("new");
         const int reusedId = 7;
 
-        using var loop = new GameLoop(new ServerOptions { Port = 0, MaxPlayers = 4 }, TestWeapons.Create(), NullLogger.Instance);
+        using var loop = new GameLoop(new ServerOptions { Port = 0, MaxPlayers = 4 }, TestGameData.Create(), NullLogger.Instance);
         var control = loop.Channels.Control.Writer;
 
         Assert.True(control.TryWrite(new ControlMessage(ControlKind.Connected, reusedId, oldPeer, "old")));

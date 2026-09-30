@@ -10,7 +10,8 @@
       "range": 150,
       "automatic": true,
       "spread": 0,
-      "recoil": 0
+      "recoil": 0,
+      "ammoType": "Medium"
     },
     {
       "id": 2,
@@ -22,7 +23,21 @@
       "range": 300,
       "automatic": false,
       "spread": 0,
-      "recoil": 0
+      "recoil": 0,
+      "ammoType": "Heavy"
+    },
+    {
+      "id": 3,
+      "name": "Wisp SMG",
+      "damage": 12,
+      "fireIntervalSeconds": 0.0667,
+      "magazineSize": 25,
+      "reloadSeconds": 1.6,
+      "range": 80,
+      "automatic": true,
+      "spread": 0,
+      "recoil": 0,
+      "ammoType": "Light"
     }
   ]
 }

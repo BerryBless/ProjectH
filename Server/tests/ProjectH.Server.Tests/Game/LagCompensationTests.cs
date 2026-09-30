@@ -27,7 +27,7 @@ public class LagCompensationTests
 
     public LagCompensationTests()
     {
-        _match = new Match(new ServerOptions { MaxPlayers = 2 }, TestWeapons.Create(), (_, _, _) => { });
+        _match = new Match(new ServerOptions { MaxPlayers = 2 }, TestGameData.Create(), (_, _, _) => { }, TestGameData.CombatLoadout);
         _match.TryJoin(1, "shooter");
         _match.TryJoin(2, "target");
         _match.TryGetPlayer(1, out _shooter);
@@ -106,12 +106,12 @@ public class LagCompensationTests
     public void Shooter_FiresFromCurrentPosition()
     {
         var shots = new List<Vector3>();
-        var match = new Match(new ServerOptions { MaxPlayers = 1 }, TestWeapons.Create(), (_, data, _) =>
+        var match = new Match(new ServerOptions { MaxPlayers = 1 }, TestGameData.Create(), (_, data, _) =>
         {
             var reader = new PacketReader(data);
             if (reader.TryReadPacketId(out PacketId id) && id == PacketId.ShotFired && ShotFired.TryRead(ref reader, out var shot))
                 shots.Add(shot.Start);
-        });
+        }, TestGameData.CombatLoadout);
         match.TryJoin(1, "a");
         match.TryGetPlayer(1, out var a);
         a.State.Position = new Vector3(1f, 0f, 1f);
@@ -127,7 +127,7 @@ public class LagCompensationTests
     [Fact]
     public void AfterRespawn_RewindFindsSpawnPoint_NotTheBody()
     {
-        var match = new Match(new ServerOptions { MaxPlayers = 2 }, TestWeapons.Create(), static (_, _, _) => { });
+        var match = new Match(new ServerOptions { MaxPlayers = 2 }, TestGameData.Create(), static (_, _, _) => { }, TestGameData.CombatLoadout);
         match.TryJoin(1, "shooter");
         match.TryJoin(2, "target");
         match.TryGetPlayer(1, out var shooter);
@@ -149,14 +149,14 @@ public class LagCompensationTests
         match.EnqueueInput(1, packet);
         match.Tick();
 
-        Assert.Equal(CombatRules.MaxShield - TestWeapons.AutoDamage, target.Shield);
+        Assert.Equal(TestGameData.LoadoutShield - TestWeapons.AutoDamage, target.Shield);
     }
 
     // Server hot path: a tick that fires, rewinds, hits and sends allocates nothing (no per-shot garbage).
     [Fact]
     public void FiringTick_AllocatesNothing()
     {
-        var match = new Match(new ServerOptions { MaxPlayers = 2 }, TestWeapons.Create(), static (_, _, _) => { });
+        var match = new Match(new ServerOptions { MaxPlayers = 2 }, TestGameData.Create(), static (_, _, _) => { }, TestGameData.CombatLoadout);
         match.TryJoin(1, "shooter");
         match.TryJoin(2, "target");
         match.TryGetPlayer(1, out var shooter);

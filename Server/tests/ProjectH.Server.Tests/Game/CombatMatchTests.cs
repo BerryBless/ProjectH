@@ -11,8 +11,9 @@ using Xunit;
 
 namespace ProjectH.Server.Tests.Game;
 
-// Combat through Match.Tick with the test catalog (slot 0: 30 damage, 3-tick interval, 6 rounds).
-// Players stand still unless a test moves them; with no input the server repeats a zero move.
+// Combat through Match.Tick with the test catalog and the combat loadout (TestGameData.CombatLoadout,
+// slot 0: 30 damage, 3-tick interval, 6 rounds; shield 50). Players stand still unless a test moves them;
+// with no input the server repeats a zero move.
 public class CombatMatchTests
 {
     private sealed record Sent(int PeerId, byte[] Data, DeliveryMethod Method)
@@ -28,12 +29,12 @@ public class CombatMatchTests
 
     public CombatMatchTests()
     {
-        _match = NewMatch(TestWeapons.Create());
+        _match = NewMatch(TestGameData.Create());
     }
 
-    private Match NewMatch(WeaponCatalog weapons) =>
-        new(new ServerOptions { MaxPlayers = 3, SnapshotEveryTicks = 2 }, weapons,
-            (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)));
+    private Match NewMatch(GameData data) =>
+        new(new ServerOptions { MaxPlayers = 3, SnapshotEveryTicks = 2 }, data,
+            (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)), TestGameData.CombatLoadout);
 
     private PlayerEntity Join(int peer, Vector3 feet)
     {
@@ -114,7 +115,7 @@ public class CombatMatchTests
         _match.Tick();
 
         Assert.Equal(CombatRules.MaxHealth, b.Health);
-        Assert.Equal(CombatRules.MaxShield - TestWeapons.AutoDamage, b.Shield);
+        Assert.Equal(TestGameData.LoadoutShield - TestWeapons.AutoDamage, b.Shield);
 
         var hit = ReadHit(Assert.Single(SentTo(1, PacketId.HitConfirmed)));
         Assert.Equal(b.EntityId, hit.TargetId);
@@ -150,7 +151,7 @@ public class CombatMatchTests
         FireAt(a, b.State.Position + Chest);
         _match.Tick();
 
-        Assert.Equal(CombatRules.MaxShield, b.Shield);
+        Assert.Equal(TestGameData.LoadoutShield, b.Shield);
         Assert.Empty(SentTo(1, PacketId.HitConfirmed));
         Assert.Empty(SentTo(2, PacketId.DamageTaken));
         Assert.Equal(8.5f, ReadShot(SentTo(1, PacketId.ShotFired)[0]).End.Z, 3);
@@ -169,7 +170,7 @@ public class CombatMatchTests
         FireAt(a, b.State.Position + Chest);
         _match.Tick();
 
-        Assert.Equal(CombatRules.MaxShield, b.Shield);
+        Assert.Equal(TestGameData.LoadoutShield, b.Shield);
         Assert.Empty(SentTo(1, PacketId.HitConfirmed));
         Assert.Equal(8.5f, ReadShot(SentTo(1, PacketId.ShotFired)[0]).End.Z, 3);
     }
@@ -184,21 +185,21 @@ public class CombatMatchTests
         FireAt(a, far.State.Position + Chest);   // the line passes through the nearer player
         _match.Tick();
 
-        Assert.Equal(CombatRules.MaxShield - TestWeapons.AutoDamage, near.Shield);
-        Assert.Equal(CombatRules.MaxShield, far.Shield);
+        Assert.Equal(TestGameData.LoadoutShield - TestWeapons.AutoDamage, near.Shield);
+        Assert.Equal(TestGameData.LoadoutShield, far.Shield);
     }
 
     [Fact]
     public void TargetBeyondRange_IsMissed()
     {
-        _match = NewMatch(TestWeapons.Create(autoRange: 5f));
+        _match = NewMatch(TestGameData.Create(autoRange: 5f));
         var a = Join(1, new Vector3(0f, 0f, -3f));
         var b = Join(2, new Vector3(0f, 0f, 3f));   // front face 5.65 m from the eye line
 
         FireAt(a, b.State.Position + Chest);
         _match.Tick();
 
-        Assert.Equal(CombatRules.MaxShield, b.Shield);
+        Assert.Equal(TestGameData.LoadoutShield, b.Shield);
         Assert.Empty(SentTo(1, PacketId.HitConfirmed));
     }
 
@@ -209,7 +210,7 @@ public class CombatMatchTests
         FireAt(a, new Vector3(0f, 0f, 0.01f));   // straight down through its own box
         _match.Tick();
 
-        Assert.Equal(CombatRules.MaxShield, a.Shield);
+        Assert.Equal(TestGameData.LoadoutShield, a.Shield);
         Assert.Empty(SentTo(1, PacketId.HitConfirmed));
         Assert.Equal(0f, ReadShot(SentTo(1, PacketId.ShotFired).Last()).End.Y, 3);   // stopped at the floor
     }
@@ -226,7 +227,7 @@ public class CombatMatchTests
         FireAt(a, behind.State.Position + Chest);
         _match.Tick();
 
-        Assert.Equal(CombatRules.MaxShield - TestWeapons.AutoDamage, behind.Shield);
+        Assert.Equal(TestGameData.LoadoutShield - TestWeapons.AutoDamage, behind.Shield);
         Assert.Equal(behind.EntityId, ReadHit(Assert.Single(SentTo(1, PacketId.HitConfirmed))).TargetId);
     }
 
@@ -280,7 +281,7 @@ public class CombatMatchTests
         Assert.Equal(body, b.State.Position);
         Assert.Equal(_seq[2], b.LastProcessedSeq);
         Assert.DoesNotContain(_sent, s => s.Id == PacketId.ShotFired);
-        Assert.Equal(CombatRules.MaxShield, a.Shield);
+        Assert.Equal(TestGameData.LoadoutShield, a.Shield);
     }
 
     [Fact]
@@ -288,7 +289,7 @@ public class CombatMatchTests
     {
         var a = Join(1, new Vector3(0f, 0f, -3f));
         var b = Join(2, new Vector3(0f, 0f, 3f));
-        b.Ammo[0] = 1;
+        b.Inventory.Slots[0].MagAmmo = 1;
         KillWithFiveHits(a, b);
         uint diedAt = b.RespawnAtTick - 90;   // 3 s at 30 Hz
 
@@ -303,9 +304,10 @@ public class CombatMatchTests
         Assert.True(b.Alive);
         Assert.Equal(Match.SpawnPosition(b.EntityId), b.State.Position);
         Assert.Equal(CombatRules.MaxHealth, b.Health);
-        Assert.Equal(CombatRules.MaxShield, b.Shield);
-        Assert.Equal(TestWeapons.AutoMagazine, b.Ammo[0]);
-        Assert.Equal(TestWeapons.SemiMagazine, b.Ammo[1]);
+        Assert.Equal(TestGameData.LoadoutShield, b.Shield);
+        Assert.Equal(TestWeapons.AutoMagazine, b.Inventory.Slots[0].MagAmmo);
+        Assert.Equal(TestWeapons.SemiMagazine, b.Inventory.Slots[1].MagAmmo);
+        Assert.Equal(TestGameData.LoadoutMediumAmmo, b.Inventory.GetAmmo(AmmoType.Medium));
         Assert.False(b.Reloading);
 
         foreach (int peer in new[] { 1, 2 })
@@ -360,7 +362,7 @@ public class CombatMatchTests
     {
         var a = Join(1, new Vector3(0f, 0f, -3f));
         var b = Join(2, new Vector3(0f, 0f, 3f));
-        b.Ammo[0] = 1;
+        b.Inventory.Slots[0].MagAmmo = 1;
         Send(b, new InputCommand { Buttons = InputButtons.Reload });
         _match.Tick();
         Assert.True(b.Reloading);
@@ -387,7 +389,7 @@ public class CombatMatchTests
         for (int i = 0; i < 12; i++) _match.Tick();   // one real input, then 11 repeated ticks
 
         Assert.Single(SentTo(1, PacketId.HitConfirmed));
-        Assert.Equal(TestWeapons.AutoMagazine - 1, a.Ammo[0]);
+        Assert.Equal(TestWeapons.AutoMagazine - 1, a.Inventory.Slots[0].MagAmmo);
     }
 
     // Spec §5: a flood of fire inputs (one per tick, as fast as the server takes them) is limited to the interval.
@@ -421,8 +423,8 @@ public class CombatMatchTests
         _match.Tick();
 
         Assert.Empty(SentTo(1, PacketId.ShotFired));
-        Assert.Equal(TestWeapons.AutoMagazine, a.Ammo[0]);
-        Assert.Equal(0u, a.NextFireTick[0]);
+        Assert.Equal(TestWeapons.AutoMagazine, a.Inventory.Slots[0].MagAmmo);
+        Assert.Equal(0u, a.Inventory.Slots[0].NextFireTick);
     }
 
     [Fact]
@@ -450,13 +452,13 @@ public class CombatMatchTests
 
         var (selfA, _) = LastSnapshotFor(1);
         Assert.Equal(CombatRules.MaxHealth, selfA.Self.Health);
-        Assert.Equal(CombatRules.MaxShield, selfA.Self.Shield);
+        Assert.Equal(TestGameData.LoadoutShield, selfA.Self.Shield);
         Assert.Equal(0, selfA.Self.WeaponSlot);
         Assert.Equal(TestWeapons.AutoMagazine - 1, selfA.Self.Ammo);
         Assert.Equal(0, selfA.Self.ReloadRemainingTicks);
 
         var (selfB, _) = LastSnapshotFor(2);
-        Assert.Equal(CombatRules.MaxShield - TestWeapons.AutoDamage, selfB.Self.Shield);
+        Assert.Equal(TestGameData.LoadoutShield - TestWeapons.AutoDamage, selfB.Self.Shield);
         Assert.Equal(1, selfB.Self.WeaponSlot);
         Assert.Equal(TestWeapons.SemiMagazine, selfB.Self.Ammo);
     }

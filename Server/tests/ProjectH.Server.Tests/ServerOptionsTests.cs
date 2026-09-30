@@ -36,6 +36,22 @@ public class ServerOptionsTests
     }
 
     [Theory]
+    [InlineData(-1, 30)]
+    [InlineData(1, -1)]
+    [InlineData(1, 3601)]
+    public void Validate_RejectsBadLootSettings(int seed, int respawnSeconds)
+    {
+        Assert.NotNull(new ServerOptions { LootSeed = seed, LootRespawnSeconds = respawnSeconds }.Validate());
+    }
+
+    [Fact]
+    public void LootDefaults_MatchSpec_AndZeroRespawnIsAllowed()
+    {
+        Assert.Equal(30, new ServerOptions().LootRespawnSeconds);   // D7
+        Assert.Null(new ServerOptions { LootRespawnSeconds = 0, LootSeed = 0 }.Validate());
+    }
+
+    [Theory]
     [InlineData(30, 1)]
     [InlineData(30, 3)]
     [InlineData(60, 4)]

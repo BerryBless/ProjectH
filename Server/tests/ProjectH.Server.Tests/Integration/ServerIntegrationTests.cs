@@ -20,7 +20,7 @@ public sealed class ServerIntegrationTests : IDisposable
             MaxPlayers = maxPlayers,
             DisconnectTimeoutMs = 1000,
             StatsIntervalSeconds = 60,
-        }, TestWeapons.Create(), NullLogger.Instance);
+        }, TestGameData.Create(), NullLogger.Instance);
         loop.Start();
         return loop;
     }

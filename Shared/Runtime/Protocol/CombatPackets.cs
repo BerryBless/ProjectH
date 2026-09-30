@@ -13,9 +13,11 @@ namespace ProjectH.Shared.Protocol
         public ushort ReloadTicks;
         public float Range;
         public bool Automatic;
+        public AmmoType AmmoType;   // Phase 4 (D3): Light, Medium or Heavy
     }
 
-    // S->C, ReliableOrdered, once right after a successful Join. Slot1 / Slot2 select entries 0 / 1.
+    // S->C, ReliableOrdered, once right after a successful Join. Lists every weapon that can exist as an
+    // item; which weapon sits in which inventory slot comes with InventoryState (Phase 4).
     public static class WeaponCatalogPacket
     {
         public const int MaxWeapons = 8;
@@ -37,6 +39,7 @@ namespace ProjectH.Shared.Protocol
                 writer.WriteUInt16(w.ReloadTicks);
                 writer.WriteSingle(w.Range);
                 writer.WriteByte(w.Automatic ? (byte)1 : (byte)0);
+                writer.WriteByte((byte)w.AmmoType);
             }
         }
 
@@ -59,6 +62,8 @@ namespace ProjectH.Shared.Protocol
                 if (!reader.TryReadSingle(out w.Range) || !Finite.Check(w.Range) || w.Range <= 0f) return false;
                 if (!reader.TryReadByte(out byte automatic) || automatic > 1) return false;
                 w.Automatic = automatic == 1;
+                if (!reader.TryReadByte(out byte ammoType) || ammoType == 0 || ammoType > ItemConstants.AmmoTypeCount) return false;
+                w.AmmoType = (AmmoType)ammoType;
                 result[i] = w;
             }
             weapons = result;
@@ -172,8 +177,8 @@ namespace ProjectH.Shared.Protocol
         }
     }
 
-    // S->C, ReliableOrdered, to everyone: the player is alive again at Position with full health,
-    // shield and ammo (D9).
+    // S->C, ReliableOrdered, to everyone: the player is alive again at Position with full Health,
+    // Shield 0 and empty-handed (no weapon, no ammo); it re-arms from loot (D9).
     public struct PlayerRespawned
     {
         public ushort EntityId;

@@ -6,7 +6,7 @@ using LiteNetLib;
 using Microsoft.Extensions.Logging;
 using ProjectH.Server.Diagnostics;
 using ProjectH.Server.Game;
-using ProjectH.Server.Game.Combat;
+using ProjectH.Server.Game.Items;
 using ProjectH.Server.Net;
 using ProjectH.Shared.Protocol;
 
@@ -38,7 +38,8 @@ public sealed class GameLoop : IDisposable
     private long _lateTicksSkipped;
     private bool _disposed;
 
-    public GameLoop(ServerOptions options, WeaponCatalog weapons, ILogger logger)
+    // loadout: test seam (D1); null = StartingLoadout.Empty, the production start.
+    public GameLoop(ServerOptions options, GameData data, ILogger logger, StartingLoadout? loadout = null)
     {
         string? error = options.Validate();
         if (error != null) throw new ArgumentException(error, nameof(options));
@@ -62,7 +63,7 @@ public sealed class GameLoop : IDisposable
             IPv6Enabled = false,
         };
         listener.Manager = _net;
-        _match = new Match(options, weapons, SendToPeer);
+        _match = new Match(options, data, SendToPeer, loadout);
     }
 
     public int LocalPort => _net.LocalPort;

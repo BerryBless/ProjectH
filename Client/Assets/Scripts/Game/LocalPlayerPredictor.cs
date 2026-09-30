@@ -21,7 +21,9 @@ namespace ProjectH.Client.Game
 
         // Held buttons go into every step; queued presses only into a frame's last step (see Advance).
         private const InputButtons HeldButtons = InputButtons.Sprint | InputButtons.Fire;
-        private const InputButtons QueuedButtons = InputButtons.Jump | InputButtons.Reload | InputButtons.Slot1 | InputButtons.Slot2;
+        private const InputButtons QueuedButtons = InputButtons.Jump | InputButtons.Reload | InputButtons.Slot1 | InputButtons.Slot2 |
+                                                   InputButtons.Slot3 | InputButtons.Interact | InputButtons.Drop |
+                                                   InputButtons.UseMedkit | InputButtons.UseShieldCell;
 
         private readonly InputCommand[] _inputs = new InputCommand[HistorySize];
         private readonly MoveState[] _results = new MoveState[HistorySize];
@@ -49,7 +51,8 @@ namespace ProjectH.Client.Game
         public bool IsDead { get; private set; }
 
         // Returns how many simulation steps ran (each generated one input).
-        // held: Sprint and Fire, applied to every step. queued: Jump, Reload, Slot1, Slot2 presses; they ride on
+        // held: Sprint and Fire, applied to every step. queued: Jump, Reload, Slot1-3, Interact, Drop, UseMedkit and
+        // UseShieldCell presses; they ride on
         // the last step, because GameClient sends one packet per frame holding only the newest
         // MaxInputsPerPacket inputs, so on a hitch frame an earlier step may never be sent. Consumed bits are cleared.
         public int Advance(float deltaTime, Vector2 move, float yaw, InputButtons held, ref InputButtons queued)

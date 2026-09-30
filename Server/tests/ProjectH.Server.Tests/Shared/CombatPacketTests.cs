@@ -27,6 +27,7 @@ public class CombatPacketTests
         ReloadTicks = 60,
         Range = 150f,
         Automatic = true,
+        AmmoType = AmmoType.Medium,
     };
 
     [Fact]
@@ -52,6 +53,7 @@ public class CombatPacketTests
         Assert.Equal(2, read[1].WeaponId);
         Assert.False(read[1].Automatic);
         Assert.Equal(300f, read[1].Range);
+        Assert.Equal(AmmoType.Medium, read[1].AmmoType);
         Assert.Equal(0, reader.Remaining);
     }
 
@@ -63,7 +65,8 @@ public class CombatPacketTests
         var writer = new PacketWriter(_buffer);
         WeaponCatalogPacket.Write(ref writer, weapons);
         Assert.False(writer.Overflowed);
-        Assert.Equal(2 + 8 * 30, writer.Length);
+        Assert.Equal(2 + 8 * 31, writer.Length);   // Phase 4: one more byte (ammo type) per weapon
+        Assert.True(writer.Length <= ProtocolConstants.MaxPacketSize);
     }
 
     [Theory]
@@ -80,6 +83,19 @@ public class CombatPacketTests
     {
         var weapon = Weapon(1, "Bad");
         weapon.Range = float.NaN;
+        var writer = new PacketWriter(_buffer);
+        WeaponCatalogPacket.Write(ref writer, new[] { weapon });
+        var reader = ReaderAfterId(writer.Length, PacketId.WeaponCatalog);
+        Assert.False(WeaponCatalogPacket.TryRead(ref reader, out _));
+    }
+
+    [Theory]
+    [InlineData(AmmoType.None)]
+    [InlineData((AmmoType)4)]
+    public void WeaponCatalog_UnknownAmmoType_IsRejected(AmmoType ammoType)
+    {
+        var weapon = Weapon(1, "Bad");
+        weapon.AmmoType = ammoType;
         var writer = new PacketWriter(_buffer);
         WeaponCatalogPacket.Write(ref writer, new[] { weapon });
         var reader = ReaderAfterId(writer.Length, PacketId.WeaponCatalog);

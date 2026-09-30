@@ -4,7 +4,8 @@ namespace ProjectH.Shared.Protocol
     {
         // Bump whenever any packet layout changes; the server rejects other versions at connect time.
         // 2: Phase 1 box collision changed movement results. 3: Phase 3 combat (aim in inputs, snapshot flags and self block, combat packets).
-        public const ushort ProtocolVersion = 3;
+        // 4: Phase 4 inventory (2-byte buttons, ammo type in the weapon catalog, item packets).
+        public const ushort ProtocolVersion = 4;
 
         public const int MaxDevPlayerIdBytes = 32;
         public const int MaxInputsPerPacket = 3;
