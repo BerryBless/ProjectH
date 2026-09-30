@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Same target and language version as Unity 6, so Unity-incompatible APIs or syntax fail here first. -->
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <RootNamespace>ProjectH.Shared</RootNamespace>
+    <!-- Sources live in /Shared (the Unity package); this project only compiles them. -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../../Shared/Runtime/**/*.cs" />
+  </ItemGroup>
+
+</Project>

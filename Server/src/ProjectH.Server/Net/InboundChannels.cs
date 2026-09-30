@@ -1,0 +1,34 @@
+using System.Threading.Channels;
+using ProjectH.Server.Diagnostics;
+
+namespace ProjectH.Server.Net;
+
+// The only handoff from LiteNetLib's threads to the game loop. Both channels are bounded:
+//
+// | Channel | Producer               | Consumer  | Capacity               | When full                          |
+// | Control | LiteNetLib event threads | GameLoop | MaxPlayers * 3         | TryWrite fails -> caller disconnects the peer |
+// | Input   | LiteNetLib event threads | GameLoop | MaxPlayers * InputBuffer | DropOldest (newest input matters most) |
+//
+// SingleWriter is false: with UnsyncedEvents LiteNetLib may raise events from more than one thread.
+public sealed class InboundChannels
+{
+    public InboundChannels(ServerOptions options, ServerStats stats)
+    {
+        Control = Channel.CreateBounded<ControlMessage>(new BoundedChannelOptions(options.ControlChannelCapacity)
+        {
+            FullMode = BoundedChannelFullMode.Wait,   // TryWrite never blocks; it returns false when full
+            SingleReader = true,
+            SingleWriter = false,
+        });
+
+        Input = Channel.CreateBounded<InputMessage>(new BoundedChannelOptions(options.InputChannelCapacity)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true,
+            SingleWriter = false,
+        }, _ => stats.AddInputDrop());
+    }
+
+    public Channel<ControlMessage> Control { get; }
+    public Channel<InputMessage> Input { get; }
+}

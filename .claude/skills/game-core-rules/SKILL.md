@@ -15,7 +15,7 @@ Client와 Server는 별도 프로젝트로 분리한다. 필요한 경우 Protoc
 
 - `Client/` — Unity 프로젝트. `Client/Library`, `Client/Temp`, `Client/Logs`, `Client/obj`, `Client/UserSettings`는 Unity 생성물이므로 읽거나 수정하지 않는다.
 - `Server/` — .NET 10 서버.
-- Shared 프로젝트는 아직 없다. 처음 필요해지면 위치와 Unity 쪽 참조 방식을 사용자에게 확인한 뒤 만든다. Unity는 csproj를 직접 참조하지 못하므로 이 결정은 되돌리기 어렵다.
+- `Shared/` — Client와 Server가 함께 쓰는 로컬 UPM 패키지. Unity는 `manifest.json`에서 `file:../../Shared`로 참조하고, Server는 같은 소스를 `Server/src/ProjectH.Shared/ProjectH.Shared.csproj`(netstandard2.1, C# 9)로 컴파일한다. 게임 로직 예외는 `Shared/Runtime/Simulation`에만 허용한다(§4).
 
 ---
 
@@ -92,6 +92,8 @@ Shared가 필요한 경우 다음 정도만 공유한다.
 - 공통 데이터 구조
 
 Shared에 게임 로직을 넣지 않는다.
+
+예외: `Shared/Runtime/Simulation`의 이동 계산(`MovementSimulation`과 그 입력·상태·상수 타입)만 둔다. Client Prediction과 서버 시뮬레이션이 같은 코드를 실행해야 예측이 어긋나지 않기 때문이다. 이 폴더에는 `System.Numerics`만 쓰는 순수 계산만 두고, 전투·인벤토리 등 다른 게임 규칙은 넣지 않는다.
 
 ## 5. 기존 구조를 먼저 확인한다
 
