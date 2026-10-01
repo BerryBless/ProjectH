@@ -35,6 +35,8 @@ public sealed class GameLoop : IDisposable
     private Thread? _thread;
     private long _exceptionCount;
     private long _exceptionsSinceStats;
+    // Phase 7 D10: process CPU time at the previous stats line, for cpu% (game loop thread only).
+    private TimeSpan _cpuAtLastStats = CurrentCpuTime();
     private long _lateTicksSkipped;
     private bool _disposed;
 
@@ -233,16 +235,26 @@ public sealed class GameLoop : IDisposable
         TickStats t = _tickMetrics.Compute();
         _tickMetrics.Reset();
         double seconds = _options.StatsIntervalSeconds;
+        TimeSpan cpu = CurrentCpuTime();
+        double cpuPercent = (cpu - _cpuAtLastStats).TotalSeconds / (seconds * Environment.ProcessorCount) * 100.0;
+        _cpuAtLastStats = cpu;
 
         _logger.LogInformation(
             "Stats players={Players} pktIn/s={PktIn:F0} bytesIn/s={BytesIn:F0} pktOut/s={PktOut:F0} bytesOut/s={BytesOut:F0} " +
             "tickMs p50={P50:F2} p95={P95:F2} p99={P99:F2} max={Max:F2} inputDrops={Drops} bufferDrops={BufferDrops} " +
-            "badPackets={Bad} lateTicksSkipped={Late} exceptions={Exceptions} gc={Gc0}/{Gc1}/{Gc2} workingSetMB={WorkingSet:F0}",
+            "badPackets={Bad} lateTicksSkipped={Late} exceptions={Exceptions} gc={Gc0}/{Gc1}/{Gc2} workingSetMB={WorkingSet:F0} cpu%={Cpu:F1}",
             _match.PlayerCount, c.PacketsIn / seconds, c.BytesIn / seconds, c.PacketsOut / seconds, c.BytesOut / seconds,
             t.P50, t.P95, t.P99, t.Max, c.InputDrops, _match.TotalBufferDrops,
             c.BadPackets, _lateTicksSkipped, _exceptionCount,
-            GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2), Environment.WorkingSet / 1048576.0);
+            GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2), Environment.WorkingSet / 1048576.0, cpuPercent);
         _exceptionsSinceStats = 0;
+    }
+
+    // Total processor time of this process (all threads), every StatsIntervalSeconds: not on the tick path.
+    private static TimeSpan CurrentCpuTime()
+    {
+        using var process = Process.GetCurrentProcess();
+        return process.TotalProcessorTime;
     }
 
     // Dedicated thread (not the ThreadPool), so sleeping here cannot starve other work.

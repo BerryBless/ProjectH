@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\ProjectH.Bots\ProjectH.Bots.csproj" />
     <ProjectReference Include="..\..\src\ProjectH.Server\ProjectH.Server.csproj" />
     <ProjectReference Include="..\..\src\ProjectH.Shared\ProjectH.Shared.csproj" />
   </ItemGroup>

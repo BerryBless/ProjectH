@@ -49,3 +49,4 @@ Lock을 썼다면 Deadlock은 항상 확인한다.
 | 2026-09-30 | Shared 예외에 지형 박스·충돌 계산 추가 | `game-core-rules` 4절 | 서버와 예측이 같은 충돌 결과를 내야 함 (Phase 1 D7) |
 | 2026-10-01 | Shared 예외에 맵 배치 데이터(Loot Spawn Point 좌표 상수) 추가 | `game-core-rules` 4절 | 맵을 바꿀 때 박스와 함께 고쳐야 함. 규칙은 넣지 않음 (Phase 4 D6) |
 | 2026-10-01 | Shared 예외에 높이 격자 지형, 투입 지점, POI 추가 (`TestArena` → `GameMap`) | `game-core-rules` 4절 | 이동 예측이 서버와 같은 지형을 써야 하고, 맵 배치를 박스·지형과 함께 고쳐야 함 (Phase 6 D8) |
+| 2026-10-01 | 작업 경로에 봇(`Server/src/ProjectH.Bots`) 추가 | `game-core-rules` 작업 대상 경로 | 봇은 서버 폴더에 있지만 프로토콜로만 통신하는 Client임을 명시 (Phase 7 D1) |

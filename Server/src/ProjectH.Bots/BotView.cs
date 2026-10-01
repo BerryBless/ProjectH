@@ -1,0 +1,105 @@
+using System.Numerics;
+using ProjectH.Shared.Protocol;
+
+namespace ProjectH.Bots;
+
+// Phase 7 D3: everything one bot knows, built only from what a client receives (snapshots and events) — never
+// server state. Owned by the runner thread; every collection is bounded (players by the snapshot limit, items by the
+// server's world item store).
+public sealed class BotView
+{
+    public const int MaxItems = 256;   // the server's WorldItems.Capacity
+
+    // Join.
+    public bool Joined;
+    public ushort MyId;
+    public byte SimHz = 30;
+
+    // Latest snapshot.
+    public bool HasSnapshot;
+    public uint ServerTick;
+    public uint AckInputSeq;
+    public SnapshotSelf Self;
+    public Vector3 MyPosition;
+    public bool Alive;
+    public readonly SnapshotEntity[] Others = new SnapshotEntity[ProtocolConstants.MaxSnapshotEntities];
+    public int OtherCount;
+
+    // Events.
+    public WeaponInfo[]? Weapons;
+    public ItemCatalogData? Catalog;
+    public bool HasInventory;
+    public InventoryState Inventory;
+    public readonly Dictionary<ushort, WorldItemData> Items = new(MaxItems);
+    public bool HasMatchState;
+    public MatchState Match;
+    public ZoneState Zone;
+    public int HitsLanded;        // HitConfirmed received
+    public int DeathsSeen;        // PlayerDied received (anyone)
+    public int MatchResults;      // MatchResult received
+    public MatchResult LastResult;
+
+    // Phase 7 D4 rule 2: the dev sandbox (no MatchState ever) is always "in a match".
+    public bool InMatch => !HasMatchState || Match.State == MatchFlowState.Playing || Match.State == MatchFlowState.FinalPhase;
+
+    public void ApplySnapshot(in WorldSnapshotHeader header)
+    {
+        HasSnapshot = true;
+        ServerTick = header.ServerTick;
+        AckInputSeq = header.AckInputSeq;
+        Self = header.Self;
+        OtherCount = 0;
+    }
+
+    // One entity of the snapshot just applied. Our own entity sets our position and life; the rest are others.
+    public void ApplyEntity(in SnapshotEntity entity)
+    {
+        if (entity.EntityId == MyId)
+        {
+            MyPosition = entity.Position;
+            Alive = entity.IsAlive;
+            return;
+        }
+        if (OtherCount < Others.Length) Others[OtherCount++] = entity;
+    }
+
+    public void ApplyItem(in WorldItemData item)
+    {
+        // Bounded like the server's store; an id already known is an update and always fits.
+        if (Items.Count < MaxItems || Items.ContainsKey(item.ItemId)) Items[item.ItemId] = item;
+    }
+
+    public void ApplyDeath(in PlayerDied died)
+    {
+        DeathsSeen++;
+        if (died.VictimId == MyId) Alive = false;
+    }
+
+    public void ApplyRespawn(in PlayerRespawned respawned)
+    {
+        if (respawned.EntityId != MyId) return;
+        Alive = true;
+        MyPosition = respawned.Position;
+    }
+
+    // The weapon in a slot, or null when the slot is empty or the catalog has not arrived.
+    public WeaponInfo? WeaponInSlot(int slot)
+    {
+        if (!HasInventory || Weapons == null) return null;
+        byte id = Inventory.GetSlot(slot).WeaponId;
+        if (id == 0) return null;
+        foreach (WeaponInfo w in Weapons)
+        {
+            if (w.WeaponId == id) return w;
+        }
+        return null;
+    }
+
+    public int Reserve(AmmoType type) => type switch
+    {
+        AmmoType.Light => Inventory.LightAmmo,
+        AmmoType.Medium => Inventory.MediumAmmo,
+        AmmoType.Heavy => Inventory.HeavyAmmo,
+        _ => 0,
+    };
+}

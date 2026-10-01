@@ -15,6 +15,7 @@ Client와 Server는 별도 프로젝트로 분리한다. 필요한 경우 Protoc
 
 - `Client/` — Unity 프로젝트. `Client/Library`, `Client/Temp`, `Client/Logs`, `Client/obj`, `Client/UserSettings`는 Unity 생성물이므로 읽거나 수정하지 않는다.
 - `Server/` — .NET 10 서버.
+- `Server/src/ProjectH.Bots` — 테스트·부하용 Headless 봇. 서버 프로젝트를 참조하지 않고 Network Protocol로만 서버와 통신하는 Client다(§3의 Client 규칙을 따른다). Client 코드도 링크하지 않는다.
 - `Shared/` — Client와 Server가 함께 쓰는 로컬 UPM 패키지. Unity는 `manifest.json`에서 `file:../../Shared`로 참조하고, Server는 같은 소스를 `Server/src/ProjectH.Shared/ProjectH.Shared.csproj`(netstandard2.1, C# 9)로 컴파일한다. 게임 로직 예외는 `Shared/Runtime/Simulation`에만 허용한다(§4).
 
 ---

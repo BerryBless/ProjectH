@@ -82,5 +82,7 @@ Game Loop는 Tick당 입력 메시지를 최대 `MaxInputMessagesPerTick`개만 
 
 ## 관측
 
-10초마다 한 줄: `Stats players=… pktIn/s … bytesOut/s … tickMs p50/p95/p99/max … inputDrops bufferDrops badPackets lateTicksSkipped exceptions gc workingSetMB`.
+10초마다 한 줄: `Stats players=… pktIn/s … bytesOut/s … tickMs p50/p95/p99/max … inputDrops bufferDrops badPackets lateTicksSkipped exceptions gc workingSetMB cpu%`. `cpu%`는 프로세스 CPU 시간 증가 / (Stats 간격 × 논리 프로세서 수) × 100이다(Phase 7 D10, 코어 하나를 다 쓰면 100 / 코어 수). 부하 측정 결과는 `LoadTest.md`.
 패킷 단위 로그는 없다. Tick 예외는 통계 주기당 1회만 로그한다.
+
+봇(부하·경기 테스트용 Client)의 실행은 `Bots.md`를 본다. 서버는 봇을 구분하지 않는다.
