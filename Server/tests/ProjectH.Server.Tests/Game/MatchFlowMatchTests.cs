@@ -1,5 +1,6 @@
 using ProjectH.Server.Game;
 using ProjectH.Shared.Protocol;
+using ProjectH.Shared.Simulation;
 using Xunit;
 
 namespace ProjectH.Server.Tests.Game;
@@ -15,7 +16,7 @@ public class MatchFlowMatchTests
     public void WithoutDevRespawn_TheWorldStartsEmpty()
     {
         Assert.Equal(0, Create(devRespawn: false).WorldItems.Count);
-        Assert.Equal(17, Create(devRespawn: true).WorldItems.Count);   // the Phase 4 sandbox fills every point
+        Assert.Equal(LootPoints.All.Length, Create(devRespawn: true).WorldItems.Count);   // the Phase 4 sandbox fills every point
     }
 
     [Fact]

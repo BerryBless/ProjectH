@@ -29,6 +29,8 @@ public sealed class ServerOptions
     public int ResultSeconds { get; set; } = 10;
     public bool DevRespawn { get; set; }
     public int ZoneSeed { get; set; } = 1;
+    // Phase 6 D9: each match shuffles the drop points with SpawnSeed + round number.
+    public int SpawnSeed { get; set; } = 1;
 
     // Each connection produces at most Connected + JoinRequested + Disconnected.
     public int ControlChannelCapacity => MaxPlayers * 3;
@@ -59,6 +61,7 @@ public sealed class ServerOptions
         if (StartCountdownSeconds < 1 || StartCountdownSeconds > 300) return "StartCountdownSeconds must be 1-300.";
         if (ResultSeconds < 1 || ResultSeconds > 300) return "ResultSeconds must be 1-300.";
         if (ZoneSeed < 0) return "ZoneSeed must be 0 or more.";
+        if (SpawnSeed < 0) return "SpawnSeed must be 0 or more.";
         return null;
     }
 }

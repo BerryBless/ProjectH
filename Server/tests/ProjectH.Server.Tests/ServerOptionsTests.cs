@@ -61,8 +61,12 @@ public class ServerOptionsTests
         Assert.Equal(10, options.ResultSeconds);
         Assert.False(options.DevRespawn);
         Assert.Equal(1, options.ZoneSeed);
+        Assert.Equal(1, options.SpawnSeed);
         Assert.Null(new ServerOptions { MinPlayers = 2, MaxPlayers = 2 }.Validate());
-        Assert.Null(new ServerOptions { MinPlayers = 16, MaxPlayers = 16, ZoneSeed = 0 }.Validate());
+        Assert.Null(new ServerOptions { MinPlayers = 16, MaxPlayers = 16, ZoneSeed = 0, SpawnSeed = 0 }.Validate());
+        string? error = new ServerOptions { SpawnSeed = -1 }.Validate();
+        Assert.NotNull(error);
+        Assert.Contains("SpawnSeed", error);
     }
 
     [Theory]

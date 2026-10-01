@@ -143,9 +143,9 @@ public class CombatMatchTests
     [Fact]
     public void Shot_AtTargetBehindPillar_HitsThePillar()
     {
-        // Pillar (9, 1.5, 9), 1 x 3 x 1: faces at z 8.5 and 9.5. The target stands right behind it.
-        var a = Join(1, new Vector3(9f, 0f, 6f));
-        var b = Join(2, new Vector3(9f, 0f, 12f));
+        // Ruins pillar (-46, 1.5, -46), 1 x 3 x 1: faces at z -46.5 and -45.5. The target stands right behind it.
+        var a = Join(1, new Vector3(-46f, 0f, -49f));
+        var b = Join(2, new Vector3(-46f, 0f, -43f));
         _sent.Clear();
 
         FireAt(a, b.State.Position + Chest);
@@ -154,17 +154,17 @@ public class CombatMatchTests
         Assert.Equal(TestGameData.LoadoutShield, b.Shield);
         Assert.Empty(SentTo(1, PacketId.HitConfirmed));
         Assert.Empty(SentTo(2, PacketId.DamageTaken));
-        Assert.Equal(8.5f, ReadShot(SentTo(1, PacketId.ShotFired)[0]).End.Z, 3);
+        Assert.Equal(-46.5f, ReadShot(SentTo(1, PacketId.ShotFired)[0]).End.Z, 3);
     }
 
     // Task 3 review (b): the world distance is the players' max distance and a tie goes to the player.
-    // A target pressed flat against the pillar's back face (its front face at z 9.5) is still behind
-    // the pillar's front face (z 8.5), so it must be missed.
+    // A target pressed flat against the pillar's back face (its front face at z -45.5) is still behind
+    // the pillar's front face (z -46.5), so it must be missed.
     [Fact]
     public void Shot_AtTargetFlushAgainstPillarBack_HitsThePillar()
     {
-        var a = Join(1, new Vector3(9f, 0f, 6f));
-        var b = Join(2, new Vector3(9f, 0f, 9.5f + MoveSettings.HalfWidth));
+        var a = Join(1, new Vector3(-46f, 0f, -49f));
+        var b = Join(2, new Vector3(-46f, 0f, -45.5f + MoveSettings.HalfWidth));
         _sent.Clear();
 
         FireAt(a, b.State.Position + Chest);
@@ -172,7 +172,26 @@ public class CombatMatchTests
 
         Assert.Equal(TestGameData.LoadoutShield, b.Shield);
         Assert.Empty(SentTo(1, PacketId.HitConfirmed));
-        Assert.Equal(8.5f, ReadShot(SentTo(1, PacketId.ShotFired)[0]).End.Z, 3);
+        Assert.Equal(-46.5f, ReadShot(SentTo(1, PacketId.ShotFired)[0]).End.Z, 3);
+    }
+
+    // Phase 6 D11: the north hill (4 m at (0, 46)) stands between the two. The shot stops on the near slope, at the
+    // height where the chest-high line meets the terrain, and nobody is hit.
+    [Fact]
+    public void Shot_AtTargetBehindAHill_HitsTheHill()
+    {
+        var a = Join(1, new Vector3(-30f, 0f, 46f));
+        var b = Join(2, new Vector3(30f, 0f, 46f));
+        _sent.Clear();
+
+        FireAt(a, b.State.Position + Chest);
+        _match.Tick();
+
+        Assert.Equal(TestGameData.LoadoutShield, b.Shield);
+        Assert.Empty(SentTo(1, PacketId.HitConfirmed));
+        ShotFired shot = ReadShot(SentTo(1, PacketId.ShotFired)[0]);
+        Assert.InRange(shot.End.X, -18f, 0f);
+        Assert.Equal(GameMap.Terrain.Height(shot.End.X, shot.End.Z), shot.End.Y, 2);
     }
 
     [Fact]

@@ -32,7 +32,7 @@ public class CollisionTests
         var s = new MoveState();
         for (int i = 0; i < 60; i++)
         {
-            MovementSimulation.Step(ref s, WalkPlusX, Dt, Wall);
+            MovementSimulation.Step(ref s, WalkPlusX, Dt, Wall, HeightField.Flat);
             Assert.False(MovementSimulation.OverlapsAny(s.Position, Wall));
         }
         // Front face stops Skin before the wall: x = 2 - 0.35 - 0.001.
@@ -45,7 +45,7 @@ public class CollisionTests
     {
         var s = new MoveState();
         var diagonal = new InputCommand { MoveY = 1f, Yaw = 45f };
-        for (int i = 0; i < 60; i++) MovementSimulation.Step(ref s, diagonal, Dt, Wall);
+        for (int i = 0; i < 60; i++) MovementSimulation.Step(ref s, diagonal, Dt, Wall, HeightField.Flat);
 
         Assert.Equal(2f - Hw - Skin, s.Position.X, 3);
         // Z is never blocked: 60 steps at 4.5 · cos 45° m/s = 2 s · 3.182 = 6.364 m.
@@ -56,11 +56,11 @@ public class CollisionTests
     public void JumpApex_UnderDiscreteSteps_ClearsOneMetre_ButNotOnePointFive()
     {
         var s = new MoveState();
-        MovementSimulation.Step(ref s, new InputCommand { Buttons = InputButtons.Jump }, Dt, ReadOnlySpan<Box>.Empty);
+        MovementSimulation.Step(ref s, new InputCommand { Buttons = InputButtons.Jump }, Dt, ReadOnlySpan<Box>.Empty, HeightField.Flat);
         float peak = s.Position.Y;
         for (int i = 0; i < 40; i++)
         {
-            MovementSimulation.Step(ref s, Idle, Dt, ReadOnlySpan<Box>.Empty);
+            MovementSimulation.Step(ref s, Idle, Dt, ReadOnlySpan<Box>.Empty, HeightField.Flat);
             if (s.Position.Y > peak) peak = s.Position.Y;
         }
         // Rises while 7 - (k-1)·2/3 > 0, i.e. 11 steps: (77 - 110/3) / 30 = 1.344 m
@@ -72,14 +72,14 @@ public class CollisionTests
     public void JumpOntoLowBox_StandsOnTop_Grounded()
     {
         var s = new MoveState();
-        MovementSimulation.Step(ref s, new InputCommand { MoveY = 1f, Yaw = 90f, Buttons = InputButtons.Jump }, Dt, LowBox);
-        for (int i = 0; i < 19; i++) MovementSimulation.Step(ref s, WalkPlusX, Dt, LowBox);
+        MovementSimulation.Step(ref s, new InputCommand { MoveY = 1f, Yaw = 90f, Buttons = InputButtons.Jump }, Dt, LowBox, HeightField.Flat);
+        for (int i = 0; i < 19; i++) MovementSimulation.Step(ref s, WalkPlusX, Dt, LowBox, HeightField.Flat);
 
         // Feet pass y = 1 on the way up at step 6 (1.067 m) and fall back below it only at step 17,
         // by which time x = 2.55 is over the box: it lands on the top, then the ground snap sets y = 1.
         Assert.Equal(1f, s.Position.Y);
         Assert.Equal(0f, s.VelocityY);
-        Assert.True(MovementSimulation.IsGrounded(s, LowBox));
+        Assert.True(MovementSimulation.IsGrounded(s, LowBox, HeightField.Flat));
         Assert.Equal(3f, s.Position.X, 3);   // 20 steps · 0.15 m, never blocked
         Assert.False(MovementSimulation.OverlapsAny(s.Position, LowBox));
     }
@@ -91,7 +91,7 @@ public class CollisionTests
         var jumpForward = new InputCommand { MoveY = 1f, Yaw = 90f, Buttons = InputButtons.Jump };
         for (int i = 0; i < 90; i++)
         {
-            MovementSimulation.Step(ref s, jumpForward, Dt, HighBox);
+            MovementSimulation.Step(ref s, jumpForward, Dt, HighBox, HeightField.Flat);
             Assert.True(s.Position.X + Hw <= 2f);   // never gets over the 1.5 m edge (apex 1.344 m)
             Assert.False(MovementSimulation.OverlapsAny(s.Position, HighBox));
         }
@@ -104,7 +104,7 @@ public class CollisionTests
         var s = new MoveState { Position = new Vector3(3f, 1f, 0f) };
         for (int i = 0; i < 90; i++)
         {
-            MovementSimulation.Step(ref s, Idle, Dt, LowBox);
+            MovementSimulation.Step(ref s, Idle, Dt, LowBox, HeightField.Flat);
             Assert.Equal(1f, s.Position.Y);
             Assert.Equal(0f, s.VelocityY);
         }
@@ -114,7 +114,7 @@ public class CollisionTests
     public void SlightlyAboveBoxTop_WithinProbe_SnapsOntoIt()
     {
         var s = new MoveState { Position = new Vector3(3f, 1.015f, 0f) };
-        MovementSimulation.Step(ref s, Idle, Dt, LowBox);
+        MovementSimulation.Step(ref s, Idle, Dt, LowBox, HeightField.Flat);
         Assert.Equal(1f, s.Position.Y);
         Assert.Equal(0f, s.VelocityY);
     }
@@ -125,15 +125,15 @@ public class CollisionTests
         // Ceiling slab from y 2.5 to 3 over the start position.
         Box[] ceiling = { B(-2f, 2.5f, -2f, 2f, 3f, 2f) };
         var s = new MoveState();
-        MovementSimulation.Step(ref s, new InputCommand { Buttons = InputButtons.Jump }, Dt, ceiling);
-        for (int i = 0; i < 3; i++) MovementSimulation.Step(ref s, Idle, Dt, ceiling);
+        MovementSimulation.Step(ref s, new InputCommand { Buttons = InputButtons.Jump }, Dt, ceiling, HeightField.Flat);
+        for (int i = 0; i < 3; i++) MovementSimulation.Step(ref s, Idle, Dt, ceiling, HeightField.Flat);
 
         // Steps 1-3 rise to 0.633 m (head 2.433 m); step 4 wants +0.167 m but only 0.066 m is free.
         Assert.Equal(0f, s.VelocityY);
         Assert.InRange(s.Position.Y, 0.69f, 0.70f);
         Assert.True(s.Position.Y + MoveSettings.Height <= 2.5f);
 
-        MovementSimulation.Step(ref s, Idle, Dt, ceiling);
+        MovementSimulation.Step(ref s, Idle, Dt, ceiling, HeightField.Flat);
         Assert.True(s.VelocityY < 0f);   // falls again, does not stick to the ceiling
     }
 
@@ -146,7 +146,7 @@ public class CollisionTests
         var s = new MoveState { Position = new Vector3(0f, 20f, 0f), VelocityY = -200f };
         for (int i = 0; i < 10; i++)
         {
-            MovementSimulation.Step(ref s, Idle, Dt, plate);
+            MovementSimulation.Step(ref s, Idle, Dt, plate, HeightField.Flat);
             Assert.True(s.Position.Y >= 5.2f);
         }
         Assert.Equal(5.2f, s.Position.Y);
@@ -160,7 +160,7 @@ public class CollisionTests
         // Box x -1..1, y 0..1, z -1..1. Feet at x 0.9, y 0.5: +X needs 0.45 m, +Y 0.5 m, Z 1.35 m.
         Box[] box = { B(-1f, 0f, -1f, 1f, 1f, 1f) };
         var s = new MoveState { Position = new Vector3(0.9f, 0.5f, 0f) };
-        MovementSimulation.Step(ref s, Idle, Dt, box);
+        MovementSimulation.Step(ref s, Idle, Dt, box, HeightField.Flat);
 
         Assert.Equal(0.9f + 0.45f + Skin, s.Position.X, 3);
         Assert.False(MovementSimulation.OverlapsAny(s.Position, box));
@@ -176,8 +176,8 @@ public class CollisionTests
         for (int i = 0; i < 300; i++)
         {
             var input = new InputCommand { MoveX = (i % 7) / 7f - 0.4f, MoveY = 1f, Yaw = i * 3.3f, Buttons = i % 20 == 0 ? InputButtons.Jump : InputButtons.None };
-            MovementSimulation.Step(ref a, input, Dt, world);
-            MovementSimulation.Step(ref b, input, Dt, world);
+            MovementSimulation.Step(ref a, input, Dt, world, HeightField.Flat);
+            MovementSimulation.Step(ref b, input, Dt, world, HeightField.Flat);
         }
         Assert.Equal(a.Position, b.Position);
         Assert.Equal(a.VelocityY, b.VelocityY);
@@ -191,7 +191,7 @@ public class CollisionTests
         var bad = new InputCommand { MoveX = float.NaN, MoveY = float.PositiveInfinity, Yaw = float.NaN, Buttons = InputButtons.Jump };
         for (int i = 0; i < 30; i++)
         {
-            MovementSimulation.Step(ref s, bad, Dt, Wall);
+            MovementSimulation.Step(ref s, bad, Dt, Wall, HeightField.Flat);
             Assert.True(float.IsFinite(s.Position.X) && float.IsFinite(s.Position.Y) && float.IsFinite(s.Position.Z));
             Assert.True(float.IsFinite(s.VelocityY));
             Assert.False(MovementSimulation.OverlapsAny(s.Position, Wall));
@@ -202,10 +202,10 @@ public class CollisionTests
     public void EmptyWorld_MatchesFloorOnlyBehaviour()
     {
         var s = new MoveState();
-        MovementSimulation.Step(ref s, new InputCommand { Buttons = InputButtons.Jump }, Dt, ReadOnlySpan<Box>.Empty);
-        for (int i = 0; i < 60; i++) MovementSimulation.Step(ref s, Idle, Dt, ReadOnlySpan<Box>.Empty);
+        MovementSimulation.Step(ref s, new InputCommand { Buttons = InputButtons.Jump }, Dt, ReadOnlySpan<Box>.Empty, HeightField.Flat);
+        for (int i = 0; i < 60; i++) MovementSimulation.Step(ref s, Idle, Dt, ReadOnlySpan<Box>.Empty, HeightField.Flat);
         Assert.Equal(0f, s.Position.Y);
         Assert.Equal(0f, s.VelocityY);
-        Assert.True(MovementSimulation.IsGrounded(s, ReadOnlySpan<Box>.Empty));
+        Assert.True(MovementSimulation.IsGrounded(s, ReadOnlySpan<Box>.Empty, HeightField.Flat));
     }
 }

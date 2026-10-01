@@ -28,10 +28,11 @@ public class LootTableTests
     private LootRoll Roll(string table, Random rng) => _data.Loot.Roll(_data.Loot.TableIndex(table), rng, _data.Weapons, _data.Items);
 
     [Fact]
-    public void Valid_HasBothTables()
+    public void Valid_HasTheThreeTables()
     {
-        Assert.Equal(2, _data.Loot.TableCount);
+        Assert.Equal(3, _data.Loot.TableCount);
         Assert.True(_data.Loot.TableIndex("Floor") >= 0);
+        Assert.True(_data.Loot.TableIndex("Building") >= 0);
         Assert.True(_data.Loot.TableIndex("Tower") >= 0);
         Assert.Equal(-1, _data.Loot.TableIndex("Basement"));
     }
@@ -81,7 +82,7 @@ public class LootTableTests
         var shipped = LootTable.LoadFile(Path.Combine(AppContext.BaseDirectory, "loot.json"), _data.Items);
         var a = new Random(7);
         var b = new Random(7);
-        foreach (string table in new[] { "Floor", "Tower" })
+        foreach (string table in new[] { "Floor", "Building", "Tower" })
         {
             for (int i = 0; i < 200; i++)
             {

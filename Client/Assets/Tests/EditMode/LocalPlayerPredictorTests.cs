@@ -46,7 +46,7 @@ namespace ProjectH.Client.Tests
 
             // Server processed inputs 1..2 exactly as the client did.
             var server = new MoveState();
-            for (int i = 0; i < 2; i++) MovementSimulation.Step(ref server, new InputCommand { MoveY = 1f }, Step, TestArena.Boxes);
+            for (int i = 0; i < 2; i++) MovementSimulation.Step(ref server, new InputCommand { MoveY = 1f }, Step, GameMap.Boxes, GameMap.Terrain);
             predictor.Reconcile(Alive(server.Position, server.VelocityY, server.Yaw), 2);
 
             Assert.AreEqual(before.z, predictor.PredictedPosition.z, 1e-4f);
@@ -61,7 +61,7 @@ namespace ProjectH.Client.Tests
 
             // Server says that after input 1 the player was 1 m further along +X (e.g. pushed).
             var server = new MoveState();
-            MovementSimulation.Step(ref server, new InputCommand { MoveY = 1f }, Step, TestArena.Boxes);
+            MovementSimulation.Step(ref server, new InputCommand { MoveY = 1f }, Step, GameMap.Boxes, GameMap.Terrain);
             server.Position.X += 1f;
             predictor.Reconcile(Alive(server.Position, server.VelocityY, server.Yaw), 1);
 
@@ -167,7 +167,7 @@ namespace ProjectH.Client.Tests
             for (uint seq = 1; seq <= 3; seq++)
             {
                 var input = new InputCommand { Seq = seq, MoveX = 1f, MoveY = 1f, Yaw = 0f, Buttons = InputButtons.Sprint };
-                MovementSimulation.Step(ref server, input, Step, TestArena.Boxes);
+                MovementSimulation.Step(ref server, input, Step, GameMap.Boxes, GameMap.Terrain);
             }
 
             Assert.AreEqual(3u, predictor.LastSeq);
@@ -224,7 +224,7 @@ namespace ProjectH.Client.Tests
             float firstYaw = 0f, lastYaw = 0f;
             for (uint seq = 1; seq <= 3; seq++)
             {
-                MovementSimulation.Step(ref server, new InputCommand { Seq = seq, MoveY = 1f, Buttons = InputButtons.Sprint }, Step, TestArena.Boxes);
+                MovementSimulation.Step(ref server, new InputCommand { Seq = seq, MoveY = 1f, Buttons = InputButtons.Sprint }, Step, GameMap.Boxes, GameMap.Terrain);
                 var eye = new Vector3(server.Position.X, server.Position.Y + AimSolver.EyeHeight, server.Position.Z);
                 Assert.IsTrue(AimSolver.TrySolve(eye, aimPoint, out float yaw, out float pitch));
                 Assert.AreEqual(yaw, predictor.InputAt(seq).AimYaw, 1e-3f, $"seq {seq}");
@@ -314,7 +314,7 @@ namespace ProjectH.Client.Tests
 
             // The server respawned before taking seq 5, stepped seq 5 (empty) at the spawn point and acked it.
             var server = spawn;
-            MovementSimulation.Step(ref server, new InputCommand { Seq = 5 }, Step, TestArena.Boxes);
+            MovementSimulation.Step(ref server, new InputCommand { Seq = 5 }, Step, GameMap.Boxes, GameMap.Terrain);
             predictor.Reconcile(Alive(server.Position, server.VelocityY, server.Yaw), 5);
 
             Assert.AreEqual(predicted.x, predictor.PredictedPosition.x, 1e-4f);

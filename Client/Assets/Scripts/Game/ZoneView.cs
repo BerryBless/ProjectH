@@ -1,4 +1,5 @@
 using ProjectH.Shared.Protocol;
+using ProjectH.Shared.Simulation;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -11,8 +12,8 @@ namespace ProjectH.Client.Game
     // frame. The circle comes from ZoneMath with the server's ZoneState (same formula as the server's judgement).
     public sealed class ZoneView : System.IDisposable
     {
-        private const int Segments = 64;
-        private const float WallHeight = 6f;
+        private const int Segments = 128;
+        private const float WallHeight = 40f;   // D12: tall enough to stand out above the Lookout plateau (6 m)
         private const float LineLift = 0.05f;   // above the floor, so the line does not flicker into it
         private const float LineWidth = 0.15f;
         private const float MinWallRadius = 0.01f;
@@ -141,8 +142,13 @@ namespace ProjectH.Client.Game
 
         private void DrawCircle(LineRenderer line, float x, float z, float radius)
         {
+            // Phase 6 spec interpretation 10: on the terrain, so the line is not buried in a hill.
             for (int i = 0; i < Segments; i++)
-                _points[i] = new Vector3(x + _cos[i] * radius, LineLift, z + _sin[i] * radius);
+            {
+                float px = x + _cos[i] * radius;
+                float pz = z + _sin[i] * radius;
+                _points[i] = new Vector3(px, GameMap.Terrain.Height(px, pz) + LineLift, pz);
+            }
             line.SetPositions(_points);
             // A radius-0 circle collapses to a point; with a 0.15 m width it would show as a stray dot, so the
             // line is hidden under the same limit as the wall.

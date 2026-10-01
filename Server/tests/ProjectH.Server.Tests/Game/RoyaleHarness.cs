@@ -24,18 +24,23 @@ internal sealed class RoyaleHarness
     public const int ResultTicks = 30;
     public static readonly Vector3 Chest = new(0f, 1.2f, 0f);
 
+    // Phase 6 spec interpretation 8: the default drop points are the six lobby ring spots in the plaza, so the
+    // Phase 5 rule tests still start close enough to shoot each other, inside the small test zone.
+    public static readonly Vector3[] LobbyRingDrops = Enumerable.Range(1, 6).Select(id => Match.SpawnPosition((ushort)id)).ToArray();
+
     private readonly Dictionary<int, uint> _seq = new();
 
     // record false: sent packets are dropped instead of copied, for allocation tests.
     public RoyaleHarness(StartingLoadout? loadout = null, string zonesJson = TestGameData.ZonesJson, int maxPlayers = 6,
-        int minPlayers = 2, string lootJson = TestGameData.LootJson, bool record = true)
+        int minPlayers = 2, string lootJson = TestGameData.LootJson, bool record = true,
+        Vector3[]? dropPoints = null)
     {
         SendPacket send = record ? (peer, data, method) => Packets.Add(new Sent(peer, data.ToArray(), method)) : static (_, _, _) => { };
         Match = new Match(new ServerOptions
             {
                 MaxPlayers = maxPlayers, MinPlayers = minPlayers, StartCountdownSeconds = 1, ResultSeconds = 1,
             },
-            TestGameData.Create(lootJson: lootJson, zonesJson: zonesJson), send, loadout);
+            TestGameData.Create(lootJson: lootJson, zonesJson: zonesJson), send, loadout, dropPoints: dropPoints ?? LobbyRingDrops);
     }
 
     public Match Match { get; }

@@ -14,6 +14,9 @@ namespace ProjectH.Server.Tests.Integration;
 // (a starved test thread must not let the zone decide the kill).
 public sealed class BattleRoyaleIntegrationTests : IDisposable
 {
+    // Phase 6 D9: two drop spots 10 m apart in the plaza, so A sees and can shoot B right after the start.
+    private static readonly Vector3[] TwoDropSpots = { new(5f, 0f, 0f), new(-5f, 0f, 0f) };
+
     private readonly GameLoop _server;
 
     public BattleRoyaleIntegrationTests()
@@ -27,7 +30,7 @@ public sealed class BattleRoyaleIntegrationTests : IDisposable
             ResultSeconds = 1,
             DisconnectTimeoutMs = 1000,
             StatsIntervalSeconds = 60,
-        }, TestGameData.Create(), NullLogger.Instance, TestGameData.CombatLoadout);
+        }, TestGameData.Create(), NullLogger.Instance, TestGameData.CombatLoadout, TwoDropSpots);
         _server.Start();
     }
 
@@ -61,7 +64,7 @@ public sealed class BattleRoyaleIntegrationTests : IDisposable
         MatchState playing = a.MatchStates.Last();
         Assert.Equal(2, playing.Participants);
         Assert.Equal(2, playing.Alive);
-        // Snapshots taken after the start show both on the spawn ring.
+        // Snapshots taken after the start show both on their drop spots.
         uint startSeen = a.LastServerTick;
         Assert.True(Pump.Until(() => a.LastServerTick > startSeen + 2 && a.LastSnapshot.ContainsKey(b.MyEntityId), 3000, a, b), "snapshot");
 

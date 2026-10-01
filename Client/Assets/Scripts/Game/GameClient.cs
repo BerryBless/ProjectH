@@ -20,7 +20,8 @@ namespace ProjectH.Client.Game
         private const float DefaultAimRange = 300f;
 
         private GameObject _world;
-        private Material _worldMaterial;
+        private Material[] _worldMaterials;
+        private Mesh _terrainMesh;
         private InputReader _input;
         private ShoulderCamera _camera;
         private Crosshair _crosshair;
@@ -30,6 +31,7 @@ namespace ProjectH.Client.Game
         private LocalFireEffects _fireEffects;
         private MatchHud _matchHud;
         private ZoneView _zoneView;
+        private PoiLabel _poiLabel;
         private readonly SpectatorCamera _spectator = new SpectatorCamera();
         private NetClient _net;
         private LocalPlayerPredictor _predictor;
@@ -72,7 +74,7 @@ namespace ProjectH.Client.Game
 
         private void Awake()
         {
-            _world = TestWorld.Build(out _worldMaterial);
+            _world = MapWorld.Build(out _worldMaterials, out _terrainMesh);
             _input = new InputReader();
 
             Camera main = Camera.main;
@@ -90,6 +92,7 @@ namespace ProjectH.Client.Game
             _fireEffects = new LocalFireEffects();
             _matchHud = new MatchHud();
             _zoneView = new ZoneView();
+            _poiLabel = new PoiLabel();
 
             _net = new NetClient();
             _net.Joined += OnJoined;
@@ -152,6 +155,9 @@ namespace ProjectH.Client.Game
             _spectator.Update(_remotePlayers);
             Vector3 followFeet = _spectator.TryGetFeet(_remotePlayers, _renderTick, out Vector3 watched) ? watched : _predictor.RenderPosition;
             _camera.Follow(followFeet, _aiming, Time.deltaTime);
+            // Phase 6 D7: the place name of whoever the camera follows. Text changes only when the place does.
+            _poiLabel.SetVisible(true);
+            _poiLabel.SetPosition(followFeet);
             _crosshair.SetVisible(alive);
 
             // After the camera moved, so aim, tracer and the sent inputs all use the crosshair of this frame.
@@ -288,6 +294,7 @@ namespace ProjectH.Client.Game
             ClearMatchState();
             _zoneView.Dispose();
             _matchHud.Dispose();
+            _poiLabel.Dispose();
             _fireEffects.Dispose();
             _worldItems.Dispose();
             _inventoryHud.Dispose();
@@ -296,7 +303,14 @@ namespace ProjectH.Client.Game
             _input.Dispose();
             PlayerViewFactory.ReleaseMaterials();
             if (_world != null) Destroy(_world);
-            if (_worldMaterial != null) Destroy(_worldMaterial);
+            if (_worldMaterials != null)
+            {
+                foreach (Material material in _worldMaterials)
+                {
+                    if (material != null) Destroy(material);
+                }
+            }
+            if (_terrainMesh != null) Destroy(_terrainMesh);
         }
 
         // Left click locks a free cursor (only once joined) and fires while it is locked (D12).
@@ -576,6 +590,7 @@ namespace ProjectH.Client.Game
             _matchHud.SetResult(false, 0, 0);
             _matchHud.SetSpectating(0);
             _matchHud.SetVisible(false);
+            _poiLabel.SetVisible(false);
             _crosshair.SetVisible(false);
             _hud.HideDeath();
             _hud.SetVisible(false);

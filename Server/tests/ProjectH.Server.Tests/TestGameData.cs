@@ -43,13 +43,15 @@ internal static class TestGameData
         }
         """;
 
-    // Spec §1 loot.json.
+    // The shipped loot.json (Phase 4 spec §1 plus the Phase 6 D10 Building table).
     public const string LootJson = """
         {
           "rarityWeights": { "Common": 50, "Uncommon": 25, "Rare": 15, "Epic": 7, "Legendary": 3 },
           "tables": {
             "Floor": [ { "kind": "Weapon", "weight": 35 }, { "kind": "Ammo", "weight": 35 },
                        { "kind": "Medkit", "weight": 15 }, { "kind": "ShieldCell", "weight": 15 } ],
+            "Building": [ { "kind": "Weapon", "weight": 50 }, { "kind": "Ammo", "weight": 20 },
+                          { "kind": "Medkit", "weight": 15 }, { "kind": "ShieldCell", "weight": 15 } ],
             "Tower": [ { "kind": "Weapon", "weight": 60 }, { "kind": "Ammo", "weight": 10 },
                        { "kind": "Medkit", "weight": 15 }, { "kind": "ShieldCell", "weight": 15 } ]
           }
@@ -60,11 +62,11 @@ internal static class TestGameData
     public const string WeaponsOnlyLootJson = """
         {
           "rarityWeights": { "Common": 50, "Uncommon": 25, "Rare": 15, "Epic": 7, "Legendary": 3 },
-          "tables": { "Floor": [ { "kind": "Weapon", "weight": 1 } ], "Tower": [ { "kind": "Weapon", "weight": 1 } ] }
+          "tables": { "Floor": [ { "kind": "Weapon", "weight": 1 } ], "Building": [ { "kind": "Weapon", "weight": 1 } ], "Tower": [ { "kind": "Weapon", "weight": 1 } ] }
         }
         """;
 
-    // Spec §1 zones.json (D7).
+    // Small zones for match tests: the Phase 5 arena numbers. Match tests drop everyone near the centre (RoyaleHarness), so these keep them inside. The shipped zones.json is pinned by ZoneDataTests.ShippedFile_MatchesTheSpec.
     public const string ZonesJson = """
         {
           "initialCenter": [0, 0],

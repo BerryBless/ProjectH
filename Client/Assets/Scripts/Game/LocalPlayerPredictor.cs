@@ -7,7 +7,7 @@ using UnityEngine;
 namespace ProjectH.Client.Game
 {
     // Client-side prediction for the local player (Docs/Networking.md).
-    // Collides with Shared TestArena.Boxes, the same boxes the server passes in Match.Tick.
+    // Moves against Shared GameMap.Boxes and GameMap.Terrain, the same world the server passes in Match.Tick.
     // Runs MovementSimulation at the server's tick rate, keeps a fixed 64-entry history of inputs and
     // results, and on each snapshot replays the inputs the server has not processed yet.
     // While dead (D9, D12) it predicts nothing: the server acks a dead player's inputs without moving it.
@@ -83,7 +83,7 @@ namespace ProjectH.Client.Game
                         queued = InputButtons.None;
                     }
                     command = new InputCommand { Seq = ++LastSeq, MoveX = move.x, MoveY = move.y, Yaw = yaw, Buttons = buttons };
-                    MovementSimulation.Step(ref _state, command, _stepSeconds, TestArena.Boxes);
+                    MovementSimulation.Step(ref _state, command, _stepSeconds, GameMap.Boxes, GameMap.Terrain);
                 }
 
                 int slot = (int)(command.Seq % HistorySize);
@@ -214,7 +214,7 @@ namespace ProjectH.Client.Game
             {
                 int slot = (int)(seq % HistorySize);
                 _previous = _state;
-                MovementSimulation.Step(ref _state, _inputs[slot], _stepSeconds, TestArena.Boxes);
+                MovementSimulation.Step(ref _state, _inputs[slot], _stepSeconds, GameMap.Boxes, GameMap.Terrain);
                 _results[slot] = _state;
             }
 

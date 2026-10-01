@@ -18,6 +18,9 @@ public delegate void SendPacket(int peerId, ReadOnlySpan<byte> data, DeliveryMet
 public sealed class Match
 {
     private const float SpawnRadius = 5f;
+    // Phase 6 D9: when there are more participants than drop points, each further lap stands this far east, then
+    // west, of the point (inside DropPoints.ClearRadius, so still clear of every box).
+    private const float DropLapOffset = 3f;
 
     private readonly Dictionary<int, PlayerEntity> _playersByPeer = new();
     // Players are removed only in Leave(); both collections are updated together.
@@ -32,6 +35,10 @@ public sealed class Match
     private readonly SafeZone _zone;
     private readonly int _lootSeed;
     private readonly int _zoneSeed;
+    private readonly int _spawnSeed;
+    // Phase 6 D9: the drop points and this match's shuffled order of them. Fixed arrays, filled at the match start.
+    private readonly Vector3[] _dropPoints;
+    private readonly int[] _dropOrder;
     private uint _matchStartTick;
     // What every client was last told (D11): a new MatchState or ZoneState is broadcast at the end of a tick only
     // when it differs. Never sent in the dev sandbox (no match flow there).
@@ -49,8 +56,9 @@ public sealed class Match
     private ushort _nextEntityId = 1;
 
     // Test seams: loadout null = StartingLoadout.Empty (the production start, D1); lootPoints null = the
-    // map's LootPoints.All.
-    public Match(ServerOptions options, GameData data, SendPacket send, StartingLoadout? loadout = null, LootPoint[]? lootPoints = null)
+    // map's LootPoints.All; dropPoints null = the map's DropPoints.All (Phase 6 D9).
+    public Match(ServerOptions options, GameData data, SendPacket send, StartingLoadout? loadout = null, LootPoint[]? lootPoints = null,
+        Vector3[]? dropPoints = null)
     {
         _send = send ?? throw new ArgumentNullException(nameof(send));
         ArgumentNullException.ThrowIfNull(data);
@@ -74,6 +82,10 @@ public sealed class Match
         _zone = new SafeZone(data.Zones);
         _lootSeed = options.LootSeed;
         _zoneSeed = options.ZoneSeed;
+        _spawnSeed = options.SpawnSeed;
+        _dropPoints = dropPoints is null ? DropPoints.All.ToArray() : (Vector3[])dropPoints.Clone();
+        if (_dropPoints.Length == 0) throw new ArgumentException("A match needs at least one drop point.", nameof(dropPoints));
+        _dropOrder = new int[_dropPoints.Length];
         _sentMatchState = _flow.ToWire(0);
         _sentZoneState = _zone.ToWire();
 
@@ -222,8 +234,8 @@ public sealed class Match
             // A player killed earlier in this loop is already dead here.
             if (!player.Alive) continue;
 
-            // Same boxes as client prediction (LocalPlayerPredictor), so predictions match.
-            MovementSimulation.Step(ref player.State, input, _tickSeconds, TestArena.Boxes);
+            // Same boxes and terrain as client prediction (LocalPlayerPredictor), so predictions match.
+            MovementSimulation.Step(ref player.State, input, _tickSeconds, GameMap.Boxes, GameMap.Terrain);
             WeaponRules.UpdateReload(player, now);
             // Only an input the client really sent can act: the missed-input repeat copies the last input's
             // buttons and must never invent a switch, reload or shot.
@@ -285,7 +297,7 @@ public sealed class Match
         ConsumableRules.TryStart(player, _items, input.Buttons, now);
     }
 
-    // D7: from the eye along the aim, the nearest arena surface or living player stops the shot. The
+    // D7: from the eye along the aim, the nearest map surface (box, terrain or floor plane) or living player stops the shot. The
     // client only sent a direction; which player is hit is decided here (D12, request §17).
     // D6: other players are tested where the shooter saw them, at ViewTick (clamped to the last
     // _maxRewindTicks ticks). The shooter itself and the arena are not rewound.
@@ -295,7 +307,7 @@ public sealed class Match
         WeaponDefinition weapon = held.Weapon!;   // Apply only fires a filled slot
         ushort damage = CombatRules.ScaledDamage(weapon.Damage, _items.DamageMultiplier(held.Rarity));
         Vector3 origin = shooter.State.Position + new Vector3(0f, CombatRules.EyeHeight, 0f);
-        float nearest = HitScan.TraceWorld(origin, direction, weapon.Range, TestArena.Boxes);
+        float nearest = HitScan.TraceWorld(origin, direction, weapon.Range, GameMap.Boxes, GameMap.Terrain);
         double rewindTick = CombatRules.ClampViewTick(viewTick, ServerTick, _maxRewindTicks);
 
         PlayerEntity? target = null;
@@ -464,7 +476,7 @@ public sealed class Match
             // It is placed like a G-drop (in front of the player), not on the loot point: the point rolls a new
             // item there after its respawn delay and the two would overlap.
             Vector3 dropOffset = ItemRules.Offset(player.State.Yaw, ItemRules.DropDistance);
-            Vector3 dropAt = ItemRules.DropPosition(player.State.Position, dropOffset, TestArena.Boxes);
+            Vector3 dropAt = ItemRules.DropPosition(player.State.Position, dropOffset, GameMap.Boxes, GameMap.Terrain);
             if (SpawnItem(new LootRoll(ItemKind.Weapon, old.Weapon!.Id, old.Rarity, (ushort)old.MagAmmo), dropAt, -1) == 0)
             {
                 // Impossible: RemoveItemAt above just freed a record, so the store is below Capacity and
@@ -493,7 +505,7 @@ public sealed class Match
         Vector3 offset = ItemRules.Offset(player.State.Yaw, ItemRules.DropDistance);
         // Conservation: the weapon leaves the hand only once it lies in the world. SpawnItem touches the
         // world list only, so the ref into the inventory stays valid.
-        if (SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, TestArena.Boxes), -1) == 0) return;
+        if (SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, GameMap.Boxes, GameMap.Terrain), -1) == 0) return;
 
         inventory.DroppedFireLockTick = Math.Max(inventory.DroppedFireLockTick, held.NextFireTick);
         held = default;
@@ -548,7 +560,7 @@ public sealed class Match
     private bool DropAround(PlayerEntity player, int n, int count, in LootRoll roll)
     {
         Vector3 offset = ItemRules.Offset(player.State.Yaw + 360f * n / count, ItemRules.DeathDropRadius);
-        return SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, TestArena.Boxes), -1) != 0;
+        return SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, GameMap.Boxes, GameMap.Terrain), -1) != 0;
     }
 
     // End of tick (D11): the match state when any of its fields changed (state, timer, alive and player counts,
@@ -629,10 +641,12 @@ public sealed class Match
         DropEverything(victim);
     }
 
-    private void Respawn(PlayerEntity player)
+    private void Respawn(PlayerEntity player) => Respawn(player, SpawnPosition(player.EntityId));
+
+    private void Respawn(PlayerEntity player, Vector3 position)
     {
-        // Keep the yaw so the camera does not snap; everything else starts over at the spawn point.
-        player.State = new MoveState { Position = SpawnPosition(player.EntityId), Yaw = player.State.Yaw };
+        // Keep the yaw so the camera does not snap; everything else starts over at the given position.
+        player.State = new MoveState { Position = position, Yaw = player.State.Yaw };
         ResetCombat(player);
         player.History.Reset(ServerTick, player.State.Position);
         // The missed-input repeat starts over too: a late input right after the respawn must not replay a
@@ -646,15 +660,18 @@ public sealed class Match
         Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
-    // D3: Starting -> Playing, in this one tick: everyone to the spawn ring, empty-handed with Health 100 and
+    // D3: Starting -> Playing, in this one tick: everyone to a drop point (Phase 6 D9), empty-handed with Health 100 and
     // Shield 0 (the loadout), the world cleared and filled with this match's loot, the participants fixed, the
     // zone started. Respawn keeps Seq, so clients re-sync their prediction exactly as after a death.
     private void StartMatch(uint now)
     {
         ClearWorldItems();
+        // Phase 6 D9: everyone to a drop point, in an order shuffled by this round's seed.
+        ShuffleDropOrder(unchecked(_spawnSeed + _flow.Round));
+        int dropIndex = 0;
         foreach (var player in _players)
         {
-            Respawn(player);
+            Respawn(player, DropSpot(dropIndex++));
             player.Participant = true;
             player.Placement = 0;
             player.Kills = 0;
@@ -892,8 +909,38 @@ public sealed class Match
         return false;
     }
 
+    // Phase 6 D9: resets the order to 0..n-1 and shuffles it (Fisher-Yates), so the result depends on the seed only.
+    // One Random per match start, never per tick.
+    private void ShuffleDropOrder(int seed)
+    {
+        for (int i = 0; i < _dropOrder.Length; i++) _dropOrder[i] = i;
+        var rng = new Random(seed);
+        for (int i = _dropOrder.Length - 1; i > 0; i--)
+        {
+            int j = rng.Next(i + 1);
+            (_dropOrder[i], _dropOrder[j]) = (_dropOrder[j], _dropOrder[i]);
+        }
+    }
+
+    // Where the k-th participant (0-based, player list order) starts: drop point order[k % n]. Lap k / n > 0 moves it
+    // DropLapOffset times ((lap + 1) / 2) east on odd laps and west on even laps, onto the terrain there (spec
+    // interpretation 6).
+    private Vector3 DropSpot(int k)
+    {
+        int n = _dropPoints.Length;
+        Vector3 spot = _dropPoints[_dropOrder[k % n]];
+        int lap = k / n;
+        if (lap > 0)
+        {
+            float shift = DropLapOffset * ((lap + 1) / 2);
+            spot.X += lap % 2 == 1 ? shift : -shift;
+            spot.Y = GameMap.Terrain.Height(spot.X, spot.Z);
+        }
+        return spot;
+    }
+
     // Spread players on a circle (golden angle) so they do not spawn inside each other.
-    // The 5 m ring lies inside TestArena.ClearRadius (checked by TestArenaTests).
+    // The 5 m ring lies inside the plaza, GameMap.PlazaRadius (checked by GameMapTests).
     internal static Vector3 SpawnPosition(ushort entityId)
     {
         float angle = entityId * 2.39996f;

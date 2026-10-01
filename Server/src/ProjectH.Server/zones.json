@@ -1,12 +1,12 @@
 {
   "initialCenter": [0, 0],
-  "initialRadius": 30,
-  "arenaHalfSize": 19.5,
+  "initialRadius": 115,
+  "arenaHalfSize": 60,
   "phases": [
-    {"waitSeconds":20,"shrinkSeconds":15,"targetRadius":20,"damagePerSecond":1},
-    {"waitSeconds":15,"shrinkSeconds":12,"targetRadius":12,"damagePerSecond":2},
-    {"waitSeconds":12,"shrinkSeconds":10,"targetRadius":6,"damagePerSecond":5},
-    {"waitSeconds":10,"shrinkSeconds":8,"targetRadius":2,"damagePerSecond":10},
-    {"waitSeconds":8,"shrinkSeconds":8,"targetRadius":0,"damagePerSecond":20}
+    {"waitSeconds":45,"shrinkSeconds":40,"targetRadius":70,"damagePerSecond":1},
+    {"waitSeconds":35,"shrinkSeconds":30,"targetRadius":40,"damagePerSecond":2},
+    {"waitSeconds":30,"shrinkSeconds":25,"targetRadius":20,"damagePerSecond":5},
+    {"waitSeconds":25,"shrinkSeconds":20,"targetRadius":8,"damagePerSecond":10},
+    {"waitSeconds":20,"shrinkSeconds":15,"targetRadius":0,"damagePerSecond":20}
   ]
 }

@@ -217,7 +217,7 @@ public class PickupDropTests
         Assert.Equal(1, dropped.Amount);
         // Not on the loot point (a respawned point item would overlap it): placed like a G-drop.
         Assert.NotEqual(spot, dropped.Position);
-        Assert.Equal(ItemRules.DropPosition(a.State.Position, ItemRules.Offset(a.State.Yaw, ItemRules.DropDistance), TestArena.Boxes), dropped.Position);
+        Assert.Equal(ItemRules.DropPosition(a.State.Position, ItemRules.Offset(a.State.Yaw, ItemRules.DropDistance), GameMap.Boxes, GameMap.Terrain), dropped.Position);
         Assert.True(_match.WorldItems[0].IsDropped);
     }
 
@@ -313,28 +313,28 @@ public class PickupDropTests
     }
 
     // Placement fallback: 1 m in front is behind (or inside) a wall, so the weapon lands at the feet. The
-    // wall piece (12, 1.5, 6) is 0.5 m thick (x 11.75-12.25): 1 m from x 11.3 is already past it.
+    // field wall (26, 1.5, 0) is 0.5 m thick (x 25.75-26.25): 1 m from x 25.3 is already past it.
     [Theory]
-    [InlineData(11.3f)]
-    [InlineData(11.0f)]
+    [InlineData(25.3f)]
+    [InlineData(25.0f)]
     public void Drop_IntoOrThroughAWall_LandsAtTheFeet(float x)
     {
-        var a = Join(1, new Vector3(x, 0f, 6f), yaw: 90f);
+        var a = Join(1, new Vector3(x, 0f, 0f), yaw: 90f);
         Press(a, InputButtons.Drop);
         var item = Assert.Single(WorldList());
-        Assert.Equal(new Vector3(x, 0f, 6f), item.Position);
+        Assert.Equal(new Vector3(x, 0f, 0f), item.Position);
     }
 
     // Placement: a weapon dropped from a box edge lands on the floor, where it can be picked up.
     [Fact]
     public void Drop_OverABoxEdge_LandsOnTheFloor()
     {
-        // Low box (0, 0.5, 12), 2 x 1 x 2: top at y 1, north edge at z 13.
-        var a = Join(1, new Vector3(0f, 1f, 12.8f), yaw: 0f);
+        // Low crate (0, 0.5, 22), 2 x 1 x 2: top at y 1, north edge at z 23.
+        var a = Join(1, new Vector3(0f, 1f, 22.8f), yaw: 0f);
         Press(a, InputButtons.Drop);
         var item = Assert.Single(WorldList());
         Assert.Equal(0f, item.Position.Y);
-        Assert.Equal(13.8f, item.Position.Z, 3);
+        Assert.Equal(23.8f, item.Position.Z, 3);
     }
 
     // Inside = strictly within the footprint and at or above the bottom, below the top. The bottom face
@@ -342,7 +342,7 @@ public class PickupDropTests
     // does not: that is standing on the box.
     private static bool StrictlyInsideAnyBox(Vector3 p)
     {
-        foreach (Box b in TestArena.Boxes)
+        foreach (Box b in GameMap.Boxes)
         {
             if (p.X > b.Min.X && p.X < b.Max.X && p.Y >= b.Min.Y && p.Y < b.Max.Y && p.Z > b.Min.Z && p.Z < b.Max.Z)
                 return true;
@@ -351,23 +351,23 @@ public class PickupDropTests
     }
 
     // Placement: in mid-air next to a box, the knee-height ray passes over the box top, and that top is
-    // above the feet so it is not ground either. The point 1 m ahead would lie inside the low box
-    // (0, 0.5, 12), x -1..1, y 0..1, z 11..13; the item lands at the feet instead, on the floor.
+    // above the feet so it is not ground either. The point 1 m ahead would lie inside the low crate
+    // (0, 0.5, 22), x -1..1, y 0..1, z 21..23; the item lands at the feet instead, on the floor.
     [Fact]
     public void Drop_InMidAirNextToABox_DoesNotLandInsideIt()
     {
-        var feet = new Vector3(0f, 0.8f, 10.6f);
-        Vector3 p = ItemRules.DropPosition(feet, ItemRules.Offset(0f, ItemRules.DropDistance), TestArena.Boxes);
+        var feet = new Vector3(0f, 0.8f, 20.6f);
+        Vector3 p = ItemRules.DropPosition(feet, ItemRules.Offset(0f, ItemRules.DropDistance), GameMap.Boxes, GameMap.Terrain);
         Assert.False(StrictlyInsideAnyBox(p));
-        Assert.Equal(new Vector3(0f, 0f, 10.6f), p);
+        Assert.Equal(new Vector3(0f, 0f, 20.6f), p);
     }
 
     // The same through a death in mid-air: no point of the circle lies inside a box.
     [Fact]
     public void DeathDrop_InMidAirNextToABox_PutsNothingInsideIt()
     {
-        var a = Join(1, new Vector3(0f, 0f, 4f));
-        var b = Join(2, new Vector3(0f, 0.8f, 10.6f));   // joins after a: still in mid-air when a fires
+        var a = Join(1, new Vector3(0f, 0f, 14f));
+        var b = Join(2, new Vector3(0f, 0.8f, 20.6f));   // joins after a: still in mid-air when a fires
         b.Health = 1;
         b.Shield = 0;
         _sent.Clear();
@@ -378,6 +378,26 @@ public class PickupDropTests
         var drops = SpawnedTo(1);
         Assert.Equal(4, drops.Count);   // Auto, Semi, Medium, Heavy
         Assert.All(drops, d => Assert.False(StrictlyInsideAnyBox(d.Position), $"drop at {d.Position} is inside a box"));
+    }
+
+    // Review Focus (Phase 6 D11): a death on the north hill's slope scatters every item onto the terrain, none in the
+    // air or under the ground.
+    [Fact]
+    public void DeathDrop_OnASlope_EveryItemLiesOnTheTerrain()
+    {
+        var a = Join(1, new Vector3(0f, GameMap.Terrain.Height(0f, 30f), 30f));
+        var b = Join(2, new Vector3(0f, GameMap.Terrain.Height(0f, 36f), 36f));
+        b.Health = 1;
+        b.Shield = 0;
+        _sent.Clear();
+
+        ShootAt(a, b);
+
+        Assert.False(b.Alive);
+        var drops = SpawnedTo(1);
+        Assert.Equal(4, drops.Count);   // Auto, Semi, Medium, Heavy
+        Assert.All(drops, d => Assert.Equal(GameMap.Terrain.Height(d.Position.X, d.Position.Z), d.Position.Y));
+        Assert.Contains(drops, d => d.Position.Y != b.State.Position.Y);   // really on the slope, not flat at the feet
     }
 
     // Keep the per-slot fire interval: fire the semi, drop it, pick it up into another slot, and the next

@@ -16,9 +16,9 @@ public class ProtocolConstantsTests
     }
 
     [Fact]
-    public void ProtocolVersion_IsFive()
+    public void ProtocolVersion_IsSix()
     {
-        // Phase 5 added the match packets and Placement in PlayerDied; v4 clients must be rejected at connect.
-        Assert.Equal((ushort)5, ProtocolConstants.ProtocolVersion);
+        // Phase 6 changed the map (terrain and boxes), so movement results differ; v5 clients must be rejected at connect.
+        Assert.Equal((ushort)6, ProtocolConstants.ProtocolVersion);
     }
 }

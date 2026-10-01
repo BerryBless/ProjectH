@@ -7,6 +7,12 @@
       { "kind": "Medkit", "weight": 15 },
       { "kind": "ShieldCell", "weight": 15 }
     ],
+    "Building": [
+      { "kind": "Weapon", "weight": 50 },
+      { "kind": "Ammo", "weight": 20 },
+      { "kind": "Medkit", "weight": 15 },
+      { "kind": "ShieldCell", "weight": 15 }
+    ],
     "Tower": [
       { "kind": "Weapon", "weight": 60 },
       { "kind": "Ammo", "weight": 10 },

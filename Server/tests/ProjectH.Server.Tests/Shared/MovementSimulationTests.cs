@@ -12,7 +12,7 @@ public class MovementSimulationTests
     private static MoveState Run(InputCommand input, int steps, MoveState start = default)
     {
         MoveState state = start;
-        for (int i = 0; i < steps; i++) MovementSimulation.Step(ref state, input, Dt, ReadOnlySpan<Box>.Empty);
+        for (int i = 0; i < steps; i++) MovementSimulation.Step(ref state, input, Dt, ReadOnlySpan<Box>.Empty, HeightField.Flat);
         return state;
     }
 
@@ -67,13 +67,13 @@ public class MovementSimulationTests
     public void Jump_RisesThenLands()
     {
         var s = new MoveState();
-        MovementSimulation.Step(ref s, new InputCommand { Buttons = InputButtons.Jump }, Dt, ReadOnlySpan<Box>.Empty);
+        MovementSimulation.Step(ref s, new InputCommand { Buttons = InputButtons.Jump }, Dt, ReadOnlySpan<Box>.Empty, HeightField.Flat);
         Assert.True(s.Position.Y > 0f);
 
         float peak = s.Position.Y;
         for (int i = 0; i < 60; i++)
         {
-            MovementSimulation.Step(ref s, new InputCommand(), Dt, ReadOnlySpan<Box>.Empty);
+            MovementSimulation.Step(ref s, new InputCommand(), Dt, ReadOnlySpan<Box>.Empty, HeightField.Flat);
             if (s.Position.Y > peak) peak = s.Position.Y;
         }
         Assert.InRange(peak, 1.0f, 1.5f);          // v^2 / 2g = 49 / 40 ≈ 1.2 m
@@ -86,9 +86,9 @@ public class MovementSimulationTests
     {
         var s = new MoveState();
         var jump = new InputCommand { Buttons = InputButtons.Jump };
-        MovementSimulation.Step(ref s, jump, Dt, ReadOnlySpan<Box>.Empty);
+        MovementSimulation.Step(ref s, jump, Dt, ReadOnlySpan<Box>.Empty, HeightField.Flat);
         float vAfterFirst = s.VelocityY;
-        MovementSimulation.Step(ref s, jump, Dt, ReadOnlySpan<Box>.Empty);
+        MovementSimulation.Step(ref s, jump, Dt, ReadOnlySpan<Box>.Empty, HeightField.Flat);
         Assert.True(s.VelocityY < vAfterFirst);
     }
 
@@ -100,8 +100,8 @@ public class MovementSimulationTests
         for (int i = 0; i < 100; i++)
         {
             var input = new InputCommand { Seq = (uint)i, MoveX = (i % 7) / 7f, MoveY = 1f, Yaw = i * 3.3f, Buttons = i % 20 == 0 ? InputButtons.Jump : InputButtons.None };
-            MovementSimulation.Step(ref a, input, Dt, ReadOnlySpan<Box>.Empty);
-            MovementSimulation.Step(ref b, input, Dt, ReadOnlySpan<Box>.Empty);
+            MovementSimulation.Step(ref a, input, Dt, ReadOnlySpan<Box>.Empty, HeightField.Flat);
+            MovementSimulation.Step(ref b, input, Dt, ReadOnlySpan<Box>.Empty, HeightField.Flat);
         }
         Assert.Equal(a.Position, b.Position);
         Assert.Equal(a.VelocityY, b.VelocityY);

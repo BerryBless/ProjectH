@@ -76,9 +76,11 @@ public class MatchStartTests
         h.RunToMatch();
 
         Assert.Equal(MatchFlowState.Playing, h.Match.Flow.State);
+        // Phase 6 D9: each on a different drop point (the harness's lobby ring spots).
+        Assert.NotEqual(a.State.Position, b.State.Position);
         foreach (PlayerEntity p in new[] { a, b })
         {
-            Assert.Equal(Match.SpawnPosition(p.EntityId), p.State.Position);
+            Assert.Contains(p.State.Position, RoyaleHarness.LobbyRingDrops);
             Assert.Equal(CombatRules.MaxHealth, p.Health);
             Assert.Equal(0, p.Shield);
             Assert.True(p.Alive);
@@ -90,11 +92,11 @@ public class MatchStartTests
             // Everyone hears of every teleport (the client re-syncs its prediction as after a respawn).
             Assert.Contains(h.SentTo(1, PacketId.PlayerRespawned), s => RoyaleHarness.ReadRespawned(s).EntityId == p.EntityId);
         }
-        Assert.Equal(17, h.Match.WorldItems.Count);
+        Assert.Equal(LootPoints.All.Length, h.Match.WorldItems.Count);
         Assert.Equal(2, h.Match.Flow.Participants);
         Assert.Equal(2, h.Match.Flow.Alive);
         Assert.Equal(1, h.Match.Zone.Phase);
-        Assert.Equal(17, h.SentTo(2, PacketId.ItemSpawned).Count);
+        Assert.Equal(LootPoints.All.Length, h.SentTo(2, PacketId.ItemSpawned).Count);
     }
 
     // D3: loot seed = LootSeed + round. The same round on two servers rolls the same loot; the next round differs.
@@ -168,7 +170,7 @@ public class MatchStartTests
         a.Kills = 1;
         h.Match.Flow.Finish(h.Match.ServerTick);
         int itemsBefore = h.Match.WorldItems.Count;
-        Assert.Equal(18, itemsBefore);
+        Assert.Equal(LootPoints.All.Length + 1, itemsBefore);
         h.Packets.Clear();
 
         h.TickUntil(() => h.Match.Flow.Round == 2, RoyaleHarness.ResultTicks + 5);
@@ -220,7 +222,7 @@ public class MatchStartTests
         }
         Assert.Equal(MatchFlowState.Playing, h.Match.Flow.State);
         Assert.Equal(2, h.Match.Flow.Participants);
-        Assert.Equal(17, h.Match.WorldItems.Count);
+        Assert.Equal(LootPoints.All.Length, h.Match.WorldItems.Count);
         Assert.Equal(1, h.Match.Zone.Phase);
         // The reset inventories reach their owners (no round-1 items left on a client's HUD).
         Assert.NotEmpty(h.SentTo(1, PacketId.InventoryState));

@@ -19,5 +19,9 @@ namespace ProjectH.Shared.Simulation
 
         // A surface within this distance of the feet counts as ground (D3).
         public const float GroundProbe = 0.02f;
+
+        // Phase 6 D4: the steepest terrain (rise over run) anywhere on the map; every slope is walkable. A walking
+        // character follows a downhill slope while the drop is at most MaxSlope times the distance moved.
+        public const float MaxSlope = 0.6f;
     }
 }

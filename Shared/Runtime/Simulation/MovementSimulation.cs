@@ -6,7 +6,8 @@ namespace ProjectH.Shared.Simulation
     // The one piece of game logic allowed in Shared (see game-core-rules §4): client prediction and
     // the authoritative server run exactly this code. Pure math, no allocation, no engine types.
     // The character is an axis-aligned box (MoveSettings.HalfWidth / Height) with its feet at
-    // MoveState.Position; the world is the y = 0 floor plus the boxes passed in.
+    // MoveState.Position; the world is the terrain (Phase 6 D2-D4) plus the boxes passed in. Every terrain slope is
+    // walkable (GameMapTests), so the terrain never blocks a horizontal move: it only sets the floor height under the feet.
     public static class MovementSimulation
     {
         private const float DegToRad = 0.017453292f;
@@ -14,7 +15,7 @@ namespace ProjectH.Shared.Simulation
         private const int AxisY = 1;
         private const int AxisZ = 2;
 
-        public static void Step(ref MoveState state, in InputCommand input, float deltaTime, ReadOnlySpan<Box> world)
+        public static void Step(ref MoveState state, in InputCommand input, float deltaTime, ReadOnlySpan<Box> world, HeightField terrain)
         {
             // Untrusted input: non-finite values become 0 and the move vector is clamped to length 1,
             // so no input can exceed the configured speed.
@@ -42,34 +43,58 @@ namespace ProjectH.Shared.Simulation
             Vector3 position = state.Position;
 
             // 1) Leave any box we start inside (reconcile snap, rounding): sweeps assume a free start (D4).
-            Depenetrate(ref position, world);
+            Depenetrate(ref position, world, terrain);
 
             // 2) Stateless ground check (D3). Snapping Y onto the surface keeps a standing player at an
             //    exact height, so grounded/airborne never alternates from rounding.
-            if (state.VelocityY <= 0f && TryFindGround(position, world, out float groundY))
+            bool walking = false;
+            if (state.VelocityY <= 0f && TryFindGround(position, world, terrain, out float groundY))
             {
                 position.Y = groundY;
-                state.VelocityY = (input.Buttons & InputButtons.Jump) != 0 ? MoveSettings.JumpSpeed : 0f;
+                bool jump = (input.Buttons & InputButtons.Jump) != 0;
+                state.VelocityY = jump ? MoveSettings.JumpSpeed : 0f;
+                walking = !jump;
             }
             else
             {
                 state.VelocityY += MoveSettings.Gravity * deltaTime;
             }
 
-            // 3) Axis-separated sweeps X -> Z -> Y (D2): a blocked axis stops, the others keep moving.
-            position.X += Sweep(position, AxisX, velocityX * deltaTime, world);
-            position.Z += Sweep(position, AxisZ, velocityZ * deltaTime, world);
+            // 3) Axis-separated sweeps X -> Z (D2): a blocked axis stops, the other keeps moving.
+            float startX = position.X;
+            float startZ = position.Z;
+            position.X += Sweep(position, AxisX, velocityX * deltaTime, world, terrain);
+            position.Z += Sweep(position, AxisZ, velocityZ * deltaTime, world, terrain);
+
+            // 4) Phase 6 D4: uphill the terrain lifts the feet; downhill a walking character follows the slope instead
+            //    of leaving the ground for a tick. MaxSlope bounds the drop over the distance moved, and the Y sweep
+            //    stops on a box top on the way down.
+            float floor = terrain.Height(position.X, position.Z);
+            if (position.Y < floor)
+            {
+                position.Y = floor;
+            }
+            else if (walking)
+            {
+                float dx = position.X - startX;
+                float dz = position.Z - startZ;
+                float reach = MathF.Sqrt(dx * dx + dz * dz) * MoveSettings.MaxSlope + MoveSettings.GroundProbe;
+                float drop = position.Y - floor;
+                if (drop > 0f && drop <= reach) position.Y += Sweep(position, AxisY, -drop, world, terrain);
+            }
+
+            // 5) Y sweep, the floor being the terrain.
             float wantY = state.VelocityY * deltaTime;
-            float movedY = Sweep(position, AxisY, wantY, world);
+            float movedY = Sweep(position, AxisY, wantY, world, terrain);
             if (movedY != wantY) state.VelocityY = 0f;   // landed or hit a ceiling
             position.Y += movedY;
 
             state.Position = position;
         }
 
-        public static bool IsGrounded(in MoveState state, ReadOnlySpan<Box> world)
+        public static bool IsGrounded(in MoveState state, ReadOnlySpan<Box> world, HeightField terrain)
         {
-            return state.VelocityY <= 0f && TryFindGround(state.Position, world, out _);
+            return state.VelocityY <= 0f && TryFindGround(state.Position, world, terrain, out _);
         }
 
         // True if the character box at these feet overlaps any box by more than zero on every axis.
@@ -90,9 +115,10 @@ namespace ProjectH.Shared.Simulation
             return false;
         }
 
-        private static void Depenetrate(ref Vector3 feet, ReadOnlySpan<Box> world)
+        private static void Depenetrate(ref Vector3 feet, ReadOnlySpan<Box> world, HeightField terrain)
         {
-            if (feet.Y < 0f) feet.Y = 0f;
+            float floor = terrain.Height(feet.X, feet.Z);
+            if (feet.Y < floor) feet.Y = floor;
 
             for (int i = 0; i < world.Length; i++)
             {
@@ -118,7 +144,7 @@ namespace ProjectH.Shared.Simulation
                 if (push < best) { best = push; direction = 4; }
                 push = max.Y - box.Min.Y;
                 // Pushing down is only allowed while the feet stay above the floor.
-                if (push < best && feet.Y - push - MoveSettings.Skin >= 0f) { best = push; direction = 5; }
+                if (push < best && feet.Y - push - MoveSettings.Skin >= floor) { best = push; direction = 5; }
 
                 float distance = best + MoveSettings.Skin;
                 switch (direction)
@@ -133,11 +159,13 @@ namespace ProjectH.Shared.Simulation
             }
         }
 
-        // Highest floor or box top within GroundProbe of the feet, under the character's footprint.
-        private static bool TryFindGround(Vector3 feet, ReadOnlySpan<Box> world, out float groundY)
+        // Highest floor or box top within GroundProbe of the feet, under the character's footprint. The terrain floor
+        // is its height under the feet (Phase 6 D4).
+        private static bool TryFindGround(Vector3 feet, ReadOnlySpan<Box> world, HeightField terrain, out float groundY)
         {
-            bool found = feet.Y <= MoveSettings.GroundProbe;
-            groundY = 0f;
+            float floor = terrain.Height(feet.X, feet.Z);
+            bool found = feet.Y <= floor + MoveSettings.GroundProbe;
+            groundY = floor;
 
             float minX = feet.X - MoveSettings.HalfWidth;
             float maxX = feet.X + MoveSettings.HalfWidth;
@@ -162,13 +190,19 @@ namespace ProjectH.Shared.Simulation
         // How far the character may move along one axis (same sign as delta, |result| <= |delta|).
         // Every box that overlaps on the other two axes and lies ahead limits the move to its near
         // face minus Skin, whatever the distance, so a fast fall cannot pass through a thin box.
-        private static float Sweep(Vector3 feet, int axis, float delta, ReadOnlySpan<Box> world)
+        private static float Sweep(Vector3 feet, int axis, float delta, ReadOnlySpan<Box> world, HeightField terrain)
         {
             if (delta == 0f) return 0f;
 
             GetBounds(feet, out Vector3 min, out Vector3 max);
             float limit = MathF.Abs(delta);
-            if (axis == AxisY && delta < 0f && min.Y < limit) limit = min.Y;   // floor plane y = 0, no Skin
+            if (axis == AxisY && delta < 0f)
+            {
+                // The terrain under the feet is the floor, no Skin.
+                float above = min.Y - terrain.Height(feet.X, feet.Z);
+                if (above < 0f) above = 0f;
+                if (above < limit) limit = above;
+            }
 
             for (int i = 0; i < world.Length; i++)
             {

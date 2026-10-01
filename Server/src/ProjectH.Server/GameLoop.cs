@@ -38,8 +38,10 @@ public sealed class GameLoop : IDisposable
     private long _lateTicksSkipped;
     private bool _disposed;
 
-    // loadout: test seam (D1); null = StartingLoadout.Empty, the production start.
-    public GameLoop(ServerOptions options, GameData data, ILogger logger, StartingLoadout? loadout = null)
+    // loadout: test seam (D1); null = StartingLoadout.Empty, the production start. dropPoints: test seam (Phase 6 D9);
+    // null = the map's DropPoints.All.
+    public GameLoop(ServerOptions options, GameData data, ILogger logger, StartingLoadout? loadout = null,
+        System.Numerics.Vector3[]? dropPoints = null)
     {
         string? error = options.Validate();
         if (error != null) throw new ArgumentException(error, nameof(options));
@@ -63,7 +65,7 @@ public sealed class GameLoop : IDisposable
             IPv6Enabled = false,
         };
         listener.Manager = _net;
-        _match = new Match(options, data, SendToPeer, loadout);
+        _match = new Match(options, data, SendToPeer, loadout, dropPoints: dropPoints);
     }
 
     public int LocalPort => _net.LocalPort;

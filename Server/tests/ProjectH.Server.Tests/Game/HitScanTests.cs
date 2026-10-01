@@ -63,8 +63,8 @@ public class HitScanTests
     [Fact]
     public void TraceWorld_StopsAtPillar()
     {
-        // Pillar (9, 1.5, 9), 1 x 3 x 1: near face at z = 8.5.
-        float d = HitScan.TraceWorld(new Vector3(9f, 1.6f, 6f), Vector3.UnitZ, 100f, TestArena.Boxes);
+        // Ruins pillar (-46, 1.5, -46), 1 x 3 x 1: near face at z = -46.5.
+        float d = HitScan.TraceWorld(new Vector3(-46f, 1.6f, -49f), Vector3.UnitZ, 100f, GameMap.Boxes, GameMap.Terrain);
         Assert.Equal(2.5f, d, 4);
     }
 
@@ -72,16 +72,16 @@ public class HitScanTests
     public void TraceWorld_DownwardRay_StopsAtFloor()
     {
         var down = Vector3.Normalize(new Vector3(0f, -1f, 1f));
-        float d = HitScan.TraceWorld(new Vector3(0f, 1.6f, 0f), down, 100f, TestArena.Boxes);
+        float d = HitScan.TraceWorld(new Vector3(0f, 1.6f, 0f), down, 100f, GameMap.Boxes, GameMap.Terrain);
         Assert.Equal(1.6f * MathF.Sqrt(2f), d, 4);
     }
 
     [Fact]
     public void TraceWorld_NothingInRange_ReturnsRange()
     {
-        // From the centre towards +Z: the low box at z 11..13 is only 1 m high, so a 1.6 m ray passes over it,
-        // and the north wall is at z = 19.5, beyond the 10 m range.
-        Assert.Equal(10f, HitScan.TraceWorld(new Vector3(0f, 1.6f, 0f), Vector3.UnitZ, 10f, TestArena.Boxes));
+        // From the centre towards +Z: the crate at z 21..23 is only 1 m high and the north hill starts at z 28,
+        // both beyond the 10 m range.
+        Assert.Equal(10f, HitScan.TraceWorld(new Vector3(0f, 1.6f, 0f), Vector3.UnitZ, 10f, GameMap.Boxes, GameMap.Terrain));
     }
 
     [Fact]

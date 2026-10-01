@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using ProjectH.Server.Game;
 using ProjectH.Server.Game.Zone;
+using ProjectH.Shared.Simulation;
 using Xunit;
 
 namespace ProjectH.Server.Tests.Game;
@@ -25,13 +26,13 @@ public class ZoneDataTests
 
         Assert.Equal(0f, zones.InitialCenter.X);
         Assert.Equal(0f, zones.InitialCenter.Y);
-        Assert.Equal(30f, zones.InitialRadius);
-        Assert.Equal(19.5f, zones.ArenaHalfSize);
+        Assert.Equal(115f, zones.InitialRadius);
+        Assert.Equal(60f, zones.ArenaHalfSize);
         Assert.Equal(5, zones.PhaseCount);
-        // D7 at 30 Hz: (wait, shrink) in ticks, target radius, damage per second.
+        // Phase 6 D12 at 30 Hz: (wait, shrink) in ticks, target radius, damage per second.
         (uint Wait, uint Shrink, float Radius, int Damage)[] expected =
         {
-            (600, 450, 20f, 1), (450, 360, 12f, 2), (360, 300, 6f, 5), (300, 240, 2f, 10), (240, 240, 0f, 20),
+            (1350, 1200, 70f, 1), (1050, 900, 40f, 2), (900, 750, 20f, 5), (750, 600, 8f, 10), (600, 450, 0f, 20),
         };
         for (int i = 0; i < expected.Length; i++)
         {
@@ -43,14 +44,15 @@ public class ZoneDataTests
         }
     }
 
+    // Phase 6 D12: the first circle covers the whole 160 x 160 m map, and every later centre stays well inside it.
     [Fact]
-    public void TestCopy_IsTheShippedFile()
+    public void ShippedFile_CoversTheWholeMap()
     {
-        // TestGameData.ZonesJson stands in for the shipped file in match tests; both are spec §1.
-        ZoneData shipped = ZoneData.LoadFile(Path.Combine(AppContext.BaseDirectory, GameData.ZonesFile), 30);
-        ZoneData test = TestGameData.Zones();
-        Assert.Equal(shipped.PhaseCount, test.PhaseCount);
-        for (int i = 0; i < shipped.PhaseCount; i++) Assert.Equal(shipped.Phase(i), test.Phase(i));
+        ZoneData zones = ZoneData.LoadFile(Path.Combine(AppContext.BaseDirectory, GameData.ZonesFile), 30);
+        float corner = MathF.Sqrt(2f) * GameMap.HalfSize;
+        Assert.True(zones.InitialRadius >= corner + MathF.Sqrt(zones.InitialCenter.X * zones.InitialCenter.X + zones.InitialCenter.Y * zones.InitialCenter.Y),
+            $"initial radius {zones.InitialRadius} does not reach the corners ({corner})");
+        Assert.True(zones.ArenaHalfSize > 0f && zones.ArenaHalfSize <= GameMap.HalfSize - 10f, $"centre bound {zones.ArenaHalfSize}");
     }
 
     [Fact]

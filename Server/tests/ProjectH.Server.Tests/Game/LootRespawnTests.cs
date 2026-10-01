@@ -76,7 +76,7 @@ public class LootRespawnTests
     private const string AmmoOnlyLootJson = """
         {
           "rarityWeights": { "Common": 1, "Uncommon": 1, "Rare": 1, "Epic": 1, "Legendary": 1 },
-          "tables": { "Floor": [ { "kind": "Ammo", "weight": 1 } ], "Tower": [ { "kind": "Ammo", "weight": 1 } ] }
+          "tables": { "Floor": [ { "kind": "Ammo", "weight": 1 } ], "Building": [ { "kind": "Ammo", "weight": 1 } ], "Tower": [ { "kind": "Ammo", "weight": 1 } ] }
         }
         """;
 

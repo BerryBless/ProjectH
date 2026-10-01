@@ -56,7 +56,7 @@ public sealed class CombatIntegrationTests : IDisposable
         Assert.Equal(CombatRules.MaxHealth, b.LastSelf.Health);
         Assert.Equal(TestGameData.LoadoutShield, b.LastSelf.Shield);
 
-        // Both stand on the 5 m spawn ring, which has nothing between its points (TestArena.ClearRadius 7 m).
+        // Both stand on the 5 m spawn ring, which has nothing between its points (the plaza, GameMap.PlazaRadius 12 m).
         Vector3 shooterFeet = a.LastSnapshot[a.MyEntityId].Position;
         Vector3 targetFeet = a.LastSnapshot[b.MyEntityId].Position;
         TestAim.YawPitch(shooterFeet, targetFeet + new Vector3(0f, 1.2f, 0f), out float yaw, out float pitch);

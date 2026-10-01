@@ -157,7 +157,7 @@ public class ItemCatalogTests
         var items = TestGameData.Items();
         var noTower = TestGameData.Loot(items, """
             { "rarityWeights": { "Common": 1, "Uncommon": 1, "Rare": 1, "Epic": 1, "Legendary": 1 },
-              "tables": { "Floor": [ { "kind": "Ammo", "weight": 1 } ] } }
+              "tables": { "Floor": [ { "kind": "Ammo", "weight": 1 } ], "Building": [ { "kind": "Ammo", "weight": 1 } ] } }
             """);
         var ex = Assert.Throws<ArgumentException>(() => new GameData(TestWeapons.Create(), items, noTower, TestGameData.Zones()));
         Assert.Contains("Tower", ex.Message);

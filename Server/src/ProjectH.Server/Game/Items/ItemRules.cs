@@ -60,26 +60,27 @@ public static class ItemRules
     }
 
     // Where a dropped item lies: feet + offset, unless a box is in the way (a wall, even a thin one, or a
-    // box the offset would end inside), then under the feet. Always on the highest surface at or below the
-    // feet (floor or a box top): items do not fall later, so a drop in mid-air or over a box edge must land
-    // now, where a player can reach it.
-    public static Vector3 DropPosition(Vector3 feet, Vector3 offset, ReadOnlySpan<Box> world)
+    // box the offset would end inside), then under the feet. Always on the ground there: the terrain, or the
+    // highest box top at or below the feet (Phase 6 D11). Items do not fall later, so a drop in mid-air or over a
+    // box edge must land now, where a player can reach it. Only boxes block: the terrain never blocks a walk, so a
+    // drop up a slope lands on the slope ahead (Phase 6 spec interpretation 4).
+    public static Vector3 DropPosition(Vector3 feet, Vector3 offset, ReadOnlySpan<Box> world, HeightField terrain)
     {
         Vector3 p = feet + offset;
         float distance = offset.Length();
         if (distance > 0f)
         {
             Vector3 origin = feet + new Vector3(0f, BlockCheckHeight, 0f);
-            if (HitScan.TraceWorld(origin, offset / distance, distance, world) < distance) p = feet;
+            if (HitScan.TraceBoxes(origin, offset / distance, distance, world) < distance) p = feet;
         }
-        p.Y = GroundHeight(p.X, p.Z, feet.Y, world);
+        p.Y = GroundHeight(p.X, p.Z, feet.Y, world, terrain);
         // In mid-air next to a box the knee-height ray can pass over the box, and its top is above the feet
         // so it is not ground: the point would lie inside the box. Then under the feet, which are never
         // inside a box (the character box cannot overlap one).
         if (InsideAnyBox(p, world))
         {
             p = feet;
-            p.Y = GroundHeight(p.X, p.Z, feet.Y, world);
+            p.Y = GroundHeight(p.X, p.Z, feet.Y, world, terrain);
         }
         return p;
     }
@@ -97,9 +98,10 @@ public static class ItemRules
         return false;
     }
 
-    private static float GroundHeight(float x, float z, float feetY, ReadOnlySpan<Box> world)
+    // The terrain height there, or a higher box top at or below the feet.
+    private static float GroundHeight(float x, float z, float feetY, ReadOnlySpan<Box> world, HeightField terrain)
     {
-        float ground = 0f;
+        float ground = terrain.Height(x, z);
         for (int i = 0; i < world.Length; i++)
         {
             ref readonly Box b = ref world[i];

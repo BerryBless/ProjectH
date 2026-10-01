@@ -7,15 +7,15 @@ using Num = System.Numerics;
 
 namespace ProjectH.Client.Tests
 {
-    // Prediction against the Shared TestArena. The server replica below runs the same
-    // MovementSimulation.Step with the same boxes, as Match.Tick does.
-    public class ArenaPredictionTests
+    // Prediction against the Shared GameMap (boxes and terrain). The server replica below runs the same MovementSimulation.Step
+    // with the same world, as Match.Tick does.
+    public class MapPredictionTests
     {
         private const int SimHz = 30;
         private const float Step = 1f / SimHz;
 
-        // Low box (0, 0.5, 12) size 2 x 1 x 2: top at y = 1, x -1..1, z 11..13.
-        private static readonly Num.Vector3 OnLowBox = new Num.Vector3(0f, 1f, 12f);
+        // Low crate (0, 0.5, 22) size 2 x 1 x 2: top at y = 1, x -1..1, z 21..23.
+        private static readonly Num.Vector3 OnLowBox = new Num.Vector3(0f, 1f, 22f);
 
         // Exactly one step per call: from a zero accumulator, Step - Step leaves exactly 0, so long
         // loops never gain an extra step from rounding slop (Advance also caps one call at 0.25 s).
@@ -33,20 +33,42 @@ namespace ProjectH.Client.Tests
         [Test]
         public void WalkingIntoLowBox_PredictionEqualsServer()
         {
-            var spawn = new MoveState { Position = new Num.Vector3(0f, 0f, 9f) };
+            var spawn = new MoveState { Position = new Num.Vector3(0f, 0f, 19f) };
             var predictor = new LocalPlayerPredictor(SimHz, spawn);
             var server = spawn;
             for (int i = 0; i < 30; i++)
             {
                 AdvanceOneStep(predictor, Vector2.up);
-                MovementSimulation.Step(ref server, new InputCommand { MoveY = 1f }, Step, TestArena.Boxes);
+                MovementSimulation.Step(ref server, new InputCommand { MoveY = 1f }, Step, GameMap.Boxes, GameMap.Terrain);
             }
 
             Assert.AreEqual(server.Position.X, predictor.PredictedPosition.x, 1e-6f);
             Assert.AreEqual(server.Position.Y, predictor.PredictedPosition.y, 1e-6f);
             Assert.AreEqual(server.Position.Z, predictor.PredictedPosition.z, 1e-6f);
-            // Stopped by the box side: z = 11 - 0.35 - 0.001.
-            Assert.AreEqual(11f - MoveSettings.HalfWidth - MoveSettings.Skin, predictor.PredictedPosition.z, 1e-3f);
+            // Stopped by the box side: z = 21 - 0.35 - 0.001.
+            Assert.AreEqual(21f - MoveSettings.HalfWidth - MoveSettings.Skin, predictor.PredictedPosition.z, 1e-3f);
+        }
+
+        // Review Focus: over a hill the client's prediction must equal the server, step by step (Phase 6 D3: the
+        // terrain is built with integer math, so both sides have bit-identical heights).
+        [Test]
+        public void WalkingOverTheNorthHill_PredictionEqualsServer()
+        {
+            // North hill: 4 m at (0, 46), 18 m out. Yaw 0 walks +Z from the plaza edge over the top.
+            var spawn = new MoveState { Position = new Num.Vector3(0f, 0f, 26f) };
+            var predictor = new LocalPlayerPredictor(SimHz, spawn);
+            var server = spawn;
+            float top = 0f;
+            for (int i = 0; i < 250; i++)
+            {
+                AdvanceOneStep(predictor, Vector2.up);
+                MovementSimulation.Step(ref server, new InputCommand { MoveY = 1f }, Step, GameMap.Boxes, GameMap.Terrain);
+                Assert.AreEqual(server.Position.X, predictor.PredictedPosition.x, $"step {i}");
+                Assert.AreEqual(server.Position.Y, predictor.PredictedPosition.y, $"step {i}");
+                Assert.AreEqual(server.Position.Z, predictor.PredictedPosition.z, $"step {i}");
+                top = Mathf.Max(top, server.Position.Y);
+            }
+            Assert.Greater(top, 3.9f);
         }
 
         // Review Focus: standing on a box top must not jitter when snapshots reconcile it.
@@ -63,7 +85,7 @@ namespace ProjectH.Client.Tests
             for (uint seq = 1; seq <= 90; seq++)
             {
                 AdvanceOneStep(predictor, Vector2.zero);
-                MovementSimulation.Step(ref server, new InputCommand { Seq = seq }, Step, TestArena.Boxes);
+                MovementSimulation.Step(ref server, new InputCommand { Seq = seq }, Step, GameMap.Boxes, GameMap.Terrain);
                 serverHistory[seq] = server;
 
                 if (seq % 5 == 0)
@@ -87,13 +109,13 @@ namespace ProjectH.Client.Tests
         [Test]
         public void ReconcileIntoPillar_ReplayEndsOutsideEveryBox()
         {
-            var predictor = new LocalPlayerPredictor(SimHz, new MoveState { Position = new Num.Vector3(7f, 0f, 7f) });
+            var predictor = new LocalPlayerPredictor(SimHz, new MoveState { Position = new Num.Vector3(-44f, 0f, -44f) });
             for (int i = 0; i < 3; i++) AdvanceOneStep(predictor, Vector2.zero);
 
-            // Pillar (9, 1.5, 9) size 1 x 3 x 1: this position is its centre.
-            predictor.Reconcile(new SnapshotEntity { Position = new Num.Vector3(9f, 0f, 9f), Flags = SnapshotEntity.AliveFlag }, 1);
+            // Ruins pillar (-46, 1.5, -46) size 1 x 3 x 1: this position is its centre.
+            predictor.Reconcile(new SnapshotEntity { Position = new Num.Vector3(-46f, 0f, -46f), Flags = SnapshotEntity.AliveFlag }, 1);
 
-            Assert.IsFalse(MovementSimulation.OverlapsAny(ToNumerics(predictor.PredictedPosition), TestArena.Boxes));
+            Assert.IsFalse(MovementSimulation.OverlapsAny(ToNumerics(predictor.PredictedPosition), GameMap.Boxes));
         }
     }
 }
