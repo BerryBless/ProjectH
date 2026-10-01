@@ -44,7 +44,7 @@ public sealed class ServerOptions
     {
         if (Port < 0 || Port > 65535) return "Port must be 0-65535.";
         if (MaxPlayers < 1 || MaxPlayers > ProtocolConstants.MaxSnapshotEntities)
-            return $"MaxPlayers must be 1-{ProtocolConstants.MaxSnapshotEntities}: a full snapshot must fit one unfragmented datagram.";
+            return $"MaxPlayers must be 1-{ProtocolConstants.MaxSnapshotEntities}: a snapshot is at most {ProtocolConstants.MaxSnapshotParts} unfragmented datagrams.";
         if (SimHz < 10 || SimHz > 128) return "SimHz must be 10-128.";
         if (SnapshotEveryTicks < 1 || SnapshotEveryTicks > SimHz) return "SnapshotEveryTicks must be 1-SimHz.";
         if (SimHz % SnapshotEveryTicks != 0) return "SnapshotEveryTicks must divide SimHz: SnapshotHz is SimHz / SnapshotEveryTicks.";

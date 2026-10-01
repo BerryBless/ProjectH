@@ -166,7 +166,7 @@ public class PacketTests
     public void Snapshot_RoundTrip_AndRecipientPatch()
     {
         var writer = new PacketWriter(_buffer);
-        WorldSnapshotHeader.Write(ref writer, new WorldSnapshotHeader { ServerTick = 7, AckInputSeq = 0, Count = 2 });
+        WorldSnapshotHeader.Write(ref writer, new WorldSnapshotHeader { ServerTick = 7, AckInputSeq = 0, Count = 2, Part = 1, PartCount = 2 });
         SnapshotEntity.Write(ref writer, new SnapshotEntity { EntityId = 1, Position = new Vector3(1, 2, 3), VelocityY = -1f, Yaw = 10f, Flags = SnapshotEntity.AliveFlag });
         SnapshotEntity.Write(ref writer, new SnapshotEntity { EntityId = 2, Position = new Vector3(4, 5, 6), VelocityY = 0f, Yaw = 20f, Flags = 0 });
         Assert.Equal(WorldSnapshotHeader.Size + 2 * SnapshotEntity.Size, writer.Length);
@@ -179,6 +179,8 @@ public class PacketTests
         Assert.Equal(7u, h.ServerTick);
         Assert.Equal(42u, h.AckInputSeq);
         Assert.Equal(2, h.Count);
+        Assert.Equal(1, h.Part);
+        Assert.Equal(2, h.PartCount);
         Assert.Equal(70, h.Self.Health);
         Assert.Equal(5, h.Self.Shield);
         Assert.Equal(1, h.Self.WeaponSlot);
@@ -186,7 +188,7 @@ public class PacketTests
         Assert.Equal(300, h.Self.ReloadRemainingTicks);
         Assert.True(SnapshotEntity.TryRead(ref reader, out var e1));
         Assert.True(SnapshotEntity.TryRead(ref reader, out var e2));
-        Assert.Equal(new Vector3(1, 2, 3), e1.Position);
+        Assert.Equal(new Vector3(1, 2, 3), e1.Position);   // whole numbers are exact in 1/256 fixed point
         Assert.Equal(-1f, e1.VelocityY);
         Assert.True(e1.IsAlive);
         Assert.Equal(2, e2.EntityId);
@@ -194,13 +196,16 @@ public class PacketTests
         Assert.Equal(0, reader.Remaining);
     }
 
-    // D10: 11 + 6 + 23 * 50 = 1167 bytes must fit one unfragmented datagram (1200).
+    // Phase 8 D3: 19 + 13 * 90 = 1189 bytes must fit one unfragmented datagram (1200).
     [Fact]
-    public void Snapshot_WithMaxEntities_Is1167Bytes_AndFitsOneDatagram()
+    public void SnapshotPacket_WithMaxEntities_Is1189Bytes_AndFitsOneDatagram()
     {
         var writer = new PacketWriter(_buffer);
-        WorldSnapshotHeader.Write(ref writer, new WorldSnapshotHeader { ServerTick = uint.MaxValue, Count = ProtocolConstants.MaxSnapshotEntities });
-        for (int i = 0; i < ProtocolConstants.MaxSnapshotEntities; i++)
+        WorldSnapshotHeader.Write(ref writer, new WorldSnapshotHeader
+        {
+            ServerTick = uint.MaxValue, Count = ProtocolConstants.MaxEntitiesPerSnapshotPacket, Part = 1, PartCount = ProtocolConstants.MaxSnapshotParts,
+        });
+        for (int i = 0; i < ProtocolConstants.MaxEntitiesPerSnapshotPacket; i++)
         {
             SnapshotEntity.Write(ref writer, new SnapshotEntity
             {
@@ -213,17 +218,75 @@ public class PacketTests
         }
 
         Assert.False(writer.Overflowed);
-        Assert.Equal(1167, writer.Length);
+        Assert.Equal(1189, writer.Length);
         Assert.True(writer.Length <= ProtocolConstants.MaxPacketSize);
     }
 
-    [Fact]
-    public void Snapshot_CountAboveLimit_IsRejected()
+    [Theory]
+    [InlineData(ProtocolConstants.MaxEntitiesPerSnapshotPacket + 1, 0, 1)]   // too many entities in one packet
+    [InlineData(1, 0, 0)]                                                       // no parts
+    [InlineData(1, 0, ProtocolConstants.MaxSnapshotParts + 1)]                  // more parts than 100 players need
+    [InlineData(1, 1, 1)]                                                       // part index outside the count
+    public void SnapshotHeader_OutOfRange_IsRejected(int count, int part, int partCount)
     {
         var writer = new PacketWriter(_buffer);
-        WorldSnapshotHeader.Write(ref writer, new WorldSnapshotHeader { ServerTick = 1, Count = ProtocolConstants.MaxSnapshotEntities + 1 });
+        WorldSnapshotHeader.Write(ref writer, new WorldSnapshotHeader { ServerTick = 1, Count = (ushort)count, Part = (byte)part, PartCount = (byte)partCount });
+        for (int i = 0; i < count && i < ProtocolConstants.MaxEntitiesPerSnapshotPacket + 1; i++)
+            SnapshotEntity.Write(ref writer, new SnapshotEntity { EntityId = (ushort)(i + 1) });
         var reader = ReaderAfterId(writer.Length, PacketId.WorldSnapshot);
         Assert.False(WorldSnapshotHeader.TryRead(ref reader, out _));
+    }
+
+    // Phase 8 D4: positions and VelocityY within +-128 come back within half a step (1/512); outside they are clamped.
+    [Fact]
+    public void SnapshotEntity_Quantization_StaysWithinHalfAStep_AndClamps()
+    {
+        var rng = new Random(4);
+        for (int i = 0; i < 2000; i++)
+        {
+            var original = new SnapshotEntity
+            {
+                EntityId = 9,
+                Position = new Vector3((float)(rng.NextDouble() * 250 - 125), (float)(rng.NextDouble() * 30), (float)(rng.NextDouble() * 250 - 125)),
+                VelocityY = (float)(rng.NextDouble() * 60 - 30),
+                Yaw = (float)(rng.NextDouble() * 360),
+                Flags = SnapshotEntity.AliveFlag,
+            };
+            SnapshotEntity back = RoundTrip(original);
+            Assert.Equal(9, back.EntityId);
+            Assert.True(back.IsAlive);
+            Assert.InRange(back.Position.X - original.Position.X, -1f / 512f, 1f / 512f);
+            Assert.InRange(back.Position.Y - original.Position.Y, -1f / 512f, 1f / 512f);
+            Assert.InRange(back.Position.Z - original.Position.Z, -1f / 512f, 1f / 512f);
+            Assert.InRange(back.VelocityY - original.VelocityY, -1f / 512f, 1f / 512f);
+            float yawError = MathF.Abs(back.Yaw - original.Yaw);
+            yawError = MathF.Min(yawError, 360f - yawError);
+            Assert.True(yawError <= 360f / 65536f, $"yaw {original.Yaw} -> {back.Yaw}");
+        }
+
+        // Box tops and terrain vertices are multiples of 1/256 and arrive exactly.
+        Assert.Equal(new Vector3(-46.75f, 6f, 1.03125f), RoundTrip(new SnapshotEntity { Position = new Vector3(-46.75f, 6f, 1.03125f) }).Position);
+        Assert.Equal(SnapshotEntity.Quantize(12.3456f), RoundTrip(new SnapshotEntity { Position = new Vector3(12.3456f, 0f, 0f) }).Position.X);
+
+        SnapshotEntity far = RoundTrip(new SnapshotEntity { Position = new Vector3(500f, -500f, float.NaN), VelocityY = float.PositiveInfinity, Yaw = float.NaN });
+        Assert.Equal(short.MaxValue / 256f, far.Position.X);
+        Assert.Equal(short.MinValue / 256f, far.Position.Y);
+        Assert.Equal(0f, far.Position.Z);
+        Assert.Equal(0f, far.VelocityY);
+        Assert.Equal(0f, far.Yaw);
+
+        Assert.InRange(RoundTrip(new SnapshotEntity { Yaw = -90f }).Yaw, 270f - 0.01f, 270f + 0.01f);
+        float almostFull = RoundTrip(new SnapshotEntity { Yaw = 359.999f }).Yaw;
+        Assert.True(almostFull < 0.01f || almostFull > 359.99f, $"359.999 -> {almostFull}");
+    }
+
+    private SnapshotEntity RoundTrip(SnapshotEntity e)
+    {
+        var writer = new PacketWriter(_buffer);
+        SnapshotEntity.Write(ref writer, e);
+        var reader = new PacketReader(_buffer.AsSpan(0, writer.Length));
+        Assert.True(SnapshotEntity.TryRead(ref reader, out SnapshotEntity back));
+        return back;
     }
 
     [Fact]

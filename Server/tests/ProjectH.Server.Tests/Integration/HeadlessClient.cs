@@ -45,11 +45,13 @@ public sealed class HeadlessClient : IDisposable
     public Dictionary<ushort, SnapshotEntity> LastSnapshot { get; } = new();
     public uint LastAckInputSeq { get; private set; }
     public uint LastServerTick { get; private set; }
+    // Counts snapshot packets, not ticks: above 90 players one tick is two packets.
     public int SnapshotsReceived { get; private set; }
 
     public WeaponInfo[]? Weapons { get; private set; }
     public ItemCatalogData? Items { get; private set; }
     public SnapshotSelf LastSelf { get; private set; }
+    // One entry per snapshot packet, not per tick: above 90 players one tick is two packets.
     public List<SnapshotSelf> SelfHistory { get; } = new();
     public List<ShotFired> Shots { get; } = new();
     public List<HitConfirmed> Hits { get; } = new();
@@ -128,7 +130,8 @@ public sealed class HeadlessClient : IDisposable
                 break;
             case PacketId.WorldSnapshot:
                 if (!WorldSnapshotHeader.TryRead(ref r, out var header)) return;
-                LastSnapshot.Clear();
+                // Phase 8: the packets of one tick add up; a new tick starts over.
+                if (header.ServerTick != LastServerTick) LastSnapshot.Clear();
                 for (int i = 0; i < header.Count; i++)
                 {
                     if (SnapshotEntity.TryRead(ref r, out var e)) LastSnapshot[e.EntityId] = e;

@@ -71,6 +71,33 @@ namespace ProjectH.Client.Tests
             Assert.Greater(top, 3.9f);
         }
 
+        // Phase 8 D4: snapshots arrive quantized (1/256 m). Reconciling every tick against the quantized server state over a
+        // hill must never correct the prediction: the error stays inside the 0.01 m match tolerance, so the predicted
+        // position stays bit-identical to the server's exact one.
+        [Test]
+        public void QuantizedSnapshots_OverAHill_NeverCorrectThePrediction()
+        {
+            var spawn = new MoveState { Position = new Num.Vector3(0f, 0f, 26f) };
+            var predictor = new LocalPlayerPredictor(SimHz, spawn);
+            var server = spawn;
+            var buffer = new byte[SnapshotEntity.Size];
+            for (uint seq = 1; seq <= 250; seq++)
+            {
+                AdvanceOneStep(predictor, Vector2.up);
+                MovementSimulation.Step(ref server, new InputCommand { MoveY = 1f }, Step, GameMap.Boxes, GameMap.Terrain);
+
+                var writer = new PacketWriter(buffer);
+                SnapshotEntity.Write(ref writer, ToEntity(server));
+                var reader = new PacketReader(buffer);
+                Assert.IsTrue(SnapshotEntity.TryRead(ref reader, out SnapshotEntity wire));
+                predictor.Reconcile(wire, seq);
+
+                Assert.AreEqual(server.Position.X, predictor.PredictedPosition.x, $"seq {seq}");
+                Assert.AreEqual(server.Position.Y, predictor.PredictedPosition.y, $"seq {seq}");
+                Assert.AreEqual(server.Position.Z, predictor.PredictedPosition.z, $"seq {seq}");
+            }
+        }
+
         // Review Focus: standing on a box top must not jitter when snapshots reconcile it.
         // Every 5th tick the server entity is perturbed (VelocityY + 0.02, above the match epsilon) and
         // acked two steps late, so Reconcile takes the replay path (restart from the server state, replay 2 inputs).

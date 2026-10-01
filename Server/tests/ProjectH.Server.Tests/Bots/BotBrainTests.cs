@@ -358,4 +358,29 @@ public class BotBrainTests
         for (int i = 0; i < 300; i++) brain.Tick(view, 22f + i / 30f, out _);
         Assert.Equal(before, GC.GetAllocatedBytesForCurrentThread());
     }
+
+    // Phase 8 D8: the packets of one tick add up; the first packet of a new tick starts the list over.
+    [Fact]
+    public void ASnapshotInTwoParts_AddsUp_AndANewTickStartsOver()
+    {
+        BotView view = Create();
+        view.ApplySnapshot(new WorldSnapshotHeader { ServerTick = 10, Part = 0, PartCount = 2 });
+        view.ApplyEntity(new SnapshotEntity { EntityId = 2, Flags = SnapshotEntity.AliveFlag });
+        view.ApplyEntity(new SnapshotEntity { EntityId = 1, Position = new Vector3(3f, 0f, 4f), Flags = SnapshotEntity.AliveFlag });   // ourselves
+        view.ApplySnapshot(new WorldSnapshotHeader { ServerTick = 10, Part = 1, PartCount = 2 });
+        view.ApplyEntity(new SnapshotEntity { EntityId = 3, Flags = SnapshotEntity.AliveFlag });
+        Assert.Equal(2, view.OtherCount);
+        Assert.Equal(new Vector3(3f, 0f, 4f), view.MyPosition);
+
+        view.ApplySnapshot(new WorldSnapshotHeader { ServerTick = 12, Part = 0, PartCount = 2 });
+        view.ApplyEntity(new SnapshotEntity { EntityId = 4, Flags = SnapshotEntity.AliveFlag });
+        Assert.Equal(1, view.OtherCount);
+        Assert.Equal((ushort)4, view.Others[0].EntityId);
+
+        // A lost first part: the second part of a new tick still starts that tick's list.
+        view.ApplySnapshot(new WorldSnapshotHeader { ServerTick = 14, Part = 1, PartCount = 2 });
+        view.ApplyEntity(new SnapshotEntity { EntityId = 5, Flags = SnapshotEntity.AliveFlag });
+        Assert.Equal(1, view.OtherCount);
+        Assert.Equal((ushort)5, view.Others[0].EntityId);
+    }
 }

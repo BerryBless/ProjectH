@@ -113,7 +113,8 @@ public class BotPartsTests
         Assert.Equal(7777, defaults.Port);
 
         Assert.False(BotOptions.TryParse(new[] { "--count", "0" }, out _, out _));
-        Assert.False(BotOptions.TryParse(new[] { "--count", "51" }, out _, out _));
+        Assert.False(BotOptions.TryParse(new[] { "--count", "101" }, out _, out _));
+        Assert.True(BotOptions.TryParse(new[] { "--count", "100" }, out _, out _));
         Assert.False(BotOptions.TryParse(new[] { "--count" }, out _, out _));
         Assert.False(BotOptions.TryParse(new[] { "--count", "many" }, out _, out _));
         Assert.False(BotOptions.TryParse(new[] { "--speed", "3" }, out _, out _));

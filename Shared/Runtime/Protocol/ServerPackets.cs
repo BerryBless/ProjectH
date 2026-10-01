@@ -78,17 +78,22 @@ namespace ProjectH.Shared.Protocol
         }
     }
 
-    // Layout: [PacketId 1][ServerTick 4][AckInputSeq 4][Count 2][SnapshotSelf 6] then Count x SnapshotEntity.
+    // Layout: [PacketId 1][ServerTick 4][AckInputSeq 4][Count 2][Part 1][PartCount 1][SnapshotSelf 6] (19-byte header) then Count x SnapshotEntity.
     // The server writes one payload for everyone and patches AckInputSeq and Self per recipient (D10).
+    // Phase 8 D3: one packet of a snapshot. A tick's snapshot is PartCount packets (Part 0..PartCount-1), each a complete
+    // header (same tick, ack and self block) with its own slice of the entities, so every packet can be applied on its
+    // own: a lost part only means those entities get no sample for that tick.
     public struct WorldSnapshotHeader
     {
-        public const int Size = 17;
+        public const int Size = 19;
         public const int AckInputSeqOffset = 5;
-        public const int SelfOffset = 11;
+        public const int SelfOffset = 13;
 
         public uint ServerTick;
         public uint AckInputSeq;
-        public ushort Count;
+        public ushort Count;       // entities in this packet
+        public byte Part;
+        public byte PartCount;
         public SnapshotSelf Self;
 
         public static void Write(ref PacketWriter writer, in WorldSnapshotHeader h)
@@ -97,6 +102,8 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt32(h.ServerTick);
             writer.WriteUInt32(h.AckInputSeq);
             writer.WriteUInt16(h.Count);
+            writer.WriteByte(h.Part);
+            writer.WriteByte(h.PartCount);
             SnapshotSelf.Write(ref writer, h.Self);
         }
 
@@ -107,8 +114,11 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadUInt32(out h.ServerTick);
             reader.TryReadUInt32(out h.AckInputSeq);
             reader.TryReadUInt16(out h.Count);
+            reader.TryReadByte(out h.Part);
+            reader.TryReadByte(out h.PartCount);
             SnapshotSelf.TryRead(ref reader, out h.Self);
-            if (h.Count > ProtocolConstants.MaxSnapshotEntities) return false;
+            if (h.Count > ProtocolConstants.MaxEntitiesPerSnapshotPacket) return false;
+            if (h.PartCount < 1 || h.PartCount > ProtocolConstants.MaxSnapshotParts || h.Part >= h.PartCount) return false;
             return reader.Remaining >= h.Count * SnapshotEntity.Size;
         }
 
@@ -155,10 +165,16 @@ namespace ProjectH.Shared.Protocol
         }
     }
 
+    // Phase 8 D4: quantized on the wire. Position and VelocityY are signed 16-bit fixed point with 1/256 resolution
+    // (range +-128 m and +-128 m/s; the map is +-80 m), Yaw is 16 bits over 360 degrees. The error is at most half a
+    // step (about 0.002 m per axis), well inside the client's reconcile tolerance (0.01 m). Values outside the range
+    // are clamped; non-finite values are written as 0.
     public struct SnapshotEntity
     {
-        public const int Size = 23; // id 2 + position 12 + velocityY 4 + yaw 4 + flags 1
+        public const int Size = 13; // id 2 + position 3 x 2 + velocityY 2 + yaw 2 + flags 1
         public const byte AliveFlag = 1;
+        public const float FixedScale = 256f;
+        public const float YawScale = 65536f / 360f;
 
         public ushort EntityId;
         public Vector3 Position;
@@ -171,9 +187,11 @@ namespace ProjectH.Shared.Protocol
         public static void Write(ref PacketWriter writer, in SnapshotEntity e)
         {
             writer.WriteUInt16(e.EntityId);
-            writer.WriteVector3(e.Position);
-            writer.WriteSingle(e.VelocityY);
-            writer.WriteSingle(e.Yaw);
+            writer.WriteUInt16(ToFixed(e.Position.X));
+            writer.WriteUInt16(ToFixed(e.Position.Y));
+            writer.WriteUInt16(ToFixed(e.Position.Z));
+            writer.WriteUInt16(ToFixed(e.VelocityY));
+            writer.WriteUInt16(ToYaw(e.Yaw));
             writer.WriteByte(e.Flags);
         }
 
@@ -182,11 +200,38 @@ namespace ProjectH.Shared.Protocol
             e = default;
             if (reader.Remaining < Size) return false;
             reader.TryReadUInt16(out e.EntityId);
-            reader.TryReadVector3(out e.Position);
-            reader.TryReadSingle(out e.VelocityY);
-            reader.TryReadSingle(out e.Yaw);
+            reader.TryReadUInt16(out ushort x);
+            reader.TryReadUInt16(out ushort y);
+            reader.TryReadUInt16(out ushort z);
+            reader.TryReadUInt16(out ushort velocityY);
+            reader.TryReadUInt16(out ushort yaw);
             reader.TryReadByte(out e.Flags);
+            e.Position = new Vector3(FromFixed(x), FromFixed(y), FromFixed(z));
+            e.VelocityY = FromFixed(velocityY);
+            e.Yaw = yaw / YawScale;
             return true;
+        }
+
+        // What the receiver will read back for this value (used by tests).
+        public static float Quantize(float value) => FromFixed(ToFixed(value));
+
+        private static ushort ToFixed(float value)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value)) return 0;
+            float scaled = (float)Math.Round(value * FixedScale);
+            if (scaled > short.MaxValue) scaled = short.MaxValue;
+            if (scaled < short.MinValue) scaled = short.MinValue;
+            return unchecked((ushort)(short)scaled);
+        }
+
+        private static float FromFixed(ushort raw) => unchecked((short)raw) / FixedScale;
+
+        private static ushort ToYaw(float yaw)
+        {
+            if (float.IsNaN(yaw) || float.IsInfinity(yaw)) return 0;
+            float degrees = yaw % 360f;
+            if (degrees < 0f) degrees += 360f;
+            return unchecked((ushort)(int)Math.Round(degrees * YawScale));
         }
     }
 }

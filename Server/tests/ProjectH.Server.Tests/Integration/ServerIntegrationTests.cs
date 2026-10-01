@@ -173,8 +173,9 @@ public sealed class ServerIntegrationTests : IDisposable
     [Fact]
     public void FullMatch_SnapshotWithMaxEntities_IsDelivered()
     {
-        // A 50-entity snapshot is 17 + 23 * 50 = 1167 bytes, sent Sequenced (never fragmented):
-        // the server's MTU must allow a single packet of ProtocolConstants.MaxPacketSize.
+        // Phase 8: 100 players arrive in two Sequenced packets (90 + 10), each at most 19 + 13 * 90 = 1189 bytes, never
+        // fragmented: the server's MTU must allow a single packet of ProtocolConstants.MaxPacketSize. Every client must
+        // end up with all 100 (the parts of one tick add up).
         int max = ProtocolConstants.MaxSnapshotEntities;
         using var server = StartServer(maxPlayers: max);
         var clients = new HeadlessClient[max];

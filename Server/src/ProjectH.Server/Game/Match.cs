@@ -725,32 +725,45 @@ public sealed class Match
         foreach (var p in _players) _send(p.PeerId, data, method);
     }
 
+    // Phase 8 D3: the snapshot is split into packets of at most MaxEntitiesPerSnapshotPacket players. Each packet is one
+    // payload for everyone; AckInputSeq and the self block differ per recipient and are patched in place.
     private void SendSnapshots()
     {
-        if (_players.Count == 0) return;
+        int total = _players.Count;
+        if (total == 0) return;
+        int perPart = ProtocolConstants.MaxEntitiesPerSnapshotPacket;
+        int parts = (total + perPart - 1) / perPart;
 
-        // One payload for everyone; AckInputSeq and the self block differ per recipient and are patched in place.
-        var writer = new PacketWriter(_sendBuffer);
-        WorldSnapshotHeader.Write(ref writer, new WorldSnapshotHeader { ServerTick = ServerTick, AckInputSeq = 0, Count = (ushort)_players.Count });
-        foreach (var p in _players)
+        for (int part = 0; part < parts; part++)
         {
-            SnapshotEntity.Write(ref writer, new SnapshotEntity
+            int first = part * perPart;
+            int count = Math.Min(perPart, total - first);
+            var writer = new PacketWriter(_sendBuffer);
+            WorldSnapshotHeader.Write(ref writer, new WorldSnapshotHeader
             {
-                EntityId = p.EntityId,
-                Position = p.State.Position,
-                VelocityY = p.State.VelocityY,
-                Yaw = p.State.Yaw,
-                Flags = p.Alive ? SnapshotEntity.AliveFlag : (byte)0,
+                ServerTick = ServerTick, AckInputSeq = 0, Count = (ushort)count, Part = (byte)part, PartCount = (byte)parts,
             });
-        }
-        // Cannot overflow: ServerOptions.Validate caps MaxPlayers at MaxSnapshotEntities (17 + 23 * 50 = 1167 bytes).
-        if (writer.Overflowed) return;
+            for (int i = first; i < first + count; i++)
+            {
+                PlayerEntity p = _players[i];
+                SnapshotEntity.Write(ref writer, new SnapshotEntity
+                {
+                    EntityId = p.EntityId,
+                    Position = p.State.Position,
+                    VelocityY = p.State.VelocityY,
+                    Yaw = p.State.Yaw,
+                    Flags = p.Alive ? SnapshotEntity.AliveFlag : (byte)0,
+                });
+            }
+            // Cannot overflow: 19 + 13 * 90 = 1189 bytes, and ServerOptions.Validate caps MaxPlayers at MaxSnapshotEntities.
+            if (writer.Overflowed) return;
 
-        Span<byte> packet = _sendBuffer.AsSpan(0, writer.Length);
-        foreach (var p in _players)
-        {
-            WorldSnapshotHeader.PatchRecipient(packet, p.LastProcessedSeq, SelfBlock(p));
-            _send(p.PeerId, packet, DeliveryMethod.Sequenced);
+            Span<byte> packet = _sendBuffer.AsSpan(0, writer.Length);
+            foreach (var p in _players)
+            {
+                WorldSnapshotHeader.PatchRecipient(packet, p.LastProcessedSeq, SelfBlock(p));
+                _send(p.PeerId, packet, DeliveryMethod.Sequenced);
+            }
         }
     }
 

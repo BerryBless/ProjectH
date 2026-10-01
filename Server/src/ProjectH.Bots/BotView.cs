@@ -42,13 +42,15 @@ public sealed class BotView
     // Phase 7 D4 rule 2: the dev sandbox (no MatchState ever) is always "in a match".
     public bool InMatch => !HasMatchState || Match.State == MatchFlowState.Playing || Match.State == MatchFlowState.FinalPhase;
 
+    // Phase 8: a snapshot can come in several packets of the same tick. The first packet of a new tick starts the list
+    // of others over; later packets of that tick add to it.
     public void ApplySnapshot(in WorldSnapshotHeader header)
     {
+        if (!HasSnapshot || header.ServerTick != ServerTick) OtherCount = 0;
         HasSnapshot = true;
         ServerTick = header.ServerTick;
         AckInputSeq = header.AckInputSeq;
         Self = header.Self;
-        OtherCount = 0;
     }
 
     // One entity of the snapshot just applied. Our own entity sets our position and life; the rest are others.

@@ -1,7 +1,7 @@
 # Networking
 
 Transport: LiteNetLib 2.1.4 (UDP). 프레이밍 `[PacketId: byte][payload]`, little-endian, 수기 직렬화(`PacketWriter`/`PacketReader`).
-`ProtocolVersion`(현재 6. Phase 6: 지형과 새 맵 박스로 이동 결과가 바뀌었다. 패킷 형식은 같다. Phase 3에서 입력 명령·Snapshot 형식이 바뀌고 전투 패킷이 생겼고, Phase 4에서 Buttons가 2B가 되고 무기 카탈로그에 탄약 종류가, 아이템 패킷 6종이 생겼고, Phase 5에서 경기 패킷 3종(`MatchState`, `ZoneState`, `MatchResult`)과 `PlayerDied`의 Placement가 생겼다) 불일치 연결은 접속 단계(`OnConnectionRequest`)에서 `RejectReason.VersionMismatch`로 거절된다. 그 외 거절 사유: `ServerFull`(연결 수 ≥ MaxPlayers), `BadRequest`(연결 데이터 없음·파싱 실패·DevPlayerId 빈 문자열). Client는 거절 사유를 `Rejected: <사유>`로 표시한다.
+`ProtocolVersion`(현재 7. Phase 8: Snapshot을 여러 패킷으로 나누고 엔티티를 양자화했다("Snapshot 분할과 양자화"). Phase 6: 지형과 새 맵 박스로 이동 결과가 바뀌었다. 패킷 형식은 같다. Phase 3에서 입력 명령·Snapshot 형식이 바뀌고 전투 패킷이 생겼고, Phase 4에서 Buttons가 2B가 되고 무기 카탈로그에 탄약 종류가, 아이템 패킷 6종이 생겼고, Phase 5에서 경기 패킷 3종(`MatchState`, `ZoneState`, `MatchResult`)과 `PlayerDied`의 Placement가 생겼다) 불일치 연결은 접속 단계(`OnConnectionRequest`)에서 `RejectReason.VersionMismatch`로 거절된다. 그 외 거절 사유: `ServerFull`(연결 수 ≥ MaxPlayers), `BadRequest`(연결 데이터 없음·파싱 실패·DevPlayerId 빈 문자열). Client는 거절 사유를 `Rejected: <사유>`로 표시한다.
 
 ## MTU
 
@@ -17,7 +17,7 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
 | PlayerSpawned | S→C | ReliableOrdered | EntityId, Position, Yaw |
 | PlayerDespawned | S→C | ReliableOrdered | EntityId |
 | PlayerInput | C→S | Unreliable | 최근 입력 1–3개(Seq, MoveX, MoveY, Yaw, Buttons u16, AimYaw, AimPitch, ViewTick = 명령 1개 30B), 오래된 것부터 |
-| WorldSnapshot | S→C | Sequenced | ServerTick, AckInputSeq(수신자별), Count, 수신자 블록(Health, Shield, WeaponSlot = 현재 인벤토리 칸 0–2, Ammo = 그 칸의 탄창(빈 칸이면 0), ReloadRemainingTicks = 6B, 수신자별), [EntityId, Position, VelocityY, Yaw, Flags(bit0 생존)] |
+| WorldSnapshot | S→C | Sequenced | ServerTick, AckInputSeq(수신자별), Count, Part, PartCount, 수신자 블록(Health, Shield, WeaponSlot = 현재 인벤토리 칸 0–2, Ammo = 그 칸의 탄창(빈 칸이면 0), ReloadRemainingTicks = 6B, 수신자별), [EntityId, Position, VelocityY, Yaw, Flags(bit0 생존)] (엔티티 13B, 양자화) |
 | WeaponCatalog | S→C | ReliableOrdered | Join 응답 직후 1회. 무기 1–8개: WeaponId, Name ≤ 16B, Damage, FireIntervalTicks, MagazineSize, ReloadTicks, Range, Automatic, AmmoType(1 Light, 2 Medium, 3 Heavy) |
 | ItemCatalog | S→C | ReliableOrdered | WeaponCatalog 직후 1회. 등급 5개(Name, DamageMultiplier), 탄약 3종(Type, Name, Max), 소모품 2종(Type, Name, UseTicks, Heal, Shield, MaxStack). 최대 219B |
 | WorldItems | S→C(새로 들어온 사람) | ReliableOrdered | ItemCatalog 직후. 월드 아이템 전체를 50개씩 나눠서: Count 1–50 + [ItemId u16, Kind, DefId, Rarity, Amount u16, Position] × Count(개체마다 19B). 패킷 최대 952B, 256개면 6개 패킷 |
@@ -34,9 +34,13 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
 | ZoneState | S→C(전원, 단계가 바뀐 Tick 끝)·Join | ReliableOrdered | Phase(0 = Zone 없음), From(X, Z, Radius), To(X, Z, Radius), ShrinkStartTick, ShrinkEndTick, DamagePerSecond u16. 36B |
 | MatchResult | S→C(접속 중인 참가자 본인) | ReliableOrdered | WinnerId(0 = 없음), Placement, Kills, Participants. 6B |
 
-- Snapshot 헤더 11B + 수신자 블록 6B + 엔티티 23B. 분할되지 않으므로 `MaxPacketSize` 1200B 이내여야 한다 → 50명 = 17 + 23 × 50 = 1167B(`PacketTests`가 고정), 최대 50 엔티티(`MaxSnapshotEntities`), `MaxPlayers ≤ 50`(기본 16, 시작 시 검증). 서버는 payload를 한 번 쓰고 수신자마다 AckInputSeq와 수신자 블록만 덮어쓴다(`WorldSnapshotHeader.PatchRecipient`).
+- Snapshot 헤더 13B(`Part`, `PartCount` 포함) + 수신자 블록 6B = 19B, 엔티티 13B. LiteNetLib은 Sequenced 패킷을 분할하지 않으므로 패킷 하나가 `MaxPacketSize` 1200B 이내여야 한다 → 패킷당 최대 90명 = 19 + 13 × 90 = 1189B(`PacketTests`가 고정), 50명 = 19 + 13 × 50 = 669B(Phase 7의 1167B에서 -42.7 %). 한 경기 최대 100명(`MaxSnapshotEntities`), Snapshot은 최대 2패킷(`MaxSnapshotParts`), `MaxPlayers ≤ 100`(기본 16, 시작 시 검증). 서버는 payload를 한 번 쓰고 수신자마다 AckInputSeq와 수신자 블록만 덮어쓴다(`WorldSnapshotHeader.PatchRecipient`).
+- **Snapshot 분할과 양자화(Protocol v7, Phase 8):**
+  - 분할: 플레이어 목록을 90명씩 나눠 Part마다 패킷 하나를 보낸다(91–100명이면 90 + 나머지, 2패킷). 패킷마다 같은 Tick·Ack·수신자 블록을 가진 완전한 헤더에 `Part`, `PartCount`가 있다. 읽을 때 `Count ≤ 90`, `1 ≤ PartCount ≤ 2`, `Part < PartCount`를 검증한다(어기면 읽기 실패).
+  - 양자화: 위치 x·y·z와 VelocityY는 부호 있는 16비트 1/256 단위(±128 m, ±128 m/s, 맵은 ±80 m), Yaw는 16비트로 360°를 나눈다. 최대 오차는 축마다 반 단위(약 0.002 m)다. 범위 밖 값은 잘라 넣고 NaN·무한대는 0이다. 구조체 필드는 float 그대로이고 Write/Read에서만 바뀐다(`SnapshotEntity.Quantize`). 내 엔티티도 같은 값을 받고, 오차가 재조정 허용 오차(0.01 m)보다 작아 보정이 일어나지 않는다(Client EditMode 테스트로 고정). 박스 윗면과 지형 꼭짓점은 1/256의 배수라 그대로 전달된다. 실제 예측 불일치로 재조정할 때는 Client가 양자화된 서버 상태에서 다시 시작하므로, 다음 보정까지 재적용한 예측에 축마다 최대 약 0.002 m의 오차가 실릴 수 있다(허용 오차 0.01 m 이내).
+  - 수신 쪽 규칙: 패킷마다 독립적으로 적용한다(재조립·대기 버퍼 없음). 한 패킷을 잃으면 그 안의 플레이어가 그 Tick의 표본 하나를 못 받을 뿐이고 보간이 흡수한다. 원격 플레이어 제거는 Snapshot에 없다는 이유가 아니라 `PlayerDespawned` 이벤트로 한다. 봇·테스트 Client는 같은 Tick의 패킷을 더하고 새 Tick이 오면 처음부터 다시 모은다.
 - Buttons(u16)는 알려진 비트(Jump, Sprint, Fire, Reload, Slot1, Slot2, Slot3, Interact, Drop, UseMedkit, UseShieldCell = 0x07FF)만 남기고 나머지는 버린다. 입력 패킷은 최대 2 + 3 × 30 = 92B다.
-- 이 표의 패킷 크기(`ItemCatalog` 219B, `WorldItems` 952B, `ItemSpawned` 20B, `InventoryState` 22B, 입력 패킷 92B, `MatchState` 11B, `ZoneState` 36B, `MatchResult` 6B 등)는 모두 PacketId 1B를 포함한 전체 바이트 수다. 새 패킷은 모두 1200B 이하다(`ItemPacketTests`, `MatchPacketTests`가 고정). Snapshot 형식은 Phase 3과 같다(50명 1167B). Zone 원은 Snapshot에 싣지 않는다(시작·끝 값과 Tick으로 양쪽이 같은 식으로 보간한다).
+- 이 표의 패킷 크기(`ItemCatalog` 219B, `WorldItems` 952B, `ItemSpawned` 20B, `InventoryState` 22B, 입력 패킷 92B, `MatchState` 11B, `ZoneState` 36B, `MatchResult` 6B 등)는 모두 PacketId 1B를 포함한 전체 바이트 수다. 새 패킷은 모두 1200B 이하다(`ItemPacketTests`, `MatchPacketTests`가 고정). Snapshot 크기는 위 Snapshot 항목을 본다(Phase 7까지는 50명 1167B, v7은 669B). Zone 원은 Snapshot에 싣지 않는다(시작·끝 값과 Tick으로 양쪽이 같은 식으로 보간한다).
 - Client가 "누구를 맞혔다"고 보내는 필드는 없다. 명중은 서버가 조준 방향으로 판정한다.
 - Join 결과: MatchFull이면 응답만 보낸다. 이미 참가한 peer의 중복 Join은 서버 Match에 도달하지 않는다(아래 Validation).
 

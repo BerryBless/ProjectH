@@ -1,6 +1,6 @@
 # Architecture
 
-Phase 7 Bots 기준. 설계 근거: `Docs/specs/2026-09-30-phase0-network-sync-design.md`, `Docs/specs/2026-09-30-phase1-character-prototype-design.md`, `Docs/specs/2026-10-01-phase3-combat-design.md`, `Docs/specs/2026-10-01-phase4-inventory-loot-design.md`, `Docs/specs/2026-10-01-phase5-battle-royale-design.md`, `Docs/specs/2026-10-01-phase6-map-design.md`, `Docs/specs/2026-10-01-phase7-bots-design.md`.
+Phase 8 Optimization 기준. 설계 근거: `Docs/specs/2026-09-30-phase0-network-sync-design.md`, `Docs/specs/2026-09-30-phase1-character-prototype-design.md`, `Docs/specs/2026-10-01-phase3-combat-design.md`, `Docs/specs/2026-10-01-phase4-inventory-loot-design.md`, `Docs/specs/2026-10-01-phase5-battle-royale-design.md`, `Docs/specs/2026-10-01-phase6-map-design.md`, `Docs/specs/2026-10-01-phase7-bots-design.md`, `Docs/specs/2026-10-01-phase8-optimization-design.md`(Snapshot 분할·양자화, 부하 재측정).
 
 ```mermaid
 flowchart LR

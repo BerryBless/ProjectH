@@ -15,7 +15,7 @@ dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 779
 |---|---|---|
 | `--host` | 127.0.0.1 | 서버 주소 |
 | `--port` | 7777 | 1–65535 |
-| `--count` | 1 | 봇 수, 1–50 (한 경기 상한 `MaxSnapshotEntities`) |
+| `--count` | 1 | 봇 수, 1–100 (한 경기 상한 `MaxSnapshotEntities`) |
 | `--seed` | 1 | 난수 시드. 봇 i는 seed + i |
 | `--duration` | 0 | 실행 시간(초). 0 = Ctrl+C까지 |
 | `--connect-interval-ms` | 100 | 봇 접속 사이 간격 0–10000 (접속 폭주 방지) |
@@ -30,7 +30,7 @@ dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 779
 |---|---|
 | `BotOptions` | 명령줄 파싱과 검증 |
 | `BotConnection` | 봇 하나의 LiteNetLib 수동 모드 연결. 패킷을 읽어 `BotView`를 갱신하고 입력 패킷을 보낸다 |
-| `BotView` | 봇이 아는 세계: 내 상태, 다른 플레이어(최대 50), 월드 아이템(최대 256), 경기·Zone 상태, 무기·아이템 Catalog |
+| `BotView` | 봇이 아는 세계: 내 상태, 다른 플레이어(최대 100), 월드 아이템(최대 256), 경기·Zone 상태, 무기·아이템 Catalog |
 | `BotBrain` | 판단과 그 결과의 입력 하나를 만든다. 시각과 난수는 인자로 받는다 |
 | `BotSteering` | 직선 조향, 막힘 탈출 |
 | `BotAim`, `LineOfSight` | 조준 각과 오차, 시선 검사 |
@@ -38,7 +38,7 @@ dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 779
 | `Program` | 진입점, Ctrl+C 처리 |
 
 - 봇 N명을 스레드 하나가 돈다. LiteNetLib 수동 모드(`StartInManualMode`, `ManualUpdate`)라 봇마다 수신 스레드가 없고, 상태를 루프 스레드 하나가 소유하므로 Lock이 없다. 루프는 SimHz(Join 응답 값, 기본 30 Hz)로 돌고, 밀리면 따라잡기는 최대 3 Tick이다.
-- 컬렉션은 모두 상한이 있다(플레이어 50, 아이템 256).
+- 컬렉션은 모두 상한이 있다(플레이어 100, 아이템 256).
 - 판단·입력 Tick은 할당하지 않는다(테스트로 고정).
 - 입력은 Unity Client와 같다: Tick마다 Seq를 1 올리고 최근 입력 3개를 한 패킷에 담는다. 눌림 버튼(점프, E, R, 회복)은 그 Tick에만 싣는다.
 
@@ -70,13 +70,13 @@ dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 779
 
 Client가 받는 정보만 쓴다. 서버 내부 상태는 보지 않는다.
 
-- Snapshot: 모든 플레이어 위치, 생존, 내 Health·Shield·탄창
+- Snapshot: 모든 플레이어 위치, 생존, 내 Health·Shield·탄창. 100명 경기는 Snapshot이 2패킷이라, 같은 Tick의 패킷은 이어 붙이고 새 Tick이 오면 다른 플레이어 목록을 비우고 다시 모은다(`BotView.ApplySnapshot`)
 - 이벤트: 아이템, 인벤토리, 경기 상태, Zone, 사망
 - Shared 맵 데이터: `GameMap` 박스·지형
 
 ## 한계
 
-지금 넣지 않은 것: 길찾기(NavMesh, A*: 건물 안 Loot를 놓칠 때가 있다), 봇 난이도 단계, 팀 AI, 서버 안 봇, 50명 초과(Phase 8), 재접속(Phase 10), Unity의 봇 전용 표시(봇은 일반 원격 플레이어로 보인다). 조준 오차 등 수치는 옵션이 아니라 코드 상수다. 행동은 단조롭다. 목적은 경기·부하 테스트다.
+지금 넣지 않은 것: 길찾기(NavMesh, A*: 건물 안 Loot를 놓칠 때가 있다), 봇 난이도 단계, 팀 AI, 서버 안 봇, 100명 초과, 재접속(Phase 10), Unity의 봇 전용 표시(봇은 일반 원격 플레이어로 보인다). 조준 오차 등 수치는 옵션이 아니라 코드 상수다. 행동은 단조롭다. 목적은 경기·부하 테스트다.
 
 ## 테스트
 

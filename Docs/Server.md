@@ -12,7 +12,7 @@ dotnet test Server/ProjectH.Server.slnx
 | 키 | 기본값 | 범위 / 의미 |
 |---|---|---|
 | Port | 7777 | 0–65535 (UDP) |
-| MaxPlayers | 16 | 1–50 (Snapshot 1200B 한도) |
+| MaxPlayers | 16 | 1–100 (Snapshot은 패킷당 90명 한도로 분할: 91명 이상이면 2패킷) |
 | SimHz | 30 | 10–128 |
 | SnapshotEveryTicks | 2 | 1–SimHz, SimHz의 약수 |
 | InputBufferPerPlayer | 8 | 2–64 |
@@ -52,7 +52,9 @@ Lock을 추가하게 되면 이 문서에 순서를 적는다.
 
 Tick 루프: `DrainControl` → `DrainInput` → `RemoveStalePeers` → `Match.Tick`. Tick이 5 Tick 이상 밀리면 밀린 분을 건너뛴다(`lateTicksSkipped`). Tick 예외는 삼키고 계속 진행한다.
 
-`Match.Tick`은 플레이어마다 `MovementSimulation.Step(ref state, input, 1/SimHz, GameMap.Boxes, GameMap.Terrain)`를 호출한다(Shared 지형과 충돌. 규칙은 `Networking.md` "이동 충돌"). 박스 58개(128개 이하) × 50명 × 30 Hz, 지형 높이 조회는 칸 하나라 무시할 수준이고 할당이 없다. 대기 Spawn은 중앙 광장(반지름 12 m) 안의 5 m 원 위다(`GameMapTests`). 경기 시작은 투입 지점을 쓴다(`BattleRoyale.md`).
+`Match.Tick`은 플레이어마다 `MovementSimulation.Step(ref state, input, 1/SimHz, GameMap.Boxes, GameMap.Terrain)`를 호출한다(Shared 지형과 충돌. 규칙은 `Networking.md` "이동 충돌"). 박스 58개(128개 이하) × 100명 × 30 Hz, 지형 높이 조회는 칸 하나라 무시할 수준이고 할당이 없다. 대기 Spawn은 중앙 광장(반지름 12 m) 안의 5 m 원 위다(`GameMapTests`). 경기 시작은 투입 지점을 쓴다(`BattleRoyale.md`).
+
+Snapshot 송신(Phase 8): `Match.SendSnapshots`가 플레이어 목록을 90명씩 나눠 Part마다 버퍼 하나를 만들고, 수신자마다 Ack·수신자 블록만 덮어써 보낸다(100명이면 수신자당 2패킷, 할당 없음). 형식은 `Networking.md` "Snapshot 분할과 양자화".
 
 전투(Phase 3, 규칙은 `Networking.md` "전투"·"인벤토리와 Loot"): `Match.Tick`은 (Phase 5: 경기 흐름 전환 → Zone 진행·피해) → (`DevRespawn`만) 부활 → (`DevRespawn`만) Loot 재생성 → 입력·이동 → 재장전 완료 → 실제 입력의 사용 취소·칸 선택·버리기·줍기·재장전·발사(`HitScan`)·사용 시작 → 사용 완료 → (Phase 5: 종료 판정) → `ServerTick++` → 바뀐 인벤토리 전송 → (Phase 5: 바뀐 `MatchState`·`ZoneState` 전송) → History 기록 → Snapshot 순서다. 전투 코드는 `Game/Combat/`(`WeaponCatalog`, `WeaponDefinition`, `WeaponRules`, `HitScan`, `CombatRules`, `PositionHistory`)에 있고 Game Loop 스레드만 쓴다. `WeaponCatalog`는 시작 후 바뀌지 않는다. 발사 한 번은 박스 58개 + 지형 칸 + 플레이어 수만큼의 slab 교차이고, 전송은 `_sendBuffer` 하나를 재사용하므로 발사 Tick도 할당이 없다(`LagCompensationTests.FiringTick_AllocatesNothing`).
 
