@@ -8,9 +8,10 @@ public class ProtocolConstantsTests
     [Fact]
     public void SnapshotPacket_FitsInOneDatagram_AndTheMatchFitsInTheParts()
     {
-        // Phase 8: header 13 + self block 6, then 13 bytes per entity; 100 players in 2 packets of at most 90.
-        Assert.Equal(19, WorldSnapshotHeader.Size);
-        Assert.Equal(6, SnapshotSelf.Size);
+        // Phase 8: header 13 + self block, then 13 bytes per entity; 100 players in 2 packets of at most 90. Phase 12 D11:
+        // the self block grew from 6 to 14 bytes (header 27); the entity stays 13.
+        Assert.Equal(27, WorldSnapshotHeader.Size);
+        Assert.Equal(14, SnapshotSelf.Size);
         Assert.Equal(13, SnapshotEntity.Size);
         Assert.Equal(100, ProtocolConstants.MaxSnapshotEntities);
         Assert.True(WorldSnapshotHeader.Size + ProtocolConstants.MaxEntitiesPerSnapshotPacket * SnapshotEntity.Size <= ProtocolConstants.MaxPacketSize);
@@ -20,9 +21,9 @@ public class ProtocolConstantsTests
     }
 
     [Fact]
-    public void ProtocolVersion_IsNine()
+    public void ProtocolVersion_IsTen()
     {
-        // Phase 11 added StatsRequest/StatsResponse and the name in PlayerSpawned; v8 clients must be rejected at connect.
-        Assert.Equal((ushort)9, ProtocolConstants.ProtocolVersion);
+        // Phase 12 changed the snapshot, two packets and the movement itself; v9 clients must be rejected at connect.
+        Assert.Equal((ushort)10, ProtocolConstants.ProtocolVersion);
     }
 }

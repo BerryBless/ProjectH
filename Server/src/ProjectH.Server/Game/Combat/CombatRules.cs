@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Server.Game.Combat;
 
@@ -11,12 +12,35 @@ public static class CombatRules
     public const int MaxShield = 100;
     // Shots start at feet + 1.6 m. The client aims from the same height (AimSolver.EyeHeight).
     public const float EyeHeight = 1.6f;
+    // Phase 12 D13: crouched or sliding (a 1.2 m box) the eye is at 1.0 m, so a crouched player behind cover cannot shoot
+    // over it while it cannot be hit. Must equal the client's AimSolver.CrouchEyeHeight.
+    public const float CrouchEyeHeight = 1.0f;
     public const float MaxPitch = 89f;
     public const float RespawnSeconds = 3f;
     // D6: a shot may rewind other players by at most this much (12 ticks at 30 Hz). The client draws
     // remote players ~133 ms (2 snapshots at 15 Hz) behind the newest snapshot, which uses part of this
     // window; 400 ms keeps RTT up to ~200 ms hittable (CombatRulesTests.MaxRewind_*).
     public const float MaxRewindSeconds = 0.4f;
+
+    // Phase 12 D13: where a shot of a player in this mode starts above its feet.
+    public static float EyeHeightOf(MovementMode mode) =>
+        mode == MovementMode.Crouch || mode == MovementMode.Slide ? CrouchEyeHeight : EyeHeight;
+
+    // Phase 12 D3, D10: fall damage by the landing speed (m/s). A server rule, so its numbers live here, not in Shared
+    // (the simulation only reports the landing speed).
+    public const float FallDamageMinSpeed = 13f;
+    public const float FallDamageMaxSpeed = 30f;
+    public const int FallDamageMax = 100;
+
+    // Phase 12 D10: no damage up to FallDamageMinSpeed, FallDamageMax from FallDamageMaxSpeed on, linear between
+    // (rounded half away from zero). Speeds are the landing's vertical speed in m/s; anything not a number is 0.
+    public static int FallDamage(float landingSpeed)
+    {
+        if (!(landingSpeed > FallDamageMinSpeed)) return 0;
+        if (landingSpeed >= FallDamageMaxSpeed) return FallDamageMax;
+        float share = (landingSpeed - FallDamageMinSpeed) / (FallDamageMaxSpeed - FallDamageMinSpeed);
+        return (int)MathF.Round(share * FallDamageMax, MidpointRounding.AwayFromZero);
+    }
 
     // D8: the shield absorbs first, the rest comes off health (never below 0). Returns true when this
     // damage took health from above 0 to 0.

@@ -13,6 +13,7 @@ public enum BotGoal : byte
     Heal = 4,      // use a Medkit or Shield Cell (rule 5)
     Loot = 5,      // walk to a useful item and press E (rule 6)
     Wander = 6,    // walk to a random point in the zone (rule 7)
+    Deploy = 7,    // Phase 12 D15: ride the transport, jump, steer the fall to the landing target
 }
 
 // Phase 7 D4-D7: one bot's decisions. Decide() re-plans every DecideInterval from the BotView; Act() turns the plan
@@ -42,6 +43,8 @@ public sealed class BotBrain
     public const float StrafeMaxSeconds = 2f;
     public const float CloseRange = 8f;
     public const float FarRange = 25f;
+    // Phase 12 D15: closer than this to the landing target (across the ground) the bot stops steering and drops straight.
+    public const float LandingStopDistance = 5f;
     private const int Memory = 16;
     private const int MaxSightChecks = 3;
 
@@ -68,6 +71,10 @@ public sealed class BotBrain
     private bool _fireToggle;
     private float _bodyYaw;
     private InputButtons _healButton;
+    // Phase 12 D15: one deployment's plan, made when the bot first sees itself aboard.
+    private bool _deploying;
+    private Vector3 _landingTarget;
+    private uint _jumpTick;
 
     public BotBrain(int seed)
     {
@@ -78,6 +85,9 @@ public sealed class BotBrain
     public ushort Target { get; private set; }
     public ushort GoalItem { get; private set; }
     public Vector3 GoalPoint { get; private set; }
+    // Phase 12 D15: the current deployment's landing target and the server tick it jumps at.
+    public Vector3 LandingTarget => _landingTarget;
+    public uint JumpTick => _jumpTick;
 
     // This tick's input. False = send nothing (not joined, or no snapshot yet). A dead or spectating bot returns true
     // with an empty input (Phase 10 D4), so the server's input timeout does not close it.
@@ -94,7 +104,14 @@ public sealed class BotBrain
             // Phase 10 D4: like the Unity client, a dead or spectating bot keeps sending empty inputs (no move, no
             // buttons) while joined, so the server's input timeout does not close it.
             Goal = BotGoal.None;
+            _deploying = false;   // the next life plans its own deployment
             command.Yaw = _bodyYaw;
+            command.ViewTick = view.ServerTick;
+            return true;
+        }
+        // Phase 12 D15: aboard, falling or gliding nothing else is possible (D12): ride, jump, steer the fall.
+        if (Deploy(view, now, ref command))
+        {
             command.ViewTick = view.ServerTick;
             return true;
         }
@@ -111,6 +128,83 @@ public sealed class BotBrain
         Act(view, now, ref command);
         command.ViewTick = view.ServerTick;
         return true;
+    }
+
+    // D15: the plan is made once per deployment, from what a client knows: the route and the places it has heard of
+    // (the POIs and the items the server sent; the loot points are server data). The brain's own seeded Random picks
+    // one, so bots spread over the map. The jump is pressed from the planned tick on, at most every ButtonRepeatSeconds
+    // (a snapshot shows the fall only a little later, and a second press in freefall would open the glider early: the
+    // server opens it at GlideAutoDeployHeight anyway). In the air the bot faces the target and flies forward until it
+    // is above it. Returns false in any other mode.
+    private bool Deploy(BotView view, float now, ref InputCommand command)
+    {
+        MovementMode mode = view.MyMode;
+        if (mode != MovementMode.Transport && mode != MovementMode.Freefall && mode != MovementMode.Glide)
+        {
+            _deploying = false;
+            return false;
+        }
+        Goal = BotGoal.Deploy;
+        if (!_deploying)
+        {
+            // A route that ended before this tick belongs to an earlier round (its snapshot can beat the new route here):
+            // aboard, wait for the new one.
+            if (!view.HasRoute || (mode == MovementMode.Transport && view.ServerTick >= view.Route.EndTick))
+            {
+                command.Yaw = _bodyYaw;
+                return true;
+            }
+            _landingTarget = PickLandingTarget(view);
+            _jumpTick = PlanJumpTick(view.Route, _landingTarget);
+            _deploying = true;
+        }
+
+        Vector3 me = view.MyPosition;
+        float yaw = BotAim.YawTo(me, _landingTarget);
+        command.Yaw = yaw;
+        command.AimYaw = yaw;
+        _bodyYaw = yaw;
+        if (mode == MovementMode.Transport)
+        {
+            if (view.ServerTick + 1 >= _jumpTick && now >= _nextButton)
+            {
+                command.Buttons |= InputButtons.Jump;
+                _nextButton = now + ButtonRepeatSeconds;
+            }
+            return true;
+        }
+        command.MoveY = BotAim.HorizontalDistance(me, _landingTarget) > LandingStopDistance ? 1f : 0f;
+        return true;
+    }
+
+    private Vector3 PickLandingTarget(BotView view)
+    {
+        ReadOnlySpan<MapPoi> pois = MapPois.All;
+        int pick = _rng.Next(pois.Length + view.Items.Count);
+        if (pick < pois.Length)
+        {
+            MapPoi poi = pois[pick];
+            return new Vector3(poi.X, GameMap.Terrain.Height(poi.X, poi.Z), poi.Z);
+        }
+        int index = pick - pois.Length;
+        foreach (KeyValuePair<ushort, WorldItemData> pair in view.Items)
+        {
+            if (index-- == 0) return pair.Value.Position;
+        }
+        return Vector3.Zero;   // not reached: pick is below the item count
+    }
+
+    // D15: the tick the transport passes closest to the target (the target projected on the route), inside the jump window.
+    public static uint PlanJumpTick(in DropRoute route, Vector3 target)
+    {
+        float dx = route.EndX - route.StartX;
+        float dz = route.EndZ - route.StartZ;
+        float lengthSq = dx * dx + dz * dz;
+        float s = lengthSq > 0f ? ((target.X - route.StartX) * dx + (target.Z - route.StartZ) * dz) / lengthSq : 0f;
+        s = Math.Clamp(s, 0f, 1f);
+        uint tick = route.StartTick + (uint)MathF.Round(s * route.DurationTicks);
+        route.JumpWindow(out uint first, out uint last);
+        return Math.Clamp(tick, first, last);
     }
 
     private void Decide(BotView view, float now)
@@ -381,7 +475,8 @@ public sealed class BotBrain
         _steering.Steer(me, goal, now, _rng, out float yaw, out bool jump, out giveUp);
         command.Yaw = yaw;
         command.MoveY = 1f;
-        if (BotAim.HorizontalDistance(me, goal) > SprintDistance) command.Buttons |= InputButtons.Sprint;
+        // Phase 12 D15: stuck, it sprints too, so its unstick jump hurdles a low obstacle and a closed door gives way.
+        if (BotAim.HorizontalDistance(me, goal) > SprintDistance || _steering.Stuck) command.Buttons |= InputButtons.Sprint;
         if (jump) command.Buttons |= InputButtons.Jump;
     }
 

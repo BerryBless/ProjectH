@@ -30,6 +30,7 @@ namespace ProjectH.Client.Game
             public uint Seq;
             public long Step;
             public InputButtons Buttons;
+            public bool Gated;          // Phase 12 D12: no action allowed in this step's mode
             public int Slot;
             public int Ammo;
             public bool Reloading;
@@ -136,12 +137,15 @@ namespace ProjectH.Client.Game
         }
 
         // One predicted input, oldest first. Returns true when the server is expected to fire it.
-        public bool Step(uint seq, InputButtons buttons)
+        // actionsAllowed false (Phase 12 D12: riding, falling, gliding, vaulting): the input acts on nothing, but the fire
+        // button's held state still follows it, like the server's FireHeld, so landing with Fire held does not fire a
+        // semi-automatic weapon without a new press.
+        public bool Step(uint seq, InputButtons buttons, bool actionsAllowed = true)
         {
-            return Run(seq, buttons, _step++);
+            return Run(seq, buttons, !actionsAllowed, _step++);
         }
 
-        private bool Run(uint seq, InputButtons buttons, long now)
+        private bool Run(uint seq, InputButtons buttons, bool gated, long now)
         {
             if (Reloading && now >= _reloadEndStep)
             {
@@ -149,10 +153,12 @@ namespace ProjectH.Client.Game
                 FinishReload();
             }
 
-            bool fired = Apply(buttons, now);
+            bool fired = false;
+            if (gated) _fireHeld = (buttons & InputButtons.Fire) != 0;
+            else fired = Apply(buttons, now);
             _history[seq % HistorySize] = new Record
             {
-                Seq = seq, Step = now, Buttons = buttons, Slot = Slot, Ammo = Ammo, Reloading = Reloading,
+                Seq = seq, Step = now, Buttons = buttons, Gated = gated, Slot = Slot, Ammo = Ammo, Reloading = Reloading,
                 NextFireStep = _slots[Slot].NextFireStep, Light = _reserve[0], Medium = _reserve[1], Heavy = _reserve[2],
             };
             return fired;
@@ -194,7 +200,7 @@ namespace ProjectH.Client.Game
             _fireHeld = (local.Buttons & InputButtons.Fire) != 0;
             _history[ackSeq % HistorySize] = new Record
             {
-                Seq = ackSeq, Step = local.Step, Buttons = local.Buttons, Slot = Slot, Ammo = Ammo, Reloading = Reloading,
+                Seq = ackSeq, Step = local.Step, Buttons = local.Buttons, Gated = local.Gated, Slot = Slot, Ammo = Ammo, Reloading = Reloading,
                 NextFireStep = _slots[Slot].NextFireStep, Light = local.Light, Medium = local.Medium, Heavy = local.Heavy,
             };
 
@@ -204,7 +210,7 @@ namespace ProjectH.Client.Game
             {
                 Record r = _history[seq % HistorySize];
                 if (r.Seq != seq) break;                               // cannot happen while the ack record is valid
-                Run(seq, r.Buttons, _step++);
+                Run(seq, r.Buttons, r.Gated, _step++);
             }
             _step = end;
         }

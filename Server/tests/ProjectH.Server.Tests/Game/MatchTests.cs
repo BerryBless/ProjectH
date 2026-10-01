@@ -194,10 +194,12 @@ public class MatchTests
             Assert.True(player.State.Position.Z > zBefore);
         }
 
-        // After the grace window the player stops walking (a paused client must not keep moving).
-        // Keep ticking long enough to land: no second jump either.
-        float zAfterGrace = player.State.Position.Z;
+        // After the grace window the player stops walking (a paused client must not keep moving). Phase 12 D3: the jump
+        // is still in the air there and keeps its momentum until it lands. Keep ticking long enough to land: no second
+        // jump either, and no more movement.
         for (int i = 0; i < 45; i++) _match.Tick();
+        float zAfterGrace = player.State.Position.Z;
+        for (int i = 0; i < 15; i++) _match.Tick();
         Assert.Equal(zAfterGrace, player.State.Position.Z);
         Assert.Equal(0f, player.State.Position.Y);
         Assert.Equal(1u, player.LastProcessedSeq);

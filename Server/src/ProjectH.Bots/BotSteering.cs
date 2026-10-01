@@ -22,6 +22,10 @@ public sealed class BotSteering
     private float _bestDistance;
     private float _bestTime;
 
+    // Phase 12 D15: the last progress check found no progress. The bot then sprints, so a closed door in the way is
+    // shouldered open (D9) and a low obstacle is hurdled when it jumps (D8).
+    public bool Stuck => _stuckChecks > 0;
+
     // A new goal: the unstick state and the give-up clock start over.
     public void Reset(Vector3 position, Vector3 goal, float now)
     {

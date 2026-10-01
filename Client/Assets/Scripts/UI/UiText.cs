@@ -24,6 +24,12 @@ namespace ProjectH.Client.UI
     public static class UiText
     {
         public const string ZoneName = "자기장";
+        // Phase 12 D10, D14: a fall's name in the kill feed and the result, and the movement hints.
+        public const string FallName = "낙하";
+        public const string HintJump = "[Space] 뛰어내리기";
+        public const string HintGlide = "[Space] 글라이더 펼치기";
+        public const string HintDoorOpen = "[E] 문 열기";
+        public const string HintDoorClose = "[E] 문 닫기";
         public const string Connecting = "접속하는 중...";
         public const string StatsLoading = "불러오는 중...";
         public const string StatsNoAnswer = "응답 없음";
@@ -118,12 +124,17 @@ namespace ProjectH.Client.UI
         public static string Winner(string winnerName) => winnerName == null ? "승자 없음" : "승자: " + winnerName;
 
         // Who ended this player's match: a player, the zone, or nobody yet (won, or still alive).
-        public static string KilledBy(bool died, bool byZone, string killerName)
+        public static string KilledBy(bool died, bool byZone, string killerName) => KilledBy(died, byZone, DeathCause.Zone, killerName);
+
+        // Phase 12 D10: noKiller (KillerId 0) is the zone or a fall, as the cause says.
+        public static string KilledBy(bool died, bool noKiller, DeathCause cause, string killerName)
         {
             if (!died) return string.Empty;
-            if (byZone) return "탈락 원인: " + ZoneName;
+            if (noKiller) return "탈락 원인: " + CauseName(cause);
             return "나를 처치한 플레이어: " + killerName;
         }
+
+        public static string CauseName(DeathCause cause) => cause == DeathCause.Fall ? FallName : ZoneName;
 
         // One-slot cache like Reconnecting.
         public static string NextRound(int secondsLeft)
@@ -163,7 +174,10 @@ namespace ProjectH.Client.UI
         public static string NameOr(string name, ushort entityId) => name ?? "플레이어 " + Int(entityId);
 
         // "가해자 ▸ 피해자"; killer null = the zone (KillerId 0).
-        public static string KillLine(string killer, string victim) => (killer ?? ZoneName) + " ▸ " + victim;
+        public static string KillLine(string killer, string victim) => KillLine(killer, victim, DeathCause.Zone);
+
+        // Phase 12 D10: killer null = the zone or a fall ("낙하 ▸ 피해자").
+        public static string KillLine(string killer, string victim, DeathCause cause) => (killer ?? CauseName(cause)) + " ▸ " + victim;
 
         // ---- Statistics (D8) ----
 
@@ -223,6 +237,32 @@ namespace ProjectH.Client.UI
 
         public static string DebugLine(string state, int roundTripMs, ushort entityId) =>
             "상태 " + state + "   RTT " + Int(roundTripMs) + " ms   Entity " + Int(entityId) + "   (F1)";
+
+        // Phase 12 D14: the movement line. Speeds and the correction in tenths and hundredths, so the caller can rebuild it
+        // only when a shown digit changes (DebugOverlay).
+        public static string MovementLine(string mode, int horizontalTenths, int verticalTenths, int energy, int correctionCentimetres) =>
+            "이동 " + mode + "   수평 " + Tenths(horizontalTenths) + " m/s   수직 " + Tenths(verticalTenths) + " m/s   기력 " + Int(energy) +
+            "   보정 " + Hundredths(correctionCentimetres) + " m";
+
+        // D14: the drop transport's route (there is no map UI).
+        public static string RouteLine(float startX, float startZ, float endX, float endZ) =>
+            "수송기 (" + Int(RoundToInt(startX)) + ", " + Int(RoundToInt(startZ)) + ") → (" + Int(RoundToInt(endX)) + ", " + Int(RoundToInt(endZ)) + ")";
+
+        private static int RoundToInt(float value) => (int)Math.Round(value);
+
+        private static string Tenths(int tenths)
+        {
+            string sign = tenths < 0 ? "-" : string.Empty;
+            int a = Math.Abs(tenths);
+            return sign + Int(a / 10) + "." + Int(a % 10);
+        }
+
+        private static string Hundredths(int hundredths)
+        {
+            string sign = hundredths < 0 ? "-" : string.Empty;
+            int a = Math.Abs(hundredths);
+            return sign + Int(a / 100) + "." + Two(a % 100);
+        }
 
         // ---- Title input (D4) ----
 

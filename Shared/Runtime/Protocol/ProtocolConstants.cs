@@ -10,7 +10,9 @@ namespace ProjectH.Shared.Protocol
         // 7: Phase 8 snapshots (13-byte quantized entities, a snapshot split into up to MaxSnapshotParts packets).
         // 8: Phase 10 hardening (DisconnectCode in the disconnect data, JoinResult.Resumed).
         // 9: Phase 11 game UI (StatsRequest/StatsResponse, the player's name in PlayerSpawned).
-        public const ushort ProtocolVersion = 9;
+        // 10: Phase 12 deployment and traversal (movement modes in the snapshot flags, a 14-byte self block, the Crouch
+        //     button, TransportRoute, DoorStates, the mode in PlayerRespawned, the cause in PlayerDied; movement changed).
+        public const ushort ProtocolVersion = 10;
 
         public const int MaxDevPlayerIdBytes = 32;
 
@@ -70,8 +72,8 @@ namespace ProjectH.Shared.Protocol
         public const int Mtu = 1232;
 
         // Phase 8 D3: the most players a match (and so a snapshot) can hold. A snapshot is split into packets of at most
-        // MaxEntitiesPerSnapshotPacket entities: (1200 - 19 header bytes) / 13 bytes per entity = 90, so 100 players
-        // take MaxSnapshotParts = 2 packets (pinned by PacketTests).
+        // MaxEntitiesPerSnapshotPacket entities: (1200 - 27 header bytes) / 13 bytes per entity = 90 (Phase 12: 1197 bytes,
+        // 3 to spare), so 100 players take MaxSnapshotParts = 2 packets (pinned by PacketTests).
         public const int MaxSnapshotEntities = 100;
         public const int MaxEntitiesPerSnapshotPacket = 90;
         public const int MaxSnapshotParts = (MaxSnapshotEntities + MaxEntitiesPerSnapshotPacket - 1) / MaxEntitiesPerSnapshotPacket;

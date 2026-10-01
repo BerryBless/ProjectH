@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 using System.Numerics;
+using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Shared.Protocol
 {
@@ -84,14 +85,15 @@ namespace ProjectH.Shared.Protocol
         }
     }
 
-    // Layout: [PacketId 1][ServerTick 4][AckInputSeq 4][Count 2][Part 1][PartCount 1][SnapshotSelf 6] (19-byte header) then Count x SnapshotEntity.
+    // Layout: [PacketId 1][ServerTick 4][AckInputSeq 4][Count 2][Part 1][PartCount 1][SnapshotSelf 14] (27-byte header, Phase 12)
+    // then Count x SnapshotEntity.
     // The server writes one payload for everyone and patches AckInputSeq and Self per recipient (D10).
     // Phase 8 D3: one packet of a snapshot. A tick's snapshot is PartCount packets (Part 0..PartCount-1), each a complete
     // header (same tick, ack and self block) with its own slice of the entities, so every packet can be applied on its
     // own: a lost part only means those entities get no sample for that tick.
     public struct WorldSnapshotHeader
     {
-        public const int Size = 19;
+        public const int Size = 27;
         public const int AckInputSeqOffset = 5;
         public const int SelfOffset = 13;
 
@@ -122,7 +124,7 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadUInt16(out h.Count);
             reader.TryReadByte(out h.Part);
             reader.TryReadByte(out h.PartCount);
-            SnapshotSelf.TryRead(ref reader, out h.Self);
+            if (!SnapshotSelf.TryRead(ref reader, out h.Self)) return false;
             if (h.Count > ProtocolConstants.MaxEntitiesPerSnapshotPacket) return false;
             if (h.PartCount < 1 || h.PartCount > ProtocolConstants.MaxSnapshotParts || h.Part >= h.PartCount) return false;
             return reader.Remaining >= h.Count * SnapshotEntity.Size;
@@ -139,15 +141,22 @@ namespace ProjectH.Shared.Protocol
 
     // The recipient's own combat values (D10). Sent in every snapshot, so the HUD recovers even when a
     // Reliable combat event is late.
+    // Phase 12 D11: plus the movement state only the owner needs for prediction (the mode, sprint and exhaustion are in
+    // its entity's flags, the position and VelocityY in the entity). Energy is the exact value (MoveState.EnergySpent);
+    // the horizontal velocity is quantized like the entity's VelocityY.
     public struct SnapshotSelf
     {
-        public const int Size = 6;
+        public const int Size = 14;
 
         public byte Health;
         public byte Shield;
         public byte WeaponSlot;             // loadout index: 0 = Slot1, 1 = Slot2
         public byte Ammo;                   // rounds in the current weapon's magazine
         public ushort ReloadRemainingTicks; // 0 = not reloading; at least 1 while a reload is running
+        public ushort Energy;               // hundredths, 0..MoveState.MaxEnergyHundredths
+        public Vector2 HorizontalVelocity;  // m/s, X and Z
+        public byte ModeTicks;
+        public byte EnergyDelayTicks;
 
         public static void Write(ref PacketWriter writer, in SnapshotSelf s)
         {
@@ -156,6 +165,11 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte(s.WeaponSlot);
             writer.WriteByte(s.Ammo);
             writer.WriteUInt16(s.ReloadRemainingTicks);
+            writer.WriteUInt16(s.Energy);
+            writer.WriteUInt16(SnapshotEntity.ToFixed(s.HorizontalVelocity.X));
+            writer.WriteUInt16(SnapshotEntity.ToFixed(s.HorizontalVelocity.Y));
+            writer.WriteByte(s.ModeTicks);
+            writer.WriteByte(s.EnergyDelayTicks);
         }
 
         public static bool TryRead(ref PacketReader reader, out SnapshotSelf s)
@@ -167,7 +181,13 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadByte(out s.WeaponSlot);
             reader.TryReadByte(out s.Ammo);
             reader.TryReadUInt16(out s.ReloadRemainingTicks);
-            return true;
+            reader.TryReadUInt16(out s.Energy);
+            reader.TryReadUInt16(out ushort velocityX);
+            reader.TryReadUInt16(out ushort velocityZ);
+            reader.TryReadByte(out s.ModeTicks);
+            reader.TryReadByte(out s.EnergyDelayTicks);
+            s.HorizontalVelocity = new Vector2(SnapshotEntity.FromFixed(velocityX), SnapshotEntity.FromFixed(velocityZ));
+            return s.Energy <= MoveState.MaxEnergyHundredths;
         }
     }
 
@@ -175,10 +195,16 @@ namespace ProjectH.Shared.Protocol
     // (range +-128 m and +-128 m/s; the map is +-80 m), Yaw is 16 bits over 360 degrees. The error is at most half a
     // step (about 0.002 m per axis), well inside the client's reconcile tolerance (0.01 m). Values outside the range
     // are clamped; non-finite values are written as 0.
+    // Phase 12 D11: Flags bit 0 alive, bits 1-3 the MovementMode, bit 4 sprinting, bit 5 exhausted (the owner's prediction
+    // needs it; others may show it). Bits 6-7 are 0.
     public struct SnapshotEntity
     {
         public const int Size = 13; // id 2 + position 3 x 2 + velocityY 2 + yaw 2 + flags 1
         public const byte AliveFlag = 1;
+        public const int ModeShift = 1;
+        public const byte ModeMask = 0x0E;
+        public const byte SprintingFlag = 16;
+        public const byte ExhaustedFlag = 32;
         public const float FixedScale = 256f;
         public const float YawScale = 65536f / 360f;
 
@@ -189,6 +215,27 @@ namespace ProjectH.Shared.Protocol
         public byte Flags;
 
         public bool IsAlive => (Flags & AliveFlag) != 0;
+        public bool IsSprinting => (Flags & SprintingFlag) != 0;
+        public bool IsExhausted => (Flags & ExhaustedFlag) != 0;
+
+        // The mode in the flags. A value above Transport (a bad packet) reads as Ground.
+        public MovementMode Mode
+        {
+            get
+            {
+                int mode = (Flags & ModeMask) >> ModeShift;
+                return mode <= (int)MovementMode.Transport ? (MovementMode)mode : MovementMode.Ground;
+            }
+        }
+
+        public static byte MakeFlags(bool alive, MovementMode mode, bool sprinting, bool exhausted)
+        {
+            int flags = ((int)mode << ModeShift) & ModeMask;
+            if (alive) flags |= AliveFlag;
+            if (sprinting) flags |= SprintingFlag;
+            if (exhausted) flags |= ExhaustedFlag;
+            return (byte)flags;
+        }
 
         public static void Write(ref PacketWriter writer, in SnapshotEntity e)
         {
@@ -221,7 +268,8 @@ namespace ProjectH.Shared.Protocol
         // What the receiver will read back for this value (used by tests).
         public static float Quantize(float value) => FromFixed(ToFixed(value));
 
-        private static ushort ToFixed(float value)
+        // Signed 16-bit fixed point (1/256), clamped; non-finite is 0. Also the self block's horizontal velocity.
+        internal static ushort ToFixed(float value)
         {
             if (float.IsNaN(value) || float.IsInfinity(value)) return 0;
             float scaled = (float)Math.Round(value * FixedScale);
@@ -230,7 +278,7 @@ namespace ProjectH.Shared.Protocol
             return unchecked((ushort)(short)scaled);
         }
 
-        private static float FromFixed(ushort raw) => unchecked((short)raw) / FixedScale;
+        internal static float FromFixed(ushort raw) => unchecked((short)raw) / FixedScale;
 
         private static ushort ToYaw(float yaw)
         {

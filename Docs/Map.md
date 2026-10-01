@@ -1,6 +1,6 @@
 # Map
 
-Phase 6 기준. 설계 근거와 결정 D1–D14: `Docs/specs/2026-10-01-phase6-map-design.md`. 데이터는 모두 Shared `Shared/Runtime/Simulation`의 코드 상수이고, 서버와 Client가 같은 값을 쓴다.
+Phase 12 기준(문 5개 추가). 설계 근거와 결정 D1–D14: `Docs/specs/2026-10-01-phase6-map-design.md`, 문: `Docs/specs/2026-10-02-phase12-deployment-traversal-design.md` D9. 데이터는 모두 Shared `Shared/Runtime/Simulation`의 코드 상수이고, 서버와 Client가 같은 값을 쓴다.
 
 ## 크기와 경계
 
@@ -35,9 +35,40 @@ Phase 6 기준. 설계 근거와 결정 D1–D14: `Docs/specs/2026-10-01-phase6-
   - 같은 높이대의 두 박스는 옆으로 맞닿지 않는다. 간격은 0.25 m 이하(모서리 틈)이거나 캐릭터 폭 이상이다.
   - 중앙 광장(반지름 12 m)에는 박스가 없다.
 - **건물:** 단층이다.
-  - 벽은 3 m 높이, 0.5 m 두께다. 문은 1.5 m다.
+  - 벽은 3 m 높이, 0.5 m 두께다. 문 틈은 1.5 m다. 틈에는 문이 들어간다("문").
   - 지붕은 벽 위에 얹는다.
   - 동·서 벽은 남·북 벽에서 0.25 m 떨어진다.
+- **Vault로 넘는 높이(Phase 12, `Movement.md` "판정"):** 박스 윗면의 높이(발 기준)로 정해진다. 장애물 앞 0.8 m 안에서 Jump를 누르면 다음과 같다.
+
+  | 윗면 − 발 | 동작 | 맵의 예 |
+  |---|---|---|
+  | 0.5–1.1 m | Hurdle(달리는 중일 때만. 걸으면 보통 점프) | 1.0 m 낮은 상자(Gearworks (36, 40)·(57, 40), Stonefield 낮은 박스 등) |
+  | 1.1 초과–2.1 m | Mantle(윗면 가장자리 안쪽 0.4 m에 선다) | 1.5 m 상자(Gearworks (34, 60)·(58, 60), 들판 엄폐물). 2.0 m도 같다 |
+  | 2.1 m 초과 | 불가(보통 점프) | 3 m 벽, 3.25 m 지붕, 4 m 외곽벽 |
+
+  도착점에 설 공간이 없거나, 도착점까지의 직선에 다른 상자가 있으면(문·얇은 벽 너머) Vault는 없다. 지형 위 박스는 발이 선 층에서만 센다(바닥이 발보다 0.3 m 넘게 높은 박스는 장애물이 아니다).
+
+## 문 (`GameMap.Doors`, 5개, Phase 12 D9)
+
+- **위치:** 문은 건물 벽의 문 틈(1.5 m)을 채운다. `Doors`의 순서가 `DoorStates`의 비트 번호다(bit i = `Doors[i]`).
+
+  | 번호 | 건물 | 벽 | 중심 (X, Z) |
+  |---|---|---|---|
+  | 0 | Rustvale 집 1 | 남 | (−54, 50.25) |
+  | 1 | Rustvale 집 2 | 남 | (−38, 48.25) |
+  | 2 | Rustvale 집 3 | 북 | (−50, 41.75) |
+  | 3 | Gearworks 창고 | 북 | (46, 55.75) |
+  | 4 | Gearworks 창고 | 남 | (46, 44.25) |
+
+- **크기:** 폭 1.5 m, 높이 3 m(벽과 같다), 두께 0.2 m(`GameMap.DoorThickness`). 벽 두께(0.5 m) 한가운데에 선다. 바닥은 높이 0이다.
+- **`Boxes`에 들어가지 않는 이유:** 문은 열려 있을 수 있고, 닫힌 문은 양옆의 벽 조각에 옆으로 닿는다. `Boxes`에는 "옆으로 닿는 상자가 없다"는 규칙이 있다(박스를 하나씩 밀어내므로 면을 공유하는 두 상자 사이에서 캐릭터가 갇힐 수 있다). 그래서 문은 따로 두고, 닫혀 있을 때만 충돌 세계에 넣는다.
+- **충돌 세계:** 이동·사격·Vault 판정 모두 `Boxes` 뒤에 닫힌 문을 붙인 배열을 쓴다. 서버는 `DoorSet`이, Client 예측은 `PredictedDoors`가 같은 순서로 만든다. 문이 바뀔 때만 배열의 문 부분을 다시 쓴다(Tick마다 할당이 없다). 열린 문은 세계에 없다.
+- **E 규칙(`DoorRules.FindTarget`, 서버. Client 복사본은 `DoorRule`):** E를 누르면 문이 줍기보다 먼저다. 발에서 문 중심까지 수평 2.5 m 안, 바라보는 방향에서 좌우 ±60° 안, 같은 층(발이 문 바닥 1 m 아래부터 문 윗면까지)의 가장 가까운 문이 대상이다. 닫혀 있으면 열고, 열려 있으면 닫는다. 대상 문이 없으면 줍기다.
+- **닫기 조건:** 문 자리에 살아 있는 캐릭터가 하나라도 겹쳐 있으면(겹침은 그 캐릭터의 모드 높이로 본다) 닫히지 않는다. Vault 중인 캐릭터는 남은 직선 경로(현재 위치 → 위치 + 속도 × 남은 Tick, 서 있는 상자로 쓸어 낸 공간)도 문 자리를 차지한 것으로 본다. Vault는 충돌 없이 움직이기 때문이다(최종 검토 B5).
+- **지연 보상:** 문은 되감지 않는다. 사격은 지금 닫혀 있는 문에 막힌다.
+- **밀치기:** 달리는 중이거나 슬라이드 중에 닫힌 문에 막히면 그 문이 열린다. `Step`이 막은 상자를 알려 주고(`StepResult.BlockedBy`, Z 축은 `BlockedByZ`, `Charging`) 둘 중 하나가 문이면 서버가 연다(`DoorSet.DoorBlocking`, Client `PredictedDoors.DoorBlocking`). 문틀 쪽으로 비스듬히 달려 들어가 X 축은 문틀, Z 축은 문에 막혀도 열린다. 공중에서는 달리기가 아니라 밀치지 못한다. 걷기로는 안 열린다. 그 Tick의 이동은 막힌 채로 끝나고 다음 Tick부터 이어진다. 봇은 달리기로 자연히 연다.
+- **전달:** 문이 바뀐 Tick의 끝에 `DoorStates`를 모두에게 보낸다. Join·Resume 때 새로 온 사람에게도 보낸다. 사격은 현재 문 상태로 추적하고 문을 되감지 않는다(고정 박스와 같다). 닫힌 문은 총알을 막는다.
+- **라운드 시작:** 경기 시작 Tick에 모든 문이 닫힌다(그 전에 열려 있던 문도).
 
 ## POI (`MapPois`)
 
@@ -79,4 +110,6 @@ Phase 6 기준. 설계 근거와 결정 D1–D14: `Docs/specs/2026-10-01-phase6-
 1. `GameMap`(박스·언덕), `LootPoints`, `DropPoints`, `MapPois`를 함께 고친다.
 2. `dotnet test Server/ProjectH.Server.slnx --filter "FullyQualifiedName~GameMapTests|FullyQualifiedName~LootPointsTests|FullyQualifiedName~DropPointsTests|FullyQualifiedName~MapPoisTests"`가 통과해야 한다.
 3. 맵이 바뀌면 이동 결과가 바뀐다. `ProtocolConstants.ProtocolVersion`을 올린다.
+   - 문을 바꾸면(개수나 순서) `GameMap.DoorCount`와 `DoorStatesPacket`의 비트 수(마스크 1바이트라 8개까지, 없는 비트는 읽기 실패)를 함께 본다. `Doors` 순서가 비트 번호이므로 순서를 바꾸면 프로토콜이 달라진다. `DoorTests`가 문 5개가 벽 틈을 채우고 다른 상자와 닿지 않는지 검사한다.
+   - Vault 높이 구분(`MovementTuning`의 Hurdle·Mantle 높이)에 걸리는 박스 높이를 바꾸면 `VaultTests`의 맵 테스트(Gearworks 상자)도 본다.
 4. 넓이가 바뀌면 `zones.json`도 맞춘다. 첫 원이 맵 전체를 덮어야 한다(`ZoneDataTests.ShippedFile_CoversTheWholeMap`).

@@ -35,6 +35,9 @@ namespace ProjectH.Client.Game
         private ZoneView _zoneView;
         private PoiLabel _poiLabel;
         private KillFeed _killFeed;
+        // Phase 12 D14: the drop transport and the doors on screen.
+        private TransportView _transportView;
+        private DoorViews _doorViews;
         // Phase 11 D9: entity id -> name from PlayerSpawned. At most one entry per player in the match: removed on
         // despawn, cleared with the match state (disconnect).
         private readonly Dictionary<ushort, string> _names = new Dictionary<ushort, string>();
@@ -48,6 +51,7 @@ namespace ProjectH.Client.Game
         // may leave before the result. Reset by our respawn (the next round) and with the match state.
         private bool _died;
         private bool _killedByZone;
+        private DeathCause _deathCause;   // Phase 12 D10: with no killer, the zone or a fall
         private string _killerName;
         // Phase 11 D8: the newest statistics answer, when the request in effect was sent and when an answer came
         // (unscaled seconds, negative = never). Cleared with the match state.
@@ -55,10 +59,14 @@ namespace ProjectH.Client.Game
         private float _statsSentAt = -1f;
         private float _statsAnsweredAt = -1f;
         private readonly SpectatorCamera _spectator = new SpectatorCamera();
+        // Phase 12 D9: the doors as predicted (server DoorStates plus our own predicted changes); the predictor moves
+        // against them. Phase 12 D5: the match's transport route (TransportRoute), until the next one or a disconnect.
+        private readonly PredictedDoors _doors = new PredictedDoors();
+        private bool _hasRoute;
+        private DropRoute _route;
         private NetClient _net;
         private LocalPlayerPredictor _predictor;
-        private Transform _localView;
-        private Renderer _localRenderer;
+        private PlayerView _localView;
         private readonly RemotePlayers _remotePlayers = new RemotePlayers();
         private ServerClock _clock;
         private WeaponState _weapons;
@@ -136,7 +144,22 @@ namespace ProjectH.Client.Game
         // Counts MatchResults since the start (UiFlow opens the result screen once per new one).
         public int ResultCount { get; private set; }
         public bool DiedThisRound => _died;
+        // True when nobody killed us (KillerId 0): the zone or, since Phase 12, a fall (LastDeathCause says which).
         public bool KilledByZone => _killedByZone;
+        public DeathCause LastDeathCause => _deathCause;
+
+        // Phase 12 D14: the F1 movement line (UiRoot owns the overlay; the values are the local prediction's).
+        public void TickMovementDebug(DebugOverlay overlay, float now)
+        {
+            bool alive = _predictor != null && !_predictor.IsDead;
+            if (!alive)
+            {
+                overlay.TickMovement(now, false, MovementMode.Ground, 0f, 0f, 0f, 0f, _hasRoute, _route);
+                return;
+            }
+            overlay.TickMovement(now, true, _predictor.Mode, _predictor.HorizontalSpeed, _predictor.VerticalSpeed, _predictor.Energy,
+                _predictor.LastCorrection, _hasRoute, _route);
+        }
         public string KillerName => _killerName;
 
         // D7: whole seconds until the current state's timer ends (Starting, Finished), 0 without one.
@@ -238,6 +261,8 @@ namespace ProjectH.Client.Game
             _zoneView = new ZoneView();
             _poiLabel = new PoiLabel();
             _killFeed = new KillFeed();
+            _transportView = new TransportView();
+            _doorViews = new DoorViews();
 
             _net = new NetClient();
             _net.Connected += OnConnected;
@@ -261,13 +286,16 @@ namespace ProjectH.Client.Game
             _net.ZoneStateReceived += OnZoneState;
             _net.MatchResultReceived += OnMatchResult;
             _net.StatsReceived += OnStats;
+            _net.TransportRouteReceived += OnTransportRoute;
+            _net.DoorStatesReceived += OnDoorStates;
         }
 
         private void Update()
         {
             _net.Poll();
             UpdateReconnect();
-            _input.Update();
+            // Phase 12: the same block as below (last frame's UI control, this frame's cursor) for the crouch toggle.
+            _input.Update(_inputBlocked || Cursor.lockState != CursorLockMode.Locked);
             UpdateCursorAndButtons();
 
             if (_clock != null && _clock.IsReady)
@@ -286,14 +314,14 @@ namespace ProjectH.Client.Game
             _camera.ApplyLook(blocked ? Vector2.zero : _input.LookDelta, _aiming);
             InputButtons held = InputButtons.None;
             if (!blocked && _input.Sprint) held |= InputButtons.Sprint;
+            if (!blocked && _input.CrouchHeld) held |= InputButtons.Crouch;   // Phase 12 D7
             if (_fireHeld) held |= InputButtons.Fire;
             if (blocked) _input.QueuedButtons = InputButtons.None;
             InputButtons queued = _input.QueuedButtons;
             _pendingSteps += _predictor.Advance(Time.deltaTime, blocked ? Vector2.zero : _input.Move, _camera.Yaw, held, ref queued);
             _input.QueuedButtons = queued;
 
-            PlayerViewFactory.Pose(_predictor.RenderPosition, _predictor.RenderYaw, !_predictor.IsDead, out Vector3 position, out Quaternion rotation);
-            _localView.SetPositionAndRotation(position, rotation);
+            _localView.Place(_predictor.RenderPosition, _predictor.RenderYaw, _predictor.Mode, _predictor.Sprinting);
         }
 
         private void LateUpdate()
@@ -301,14 +329,23 @@ namespace ProjectH.Client.Game
             // Before the early return: items spin (and are visible) before the local player has spawned. No allocation.
             _worldItems.Tick(Time.time);
             _killFeed.Tick(Time.unscaledTime);
+            // Phase 12 D14: the doors as predicted, and the transport at the render tick (also while spectating). Our own
+            // rider sees it at the tick it is drawn at instead (the predicted tick, or the newest snapshot's before the first
+            // ack), so the transport, the rider and its camera move together.
+            _doorViews.Tick(_doors);
+            bool riding = _predictor != null && !_predictor.IsDead && _predictor.Mode == MovementMode.Transport && _clock != null;
+            _transportView.Tick(riding ? RiderTick() : _renderTick);
             if (_predictor == null) return;
             float now = Time.time;
             bool alive = !_predictor.IsDead;
 
             // D5: dead in a match, the camera follows the watched player where it is drawn; otherwise our own view.
             _spectator.Update(_remotePlayers);
-            Vector3 followFeet = _spectator.TryGetFeet(_remotePlayers, _renderTick, out Vector3 watched) ? watched : _predictor.RenderPosition;
-            _camera.Follow(followFeet, _aiming, Time.deltaTime);
+            bool watching = _spectator.TryGetFeet(_remotePlayers, _renderTick, out Vector3 watched);
+            Vector3 followFeet = watching ? watched : _predictor.RenderPosition;
+            // Phase 12 D14: the camera eases to our own mode (a watched player gets the standard camera).
+            MovementMode mode = watching || !alive ? MovementMode.Ground : _predictor.Mode;
+            _camera.Follow(followFeet, _aiming, Time.deltaTime, mode, !watching && alive && _predictor.Sprinting);
             // Phase 6 D7: the place name of whoever the camera follows. Text changes only when the place does.
             _poiLabel.SetVisible(true);
             _poiLabel.SetPosition(followFeet);
@@ -342,13 +379,44 @@ namespace ProjectH.Client.Game
             _fireEffects.Tick(now);
 
             _hud.SetVitals(_health, _shield);
+            // Phase 12 D14: the energy bar (hidden when full and not sprinting) and the hint line.
+            float energy = _predictor.Energy / MovementTuning.MaxEnergy;
+            bool onFoot = LocalPlayerPredictor.ActionsAllowed(_predictor.Mode);
+            // Shown on foot and in the air alike (the energy recovers while falling, too).
+            _hud.SetEnergy(energy, alive && (energy < 1f || _predictor.Sprinting), _predictor.Exhausted);
+            int door = alive && onFoot ? DoorRule.FindTarget(_predictor.PredictedPosition.ToNumerics(), _predictor.RenderYaw, GameMap.Doors) : -1;
+            _hud.SetHint(Hint(alive, door));
             if (_weapons != null && _weapons.HasWeapon) _hud.SetWeapon(_weapons.Current.Name, _weapons.Ammo, _weapons.Reserve, _weapons.Reloading);
             else _hud.ClearWeapon();
             _hud.Tick(_camera.Yaw, now);
 
-            UpdateInventoryHud(alive, now);
+            // D9, D12: E means the door first, and aboard, falling or vaulting it does nothing: no item prompt then.
+            UpdateInventoryHud(alive, onFoot && door < 0, now);
             UpdateMatchHud(alive);
         }
+
+        // Phase 12 D14: aboard (inside the jump window) "jump", in freefall "glider", next to a door "open"/"close".
+        private string Hint(bool alive, int door)
+        {
+            if (!alive) return null;
+            switch (_predictor.Mode)
+            {
+                case MovementMode.Transport:
+                    if (!_hasRoute) return null;
+                    _route.JumpWindow(out uint first, out uint last);
+                    // The tick the next input is simulated at (before the first ack: the newest snapshot's).
+                    uint tick = _predictor.HasTickBase ? _predictor.PredictedTick : _clock.LatestTick;
+                    return tick >= first && tick < last ? UiText.HintJump : null;
+                case MovementMode.Freefall:
+                    return UiText.HintGlide;
+            }
+            if (door < 0) return null;
+            return _doors.IsOpen(door) ? UiText.HintDoorClose : UiText.HintDoorOpen;
+        }
+
+        // The server tick our rider is drawn at: the predicted one, or before the first ack (the rider held at the server's
+        // position) the newest snapshot's. Only called with a predictor and a clock.
+        private double RiderTick() => _predictor.HasTickBase ? _predictor.RenderTick : _clock.LatestTick;
 
         // D14: state line, zone line and circle, red edges outside the zone, spectating. Strings are rebuilt only on
         // change (MatchHudText). Times use the estimated current server tick: the render tick plus the interpolation
@@ -373,7 +441,8 @@ namespace ProjectH.Client.Game
         }
 
         // D15: slots, heals, the heal bar and the "[E]" prompt. Strings are rebuilt only on change (InventoryHudText).
-        private void UpdateInventoryHud(bool alive, float now)
+        // Phase 12: prompt false hides the item prompt only (the heal bar stays).
+        private void UpdateInventoryHud(bool alive, bool prompt, float now)
         {
             _inventoryHud.Tick(now);
             if (_weapons == null || _itemCatalog == null) return;
@@ -391,7 +460,7 @@ namespace ProjectH.Client.Game
             _inventoryHud.SetUseProgress(channel ? 1f - Mathf.Clamp01((_useEndTime - now) / _useSeconds) : -1f);
 
             // Same rule as the server (PickupRule): the prompt names the item E will take.
-            int target = alive ? PickupRule.FindNearest(_worldItems.Items, _predictor.PredictedPosition.ToNumerics()) : -1;
+            int target = alive && prompt ? PickupRule.FindNearest(_worldItems.Items, _predictor.PredictedPosition.ToNumerics()) : -1;
             if (target < 0)
             {
                 _inventoryHud.SetPrompt(0, 0, null, null);
@@ -444,9 +513,13 @@ namespace ProjectH.Client.Game
             _net.ZoneStateReceived -= OnZoneState;
             _net.MatchResultReceived -= OnMatchResult;
             _net.StatsReceived -= OnStats;
+            _net.TransportRouteReceived -= OnTransportRoute;
+            _net.DoorStatesReceived -= OnDoorStates;
             _net.Dispose();
             ClearMatchState();
             _killFeed.Dispose();
+            _doorViews.Dispose();
+            _transportView.Dispose();
             _zoneView.Dispose();
             _matchHud.Dispose();
             _poiLabel.Dispose();
@@ -527,7 +600,9 @@ namespace ProjectH.Client.Game
             for (int i = count - 1; i >= 0; i--)
             {
                 uint seq = newest - (uint)i;
-                if (_weapons.Step(seq, _predictor.InputAt(seq).Buttons)) shots++;
+                // Phase 12 D12: riding, falling, gliding or vaulting, the server takes no action from the input (it only
+                // follows the held fire button).
+                if (_weapons.Step(seq, _predictor.InputAt(seq).Buttons, _predictor.ActionsAllowedAt(seq))) shots++;
             }
             return shots;
         }
@@ -633,11 +708,13 @@ namespace ProjectH.Client.Game
             if (spawned.EntityId == MyEntityId)
             {
                 if (_predictor != null) return;
-                _predictor = new LocalPlayerPredictor(_simHz, new MoveState { Position = spawned.Position, Yaw = spawned.Yaw });
-                // A key pressed while waiting for the spawn must not act on the first step.
+                // Phase 12: the spawn carries no mode; a resumed player in the air gets it from the next snapshot.
+                _predictor = new LocalPlayerPredictor(_simHz, new MoveState { Position = spawned.Position, Yaw = spawned.Yaw }, _doors);
+                if (_hasRoute) _predictor.SetRoute(_route);
+                // A key pressed while waiting for the spawn must not act on the first step, and it starts standing.
                 _input.QueuedButtons = InputButtons.None;
+                _input.ResetCrouch();
                 _localView = PlayerViewFactory.Create($"Player {spawned.EntityId} (you)", true);
-                _localRenderer = _localView.GetComponent<Renderer>();
                 _health = 0;
                 _shield = 0;
                 _hud.SetVisible(true);
@@ -667,7 +744,7 @@ namespace ProjectH.Client.Game
             {
                 if (entities[i].EntityId == MyEntityId)
                 {
-                    if (_predictor != null) _predictor.Reconcile(entities[i], header.AckInputSeq);
+                    if (_predictor != null) _predictor.Reconcile(entities[i], header.Self, header.AckInputSeq, header.ServerTick);
                 }
                 else
                 {
@@ -698,19 +775,22 @@ namespace ProjectH.Client.Game
             // Phase 11 D10: every death but the "you are spectating" notice a newcomer gets at join (Match sends it with
             // no killer and no placement; a zone death in a match has a placement, and the dev sandbox has no zone). The
             // line is built once here, so the feed allocates per death, never per frame.
-            bool notice = died.KillerId == 0 && died.Placement == 0;
+            // Phase 12 D10: a fall also has no killer and, in the dev sandbox, no placement: its cause tells it apart.
+            bool notice = died.KillerId == 0 && died.Placement == 0 && died.Cause == DeathCause.Zone;
             string killer = died.KillerId == 0 ? null : UiText.NameOr(NameOf(died.KillerId), died.KillerId);
-            if (!notice) _killFeed.Add(UiText.KillLine(killer, UiText.NameOr(NameOf(died.VictimId), died.VictimId)), Time.unscaledTime);
+            if (!notice) _killFeed.Add(UiText.KillLine(killer, UiText.NameOr(NameOf(died.VictimId), died.VictimId), died.Cause), Time.unscaledTime);
 
             if (died.VictimId != MyEntityId || _predictor == null) return;
             if (!notice)
             {
                 _died = true;
                 _killedByZone = died.KillerId == 0;
+                _deathCause = died.Cause;
                 _killerName = killer;
             }
             _predictor.SetDead();
-            PlayerViewFactory.SetAlive(_localRenderer, null, true, false);
+            _input.ResetCrouch();
+            _localView.SetAlive(false);
             // D4, D5: in a match death is permanent, so no respawn countdown: watch the killer instead. A newcomer
             // during a match is told the same way (KillerId 0). The dev sandbox keeps the Phase 3 countdown.
             if (_hasMatch)
@@ -733,16 +813,19 @@ namespace ProjectH.Client.Game
                 return;
             }
             if (_predictor == null) return;
-            // Also the match start and the round reset (Phase 5 D3, D13): the same teleport, Seq continues.
-            _predictor.Respawn(new MoveState { Position = respawned.Position, Yaw = respawned.Yaw });
+            // Also the match start and the round reset (Phase 5 D3, D13): the same teleport, Seq continues. Phase 12: aboard
+            // the drop transport at a match start.
+            _predictor.Respawn(new MoveState { Position = respawned.Position, Yaw = respawned.Yaw, Mode = respawned.Mode });
             _input.QueuedButtons = InputButtons.None;
+            _input.ResetCrouch();
             _spectator.End();
             _died = false;
             _killedByZone = false;
+            _deathCause = DeathCause.Zone;
             _killerName = null;
             // Empty until the server's InventoryState for the new life arrives (sent right after this event).
             if (_weapons != null) _weapons.Clear();
-            PlayerViewFactory.SetAlive(_localRenderer, null, true, true);
+            _localView.SetAlive(true);
             _hud.HideDeath();
         }
 
@@ -754,8 +837,13 @@ namespace ProjectH.Client.Game
                 _hasMatch = true;
                 _matchHud.SetVisible(true);
             }
-            // The result stays up during Finished and goes with the next round's countdown.
-            if (state.State == MatchFlowState.WaitingForPlayers || state.State == MatchFlowState.Starting) _hasResult = false;
+            // The result stays up during Finished and goes with the next round's countdown. Phase 12: so does the last
+            // round's transport route (the next one comes with the next match start, after this state).
+            if (state.State == MatchFlowState.WaitingForPlayers || state.State == MatchFlowState.Starting)
+            {
+                _hasResult = false;
+                ClearRoute();
+            }
         }
 
         private void OnZoneState(ZoneState zone)
@@ -770,6 +858,28 @@ namespace ProjectH.Client.Game
             _result = result;
             _hasResult = true;
             ResultCount++;
+        }
+
+        // Phase 12 D5: sent before the match start's respawns (and at a join or resume during the match).
+        private void OnTransportRoute(DropRoute route)
+        {
+            _route = route;
+            _hasRoute = true;
+            if (_predictor != null) _predictor.SetRoute(route);
+            _transportView.SetRoute(route);
+        }
+
+        private void ClearRoute()
+        {
+            if (!_hasRoute) return;
+            _hasRoute = false;
+            if (_predictor != null) _predictor.ClearRoute();
+            _transportView.Clear();
+        }
+
+        private void OnDoorStates(byte openMask)
+        {
+            _doors.ApplyServer(openMask);
         }
 
         private void OnStats(StatsResponse response)
@@ -815,9 +925,8 @@ namespace ProjectH.Client.Game
         private void ClearMatchState()
         {
             _predictor = null;
-            if (_localView != null) Destroy(_localView.gameObject);
+            _localView?.Destroy();
             _localView = null;
-            _localRenderer = null;
             _remotePlayers.Clear();
             _clock = null;
             _weapons = null;
@@ -836,10 +945,14 @@ namespace ProjectH.Client.Game
             _killFeed.Clear();
             _died = false;
             _killedByZone = false;
+            _deathCause = DeathCause.Zone;
             _killerName = null;
             _stats = null;
             _statsSentAt = -1f;
             _statsAnsweredAt = -1f;
+            _doors.Reset();
+            _hasRoute = false;
+            _transportView.Clear();
             _spectator.End();
             _zoneView.Clear();
             _matchHud.SetOutside(false);

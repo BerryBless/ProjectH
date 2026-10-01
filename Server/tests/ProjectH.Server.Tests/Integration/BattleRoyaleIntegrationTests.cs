@@ -30,6 +30,9 @@ public sealed class BattleRoyaleIntegrationTests : IDisposable
             ResultSeconds = 1,
             DisconnectTimeoutMs = 1000,
             StatsIntervalSeconds = 60,
+            // Phase 12: this test fights right after the start on its two drop spots; deployment over UDP is covered by
+            // ReconnectIntegrationTests (AirDrop on).
+            AirDrop = false,
         }, TestGameData.Create(), NullLogger.Instance, TestGameData.CombatLoadout, TwoDropSpots);
         _server.Start();
     }

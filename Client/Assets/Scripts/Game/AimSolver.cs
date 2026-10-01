@@ -1,3 +1,4 @@
+using ProjectH.Shared.Simulation;
 using UnityEngine;
 
 namespace ProjectH.Client.Game
@@ -9,9 +10,15 @@ namespace ProjectH.Client.Game
     {
         // Must equal the server's CombatRules.EyeHeight (feet + 1.6 m, also ShoulderCameraMath.PivotHeight).
         public const float EyeHeight = 1.6f;
+        // Phase 12 D13: crouched or sliding. Must equal the server's CombatRules.CrouchEyeHeight.
+        public const float CrouchEyeHeight = 1.0f;
         // The server clamps pitch to the same range.
         public const float MaxPitch = 89f;
         private const float MinDistance = 0.01f;
+
+        // Phase 12 D13: the eye height of a mode, as the server's CombatRules.EyeHeightOf.
+        public static float EyeHeightOf(MovementMode mode) =>
+            mode == MovementMode.Crouch || mode == MovementMode.Slide ? CrouchEyeHeight : EyeHeight;
 
         // yaw 0 faces +Z, yaw 90 faces +X, positive pitch looks down (ShoulderCameraMath.Forward).
         // False when the target is too close to the eye to give a direction.

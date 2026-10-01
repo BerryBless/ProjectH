@@ -16,11 +16,18 @@ namespace ProjectH.Client.Game
         private const float DamageIndicatorSeconds = 1f;
         private const float DamageIndicatorRadius = 90f;
         private const int FontSize = 22;
+        // Phase 12 D14: the energy bar above the vitals line (full width = full energy).
+        private const float EnergyBarWidth = 220f;
+        private const float EnergyBarHeight = 8f;
 
         private readonly GameObject _root;
         private readonly Text _vitals;
         private readonly Text _weapon;
         private readonly Text _center;
+        private readonly Text _hint;
+        private readonly GameObject _energyBar;
+        private readonly RectTransform _energyFill;
+        private readonly Image _energyFillImage;
         private readonly GameObject _hitMarker;
         private readonly Image[] _hitBars = new Image[4];
         private readonly RectTransform _damageIndicator;
@@ -37,6 +44,9 @@ namespace ProjectH.Client.Game
         private float _damageYaw;       // world yaw of the attacker direction, degrees
         private float _respawnAt = -1f; // local time of the expected respawn; < 0 when alive
         private int _countdown = -1;
+        private string _hintText;
+        private int _energyPixels = -1;
+        private bool _energyExhausted;
 
         public CombatHud()
         {
@@ -49,6 +59,25 @@ namespace ProjectH.Client.Game
             _vitals = CreateText("Vitals", font, new Vector2(0f, 0f), new Vector2(20f, 20f), TextAnchor.LowerLeft);
             _weapon = CreateText("Weapon", font, new Vector2(1f, 0f), new Vector2(-20f, 20f), TextAnchor.LowerRight);
             _center = CreateText("Center", font, new Vector2(0.5f, 0.5f), new Vector2(0f, -80f), TextAnchor.MiddleCenter);
+            // Phase 12 D14: the hint line ("[Space] 뛰어내리기", "[E] 문 열기") under the centre, and the energy bar.
+            _hint = CreateText("Hint", font, new Vector2(0.5f, 0.5f), new Vector2(0f, -130f), TextAnchor.MiddleCenter);
+            _hint.color = new Color(1f, 0.95f, 0.6f);
+            Image back = CreateBar((RectTransform)_root.transform, Vector2.zero, new Vector2(EnergyBarWidth, EnergyBarHeight), 0f);
+            back.color = new Color(0f, 0f, 0f, 0.5f);
+            var backRect = back.rectTransform;
+            backRect.anchorMin = Vector2.zero;
+            backRect.anchorMax = Vector2.zero;
+            backRect.pivot = Vector2.zero;
+            backRect.anchoredPosition = new Vector2(20f, 66f);
+            _energyBar = back.gameObject;
+            _energyFillImage = CreateBar(backRect, Vector2.zero, new Vector2(EnergyBarWidth, EnergyBarHeight), 0f);
+            _energyFill = _energyFillImage.rectTransform;
+            _energyFill.anchorMin = Vector2.zero;
+            _energyFill.anchorMax = Vector2.zero;
+            _energyFill.pivot = Vector2.zero;
+            _energyFill.anchoredPosition = Vector2.zero;
+            _energyFillImage.color = new Color(0.4f, 0.85f, 1f);
+            _energyBar.SetActive(false);
 
             _hitMarker = new GameObject("HitMarker", typeof(RectTransform));
             var markerRect = (RectTransform)_hitMarker.transform;
@@ -106,6 +135,34 @@ namespace ProjectH.Client.Game
             if (_root == null || _weaponName == null) return;
             _weaponName = null;
             _weapon.text = string.Empty;
+        }
+
+        // Phase 12 D14: energy 0..1; hidden when full and not sprinting. Exhausted (no sprint until 20) shows orange. The
+        // bar only changes size when a whole pixel changes.
+        public void SetEnergy(float fraction, bool visible, bool exhausted)
+        {
+            if (_root == null) return;
+            if (_energyBar.activeSelf != visible) _energyBar.SetActive(visible);
+            if (!visible) return;
+            int pixels = Mathf.RoundToInt(Mathf.Clamp01(fraction) * EnergyBarWidth);
+            if (pixels != _energyPixels)
+            {
+                _energyPixels = pixels;
+                _energyFill.sizeDelta = new Vector2(pixels, EnergyBarHeight);
+            }
+            if (exhausted != _energyExhausted)
+            {
+                _energyExhausted = exhausted;
+                _energyFillImage.color = exhausted ? new Color(1f, 0.55f, 0.2f) : new Color(0.4f, 0.85f, 1f);
+            }
+        }
+
+        // Phase 12 D14: one of UiText's constant hints, or null. Set only when the reference changes.
+        public void SetHint(string hint)
+        {
+            if (_root == null || ReferenceEquals(hint, _hintText)) return;
+            _hintText = hint;
+            _hint.text = hint ?? string.Empty;
         }
 
         // HitConfirmed: white cross, red on a kill.

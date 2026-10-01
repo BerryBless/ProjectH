@@ -34,6 +34,10 @@
     <Compile Include="..\..\..\Client\Assets\Scripts\UI\UiFlow.cs" Link="ClientCopies\UI\UiFlow.cs" />
     <Compile Include="..\..\..\Client\Assets\Scripts\UI\UiText.cs" Link="ClientCopies\UI\UiText.cs" />
     <Compile Include="..\..\..\Client\Assets\Scripts\UI\KillFeedModel.cs" Link="ClientCopies\UI\KillFeedModel.cs" />
+    <!-- Phase 12 D9: the client's copy of the door rule, compared with the server's DoorRules (DoorTests). -->
+    <Compile Include="..\..\..\Client\Assets\Scripts\Game\DoorRule.cs" Link="ClientCopies\DoorRule.cs" />
+    <!-- Phase 12 final review: the client's predicted door world, compared with the server's DoorSet (DoorTests). -->
+    <Compile Include="..\..\..\Client\Assets\Scripts\Game\PredictedDoors.cs" Link="ClientCopies\PredictedDoors.cs" />
   </ItemGroup>
 
 </Project>

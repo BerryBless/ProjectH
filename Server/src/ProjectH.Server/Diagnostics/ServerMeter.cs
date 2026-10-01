@@ -46,6 +46,8 @@ public sealed class ServerMeter : IDisposable
         _meter.CreateObservableCounter("projecth.loop_failures", () => h.LoopFailures);
         _meter.CreateObservableCounter("projecth.match_resets", () => h.MatchResets);
         _meter.CreateObservableCounter("projecth.stalls", () => h.Stalls);
+        _meter.CreateObservableCounter("projecth.movement_anomalies", () => h.MovementAnomalies,
+            description: "Moves faster than their movement mode allows (a simulation bug; should stay 0)");
         _meter.CreateObservableCounter("projecth.db_records", () => DbRecords(h));
         _meter.CreateObservableCounter("projecth.stats_queries", () => StatsQueries(h));
     }

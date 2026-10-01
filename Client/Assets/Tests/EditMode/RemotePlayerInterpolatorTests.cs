@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using ProjectH.Client.Game;
+using ProjectH.Shared.Simulation;
 using UnityEngine;
 
 namespace ProjectH.Client.Tests
@@ -176,6 +177,30 @@ namespace ProjectH.Client.Tests
 
             Assert.IsTrue(interp.TrySample(10.0, out Vector3 position, out _));
             Assert.AreEqual(Far.x, position.x, 1e-4f);
+        }
+
+        // Phase 12 final review A1: the pose follows the drawn (interpolated) position, not the newest snapshot. The mode is
+        // the one of the newest sample at or before the render tick, like the server's PositionHistory.Sample.
+        [Test]
+        public void Mode_SwitchesWhenTheRenderTickPassesTheSample()
+        {
+            var interp = new RemotePlayerInterpolator();
+            interp.Push(10, Vector3.zero, 0f, MovementMode.Ground, true, false);
+            interp.Push(12, new Vector3(2f, 0f, 0f), 0f, MovementMode.Slide, false, true);
+
+            Assert.IsTrue(interp.TrySample(11.9, out _, out _, out MovementMode mode, out bool sprinting, out bool exhausted));
+            Assert.AreEqual(MovementMode.Ground, mode);
+            Assert.IsTrue(sprinting);
+            Assert.IsFalse(exhausted);
+
+            Assert.IsTrue(interp.TrySample(12.0, out _, out _, out mode, out sprinting, out exhausted));
+            Assert.AreEqual(MovementMode.Slide, mode);
+            Assert.IsFalse(sprinting);
+            Assert.IsTrue(exhausted);
+
+            // Before the oldest sample: the oldest's.
+            Assert.IsTrue(interp.TrySample(5.0, out _, out _, out mode, out _, out _));
+            Assert.AreEqual(MovementMode.Ground, mode);
         }
 
         [Test]

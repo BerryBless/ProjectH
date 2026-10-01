@@ -208,7 +208,9 @@ public class GameMapTests
                 };
                 MovementSimulation.Step(ref a, input, Dt, Boxes, Terrain);
                 MovementSimulation.Step(ref b, input, Dt, Boxes, Terrain);
-                Assert.False(MovementSimulation.OverlapsAny(a.Position, Boxes), $"walk {w} step {i}: overlaps at {a.Position}");
+                // Phase 12 D8: a vault moves without collision (its path may cross the obstacle's edge); it ends clear.
+                if (a.Mode != MovementMode.Vault)
+                    Assert.False(MovementSimulation.OverlapsAny(a.Position, Boxes), $"walk {w} step {i}: overlaps at {a.Position}");
                 Assert.True(a.Position.Y >= Terrain.Height(a.Position.X, a.Position.Z) - 1e-4f, $"walk {w} step {i}: under the terrain at {a.Position}");
                 Assert.True(MathF.Abs(a.Position.X) < GameMap.HalfSize && MathF.Abs(a.Position.Z) < GameMap.HalfSize, $"walk {w} step {i}: outside at {a.Position}");
             }

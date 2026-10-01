@@ -28,6 +28,15 @@ namespace ProjectH.Client.Tests
         private static SnapshotEntity ToEntity(in MoveState s)
             => new SnapshotEntity { Position = s.Position, VelocityY = s.VelocityY, Yaw = s.Yaw, Flags = SnapshotEntity.AliveFlag };
 
+        // Phase 12: the owner's half of the snapshot (horizontal velocity, energy, tick counters).
+        private static SnapshotSelf ToSelf(in MoveState s) => new SnapshotSelf
+        {
+            Energy = (ushort)(MoveState.MaxEnergyHundredths - s.EnergySpent),
+            HorizontalVelocity = s.HorizontalVelocity,
+            ModeTicks = s.ModeTicks,
+            EnergyDelayTicks = s.EnergyDelayTicks,
+        };
+
         private static Num.Vector3 ToNumerics(Vector3 v) => new Num.Vector3(v.x, v.y, v.z);
 
         [Test]
@@ -80,7 +89,7 @@ namespace ProjectH.Client.Tests
             var spawn = new MoveState { Position = new Num.Vector3(0f, 0f, 26f) };
             var predictor = new LocalPlayerPredictor(SimHz, spawn);
             var server = spawn;
-            var buffer = new byte[SnapshotEntity.Size];
+            var buffer = new byte[SnapshotEntity.Size + SnapshotSelf.Size];
             for (uint seq = 1; seq <= 250; seq++)
             {
                 AdvanceOneStep(predictor, Vector2.up);
@@ -88,9 +97,11 @@ namespace ProjectH.Client.Tests
 
                 var writer = new PacketWriter(buffer);
                 SnapshotEntity.Write(ref writer, ToEntity(server));
+                SnapshotSelf.Write(ref writer, ToSelf(server));
                 var reader = new PacketReader(buffer);
                 Assert.IsTrue(SnapshotEntity.TryRead(ref reader, out SnapshotEntity wire));
-                predictor.Reconcile(wire, seq);
+                Assert.IsTrue(SnapshotSelf.TryRead(ref reader, out SnapshotSelf self));
+                predictor.Reconcile(wire, self, seq, seq);
 
                 Assert.AreEqual(server.Position.X, predictor.PredictedPosition.x, $"seq {seq}");
                 Assert.AreEqual(server.Position.Y, predictor.PredictedPosition.y, $"seq {seq}");
@@ -119,11 +130,11 @@ namespace ProjectH.Client.Tests
                 {
                     SnapshotEntity stale = ToEntity(serverHistory[seq - 2]);
                     stale.VelocityY += 0.02f;
-                    predictor.Reconcile(stale, seq - 2);
+                    predictor.Reconcile(stale, ToSelf(serverHistory[seq - 2]), seq - 2, seq - 2);
                 }
                 else
                 {
-                    predictor.Reconcile(ToEntity(server), seq);
+                    predictor.Reconcile(ToEntity(server), ToSelf(server), seq, seq);
                 }
 
                 Assert.AreEqual(1f, predictor.PredictedPosition.y);
@@ -140,7 +151,8 @@ namespace ProjectH.Client.Tests
             for (int i = 0; i < 3; i++) AdvanceOneStep(predictor, Vector2.zero);
 
             // Ruins pillar (-46, 1.5, -46) size 1 x 3 x 1: this position is its centre.
-            predictor.Reconcile(new SnapshotEntity { Position = new Num.Vector3(-46f, 0f, -46f), Flags = SnapshotEntity.AliveFlag }, 1);
+            predictor.Reconcile(new SnapshotEntity { Position = new Num.Vector3(-46f, 0f, -46f), Flags = SnapshotEntity.AliveFlag },
+                new SnapshotSelf { Energy = MoveState.MaxEnergyHundredths }, 1, 1);
 
             Assert.IsFalse(MovementSimulation.OverlapsAny(ToNumerics(predictor.PredictedPosition), GameMap.Boxes));
         }

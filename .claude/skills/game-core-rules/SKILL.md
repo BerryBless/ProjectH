@@ -98,6 +98,8 @@ Shared에 게임 로직을 넣지 않는다.
 
 예외 2: 맵 배치 데이터(좌표 상수). Loot Spawn Point(`LootPoints`), 투입 지점(`DropPoints`), POI 이름·중심·반지름(`MapPois`)처럼 맵과 함께 바뀌어야 하는 상수는 `GameMap` 옆 `Shared/Runtime/Simulation`에 둔다. 맵을 바꿀 때 박스·지형과 함께 고치기 위해서다. 좌표와 이름 같은 상수만 두고, Loot Table·난수·투입 순서·줍기 판정 같은 규칙은 넣지 않는다. Loot와 투입 지점은 서버만 읽는다(Client는 위치를 서버 이벤트로만 받는다). POI는 Client가 이름 표시에만 쓴다.
 
+예외 3(Phase 12): 이동 모드(웅크리기·슬라이드·Vault·자유 낙하·글라이드·수송기 탑승)와 그 판정(`CanStand`, Mantle·Hurdle 후보 검사, 지면 거리), 수송기 경로에서 위치를 구하는 순수 계산(`DropRoute`·`Ride`), 문 상자(`GameMap.Doors`)는 이동 계산의 일부라 `Shared/Runtime/Simulation`에 둔다. 예측과 서버가 같은 결과를 내야 하기 때문이다. 경로를 시드로 고르는 난수(`DropPlanner`)와 문 상호작용 규칙(`DoorRules`, Client는 같은 규칙의 복사본과 일치 테스트)은 서버·Client 쪽에 두고 Shared에 넣지 않는다. 문 상호작용 거리·각도 상수는 두 규칙 복사본이 같이 읽으므로 Shared 상수로 둔다(`MovementTuning.DoorInteractRange`·`DoorInteractHalfAngle`). 낙하 피해처럼 서버만 쓰는 규칙의 상수는 Shared에 두지 않는다(`CombatRules.FallDamage*`).
+
 ## 5. 기존 구조를 먼저 확인한다
 
 코드를 변경하기 전에 관련 코드를 먼저 읽는다.

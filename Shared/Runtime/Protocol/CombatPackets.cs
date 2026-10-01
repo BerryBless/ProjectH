@@ -1,4 +1,5 @@
 using System.Numerics;
+using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Shared.Protocol
 {
@@ -153,15 +154,24 @@ namespace ProjectH.Shared.Protocol
         }
     }
 
+    // Phase 12 D10: what killed a player when no player did (PlayerDied.KillerId 0). A player's kill and the
+    // spectating notice a newcomer gets also carry 0. Values are the wire format.
+    public enum DeathCause : byte
+    {
+        Zone = 0,
+        Fall = 1,
+    }
+
     // S->C, ReliableOrdered, to everyone. Same channel as PlayerRespawned, so a client always sees a
     // death before the matching respawn.
-    // KillerId 0 = no killer (the zone, Phase 5 D8). Placement (Phase 5 D11) = living participants left + 1
-    // during a match, 0 outside one (dev respawn mode, or a newcomer told it is spectating).
+    // KillerId 0 = no killer (the zone, Phase 5 D8; a fall, Phase 12 D10: Cause says which). Placement (Phase 5 D11) =
+    // living participants left + 1 during a match, 0 outside one (dev respawn mode, or a newcomer told it is spectating).
     public struct PlayerDied
     {
         public ushort VictimId;
         public ushort KillerId;
         public byte Placement;
+        public DeathCause Cause;
 
         public static void Write(ref PacketWriter writer, in PlayerDied d)
         {
@@ -169,26 +179,33 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt16(d.VictimId);
             writer.WriteUInt16(d.KillerId);
             writer.WriteByte(d.Placement);
+            writer.WriteByte((byte)d.Cause);
         }
 
         public static bool TryRead(ref PacketReader reader, out PlayerDied d)
         {
             d = default;
-            if (reader.Remaining < 5) return false;
+            if (reader.Remaining < 6) return false;
             reader.TryReadUInt16(out d.VictimId);
             reader.TryReadUInt16(out d.KillerId);
             reader.TryReadByte(out d.Placement);
+            reader.TryReadByte(out byte cause);
+            if (cause > (byte)DeathCause.Fall) return false;
+            d.Cause = (DeathCause)cause;
             return true;
         }
     }
 
     // S->C, ReliableOrdered, to everyone: the player is alive again at Position with full Health,
     // Shield 0 and empty-handed (no weapon, no ammo); it re-arms from loot (D9).
+    // Phase 12 D11: Mode is the movement mode it starts in: Transport at a match start (aboard the drop transport),
+    // Ground otherwise.
     public struct PlayerRespawned
     {
         public ushort EntityId;
         public Vector3 Position;
         public float Yaw;
+        public MovementMode Mode;
 
         public static void Write(ref PacketWriter writer, in PlayerRespawned r)
         {
@@ -196,15 +213,19 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt16(r.EntityId);
             writer.WriteVector3(r.Position);
             writer.WriteSingle(r.Yaw);
+            writer.WriteByte((byte)r.Mode);
         }
 
         public static bool TryRead(ref PacketReader reader, out PlayerRespawned r)
         {
             r = default;
-            if (reader.Remaining < 18) return false;
+            if (reader.Remaining < 19) return false;
             reader.TryReadUInt16(out r.EntityId);
             reader.TryReadVector3(out r.Position);
             reader.TryReadSingle(out r.Yaw);
+            reader.TryReadByte(out byte mode);
+            if (mode > (byte)MovementMode.Transport) return false;
+            r.Mode = (MovementMode)mode;
             return Finite.Check(r.Position) && Finite.Check(r.Yaw);
         }
     }

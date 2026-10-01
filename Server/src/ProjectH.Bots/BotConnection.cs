@@ -170,11 +170,7 @@ public sealed class BotConnection : IDisposable
                 }
                 break;
             case PacketId.MatchState:
-                if (MatchState.TryRead(ref r, out var match))
-                {
-                    view.Match = match;
-                    view.HasMatchState = true;
-                }
+                if (MatchState.TryRead(ref r, out var match)) view.ApplyMatch(match);
                 break;
             case PacketId.ZoneState:
                 if (ZoneState.TryRead(ref r, out var zone)) view.Zone = zone;
@@ -184,6 +180,13 @@ public sealed class BotConnection : IDisposable
                 {
                     view.LastResult = result;
                     view.MatchResults++;
+                }
+                break;
+            case PacketId.TransportRoute:
+                if (TransportRoutePacket.TryRead(ref r, out var route))
+                {
+                    view.Route = route;
+                    view.HasRoute = true;
                 }
                 break;
         }

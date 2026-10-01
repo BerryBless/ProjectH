@@ -197,8 +197,8 @@ public class PacketTests
         Assert.True(PlayerInputPacket.TryRead(ref reader, out var read));
         Assert.Equal(InputButtons.Jump | InputButtons.Sprint | InputButtons.Fire | InputButtons.Reload |
                      InputButtons.Slot1 | InputButtons.Slot2 | InputButtons.Slot3 | InputButtons.Interact |
-                     InputButtons.Drop | InputButtons.UseMedkit | InputButtons.UseShieldCell, read.Get(0).Buttons);
-        Assert.Equal(0x07FF, (int)read.Get(0).Buttons);
+                     InputButtons.Drop | InputButtons.UseMedkit | InputButtons.UseShieldCell | InputButtons.Crouch, read.Get(0).Buttons);
+        Assert.Equal(0x0FFF, (int)read.Get(0).Buttons);   // Phase 12: Crouch (2048) is known
     }
 
     [Fact]
@@ -269,7 +269,7 @@ public class PacketTests
 
     // Phase 8 D3: 19 + 13 * 90 = 1189 bytes must fit one unfragmented datagram (1200).
     [Fact]
-    public void SnapshotPacket_WithMaxEntities_Is1189Bytes_AndFitsOneDatagram()
+    public void SnapshotPacket_WithMaxEntities_Is1197Bytes_AndFitsOneDatagram()
     {
         var writer = new PacketWriter(_buffer);
         WorldSnapshotHeader.Write(ref writer, new WorldSnapshotHeader
@@ -289,7 +289,7 @@ public class PacketTests
         }
 
         Assert.False(writer.Overflowed);
-        Assert.Equal(1189, writer.Length);
+        Assert.Equal(1197, writer.Length);   // Phase 12 D11: 27 + 90 x 13
         Assert.True(writer.Length <= ProtocolConstants.MaxPacketSize);
     }
 

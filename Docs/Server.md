@@ -4,6 +4,7 @@
 
 ```bash
 dotnet run --project Server/src/ProjectH.Server
+dotnet run --project Server/src/ProjectH.Server -- --Server:AirDrop=false   # Phase 12: 수송기 없이 땅에서 시작(비교용)
 dotnet test Server/ProjectH.Server.slnx
 ```
 
@@ -29,7 +30,8 @@ MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 �
 | ResultSeconds | 10 | 1–300. 결과 화면(`Finished`) |
 | DevRespawn | false | true = Phase 3·4 테스트 아레나(경기 흐름 없음, 피해 항상, 3초 부활, Loot 처음부터·재생성, 경기 패킷 없음). 운영은 false |
 | ZoneSeed | 1 | ≥ 0. Zone 중심 난수 시드. 경기마다 `ZoneSeed + 판 번호` |
-| SpawnSeed | 1 | ≥ 0. 투입 지점 섞기 시드. 경기마다 `SpawnSeed + 판 번호` |
+| SpawnSeed | 1 | ≥ 0. 투입 지점 섞기 시드. 경기마다 `SpawnSeed + 판 번호`. `AirDrop`이면 수송기 경로의 시드이기도 하다 |
+| AirDrop | true | Phase 12: 경기가 수송기에서 시작한다(`BattleRoyale.md` "공중 투입". Zone 시계는 경로가 끝나는 Tick에 시작). false면 Phase 6의 투입 지점에서 땅으로 시작한다(Phase 5–11 규칙 테스트와 Phase 11과의 부하 비교용). `DevRespawn`이 true면 이 값과 상관없이 땅에서 시작한다 |
 | ReconnectGraceSeconds | 10 | 0–60, 0 = 끔. 경기 중 끊긴 참가자가 캐릭터를 지키는 시간(`Networking.md` "끊기와 재접속") |
 | JoinTimeoutSeconds | 5 | 1–60. 연결한 뒤 Join해야 하는 시간. 넘으면 `JoinTimeout`으로 끊는다 |
 | InputTimeoutSeconds | 10 | 0 = 끔, 아니면 2–300이고 `InputTimeoutSeconds × 1000 ≥ DisconnectTimeoutMs + 2000`(기본 5000이면 7 이상, 최솟값 500이면 3 이상). Join한 peer가 입력을 보내야 하는 간격. 넘으면 `InputTimeout`으로 끊는다. LiteNetLib Timeout보다 먼저 오면 네트워크 끊김이 서버 끊기로 보여 유예를 잃으므로 이 조건을 둔다 |
@@ -55,18 +57,20 @@ MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 �
 
 `NetManager`는 `UnsyncedEvents = true`, `AutoRecycle = true`. 그래서 `NetworkListener`가 받은 데이터는 그 자리에서 값 타입 메시지로 복사한다.
 
+Phase 12: 문 상태(`DoorSet`, 열린 문 마스크와 충돌 세계 배열)와 수송기 경로(`Match`의 `_route`)는 `Match`가 소유하고 Game Loop 스레드만 읽고 쓴다. 새 Lock은 없다.
+
 우리 코드는 Lock을 쓰지 않는다. 스레드 간 전달은 `System.Threading.Channels`, 카운터는 `Interlocked`. 따라서 Lock Ordering·Deadlock 대상이 없다.
 Lock을 추가하게 되면 이 문서에 순서를 적는다.
 
 Tick 루프: `DrainControl` → `DrainInput` → `SweepPeers`(stale peer 정리 + Join·Input Timeout + Join 거절된 peer 끊기) → `SendStatsReplies`(전적 답 최대 32개) → `Match.Tick`(맨 앞에서 `ExpireGrace`). Tick이 5 Tick 이상 밀리면 밀린 분을 건너뛴다(`lateTicksSkipped`). Tick 예외는 "예외 복구"를 본다.
 
-`Match.Tick`은 플레이어마다 `MovementSimulation.Step(ref state, input, 1/SimHz, GameMap.Boxes, GameMap.Terrain)`를 호출한다(Shared 지형과 충돌. 규칙은 `Networking.md` "이동 충돌"). 박스 58개(128개 이하) × 100명 × 30 Hz, 지형 높이 조회는 칸 하나라 무시할 수준이고 할당이 없다. 대기 Spawn은 중앙 광장(반지름 12 m) 안의 5 m 원 위다(`GameMapTests`). 경기 시작은 투입 지점을 쓴다(`BattleRoyale.md`).
+`Match.Tick`은 플레이어마다 `MovementSimulation.Step(ref state, input, 1/SimHz, DoorSet.World, GameMap.Terrain)`를 호출한다(Shared 지형과 충돌. 규칙은 `Networking.md` "이동 충돌", 모드는 `Movement.md`). Phase 12: 세계는 `GameMap.Boxes` 뒤에 닫힌 문을 붙인 고정 배열이고(문이 바뀔 때만 다시 쓴다), 공중 투입 경기에서 `Transport` 탑승자는 `Step` 대신 `DropTransport.Ride`로 경로에 놓는다. `Step` 결과로 문 밀치기·이동 이상 검사·낙하 피해를 처리한다. 박스 58개(128개 이하) + 문 5개 × 100명 × 30 Hz, 지형 높이 조회는 칸 하나라 무시할 수준이고 할당이 없다. 대기 Spawn은 중앙 광장(반지름 12 m) 안의 5 m 원 위다(`GameMapTests`). 경기 시작은 수송기에서(`AirDrop`) 또는 투입 지점에서 한다(`BattleRoyale.md`).
 
 Snapshot 송신(Phase 8): `Match.SendSnapshots`가 플레이어 목록을 90명씩 나눠 Part마다 버퍼 하나를 만들고, 수신자마다 Ack·수신자 블록만 덮어써 보낸다(100명이면 수신자당 2패킷, 할당 없음). 형식은 `Networking.md` "Snapshot 분할과 양자화".
 
 전투(Phase 3, 규칙은 `Networking.md` "전투"·"인벤토리와 Loot"): `Match.Tick`은 (Phase 5: 경기 흐름 전환 → Zone 진행·피해) → (`DevRespawn`만) 부활 → (`DevRespawn`만) Loot 재생성 → 입력·이동 → 재장전 완료 → 실제 입력의 사용 취소·칸 선택·버리기·줍기·재장전·발사(`HitScan`)·사용 시작 → 사용 완료 → (Phase 5: 종료 판정) → `ServerTick++` → 바뀐 인벤토리 전송 → (Phase 5: 바뀐 `MatchState`·`ZoneState` 전송) → History 기록 → Snapshot 순서다. 전투 코드는 `Game/Combat/`(`WeaponCatalog`, `WeaponDefinition`, `WeaponRules`, `HitScan`, `CombatRules`, `PositionHistory`)에 있고 Game Loop 스레드만 쓴다. `WeaponCatalog`는 시작 후 바뀌지 않는다. 발사 한 번은 박스 58개 + 지형 칸 + 플레이어 수만큼의 slab 교차이고, 전송은 `_sendBuffer` 하나를 재사용하므로 발사 Tick도 할당이 없다(`LagCompensationTests.FiringTick_AllocatesNothing`).
 
-경기 흐름(Phase 5, 규칙은 `BattleRoyale.md`): `Game/Flow/MatchFlow`(상태 기계, 판 번호, 참가자·생존자 수, 피해·부활 허용 여부)와 `Game/Zone/`(`ZoneData`, `SafeZone`: 경기마다 시드로 원을 모두 굴려 두고 `Sample`·`IsOutside`는 고정 배열만 읽는다. 반지름 0인 원은 안이 없다). 둘 다 `Match`가 소유하고 Game Loop 스레드만 쓰며 Lock이 없다. 서버는 빈 채로, 경기 전(`WaitingForPlayers`, 월드 아이템 없음)으로 시작한다. 경기 시작의 `System.Random` 생성(Loot·Zone·투입 각 1개)만 할당이고(판 재시작은 할당이 없다), 진행 중인 경기의 Tick은 Zone 피해가 있어도 할당이 없다(`MatchEliminationTests.MatchTicks_WithZoneDamage_DoNotAllocate`). 경기 전에는 피해가 없고(`MatchFlow.DamageAllowed`), 경기 중 사망은 영구적이며(부활·Loot 재생성은 `DevRespawn`일 때만), 이탈은 탈락으로 처리해 인벤토리를 떨어뜨린다. `Match`의 테스트용 접근자(`Flow`, `Zone`, `MatchStartTick`, `WinnerId`)는 `InternalsVisibleTo`로만 보인다.
+경기 흐름(Phase 5, 규칙은 `BattleRoyale.md`): `Game/Flow/MatchFlow`(상태 기계, 판 번호, 참가자·생존자 수, 피해·부활 허용 여부)와 `Game/Zone/`(`ZoneData`, `SafeZone`: 경기마다 시드로 원을 모두 굴려 두고 `Sample`·`IsOutside`는 고정 배열만 읽는다. 반지름 0인 원은 안이 없다). 둘 다 `Match`가 소유하고 Game Loop 스레드만 쓰며 Lock이 없다. 서버는 빈 채로, 경기 전(`WaitingForPlayers`, 월드 아이템 없음)으로 시작한다. 경기 시작의 `System.Random` 생성(Loot·Zone·투입 지점 섞기, Phase 12의 수송기 경로 `DropPlanner` 각 1개)만 할당이고(판 재시작은 할당이 없다), 진행 중인 경기의 Tick은 Zone 피해가 있어도 할당이 없다(`MatchEliminationTests.MatchTicks_WithZoneDamage_DoNotAllocate`). 경기 전에는 피해가 없고(`MatchFlow.DamageAllowed`), 경기 중 사망은 영구적이며(부활·Loot 재생성은 `DevRespawn`일 때만), 이탈은 탈락으로 처리해 인벤토리를 떨어뜨린다. `Match`의 테스트용 접근자(`Flow`, `Zone`, `MatchStartTick`, `WinnerId`)는 `InternalsVisibleTo`로만 보인다.
 
 인벤토리·Loot(Phase 4): `Game/Items/`(`ItemCatalog`, `LootTable`, `LootSpawner`, `WorldItems`, `Inventory`, `StartingLoadout`, `ItemRules`, `ConsumableRules`)와 `Game/GameData`. 모두 Game Loop 스레드 소유이고 Lock이 없다. `WorldItems`는 256칸 고정 배열이라 선형 탐색(최대 256)이 줍기 한 번의 비용이다. 월드 아이템을 바꾸는 곳은 `Match.SpawnItem`·`RemoveItemAt`·`SetItemAmount` 셋뿐이고, 각자 이벤트 전송을 끝낸 뒤 돌아오므로 `_sendBuffer`를 쓰는 `PacketWriter`가 다른 전송과 겹치지 않는다. 줍기·회복 Tick도 할당이 없다(`PickupDropTests.PickupTick_AllocatesNothing`, `ConsumableTests.UseTicks_AllocateNothing`). `Match`와 `GameLoop` 생성자의 `StartingLoadout`·`LootPoint[]` 인자는 테스트용이고, 운영은 빈손 시작과 Shared `LootPoints`를 쓴다. 아이템은 월드(`SpawnItem`)가 받은 뒤에만 인벤토리에서 빠지고(Drop·교환·사망 Drop), `RefillLootPoints`는 Point에 아이템이 남아 있으면 다시 굴리지 않는다. `Kill`은 재장전과 회복 채널을 직접 취소한다.
 
@@ -123,7 +127,7 @@ Health peers players graced match=<State>#<Round>
   rejects full badRequest version
   kicks kicked joinTimeout inputTimeout serverError
   badPackets unknownId malformed beforeJoin duplicateJoin inputRate wrongDirection handlerException
-  tickFailures loopFailures matchResets stalls
+  tickFailures loopFailures matchResets stalls movementAnomalies
   db saved failed discarded dropped
   stats requests limited busy unavailable undelivered
 ```
@@ -134,6 +138,7 @@ Health peers players graced match=<State>#<Round>
 - `rejects`: 연결 요청 거절(이유별). 종료 중의 거절도 `full`로 센다. `kicks`: 서버가 끊은 수(코드별. `kicked`는 잘못된 패킷 때문에 끊은 수, `serverError`는 경기 초기화와 Control 채널이 가득 차서 끊은 수). 종료(`ServerShutdown`)와 Join 거절 뒤의 끊기는 Kick이 아니라 세지 않는다.
 - `badPackets` 7개 항목: 잘못된 패킷(이유별, `Networking.md` "Validation").
 - `tickFailures`·`loopFailures`·`matchResets`: 예외 복구 카운터. `stalls`: Watchdog이 센 멈춤.
+- `movementAnomalies`(Phase 12 D12): 한 Tick의 이동이 그 모드의 최대 속도 × dt × 1.5를 넘은 수(`MovementLimits`, `Movement.md` "이동 이상 검사"). 서버가 이동을 입력만으로 직접 계산하므로 치트가 아니라 시뮬레이션 버그를 알리는 값이다. 정상이면 언제나 0이다.
 - `db`: `MatchHistoryWriter`의 `Saved`·`Failed`·`Discarded`와 큐의 `Dropped`(`Database.md`).
 - `stats`(Phase 11, 전적 조회): `requests`는 요청 채널에 받아들인 요청 수. `limited`는 답 없이 버린 요청(Join이 성공하지 않은 연결이거나 같은 연결의 앞 요청 뒤 2초 안). `busy`·`unavailable`은 그 상태로 답한 수(`busy`: 요청 채널이 가득 참, `unavailable`: Persistence 꺼짐·큐에서 5초 넘게 기다림(조회하지 않음)·DB 실패·3초 초과). `undelivered`는 나가지 못한 답(응답 채널이 가득 참, 또는 요청한 연결이 이미 없음). `Networking.md` "전적 조회".
 
@@ -153,6 +158,7 @@ dotnet-counters monitor -n ProjectH.Server --counters ProjectH.Server
 | `projecth.kicks` | Counter | `code` = `Kicked` / `JoinTimeout` / `InputTimeout` / `ServerError`(종료는 Kick이 아니라 `ServerShutdown` 계열이 없다) |
 | `projecth.bad_packets` | Counter | `reason` = `BadPacketReason` 7가지 |
 | `projecth.tick_failures`, `projecth.loop_failures`, `projecth.match_resets`, `projecth.stalls` | Counter | |
+| `projecth.movement_anomalies` | Counter | Phase 12. 정상이면 0 |
 | `projecth.db_records` | Counter | `result` = `saved` / `failed` / `discarded` / `dropped` |
 | `projecth.stats_queries` | Counter | `result` = `requests` / `limited` / `busy` / `unavailable` / `undelivered` |
 

@@ -1,3 +1,4 @@
+using ProjectH.Shared.Simulation;
 using UnityEngine;
 
 namespace ProjectH.Client.Game
@@ -16,10 +17,17 @@ namespace ProjectH.Client.Game
         private readonly uint[] _ticks = new uint[Capacity];
         private readonly Vector3[] _positions = new Vector3[Capacity];
         private readonly float[] _yaws = new float[Capacity];
+        // Phase 12: the snapshot's mode and flags per sample, so the pose and hit box follow the drawn position (about
+        // 100 ms behind the newest snapshot), like the server's PositionHistory at the rewound tick.
+        private readonly MovementMode[] _modes = new MovementMode[Capacity];
+        private readonly bool[] _sprinting = new bool[Capacity];
+        private readonly bool[] _exhausted = new bool[Capacity];
         private int _count;
         private int _newest = -1;
 
-        public void Push(uint tick, Vector3 position, float yaw)
+        public void Push(uint tick, Vector3 position, float yaw) => Push(tick, position, yaw, MovementMode.Ground, false, false);
+
+        public void Push(uint tick, Vector3 position, float yaw, MovementMode mode, bool sprinting, bool exhausted)
         {
             // Snapshot values come from the network: a NaN/Infinity sample would poison every
             // later Lerp and reach the Transform, so it is dropped here.
@@ -31,6 +39,9 @@ namespace ProjectH.Client.Game
             _ticks[_newest] = tick;
             _positions[_newest] = position;
             _yaws[_newest] = yaw;
+            _modes[_newest] = mode;
+            _sprinting[_newest] = sprinting;
+            _exhausted[_newest] = exhausted;
             if (_count < Capacity) _count++;
         }
 
@@ -62,10 +73,19 @@ namespace ProjectH.Client.Game
             else _count = kept;   // the ring keeps _newest; the dropped oldest slots are reused by Push
         }
 
-        public bool TrySample(double renderTick, out Vector3 position, out float yaw)
+        public bool TrySample(double renderTick, out Vector3 position, out float yaw) =>
+            TrySample(renderTick, out position, out yaw, out _, out _, out _);
+
+        // mode, sprinting, exhausted: those of the newest sample at or before renderTick (between two samples, the older
+        // one's), the same rule as the server's PositionHistory.Sample; before the oldest sample, the oldest's.
+        public bool TrySample(double renderTick, out Vector3 position, out float yaw, out MovementMode mode, out bool sprinting,
+            out bool exhausted)
         {
             position = default;
             yaw = 0f;
+            mode = MovementMode.Ground;
+            sprinting = false;
+            exhausted = false;
             if (_count == 0) return false;
 
             for (int i = 0; i < _count; i++)
@@ -73,6 +93,9 @@ namespace ProjectH.Client.Game
                 int index = (_newest - i + Capacity) % Capacity;
                 if (_ticks[index] > renderTick) continue;
 
+                mode = _modes[index];
+                sprinting = _sprinting[index];
+                exhausted = _exhausted[index];
                 if (i == 0)
                 {
                     position = _positions[index];
@@ -90,6 +113,9 @@ namespace ProjectH.Client.Game
             int oldest = (_newest - _count + 1 + Capacity) % Capacity;
             position = _positions[oldest];
             yaw = _yaws[oldest];
+            mode = _modes[oldest];
+            sprinting = _sprinting[oldest];
+            exhausted = _exhausted[oldest];
             return true;
         }
 

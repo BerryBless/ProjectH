@@ -111,6 +111,21 @@ namespace ProjectH.Client.Tests
             Assert.IsTrue(Step(state, InputButtons.Fire));
         }
 
+        // Phase 12 final review C9: gated (aboard, in the air, vaulting) the input acts on nothing, but the held fire button
+        // is followed like the server's FireHeld: landing with Fire held does not fire the semi-automatic weapon.
+        [Test]
+        public void Semi_FireHeldThroughTheLanding_DoesNotFire_UntilPressedAgain()
+        {
+            var state = Armed();
+            Assert.IsFalse(Step(state, InputButtons.Slot2));
+            Assert.AreEqual(1, state.Slot);
+            for (int i = 0; i < 5; i++) Assert.IsFalse(state.Step(++_seq, InputButtons.Fire, actionsAllowed: false));
+            Assert.AreEqual(2, state.Ammo);
+            Assert.IsFalse(Step(state, InputButtons.Fire));    // landed, still held
+            Assert.IsFalse(Step(state, InputButtons.None));
+            Assert.IsTrue(Step(state, InputButtons.Fire));     // a new press
+        }
+
         [Test]
         public void ReloadButton_And_Switch_FollowServerOrder()
         {

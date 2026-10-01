@@ -31,6 +31,10 @@ public sealed class ServerOptions
     public int ZoneSeed { get; set; } = 1;
     // Phase 6 D9: each match shuffles the drop points with SpawnSeed + round number.
     public int SpawnSeed { get; set; } = 1;
+    // Phase 12 D4, D5: a match starts aboard the drop transport (its route is rolled with SpawnSeed + round number) and
+    // the zone's clock starts when the route ends. Off = everyone starts on a drop point as in Phases 6-11 (most rule
+    // tests, and a load run that compares with them). Never with DevRespawn.
+    public bool AirDrop { get; set; } = true;
 
     // Phase 10 (D2-D4): a participant who drops during a match keeps its character this long (0 = off); a connection
     // must join within JoinTimeoutSeconds; a joined player that sends no input for InputTimeoutSeconds is disconnected

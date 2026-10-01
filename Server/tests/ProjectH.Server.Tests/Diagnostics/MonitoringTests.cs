@@ -61,7 +61,7 @@ public class MonitoringTests
                      "rejects full=1", "badRequest=0", "version=0",
                      "kicks kicked=0", "joinTimeout=0", "inputTimeout=1", "serverError=0",
                      "badPackets unknownId=0", "malformed=", "beforeJoin=", "duplicateJoin=", "inputRate=", "wrongDirection=1", "handlerException=",
-                     "tickFailures=0", "loopFailures=0", "matchResets=0", "stalls=0",
+                     "tickFailures=0", "loopFailures=0", "matchResets=0", "stalls=0", "movementAnomalies=0",
                      "db saved=3 failed=1 discarded=2 dropped=4",
                      "stats requests=0 limited=2 busy=0 unavailable=0 undelivered=0",
                  })
@@ -87,6 +87,7 @@ public class MonitoringTests
         health.AddDisconnect(timeout: true);
         health.SetGauges(peers: 3, players: 2, graced: 1, MatchFlowState.Playing);
         health.AddGraceExpiry();
+        health.AddMovementAnomaly();
 
         using var meter = new ServerMeter(health);
         var seen = new List<(string Name, long Value, string Tags)>();
@@ -111,6 +112,7 @@ public class MonitoringTests
         Assert.Contains(("projecth.db_records", 1L, "result=dropped"), seen);
         Assert.Contains(("projecth.match_state", (long)MatchFlowState.Playing, ""), seen);
         Assert.Contains(("projecth.grace_expiries", 1L, ""), seen);
+        Assert.Contains(("projecth.movement_anomalies", 1L, ""), seen);   // Phase 12 D12
         Assert.Contains(("projecth.stats_queries", 6L, "result=requests"), seen);
         Assert.Contains(("projecth.stats_queries", 2L, "result=limited"), seen);
         Assert.Contains(("projecth.stats_queries", 1L, "result=busy"), seen);

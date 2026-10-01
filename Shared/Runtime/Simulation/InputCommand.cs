@@ -18,6 +18,7 @@ namespace ProjectH.Shared.Simulation
         Drop = 256,           // G: drop the current weapon (D12)
         UseMedkit = 512,      // 4
         UseShieldCell = 1024, // 5
+        Crouch = 2048,        // Phase 12 D7: held. C toggles it on the client, Ctrl holds it.
     }
 
     // One fixed-tick input. Seq increases by one per client simulation step and is how the

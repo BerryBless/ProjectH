@@ -1,5 +1,6 @@
 using System.Linq;
 using ProjectH.Shared.Protocol;
+using ProjectH.Shared.Simulation;
 using Xunit;
 using static ProjectH.Server.Tests.Integration.HardeningIntegrationTests;
 
@@ -41,6 +42,33 @@ public sealed class ReconnectIntegrationTests
         finally
         {
             a.Dispose();   // killed above, but a failed assertion before the kill must not leak its socket
+        }
+    }
+
+    // Phase 12 D16: a client that crashes while riding the drop transport comes back to the same route, and its next
+    // snapshot shows where the server's own steps (empty input) took it meanwhile.
+    [Fact]
+    public void ACrashedRider_ComesBack_WithTheRoute_AndItsMode()
+    {
+        using GameLoop server = StartServer(countdown: 1);
+        var a = Join(server, "a");
+        try
+        {
+            using var b = Join(server, "b");
+            Assert.True(Pump.Until(() => InMatch(a) && InMatch(b) && a.TransportRoutes.Count == 1, 5000, a, b), "aboard");
+            ushort entity = a.MyEntityId;
+
+            a.Kill();
+            Assert.True(Pump.Until(() => server.Health.GraceStarts == 1, 4000, b), "graced");
+
+            using var back = Join(server, "a", expected: JoinResult.Resumed);
+            Assert.True(Pump.Until(() => back.TransportRoutes.Count == 1 && back.LastSnapshot.ContainsKey(entity), 3000, back, b), "route and snapshot");
+            Assert.Equal(a.TransportRoutes[0], back.TransportRoutes[0]);
+            Assert.Contains(back.LastSnapshot[entity].Mode, new[] { MovementMode.Transport, MovementMode.Freefall, MovementMode.Glide });
+        }
+        finally
+        {
+            a.Dispose();
         }
     }
 

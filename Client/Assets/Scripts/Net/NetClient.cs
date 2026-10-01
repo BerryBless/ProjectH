@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using LiteNetLib;
 using LiteNetLib.Utils;
 using ProjectH.Shared.Protocol;
+using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Client.Net
 {
@@ -74,6 +75,9 @@ namespace ProjectH.Client.Net
         public event Action<MatchResult> MatchResultReceived;
         // Phase 11 D8: the answer to RequestStats (a class allocated by its reader, once per answer).
         public event Action<StatsResponse> StatsReceived;
+        // Phase 12 D5, D9: the drop transport route, and which doors are open.
+        public event Action<DropRoute> TransportRouteReceived;
+        public event Action<byte> DoorStatesReceived;
 
         public ClientState State { get; private set; } = ClientState.Disconnected;
         public string LastError { get; private set; }
@@ -343,6 +347,14 @@ namespace ProjectH.Client.Net
 
                 case PacketId.StatsResponse:
                     if (StatsResponse.TryRead(ref packet, out var stats)) StatsReceived?.Invoke(stats);
+                    break;
+
+                case PacketId.TransportRoute:
+                    if (TransportRoutePacket.TryRead(ref packet, out var route)) TransportRouteReceived?.Invoke(route);
+                    break;
+
+                case PacketId.DoorStates:
+                    if (DoorStatesPacket.TryRead(ref packet, out byte doors)) DoorStatesReceived?.Invoke(doors);
                     break;
             }
         }

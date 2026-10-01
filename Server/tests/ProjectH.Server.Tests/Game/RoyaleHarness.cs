@@ -13,6 +13,8 @@ namespace ProjectH.Server.Tests.Game;
 
 // A battle royale Match (no DevRespawn) driven tick by tick, for the Phase 5 rule tests. The countdown and the
 // result screen are 1 s (30 ticks) so tests reach every state quickly. Every sent packet is recorded.
+// Phase 12: airDrop false (the default here) starts matches on the drop points as in Phases 5-11, so the rule tests
+// stay about their rules; the deployment tests pass true (ServerOptions.AirDrop, on in production).
 internal sealed class RoyaleHarness
 {
     public sealed record Sent(int PeerId, byte[] Data, DeliveryMethod Method)
@@ -34,13 +36,13 @@ internal sealed class RoyaleHarness
     public RoyaleHarness(StartingLoadout? loadout = null, string zonesJson = TestGameData.ZonesJson, int maxPlayers = 6,
         int minPlayers = 2, string lootJson = TestGameData.LootJson, bool record = true,
         Vector3[]? dropPoints = null, Action<ProjectH.Server.Persistence.MatchRecord>? matchSink = null,
-        int reconnectGraceSeconds = 10, Action<string>? graceExpired = null)
+        int reconnectGraceSeconds = 10, Action<string>? graceExpired = null, bool airDrop = false)
     {
         SendPacket send = record ? (peer, data, method) => Packets.Add(new Sent(peer, data.ToArray(), method)) : static (_, _, _) => { };
         Match = new Match(new ServerOptions
             {
                 MaxPlayers = maxPlayers, MinPlayers = minPlayers, StartCountdownSeconds = 1, ResultSeconds = 1,
-                ReconnectGraceSeconds = reconnectGraceSeconds,
+                ReconnectGraceSeconds = reconnectGraceSeconds, AirDrop = airDrop,
             },
             TestGameData.Create(lootJson: lootJson, zonesJson: zonesJson), send, loadout, dropPoints: dropPoints ?? LobbyRingDrops,
             matchSink: matchSink, graceExpired: graceExpired);

@@ -188,3 +188,35 @@ Phase 10은 Tick마다 하는 일을 더했다:
   - 경기 초기화: `matchResets`
   - 멈춤: `stalls`
 - 봇 `reconnects=0`.
+
+## Phase 12 확인 (이동·공중 투입, Protocol v10)
+
+Phase 12에서 바뀐 것:
+- 이동에 모드가 생겼다(웅크리기, 슬라이드, Vault, 자유 낙하, 글라이드, 수송기).
+- 문 충돌, 이동 이상 검사, 공중 투입이 생겼다.
+- Snapshot Entity는 13 B 그대로다. 헤더는 19 → 27 B(Self 6 → 14 B)이고, 90명 꽉 찬 패킷은 1197 B다. 이 값은 테스트로 고정되어 있다.
+
+측정 조건은 두 가지다. 둘 다 Release, 봇 50명, 집계는 처음 2줄을 버린 Stats 줄이다.
+
+- **A.** Phase 11과 같은 조건: `--Server:MaxPlayers=100 --Server:DevRespawn=true`(DB 저장 끔), 봇 `--count 50 --duration 120 --connect-interval-ms 30`
+- **B.** 정식 경기: DevRespawn 끔, 공중 투입 켬(기본값). 봇 50명이 대기 → 카운트다운 → 수송기 → 뛰어내리기 → 낙하·글라이드 → 착지 → 전투를 거친다. `--duration 150`, Stats 15줄
+
+| 항목 | Phase 11 | Phase 12 A | Phase 12 B(공중 투입) |
+|---|---|---|---|
+| Tick p50 | — | 0.07 ms | 0.04–0.08 ms |
+| Tick p95 (줄 범위) | 0.10–0.15 ms | 0.09–0.11 ms | 0.06–0.14 ms |
+| Tick p99 최댓값 | 0.23 ms | 0.17 ms | 0.39 ms |
+| Tick max 최댓값 | 0.39 ms | 0.47 ms | 4.98 ms(경기 시작 직후 한 번) |
+| pktIn/s | 1500 | 1500 | 1500 |
+| pktOut/s | — | 1512–2504 | 750–2060 |
+| bytesOut/s | 약 515–548 KB/s | 523–546 KB/s | 508–537 KB/s |
+| cpu% | 0.2 | 0.1–0.2 | 0.1–0.2 |
+| movementAnomalies | — | 0 | 0 |
+
+- **A:** Phase 11과 같은 수준이다. 새 이동 코드 때문에 Tick이 늘지 않았다.
+- **B:**
+  - p95는 다른 조건과 같은 범위다.
+  - Tick max가 경기 시작 직후 4.98 ms, 2.82 ms, 1.69 ms로 높았다. 그 뒤에는 0.1–0.3 ms다. 경기 시작 Tick에 겹치는 일(50명 탑승 Respawn, Loot 50곳 생성, 경로·문 상태 전송)과 새 코드 경로의 첫 실행(JIT)이 원인으로 보인다. 따로 나눠 재지는 않았다.
+  - 33.3 ms 예산에 비하면 작다.
+- **두 조건 모두:** Kick·Timeout·Tick 실패·Stall·이동 이상이 0이었고, 봇 재접속도 0이었다.
+- **B의 pktOut/s:** 나중 줄에서 750으로 내려간 것은 봇 대부분이 탈락해 이벤트 패킷이 줄었기 때문이다(봇 `alive=18`).

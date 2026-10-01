@@ -108,10 +108,14 @@ public static class HitScan
     }
 
     // Player hit box: the movement AABB (HalfWidth 0.35 m, Height 1.8 m) with its feet at feet.
-    public static bool TracePlayer(Vector3 origin, Vector3 direction, float maxDistance, Vector3 feet, out float distance)
+    public static bool TracePlayer(Vector3 origin, Vector3 direction, float maxDistance, Vector3 feet, out float distance) =>
+        TracePlayer(origin, direction, maxDistance, feet, MoveSettings.Height, out distance);
+
+    // Phase 12 D13: the same box with the mode's height (MovementSimulation.CollisionHeight: 1.2 m crouched or sliding).
+    public static bool TracePlayer(Vector3 origin, Vector3 direction, float maxDistance, Vector3 feet, float height, out float distance)
     {
         var min = new Vector3(feet.X - MoveSettings.HalfWidth, feet.Y, feet.Z - MoveSettings.HalfWidth);
-        var max = new Vector3(feet.X + MoveSettings.HalfWidth, feet.Y + MoveSettings.Height, feet.Z + MoveSettings.HalfWidth);
+        var max = new Vector3(feet.X + MoveSettings.HalfWidth, feet.Y + height, feet.Z + MoveSettings.HalfWidth);
         return IntersectAabb(origin, direction, min, max, maxDistance, out distance);
     }
 

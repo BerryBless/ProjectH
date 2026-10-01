@@ -1,4 +1,5 @@
 using System;
+using System.Numerics;
 
 namespace ProjectH.Shared.Simulation
 {
@@ -63,6 +64,33 @@ namespace ProjectH.Shared.Simulation
             if (i > VertsX - 2) i = VertsX - 2;
             if (j > VertsZ - 2) j = VertsZ - 2;
             return CellHeight(i, j, gx - i, gz - j);
+        }
+
+        // Phase 12 D7: the slope of the triangle under (x, z) as (dh/dx, dh/dz), rise per metre. Same triangles as Height.
+        // Outside the grid the surface is flat (Height clamps to the edge), so the slope there is 0. Allocates nothing.
+        public Vector2 Gradient(float x, float z)
+        {
+            float gx = (x - OriginX) * _inverseCell;
+            float gz = (z - OriginZ) * _inverseCell;
+            // !(g >= 0) also catches NaN.
+            if (!(gx >= 0f) || !(gz >= 0f) || gx > VertsX - 1 || gz > VertsZ - 1) return Vector2.Zero;
+
+            int i = (int)gx;
+            int j = (int)gz;
+            if (i > VertsX - 2) i = VertsX - 2;
+            if (j > VertsZ - 2) j = VertsZ - 2;
+            float u = gx - i;
+            float v = gz - j;
+            int k = i + j * VertsX;
+            float h00 = _heights[k];
+            float h11 = _heights[k + 1 + VertsX];
+            if (u >= v)
+            {
+                float h10 = _heights[k + 1];
+                return new Vector2((h10 - h00) * _inverseCell, (h11 - h10) * _inverseCell);
+            }
+            float h01 = _heights[k + VertsX];
+            return new Vector2((h11 - h01) * _inverseCell, (h01 - h00) * _inverseCell);
         }
 
         // Height inside cell (i, j) at local (u, v) in [0, 1]: triangle (0,0)-(1,0)-(1,1) when u >= v, else

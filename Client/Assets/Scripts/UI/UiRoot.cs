@@ -104,6 +104,7 @@ namespace ProjectH.Client.UI
             }
             if (_flow.StatsOpen) _stats.Tick(Time.unscaledTime, _statsSentAt, _client.StatsAnsweredAt, _client.LastStats, _utcOffset);
             _debug.Tick(_client.State, _client.RoundTripMs, _client.MyEntityId);
+            _client.TickMovementDebug(_debug, Time.unscaledTime);
         }
 
         // Shows what UiFlow chose. Runs only when its Version changed (or at start).
@@ -143,7 +144,8 @@ namespace ProjectH.Client.UI
             MatchResult r = _client.Result;
             bool won = r.WinnerId != 0 && r.WinnerId == _client.MyEntityId;
             string winner = r.WinnerId == 0 ? null : UiText.NameOr(_client.NameOf(r.WinnerId), r.WinnerId);
-            _result.Show(won, r.Placement, r.Participants, r.Kills, winner, _client.DiedThisRound, _client.KilledByZone, _client.KillerName);
+            _result.Show(won, r.Placement, r.Participants, r.Kills, winner, _client.DiedThisRound, _client.KilledByZone, _client.LastDeathCause,
+                _client.KillerName);
         }
 
         // The title's Connect: the only path that saves the address, port and name (D4).

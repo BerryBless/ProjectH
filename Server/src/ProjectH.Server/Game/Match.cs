@@ -51,6 +51,17 @@ public sealed class Match
     // Phase 10 D2, D9: told the DevPlayerId of every graced player that leaves without resuming (grace over, died while
     // away, or the round reset). Called on the game loop thread and must not block (GameLoop counts and logs it).
     private readonly Action<string>? _graceExpired;
+    // Phase 12 D12: told of every move faster than its mode allows (a simulation bug; GameLoop counts it). Must not block.
+    private readonly Action? _movementAnomaly;
+    // Phase 12 D4, D5: matches start aboard the drop transport. The route is valid while _hasRoute: from such a match's
+    // start to the round reset.
+    private readonly bool _airDrop;
+    private bool _hasRoute;
+    private DropRoute _route;
+    // Phase 12 D9: the doors and the collision world they make (map boxes + closed doors); every move, shot and drop
+    // uses _doors.World. _sentDoors is what every client was last told (DoorStates when it changes).
+    private readonly DoorSet _doors = new();
+    private byte _sentDoors;
     // Participants who left during the current match, recorded when they left (they are no longer in _players).
     // At most MaxPlayers entries; cleared when a match starts.
     private readonly List<PlayerRecord> _leftParticipants = new();
@@ -74,10 +85,13 @@ public sealed class Match
     // Test seams: loadout null = StartingLoadout.Empty (the production start, D1); lootPoints null = the
     // map's LootPoints.All; dropPoints null = the map's DropPoints.All (Phase 6 D9).
     public Match(ServerOptions options, GameData data, SendPacket send, StartingLoadout? loadout = null, LootPoint[]? lootPoints = null,
-        Vector3[]? dropPoints = null, Action<MatchRecord>? matchSink = null, Action<string>? graceExpired = null)
+        Vector3[]? dropPoints = null, Action<MatchRecord>? matchSink = null, Action<string>? graceExpired = null,
+        Action? movementAnomaly = null)
     {
         _matchSink = matchSink;
         _graceExpired = graceExpired;
+        _movementAnomaly = movementAnomaly;
+        _airDrop = options.AirDrop && !options.DevRespawn;
         SendPacket raw = send ?? throw new ArgumentNullException(nameof(send));
         // Phase 10 D2: the one place packets to a graced player (NoPeer) are dropped. Every send goes through _send.
         _send = (peerId, data, method) =>
@@ -152,6 +166,12 @@ public sealed class Match
     internal uint MatchStartTick => _matchStartTick;
     // The last match's winner (D9), 0 = none among the connected players. Set when the match finishes.
     internal ushort WinnerId { get; private set; }
+    // Test seams (Phase 12): the current drop transport route, valid while HasRoute.
+    internal bool HasRoute => _hasRoute;
+    internal DropRoute Route => _route;
+    internal DoorSet Doors => _doors;
+    // Phase 12 D12: moves faster than their mode allows since this match object was made (should stay 0).
+    public long MovementAnomalies { get; private set; }
     // Phase 9: finished matches whose record could not be built or handed to the sink (it threw). Shown in the stats line.
     public long MatchSinkFailures { get; private set; }
     // Phase 11: PlayerSpawned packets that could not be encoded (a name over the limit) and so were not sent.
@@ -210,6 +230,9 @@ public sealed class Match
             SendMatchState(peerId, _flow.ToWire(_players.Count));
             SendZoneState(peerId, _zone.ToWire());
         }
+        SendDoors(peerId);   // Phase 12 D9
+        // Phase 12 D16: a newcomer during an air-drop match sees the transport too.
+        if (_hasRoute) SendRoute(peerId);
         // Reliable, after its own spawn: the newcomer's client knows it is dead (spectating) before any input.
         // Only to the newcomer; the others see it dead from the snapshot flag.
         if (spectator) SendDied(peerId, new PlayerDied { VictimId = player.EntityId });
@@ -311,12 +334,19 @@ public sealed class Match
             // A player killed earlier in this loop is already dead here.
             if (!player.Alive) continue;
 
-            // Same boxes and terrain as client prediction (LocalPlayerPredictor), so predictions match.
-            MovementSimulation.Step(ref player.State, input, _tickSeconds, GameMap.Boxes, GameMap.Terrain);
+            // Phase 12 D5: a rider is placed on the route at the tick being simulated (now + 1, the tick its snapshot
+            // reports) and may jump. Everyone else steps with the same boxes and terrain as client prediction
+            // (LocalPlayerPredictor), so predictions match.
+            if (_hasRoute && DropTransport.Ride(ref player.State, input, _route, now + 1)) player.Sprinting = false;
+            else if (!Move(player, input)) continue;   // the landing killed it
             WeaponRules.UpdateReload(player, now);
             // Only an input the client really sent can act: the missed-input repeat copies the last input's
-            // buttons and must never invent a switch, reload or shot.
-            if (sent) ProcessActions(player, input, now);
+            // buttons and must never invent a switch, reload or shot. Phase 12 D12: and only in a mode that allows
+            // actions (after this tick's move).
+            if (sent && ActionsAllowed(player.State.Mode)) ProcessActions(player, input, now);
+            // Gated, the fire button's held state still follows the input: landing with Fire held must not fire a
+            // semi-automatic weapon without a new press (the client's WeaponState does the same).
+            else if (sent) player.FireHeld = (input.Buttons & InputButtons.Fire) != 0;
             ConsumableRules.Complete(player, _items, now);   // step 9: every tick, input or not
         }
 
@@ -327,10 +357,58 @@ public sealed class Match
         ServerTick++;
         SendInventoryChanges();
         SendMatchChanges();
+        SendDoorChanges();
         // After every move of this tick, so all players are recorded at the same moment. A snapshot with
         // ServerTick N shows exactly the positions recorded at N, which is what ViewTick refers to.
-        foreach (var player in _players) player.History.Record(ServerTick, player.State.Position);
+        foreach (var player in _players) player.History.Record(ServerTick, player.State.Position, player.State.Mode);
         if (ServerTick % (uint)_snapshotEveryTicks == 0) SendSnapshots();
+    }
+
+    // One Step and the Phase 12 checks of its result: the movement self-check (D12) and fall damage (D10). Returns false
+    // when the landing killed the player.
+    private bool Move(PlayerEntity player, in InputCommand input)
+    {
+        MovementMode before = player.State.Mode;
+        Vector3 from = player.State.Position;
+        MovementSimulation.Step(ref player.State, input, _tickSeconds, _doors.World, GameMap.Terrain, out StepResult step);
+        player.Sprinting = step.Sprinting;
+
+        // D9: sprinting or sliding into a closed door shoulders it open; the move goes on next tick.
+        if (step.Charging && step.BlockedBy >= 0)
+        {
+            int door = _doors.DoorBlocking(step);
+            if (door >= 0) _doors.Set(door, true);
+        }
+
+        float limit = MathF.Max(MovementLimits.MaxSpeed(before), MovementLimits.MaxSpeed(player.State.Mode)) * _tickSeconds * MovementLimits.Slack;
+        if (Vector3.DistanceSquared(from, player.State.Position) > limit * limit)
+        {
+            MovementAnomalies++;
+            _movementAnomaly?.Invoke();
+        }
+
+        // D10: like shots, a fall hurts only when damage is allowed (the dev sandbox, or during the match).
+        return !(step.LandingSpeed > 0f && _flow.DamageAllowed && ApplyFallDamage(player, step.LandingSpeed));
+    }
+
+    // Phase 12 D12: riding, falling, gliding and vaulting allow no shot, reload, pickup, interaction, heal, slot switch
+    // or drop. A reload or heal already running goes on.
+    private static bool ActionsAllowed(MovementMode mode) =>
+        mode == MovementMode.Ground || mode == MovementMode.Crouch || mode == MovementMode.Slide;
+
+    // Phase 12 D10: health only (the shield does not stop it, like the zone) and a DamageTaken from nobody; a fatal fall
+    // is a death without a killer, cause Fall. Returns true when it killed.
+    private bool ApplyFallDamage(PlayerEntity player, float landingSpeed)
+    {
+        int damage = CombatRules.FallDamage(landingSpeed);
+        if (damage <= 0) return false;
+        player.Health = Math.Max(0, player.Health - damage);
+        var writer = new PacketWriter(_sendBuffer);
+        DamageTaken.Write(ref writer, new DamageTaken { AttackerId = 0, Damage = (ushort)damage, FromDirection = Vector3.Zero });
+        _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+        if (player.Health > 0) return false;
+        Kill(player, null, DeathCause.Fall);
+        return true;
     }
 
     // One buffered input per tick (Phase 0). Returns false when the input is made up by the server.
@@ -367,7 +445,8 @@ public sealed class Match
         ConsumableRules.CancelIfInterrupted(player, input.Buttons);
         WeaponRules.SelectSlot(player, input.Buttons);
         if ((input.Buttons & InputButtons.Drop) != 0) DropCurrentWeapon(player);
-        if ((input.Buttons & InputButtons.Interact) != 0) Pickup(player);
+        // Phase 12 D9: E acts on a door in front first, an item otherwise.
+        if ((input.Buttons & InputButtons.Interact) != 0 && !ToggleDoor(player)) Pickup(player);
 
         bool aimValid = CombatRules.TryAimDirection(input.AimYaw, input.AimPitch, out Vector3 direction);
         if (WeaponRules.Apply(player, input.Buttons, aimValid, now))
@@ -385,16 +464,19 @@ public sealed class Match
         ref HeldWeapon held = ref shooter.Inventory.Current;
         WeaponDefinition weapon = held.Weapon!;   // Apply only fires a filled slot
         ushort damage = CombatRules.ScaledDamage(weapon.Damage, _items.DamageMultiplier(held.Rarity));
-        Vector3 origin = shooter.State.Position + new Vector3(0f, CombatRules.EyeHeight, 0f);
-        float nearest = HitScan.TraceWorld(origin, direction, weapon.Range, GameMap.Boxes, GameMap.Terrain);
+        // Phase 12 D13: crouched or sliding the eye is lower (the client aims from the same height, AimSolver).
+        Vector3 origin = shooter.State.Position + new Vector3(0f, CombatRules.EyeHeightOf(shooter.State.Mode), 0f);
+        float nearest = HitScan.TraceWorld(origin, direction, weapon.Range, _doors.World, GameMap.Terrain);   // a closed door stops it
         double rewindTick = CombatRules.ClampViewTick(viewTick, ServerTick, _maxRewindTicks);
 
         PlayerEntity? target = null;
         foreach (var other in _players)
         {
             if (other == shooter || !other.Alive) continue;
-            Vector3 feet = other.History.Sample(rewindTick);
-            if (HitScan.TracePlayer(origin, direction, nearest, feet, out float distance) &&
+            // Phase 12 D13: the hit box has the height of the mode the target was in then; a transport rider is not hit.
+            Vector3 feet = other.History.Sample(rewindTick, out MovementMode mode);
+            if (mode == MovementMode.Transport) continue;
+            if (HitScan.TracePlayer(origin, direction, nearest, feet, MovementSimulation.CollisionHeight(mode), out float distance) &&
                 (target == null || distance < nearest))
             {
                 nearest = distance;
@@ -446,7 +528,8 @@ public sealed class Match
         if (damage == 0) return;
         foreach (var player in _players)
         {
-            if (!player.Alive || !_zone.IsOutside(player.State.Position, now)) continue;
+            // Phase 12: a transport rider is above the map (its route reaches outside the circle), not in it.
+            if (!player.Alive || player.State.Mode == MovementMode.Transport || !_zone.IsOutside(player.State.Position, now)) continue;
             player.Health = Math.Max(0, player.Health - damage);
             if (player.Health == 0) Kill(player, null);
         }
@@ -485,6 +568,42 @@ public sealed class Match
             MatchSinkFailures++;
             _sinkError ??= e;
         }
+    }
+
+    // Phase 12 D9: E on the door DoorRules picks opens it, or closes it when no living character stands in its place.
+    // Returns false when no door is in reach (then E picks up an item).
+    private bool ToggleDoor(PlayerEntity player)
+    {
+        int door = DoorRules.FindTarget(player.State.Position, player.State.Yaw, GameMap.Doors);
+        if (door < 0) return false;
+        if (!_doors.IsOpen(door)) _doors.Set(door, true);
+        else if (!DoorOccupied(door)) _doors.Set(door, false);
+        return true;
+    }
+
+    // A living character's box overlaps the door's. A vaulter also occupies the rest of its straight vault path (current
+    // position to position + velocity x ModeTicks, swept with its box): the vault moves without collision (D8), so a door
+    // closed across that path would be passed through.
+    private bool DoorOccupied(int door)
+    {
+        ReadOnlySpan<Box> doorBox = GameMap.Doors.Slice(door, 1);
+        foreach (var p in _players)
+        {
+            if (!p.Alive) continue;
+            float height = MovementSimulation.CollisionHeight(p.State.Mode);
+            if (MovementSimulation.OverlapsAny(p.State.Position, height, doorBox)) return true;
+            if (p.State.Mode == MovementMode.Vault && p.State.ModeTicks > 0 && VaultPathOverlaps(p.State, height, doorBox[0])) return true;
+        }
+        return false;
+    }
+
+    private bool VaultPathOverlaps(in MoveState state, float height, in Box box)
+    {
+        Vector3 from = state.Position;
+        Vector3 to = from + new Vector3(state.HorizontalVelocity.X, state.VelocityY, state.HorizontalVelocity.Y) * (_tickSeconds * state.ModeTicks);
+        Vector3 min = Vector3.Min(from, to) - new Vector3(MoveSettings.HalfWidth, 0f, MoveSettings.HalfWidth);
+        Vector3 max = Vector3.Max(from, to) + new Vector3(MoveSettings.HalfWidth, height, MoveSettings.HalfWidth);
+        return min.X < box.Max.X && max.X > box.Min.X && min.Y < box.Max.Y && max.Y > box.Min.Y && min.Z < box.Max.Z && max.Z > box.Min.Z;
     }
 
     // D8, D9: the server picks the nearest item in range itself; the client never names one, so it cannot
@@ -562,7 +681,7 @@ public sealed class Match
             // It is placed like a G-drop (in front of the player), not on the loot point: the point rolls a new
             // item there after its respawn delay and the two would overlap.
             Vector3 dropOffset = ItemRules.Offset(player.State.Yaw, ItemRules.DropDistance);
-            Vector3 dropAt = ItemRules.DropPosition(player.State.Position, dropOffset, GameMap.Boxes, GameMap.Terrain);
+            Vector3 dropAt = ItemRules.DropPosition(player.State.Position, dropOffset, _doors.World, GameMap.Terrain);
             if (SpawnItem(new LootRoll(ItemKind.Weapon, old.Weapon!.Id, old.Rarity, (ushort)old.MagAmmo), dropAt, -1) == 0)
             {
                 // Impossible: RemoveItemAt above just freed a record, so the store is below Capacity and
@@ -591,7 +710,7 @@ public sealed class Match
         Vector3 offset = ItemRules.Offset(player.State.Yaw, ItemRules.DropDistance);
         // Conservation: the weapon leaves the hand only once it lies in the world. SpawnItem touches the
         // world list only, so the ref into the inventory stays valid.
-        if (SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, GameMap.Boxes, GameMap.Terrain), -1) == 0) return;
+        if (SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, _doors.World, GameMap.Terrain), -1) == 0) return;
 
         inventory.DroppedFireLockTick = Math.Max(inventory.DroppedFireLockTick, held.NextFireTick);
         held = default;
@@ -646,7 +765,7 @@ public sealed class Match
     private bool DropAround(PlayerEntity player, int n, int count, in LootRoll roll)
     {
         Vector3 offset = ItemRules.Offset(player.State.Yaw + 360f * n / count, ItemRules.DeathDropRadius);
-        return SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, GameMap.Boxes, GameMap.Terrain), -1) != 0;
+        return SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, _doors.World, GameMap.Terrain), -1) != 0;
     }
 
     // End of tick (D11): the match state when any of its fields changed (state, timer, alive and player counts,
@@ -668,6 +787,22 @@ public sealed class Match
         }
     }
 
+    // Phase 12 D9: at the end of a tick in which a door changed, the doors to everyone (one small packet however many
+    // changed).
+    private void SendDoorChanges()
+    {
+        if (_doors.OpenMask == _sentDoors) return;
+        _sentDoors = _doors.OpenMask;
+        foreach (var p in _players) SendDoors(p.PeerId);
+    }
+
+    private void SendDoors(int peerId)
+    {
+        var writer = new PacketWriter(_sendBuffer);
+        DoorStatesPacket.Write(ref writer, _doors.OpenMask);
+        _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
     private void SendMatchState(int peerId, in MatchState state)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -679,6 +814,14 @@ public sealed class Match
     {
         var writer = new PacketWriter(_sendBuffer);
         ZoneState.Write(ref writer, zone);
+        _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
+    // Phase 12 D5: the route, to one player (a newcomer or a resumed player during the match) or to everyone (the start).
+    private void SendRoute(int peerId)
+    {
+        var writer = new PacketWriter(_sendBuffer);
+        TransportRoutePacket.Write(ref writer, _route);
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
@@ -711,9 +854,9 @@ public sealed class Match
 
     // D9: death is decided here. The same ReliableOrdered channel carries DamageTaken, PlayerDied and
     // PlayerRespawned, so every client sees them in that order.
-    // killer null = the zone (Phase 5 D8): KillerId 0, nobody gets the kill. During a match the death is
-    // permanent and takes the next placement (D9); the killer's count rises unless it killed itself (D12).
-    private void Kill(PlayerEntity victim, PlayerEntity? killer)
+    // killer null = the zone (Phase 5 D8) or a fall (Phase 12 D10, cause): KillerId 0, nobody gets the kill. During a
+    // match the death is permanent and takes the next placement (D9); the killer's count rises unless it killed itself (D12).
+    private void Kill(PlayerEntity victim, PlayerEntity? killer, DeathCause cause = DeathCause.Zone)
     {
         victim.Alive = false;
         victim.RespawnAtTick = ServerTick + _respawnTicks;
@@ -734,7 +877,10 @@ public sealed class Match
         }
 
         var writer = new PacketWriter(_sendBuffer);
-        PlayerDied.Write(ref writer, new PlayerDied { VictimId = victim.EntityId, KillerId = killer?.EntityId ?? 0, Placement = placement });
+        PlayerDied.Write(ref writer, new PlayerDied
+        {
+            VictimId = victim.EntityId, KillerId = killer?.EntityId ?? 0, Placement = placement, Cause = killer == null ? cause : DeathCause.Zone,
+        });
         Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
 
         // After PlayerDied, so every client hears of the death before the items appear.
@@ -743,12 +889,14 @@ public sealed class Match
 
     private void Respawn(PlayerEntity player) => Respawn(player, SpawnPosition(player.EntityId));
 
-    private void Respawn(PlayerEntity player, Vector3 position)
+    // Phase 12: mode is the movement mode the player starts in (Transport aboard the drop transport).
+    private void Respawn(PlayerEntity player, Vector3 position, MovementMode mode = MovementMode.Ground)
     {
-        // Keep the yaw so the camera does not snap; everything else starts over at the given position.
-        player.State = new MoveState { Position = position, Yaw = player.State.Yaw };
+        // Keep the yaw so the camera does not snap; everything else starts over at the given position (rested).
+        player.State = new MoveState { Position = position, Yaw = player.State.Yaw, Mode = mode };
+        player.Sprinting = false;
         ResetCombat(player);
-        player.History.Reset(ServerTick, player.State.Position);
+        player.History.Reset(ServerTick, player.State.Position, mode);
         // The missed-input repeat starts over too: a late input right after the respawn must not replay a
         // move from the old life. Seq stays (the client's seq continues across the respawn), and so does
         // LastProcessedSeq.
@@ -756,22 +904,35 @@ public sealed class Match
         player.MissedTicks = 0;
 
         var writer = new PacketWriter(_sendBuffer);
-        PlayerRespawned.Write(ref writer, new PlayerRespawned { EntityId = player.EntityId, Position = player.State.Position, Yaw = player.State.Yaw });
+        PlayerRespawned.Write(ref writer, new PlayerRespawned
+        {
+            EntityId = player.EntityId, Position = player.State.Position, Yaw = player.State.Yaw, Mode = mode,
+        });
         Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
     // D3: Starting -> Playing, in this one tick: everyone to a drop point (Phase 6 D9), empty-handed with Health 100 and
     // Shield 0 (the loadout), the world cleared and filled with this match's loot, the participants fixed, the
     // zone started. Respawn keeps Seq, so clients re-sync their prediction exactly as after a death.
+    // Phase 12 D4, D5: with AirDrop everyone starts aboard the drop transport instead: the route (rolled with this
+    // round's spawn seed, starting at the tick being simulated) goes out first, so the same ordered channel delivers it
+    // before the PlayerRespawned events in Transport mode; and the zone's clock starts when the route ends.
     private void StartMatch(uint now)
     {
         ClearWorldItems();
+        _hasRoute = _airDrop;
+        if (_hasRoute)
+        {
+            _route = DropPlanner.Plan(unchecked(_spawnSeed + _flow.Round), now + 1, _simHz);
+            foreach (var player in _players) SendRoute(player.PeerId);
+        }
         // Phase 6 D9: everyone to a drop point, in an order shuffled by this round's seed.
         ShuffleDropOrder(unchecked(_spawnSeed + _flow.Round));
         int dropIndex = 0;
         foreach (var player in _players)
         {
-            Respawn(player, DropSpot(dropIndex++));
+            if (_hasRoute) Respawn(player, _route.PositionAt(_route.StartTick), MovementMode.Transport);
+            else Respawn(player, DropSpot(dropIndex++));
             player.Participant = true;
             player.Placement = 0;
             player.Kills = 0;
@@ -779,10 +940,13 @@ public sealed class Match
             player.EliminatedTick = 0;
         }
         _leftParticipants.Clear();
+        // Phase 12 D9: every door closed (everyone is aboard or on a drop point, clear of every box); the change goes out
+        // at the end of this tick.
+        _doors.CloseAll();
         _matchStartedUtc = DateTime.UtcNow;
         _loot.Restart(unchecked(_lootSeed + _flow.Round));
         for (int point = 0; point < _loot.Count; point++) SpawnItem(_loot.Roll(point), _loot.Position(point), point);
-        _zone.Start(now, unchecked(_zoneSeed + _flow.Round));
+        _zone.Start(_hasRoute ? _route.EndTick : now, unchecked(_zoneSeed + _flow.Round));
         if (_zone.IsFinalPhase) _flow.EnterFinalPhase();   // a one-phase zone is final from the start
         _matchStartTick = now;
         WinnerId = 0;
@@ -795,6 +959,7 @@ public sealed class Match
         // Phase 10 D2: the grace ends with the round. Before Reopen counts the players for the next countdown.
         while (_graced.Count > 0) ExpireGraced(_graced[0]);
         ClearWorldItems();
+        _hasRoute = false;
         foreach (var player in _players)
         {
             Respawn(player);
@@ -858,10 +1023,11 @@ public sealed class Match
                     Position = p.State.Position,
                     VelocityY = p.State.VelocityY,
                     Yaw = p.State.Yaw,
-                    Flags = p.Alive ? SnapshotEntity.AliveFlag : (byte)0,
+                    // Phase 12 D11: alive, the mode, sprinting and exhausted in the one flag byte.
+                    Flags = SnapshotEntity.MakeFlags(p.Alive, p.State.Mode, p.Sprinting, p.State.Exhausted),
                 });
             }
-            // Cannot overflow: 19 + 13 * 90 = 1189 bytes, and ServerOptions.Validate caps MaxPlayers at MaxSnapshotEntities.
+            // Cannot overflow: 27 + 13 * 90 = 1197 bytes, and ServerOptions.Validate caps MaxPlayers at MaxSnapshotEntities.
             if (writer.Overflowed) return;
 
             Span<byte> packet = _sendBuffer.AsSpan(0, writer.Length);
@@ -888,6 +1054,11 @@ public sealed class Match
             WeaponSlot = (byte)p.Inventory.CurrentSlot,
             Ammo = (byte)p.Inventory.Current.MagAmmo,   // 0 for an empty slot
             ReloadRemainingTicks = reloadRemaining,
+            // Phase 12 D11: what the owner's prediction needs beyond the entity.
+            Energy = (ushort)(MoveState.MaxEnergyHundredths - p.State.EnergySpent),
+            HorizontalVelocity = p.State.HorizontalVelocity,
+            ModeTicks = p.State.ModeTicks,
+            EnergyDelayTicks = p.State.EnergyDelayTicks,
         };
     }
 
@@ -1082,6 +1253,9 @@ public sealed class Match
             SendMatchState(peerId, _flow.ToWire(_players.Count));
             SendZoneState(peerId, _zone.ToWire());
         }
+        // Phase 12 D16: the route, so a rider (or a jumper) predicts from it; the mode comes with the next snapshot.
+        if (_hasRoute) SendRoute(peerId);
+        SendDoors(peerId);
         // The match ended while it was away: FinishMatch sent its result to no connection, so it gets it now.
         if (_flow.State == MatchFlowState.Finished && player.Participant) SendMatchResult(player);
     }

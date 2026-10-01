@@ -27,6 +27,8 @@ public sealed class PlayerEntity
 
     // Fields, not properties, so MovementSimulation can step State by ref without copies.
     public MoveState State;
+    // Phase 12 D11: whether the last step sprinted (the snapshot flag).
+    public bool Sprinting;
     public InputCommand LastInput;
     public uint LastProcessedSeq;
     // Consecutive ticks without a buffered input, reset when one is taken. Match stops counting at

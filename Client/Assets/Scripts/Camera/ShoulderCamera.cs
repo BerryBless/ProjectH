@@ -1,3 +1,4 @@
+using ProjectH.Shared.Simulation;
 using UnityEngine;
 
 namespace ProjectH.Client.CameraControl
@@ -20,6 +21,8 @@ namespace ProjectH.Client.CameraControl
         private readonly PhysicsSphereCaster _caster = new PhysicsSphereCaster();
         private float _aimBlend;
         private float _distance = ShoulderCameraMath.HipDistance;
+        // Phase 12 D14: the hip camera, eased towards the followed character's mode.
+        private CameraTargets _hip = ShoulderCameraMath.Hip;
 
         public ShoulderCamera(Camera camera)
         {
@@ -43,11 +46,12 @@ namespace ProjectH.Client.CameraControl
             Pitch = Mathf.Clamp(Pitch - lookDelta.y * sensitivity, MinPitch, MaxPitch);
         }
 
-        // Call from LateUpdate with the rendered feet position.
-        public void Follow(Vector3 targetFeet, bool aiming, float deltaTime)
+        // Call from LateUpdate with the rendered feet position, and the mode of whoever is followed (D14).
+        public void Follow(Vector3 targetFeet, bool aiming, float deltaTime, MovementMode mode = MovementMode.Ground, bool sprinting = false)
         {
             _aimBlend = ShoulderCameraMath.Approach(_aimBlend, aiming ? 1f : 0f, AimBlendSharpness, deltaTime);
-            ShoulderPose pose = ShoulderCameraMath.Solve(targetFeet, Yaw, Pitch, _aimBlend, _distance, deltaTime, _caster);
+            _hip = ShoulderCameraMath.Approach(_hip, ShoulderCameraMath.TargetsFor(mode, sprinting), deltaTime);
+            ShoulderPose pose = ShoulderCameraMath.Solve(targetFeet, Yaw, Pitch, _aimBlend, _distance, deltaTime, _caster, _hip);
             _distance = pose.Distance;
             _transform.SetPositionAndRotation(pose.Position, Quaternion.Euler(Pitch, Yaw, 0f));
             _camera.fieldOfView = pose.FieldOfView;

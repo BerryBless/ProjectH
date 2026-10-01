@@ -28,5 +28,8 @@ namespace ProjectH.Shared.Protocol
         // Phase 11 D8: statistics on request.
         StatsRequest = 22,
         StatsResponse = 23,
+        // Phase 12 D11: deployment and doors.
+        TransportRoute = 24,
+        DoorStates = 25,
     }
 }

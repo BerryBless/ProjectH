@@ -1,3 +1,4 @@
+using ProjectH.Shared.Protocol;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
@@ -42,14 +43,16 @@ namespace ProjectH.Client.UI
             _root.SetActive(visible);
         }
 
-        // Once when the result screen opens. winnerName null = no winner; killerName is used when died && !byZone.
-        public void Show(bool won, int placement, int participants, int kills, string winnerName, bool died, bool byZone, string killerName)
+        // Once when the result screen opens. winnerName null = no winner; killerName is used when died && !noKiller, and the
+        // cause (the zone or a fall, Phase 12 D10) when noKiller.
+        public void Show(bool won, int placement, int participants, int kills, string winnerName, bool died, bool noKiller,
+            DeathCause cause, string killerName)
         {
             _title.text = UiText.ResultTitle(won);
             _placement.text = UiText.Placement(placement, participants);
             _kills.text = UiText.Kills(kills);
             _winner.text = UiText.Winner(winnerName);
-            _killedBy.text = UiText.KilledBy(died && !won, byZone, killerName);
+            _killedBy.text = UiText.KilledBy(died && !won, noKiller, cause, killerName);
             _shownSeconds = -1;
         }
 

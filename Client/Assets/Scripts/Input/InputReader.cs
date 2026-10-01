@@ -25,6 +25,10 @@ namespace ProjectH.Client.Input
         private readonly InputAction _useShieldCell;
         private readonly InputAction _escape;
         private readonly InputAction _debugToggle;
+        private readonly InputAction _crouchToggle;
+        private readonly InputAction _crouchHold;
+        // Phase 12 D7: C turns crouch on and off; a jump or a sprint press turns it off again.
+        private bool _crouchToggled;
 
         public InputReader()
         {
@@ -52,6 +56,9 @@ namespace ProjectH.Client.Input
             // Phase 11 D5: Esc opens and closes the menu (UiFlow decides; the cursor follows it). F1: the debug line (D4).
             _escape = new InputAction("Escape", InputActionType.Button, "<Keyboard>/escape");
             _debugToggle = new InputAction("DebugToggle", InputActionType.Button, "<Keyboard>/f1");
+            // Phase 12 D7: C toggles crouch, Ctrl holds it (the Crouch button is sent as held either way).
+            _crouchToggle = new InputAction("CrouchToggle", InputActionType.Button, "<Keyboard>/c");
+            _crouchHold = new InputAction("CrouchHold", InputActionType.Button, "<Keyboard>/leftCtrl");
 
             _move.Enable();
             _look.Enable();
@@ -69,6 +76,8 @@ namespace ProjectH.Client.Input
             _useShieldCell.Enable();
             _escape.Enable();
             _debugToggle.Enable();
+            _crouchToggle.Enable();
+            _crouchHold.Enable();
         }
 
         public Vector2 Move => _move.ReadValue<Vector2>();
@@ -79,6 +88,11 @@ namespace ProjectH.Client.Input
         public bool AimHeld => _aim.IsPressed();
         public bool EscapePressed => _escape.WasPressedThisFrame();
         public bool DebugTogglePressed => _debugToggle.WasPressedThisFrame();
+        // Phase 12 D7: the Crouch button: toggled with C or held with Ctrl.
+        public bool CrouchHeld => _crouchToggled || _crouchHold.IsPressed();
+
+        // A respawn or a death starts standing.
+        public void ResetCrouch() => _crouchToggled = false;
 
         // Jump, Reload, Slot1-3, Interact, Drop and the two heal presses since the last simulation step that
         // used them. Rendering runs
@@ -86,9 +100,15 @@ namespace ProjectH.Client.Input
         // LocalPlayerPredictor.Advance clears the bits it puts into an input.
         public InputButtons QueuedButtons { get; set; }
 
-        // Call once per rendered frame.
-        public void Update()
+        // Call once per rendered frame. gameInputBlocked: a screen is up or the cursor is free; C then does not toggle the
+        // crouch (Ctrl is not sent either, GameClient), so a key typed into a menu does not crouch the character.
+        public void Update(bool gameInputBlocked)
         {
+            if (!gameInputBlocked)
+            {
+                if (_crouchToggle.WasPressedThisFrame()) _crouchToggled = !_crouchToggled;
+                if (_jump.WasPressedThisFrame() || _sprint.WasPressedThisFrame()) _crouchToggled = false;
+            }
             if (_jump.WasPressedThisFrame()) QueuedButtons |= InputButtons.Jump;
             if (_reload.WasPressedThisFrame()) QueuedButtons |= InputButtons.Reload;
             if (_slot1.WasPressedThisFrame()) QueuedButtons |= InputButtons.Slot1;
@@ -118,6 +138,8 @@ namespace ProjectH.Client.Input
             _useShieldCell.Dispose();
             _escape.Dispose();
             _debugToggle.Dispose();
+            _crouchToggle.Dispose();
+            _crouchHold.Dispose();
         }
     }
 }

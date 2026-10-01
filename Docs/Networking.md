@@ -1,7 +1,7 @@
 # Networking
 
 Transport: LiteNetLib 2.1.4 (UDP). 프레이밍 `[PacketId: byte][payload]`, little-endian, 수기 직렬화(`PacketWriter`/`PacketReader`).
-`ProtocolVersion`(현재 9. Phase 11: 전적 패킷 `StatsRequest`/`StatsResponse`가 생겼고 `PlayerSpawned`에 이름(`Name`)이 들어갔다("전적 조회 (Phase 11 D8)"). Phase 10: 서버가 끊을 때 이유 코드(`DisconnectCode`)를 보내고 `JoinResult.Resumed`가 생겼다("끊기와 재접속 (Phase 10)"). 패킷 형식은 같다. Phase 8: Snapshot을 여러 패킷으로 나누고 엔티티를 양자화했다("Snapshot 분할과 양자화"). Phase 6: 지형과 새 맵 박스로 이동 결과가 바뀌었다. 패킷 형식은 같다. Phase 3에서 입력 명령·Snapshot 형식이 바뀌고 전투 패킷이 생겼고, Phase 4에서 Buttons가 2B가 되고 무기 카탈로그에 탄약 종류가, 아이템 패킷 6종이 생겼고, Phase 5에서 경기 패킷 3종(`MatchState`, `ZoneState`, `MatchResult`)과 `PlayerDied`의 Placement가 생겼다) 불일치 연결은 접속 단계(`OnConnectionRequest`)에서 `RejectReason.VersionMismatch`로 거절된다. 그 외 거절 사유: `ServerFull`(연결 수 ≥ MaxPlayers), `BadRequest`(연결 데이터 없음·파싱 실패·DevPlayerId가 이름 규칙에 어긋남. 아래 "Validation"). Client는 거절 사유를 끊김 화면이 한국어로 보여 준다(`UiText.Reject`).
+`ProtocolVersion`(현재 10. Phase 12: 이동 모드를 Snapshot Entity의 `Flags`에 싣고, 수신자 블록(Self)이 6B에서 14B가 됐고, `Crouch` 버튼, 새 패킷 `TransportRoute`·`DoorStates`, `PlayerRespawned.Mode`, `PlayerDied.Cause`가 생겼다. 이동 규칙도 바뀌었다("투입과 문 (Phase 12)", `Movement.md`). Phase 11: 전적 패킷 `StatsRequest`/`StatsResponse`가 생겼고 `PlayerSpawned`에 이름(`Name`)이 들어갔다("전적 조회 (Phase 11 D8)"). Phase 10: 서버가 끊을 때 이유 코드(`DisconnectCode`)를 보내고 `JoinResult.Resumed`가 생겼다("끊기와 재접속 (Phase 10)"). 패킷 형식은 같다. Phase 8: Snapshot을 여러 패킷으로 나누고 엔티티를 양자화했다("Snapshot 분할과 양자화"). Phase 6: 지형과 새 맵 박스로 이동 결과가 바뀌었다. 패킷 형식은 같다. Phase 3에서 입력 명령·Snapshot 형식이 바뀌고 전투 패킷이 생겼고, Phase 4에서 Buttons가 2B가 되고 무기 카탈로그에 탄약 종류가, 아이템 패킷 6종이 생겼고, Phase 5에서 경기 패킷 3종(`MatchState`, `ZoneState`, `MatchResult`)과 `PlayerDied`의 Placement가 생겼다) 불일치 연결은 접속 단계(`OnConnectionRequest`)에서 `RejectReason.VersionMismatch`로 거절된다. 그 외 거절 사유: `ServerFull`(연결 수 ≥ MaxPlayers), `BadRequest`(연결 데이터 없음·파싱 실패·DevPlayerId가 이름 규칙에 어긋남. 아래 "Validation"). Client는 거절 사유를 끊김 화면이 한국어로 보여 준다(`UiText.Reject`).
 
 ## MTU
 
@@ -17,7 +17,7 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
 | PlayerSpawned | S→C | ReliableOrdered | EntityId, Position, Yaw, Name(DevPlayerId, 1바이트 길이 + UTF-8 1–32B. 빈 이름·33B 이상은 읽기 실패) |
 | PlayerDespawned | S→C | ReliableOrdered | EntityId |
 | PlayerInput | C→S | Unreliable | 최근 입력 1–3개(Seq, MoveX, MoveY, Yaw, Buttons u16, AimYaw, AimPitch, ViewTick = 명령 1개 30B), 오래된 것부터 |
-| WorldSnapshot | S→C | Sequenced | ServerTick, AckInputSeq(수신자별), Count, Part, PartCount, 수신자 블록(Health, Shield, WeaponSlot = 현재 인벤토리 칸 0–2, Ammo = 그 칸의 탄창(빈 칸이면 0), ReloadRemainingTicks = 6B, 수신자별), [EntityId, Position, VelocityY, Yaw, Flags(bit0 생존)] (엔티티 13B, 양자화) |
+| WorldSnapshot | S→C | Sequenced | ServerTick, AckInputSeq(수신자별), Count, Part, PartCount, 수신자 블록(Health, Shield, WeaponSlot = 현재 인벤토리 칸 0–2, Ammo = 그 칸의 탄창(빈 칸이면 0), ReloadRemainingTicks, 기력 u16(×100, 0–10000), 수평 속도 X·Z i16 ×2(1/256 m/s), `ModeTicks`, `EnergyDelayTicks` = 14B, 수신자별), [EntityId, Position, VelocityY, Yaw, Flags(bit0 생존, bit1–3 이동 모드, bit4 달리는 중, bit5 기진 = 달리기 불가 상태)] (엔티티 13B, 양자화) |
 | WeaponCatalog | S→C | ReliableOrdered | Join 응답 직후 1회. 무기 1–8개: WeaponId, Name ≤ 16B, Damage, FireIntervalTicks, MagazineSize, ReloadTicks, Range, Automatic, AmmoType(1 Light, 2 Medium, 3 Heavy) |
 | ItemCatalog | S→C | ReliableOrdered | WeaponCatalog 직후 1회. 등급 5개(Name, DamageMultiplier), 탄약 3종(Type, Name, Max), 소모품 2종(Type, Name, UseTicks, Heal, Shield, MaxStack). 최대 219B |
 | WorldItems | S→C(새로 들어온 사람) | ReliableOrdered | ItemCatalog 직후. 월드 아이템 전체를 50개씩 나눠서: Count 1–50 + [ItemId u16, Kind, DefId, Rarity, Amount u16, Position] × Count(개체마다 19B). 패킷 최대 952B, 256개면 6개 패킷 |
@@ -28,21 +28,28 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
 | ShotFired | S→C(전원) | Unreliable | ShooterId, Start(눈), End(멈춘 곳) |
 | HitConfirmed | S→C(쏜 사람) | ReliableOrdered | TargetId, Damage(무기의 명목 피해. 실제로 깎인 양이 아니다), Killed |
 | DamageTaken | S→C(맞은 사람) | ReliableOrdered | AttackerId, Damage, FromDirection(맞은 쪽 → 쏜 쪽 단위 벡터) |
-| PlayerDied | S→C(전원) | ReliableOrdered | VictimId, KillerId(0 = Zone), Placement(경기 중 사망이면 남은 생존자 수 + 1, 아니면 0). 6B. 경기 중 들어온 사람에게는 본인에게만 `VictimId = 자기, KillerId 0, Placement 0`으로 보낸다(관전 시작) |
-| PlayerRespawned | S→C(전원) | ReliableOrdered | EntityId, Position, Yaw. 경기 시작·판 재시작 때 모두의 Spawn 이동에도 쓴다 |
+| PlayerDied | S→C(전원) | ReliableOrdered | VictimId, KillerId(0 = 처치자 없음), Placement(경기 중 사망이면 남은 생존자 수 + 1, 아니면 0), `Cause`(0 자기장·플레이어, 1 낙하. 1보다 크면 읽기 실패). 7B. 처치자가 있으면 `Cause`는 0이다. 경기 중 들어온 사람에게는 본인에게만 `VictimId = 자기, KillerId 0, Placement 0, Cause 0`으로 보낸다(관전 시작) |
+| PlayerRespawned | S→C(전원) | ReliableOrdered | EntityId, Position, Yaw, `Mode`(시작 이동 모드: 경기 시작의 공중 투입이면 `Transport` 6, 아니면 `Ground` 0. 6보다 크면 읽기 실패). 20B. 경기 시작·판 재시작 때 모두의 Spawn 이동에도 쓴다 |
+| TransportRoute | S→C | ReliableOrdered | 시작 X·Z, 끝 X·Z, 고도(float 5개), 시작 Tick, 길이 Tick(u32 2개) = 29B. 경기 시작 때(`PlayerRespawned`보다 먼저 보낸다. 같은 채널이라 그 순서로 도착한다)와 경기 중 Join·Resume 때. Client는 이 값으로 수송기 위치를 서버 Tick마다 계산한다(`DropRoute.PositionAt`). 좌표가 ±127 밖이거나 고도가 음수이거나 길이가 0 또는 76800 Tick(10분) 초과면 읽기 실패 |
+| DoorStates | S→C | ReliableOrdered | 열린 문 비트 마스크(bit i = `GameMap.Doors[i]`, 문 5개) = 2B. 문이 바뀐 Tick의 끝(Tick당 최대 1개), 판 시작(모두 닫힘), Join·Resume 때. 없는 문의 비트가 켜져 있으면 읽기 실패 |
 | MatchState | S→C(전원, 바뀐 Tick 끝)·Join | ReliableOrdered | State(0 Waiting, 1 Starting, 2 Playing, 3 FinalPhase, 4 Finished, 5 Closing), StateEndTick u32(0 = 타이머 없음), Alive, Participants, Round u16, MinPlayers. 11B. 경기 전에는 Alive·Participants가 접속자 수다 |
 | ZoneState | S→C(전원, 단계가 바뀐 Tick 끝)·Join | ReliableOrdered | Phase(0 = Zone 없음), From(X, Z, Radius), To(X, Z, Radius), ShrinkStartTick, ShrinkEndTick, DamagePerSecond u16. 36B |
 | MatchResult | S→C(접속 중인 참가자 본인) | ReliableOrdered | WinnerId(0 = 없음), Placement, Kills, Participants. 6B |
 | StatsRequest | C→S | ReliableOrdered | 없음(PacketId만). Join을 요청한 연결만, 연결당 2초에 한 번. 본문이 있으면 잘못된 패킷 |
 | StatsResponse | S→C(요청한 사람) | ReliableOrdered | Status(0 Ok, 1 NoRecord, 2 Unavailable, 3 Busy), 요약(Matches, Wins, Kills, Deaths, Damage, SurvivalSeconds, 각 u32, 서버가 자른다), Count 0–10, 행(EndedUnixSeconds u32, Round u32, Players, Placement(0 = 순위 없음), Kills u16, Damage u32, SurvivalMs u32 = 20B) × Count, 최신순. Ok가 아니면 요약 0, 행 없음. 최대 227B |
 
-- Snapshot 헤더 13B(`Part`, `PartCount` 포함) + 수신자 블록 6B = 19B, 엔티티 13B. LiteNetLib은 Sequenced 패킷을 분할하지 않으므로 패킷 하나가 `MaxPacketSize` 1200B 이내여야 한다 → 패킷당 최대 90명 = 19 + 13 × 90 = 1189B(`PacketTests`가 고정), 50명 = 19 + 13 × 50 = 669B(Phase 7의 1167B에서 -42.7 %). 한 경기 최대 100명(`MaxSnapshotEntities`), Snapshot은 최대 2패킷(`MaxSnapshotParts`), `MaxPlayers ≤ 100`(기본 16, 시작 시 검증). 서버는 payload를 한 번 쓰고 수신자마다 AckInputSeq와 수신자 블록만 덮어쓴다(`WorldSnapshotHeader.PatchRecipient`).
+- Snapshot 헤더 13B(`Part`, `PartCount` 포함) + 수신자 블록 14B = 27B(Phase 12. 그 전에는 블록 6B로 19B), 엔티티 13B(Phase 12에서도 그대로. 이동 모드는 빈 `Flags` 비트에 넣었다). LiteNetLib은 Sequenced 패킷을 분할하지 않으므로 패킷 하나가 `MaxPacketSize` 1200B 이내여야 한다 → 패킷당 최대 90명 = 27 + 13 × 90 = 1197B(`PacketTests`가 고정, 3B 여유), 50명 = 27 + 13 × 50 = 677B(Phase 7의 1167B에서 -42.0 %. Phase 8~11은 669B). 수신자 블록을 읽을 때 기력이 가득(10000)보다 크면 헤더 읽기가 실패한다(범위 밖 블록 거절). 한 경기 최대 100명(`MaxSnapshotEntities`), Snapshot은 최대 2패킷(`MaxSnapshotParts`), `MaxPlayers ≤ 100`(기본 16, 시작 시 검증). 서버는 payload를 한 번 쓰고 수신자마다 AckInputSeq와 수신자 블록만 덮어쓴다(`WorldSnapshotHeader.PatchRecipient`).
 - **Snapshot 분할과 양자화(Protocol v7, Phase 8):**
   - 분할: 플레이어 목록을 90명씩 나눠 Part마다 패킷 하나를 보낸다(91–100명이면 90 + 나머지, 2패킷). 패킷마다 같은 Tick·Ack·수신자 블록을 가진 완전한 헤더에 `Part`, `PartCount`가 있다. 읽을 때 `Count ≤ 90`, `1 ≤ PartCount ≤ 2`, `Part < PartCount`를 검증한다(어기면 읽기 실패).
   - 양자화: 위치 x·y·z와 VelocityY는 부호 있는 16비트 1/256 단위(±128 m, ±128 m/s, 맵은 ±80 m), Yaw는 16비트로 360°를 나눈다. 최대 오차는 축마다 반 단위(약 0.002 m)다. 범위 밖 값은 잘라 넣고 NaN·무한대는 0이다. 구조체 필드는 float 그대로이고 Write/Read에서만 바뀐다(`SnapshotEntity.Quantize`). 내 엔티티도 같은 값을 받고, 오차가 재조정 허용 오차(0.01 m)보다 작아 보정이 일어나지 않는다(Client EditMode 테스트로 고정). 박스 윗면과 지형 꼭짓점은 1/256의 배수라 그대로 전달된다. 실제 예측 불일치로 재조정할 때는 Client가 양자화된 서버 상태에서 다시 시작하므로, 다음 보정까지 재적용한 예측에 축마다 최대 약 0.002 m의 오차가 실릴 수 있다(허용 오차 0.01 m 이내).
   - 수신 쪽 규칙: 패킷마다 독립적으로 적용한다(재조립·대기 버퍼 없음). 한 패킷을 잃으면 그 안의 플레이어가 그 Tick의 표본 하나를 못 받을 뿐이고 보간이 흡수한다. 원격 플레이어 제거는 Snapshot에 없다는 이유가 아니라 `PlayerDespawned` 이벤트로 한다. 봇·테스트 Client는 같은 Tick의 패킷을 더하고 새 Tick이 오면 처음부터 다시 모은다.
-- Buttons(u16)는 알려진 비트(Jump, Sprint, Fire, Reload, Slot1, Slot2, Slot3, Interact, Drop, UseMedkit, UseShieldCell = 0x07FF)만 남기고 나머지는 버린다. 입력 패킷은 최대 2 + 3 × 30 = 92B다.
-- 이 표의 패킷 크기(`ItemCatalog` 219B, `WorldItems` 952B, `ItemSpawned` 20B, `InventoryState` 22B, 입력 패킷 92B, `MatchState` 11B, `ZoneState` 36B, `MatchResult` 6B, `StatsResponse` 227B 등)는 모두 PacketId 1B를 포함한 전체 바이트 수다. 새 패킷은 모두 1200B 이하다(`ItemPacketTests`, `MatchPacketTests`가 고정). Snapshot 크기는 위 Snapshot 항목을 본다(Phase 7까지는 50명 1167B, v7은 669B). Zone 원은 Snapshot에 싣지 않는다(시작·끝 값과 Tick으로 양쪽이 같은 식으로 보간한다).
+- Buttons(u16)는 알려진 비트(Jump, Sprint, Fire, Reload, Slot1, Slot2, Slot3, Interact, Drop, UseMedkit, UseShieldCell, Crouch = 0x0FFF)만 남기고 나머지는 버린다. 입력 패킷은 최대 2 + 3 × 30 = 92B다.
+
+  | 비트 | 값 | 버튼 | 비고 |
+  |---|---|---|---|
+  | 0–10 | 1–1024 | Jump, Sprint, Fire, Reload, Slot1–3, Interact, Drop, UseMedkit, UseShieldCell | Phase 4까지 |
+  | 11 | 2048 | `Crouch` | Phase 12. 누르고 있는 상태(토글은 Client가 만든다). 뛰어내리기·글라이더·Vault는 Jump, 문은 Interact를 다시 쓴다 |
+- 이 표의 패킷 크기(`ItemCatalog` 219B, `WorldItems` 952B, `ItemSpawned` 20B, `InventoryState` 22B, 입력 패킷 92B, `MatchState` 11B, `ZoneState` 36B, `MatchResult` 6B, `StatsResponse` 227B 등)는 모두 PacketId 1B를 포함한 전체 바이트 수다. 새 패킷은 모두 1200B 이하다(`ItemPacketTests`, `MatchPacketTests`가 고정). Snapshot 크기는 위 Snapshot 항목을 본다(Phase 7까지는 50명 1167B, v7은 669B, v10은 677B). Phase 12의 `TransportRoute` 29B, `DoorStates` 2B, `PlayerRespawned` 20B, `PlayerDied` 7B도 `TraversalPacketTests`·`MatchPacketTests`가 고정한다. Zone 원은 Snapshot에 싣지 않는다(시작·끝 값과 Tick으로 양쪽이 같은 식으로 보간한다).
 - Client가 "누구를 맞혔다"고 보내는 필드는 없다. 명중은 서버가 조준 방향으로 판정한다.
 - Join 결과: Resumed는 끊겼던 참가자가 같은 Entity로 돌아온 것이다("끊기와 재접속"). 늦은 합류와 같은 전체 상태가 이어진다. MatchFull이면 응답만 보내고, 그 연결은 Join한 것으로 치지 않는다. 1초 뒤(응답이 먼저 나가도록) 코드 없이(`None`) 끊는다. Client는 Join 실패를 받으면 자동 재접속을 멈춘다(Phase 10). 이미 참가한 peer의 중복 Join은 서버 Match에 도달하지 않는다(아래 Validation).
 
@@ -51,8 +58,8 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
 1. Client `Connect` → 연결 요청 데이터 전송.
 2. Server `OnConnectionRequest`에서 검사 후 Accept, `PeerState`를 `peer.Tag`에 설정하고 그 다음에 `Connected` 제어 메시지를 Control 채널에 쓴다. LiteNetLib이 `Accept()` 안에서 `OnPeerConnected`를 동기 호출하는데 그 시점엔 Tag가 아직 없으므로, `OnPeerConnected`에서는 아무것도 하지 않는다.
 3. Client `OnPeerConnected`에서 `JoinMatchRequest` 전송.
-4. Server가 `JoinMatchResponse` → `WeaponCatalog` → `ItemCatalog` → `WorldItems`(분할, 아이템이 없으면 보내지 않는다. 운영 서버는 경기 전에 월드가 비어 있다) → `InventoryState` → 새 플레이어에게 전원의 `PlayerSpawned`, 기존 플레이어에게 새 플레이어의 `PlayerSpawned` → (`DevRespawn`이 꺼져 있으면) `MatchState` → `ZoneState` → (경기 중이면) 본인의 `PlayerDied`(관전).
-5. Resume(Phase 10): 경기 중 끊긴 참가자가 유예 안에 같은 DevPlayerId로 Join하면 `JoinMatchResponse(Resumed, 같은 Entity)` → `WeaponCatalog` → `ItemCatalog` → `WorldItems` → `InventoryState` → 전원의 `PlayerSpawned`(자기 포함, 지금 위치) → `MatchState` → `ZoneState` → (유예 중에 경기가 끝났으면, 즉 `Finished`이면) 본인의 `MatchResult`. 경기 끝에 보낸 결과는 연결이 없어 사라졌으므로 다시 보낸다. 다른 플레이어에게는 아무것도 보내지 않는다(떠난 적이 없다).
+4. Server가 `JoinMatchResponse` → `WeaponCatalog` → `ItemCatalog` → `WorldItems`(분할, 아이템이 없으면 보내지 않는다. 운영 서버는 경기 전에 월드가 비어 있다) → `InventoryState` → 새 플레이어에게 전원의 `PlayerSpawned`, 기존 플레이어에게 새 플레이어의 `PlayerSpawned` → (`DevRespawn`이 꺼져 있으면) `MatchState` → `ZoneState` → (Phase 12) `DoorStates` → (공중 투입 경기 중이면) `TransportRoute` → (경기 중이면) 본인의 `PlayerDied`(관전).
+5. Resume(Phase 10): 경기 중 끊긴 참가자가 유예 안에 같은 DevPlayerId로 Join하면 `JoinMatchResponse(Resumed, 같은 Entity)` → `WeaponCatalog` → `ItemCatalog` → `WorldItems` → `InventoryState` → 전원의 `PlayerSpawned`(자기 포함, 지금 위치) → `MatchState` → `ZoneState` → (Phase 12: 공중 투입 경기면) `TransportRoute` → `DoorStates` → (유예 중에 경기가 끝났으면, 즉 `Finished`이면) 본인의 `MatchResult`. 경기 끝에 보낸 결과는 연결이 없어 사라졌으므로 다시 보낸다. 다른 플레이어에게는 아무것도 보내지 않는다(떠난 적이 없다).
 
 ## 끊기와 재접속 (Phase 10)
 
@@ -123,14 +130,15 @@ sequenceDiagram
   - 프레임당 누적 시간으로 고정 스텝을 0~N회 실행(누적은 0.25초로 제한, 히치 후 폭주 방지). 스텝마다 Seq를 1 올리고 입력·결과를 64칸 링 히스토리에 저장한다.
   - 패킷은 프레임당 1개, 최신 입력 최대 3개(`MaxInputsPerPacket`)만 담는다. 스텝이 여러 번 돈 프레임에서는 그보다 앞선 입력이 전송되지 않을 수 있다.
   - 점프는 프레임의 마지막 예측 스텝에서 소비한다(항상 최신 3개 패킷에 들어가도록).
-  - Snapshot 수신 시 ack 시점의 예측과 서버 상태를 비교(위치 0.01m, VelocityY 0.01)해 다르면 서버 상태에서 ack 이후 입력을 재적용한다. 화면 위치는 오차를 렌더 오프셋으로 유지하며 감쇠(`exp(-10·dt)`)시키고, 보정량이 2m를 초과하면 오프셋 없이 즉시 스냅한다. ack가 0이면 아직 서버가 입력을 처리하지 않았다는 뜻이므로, 보낸 입력이 없을 때만 서버 상태로 교체하고 이미 예측 중이면 무시한다. ack가 보낸 입력보다 크거나 히스토리(64)를 벗어나면 서버 상태로 바로 교체한다.
+  - Phase 12: 예측하고 보정하는 상태는 `MoveState` 전체다(모드, 수평 속도, 기력, Tick 값, 기진). 이동 모드별 규칙과 수치는 `Movement.md`다. 서버 상태는 Entity(위치, VelocityY, 모드, 달리기·기진 플래그)와 수신자 블록(수평 속도, 기력, `ModeTicks`, `EnergyDelayTicks`)에서 합쳐 만든다.
+  - Snapshot 수신 시 ack 시점의 예측과 서버 상태를 비교한다. 위치·VelocityY·수평 속도는 0.01(양자화 오차보다 크다), 모드·기력·`EnergyDelayTicks`·`ModeTicks`·기진은 정확히 같아야 한다. 다르면 서버 상태에서 ack 이후 입력을 재적용한다. 화면 위치는 오차를 렌더 오프셋으로 유지하며 감쇠(`exp(-10·dt)`)시키고, 보정량이 2m를 초과하면 오프셋 없이 즉시 스냅한다. ack가 0이면 아직 서버가 입력을 처리하지 않았다는 뜻이므로, 보낸 입력이 없을 때만 서버 상태로 교체하고 이미 예측 중이면 무시한다(Phase 12: 단, 서버의 모드가 예측과 다르면 서버 상태로 맞춘다. 공중에서의 재접속 D16). ack가 보낸 입력보다 크거나 히스토리(64)를 벗어나면 서버 상태로 바로 교체한다.
   - 서버가 보낸 값이 NaN/Infinity이면 그 엔티티는 무시한다(예측 상태 오염 방지).
-- 다른 플레이어: Snapshot 보간, 2 Snapshot 간격(`2 / SnapshotHz` ≈ 133ms) 과거를 렌더 (`RemotePlayerInterpolator`, `ServerClock`). 플레이어당 8개 샘플 링버퍼, 최신 샘플 이후는 외삽 없이 마지막 위치 유지. 비유한(non-finite) 샘플은 버린다. `ServerClock`은 렌더 Tick이 뒤로 가지 않게 한다.
+- 다른 플레이어: Snapshot 보간, 2 Snapshot 간격(`2 / SnapshotHz` ≈ 133ms) 과거를 렌더 (`RemotePlayerInterpolator`, `ServerClock`). 플레이어당 8개 샘플 링버퍼, 최신 샘플 이후는 외삽 없이 마지막 위치 유지. Phase 12: 샘플마다 이동 모드·달리기·기력 소진도 저장하고, 렌더 Tick 이하의 가장 새 샘플 것을 자세·조준 Collider 높이에 쓴다(서버 `PositionHistory.Sample`과 같은 규칙, 최종 검토 A1). 비유한(non-finite) 샘플은 버린다. `ServerClock`은 렌더 Tick이 뒤로 가지 않게 한다.
 - 입력이 제때 오지 않으면 서버는 직전 입력을 반복(점프 제외)하고 ack는 올리지 않는다 → 패킷 손실 시 작은 보정이 생길 수 있다. 입력 없는 Tick이 `SimHz / 2`(0.5초)를 넘으면 이동 입력 0(직전 Yaw 유지, 버튼 없음)으로 멈춘다. 멈춘 클라이언트가 Disconnect 전까지 계속 걷지 않게 하기 위해서다. 새 입력이 오면 다시 반복 허용 구간이 시작된다.
 
 ## 이동 충돌 (Phase 1)
 
-서버(`Match.Tick`)와 예측(`LocalPlayerPredictor`)은 같은 `MovementSimulation.Step(ref state, input, dt, GameMap.Boxes, GameMap.Terrain)`를 호출한다. 지형은 Shared 상수 `GameMap`: 높이 격자(`HeightField`) + 축 정렬 박스이고, 캐릭터는 AABB(반폭 0.35 m, 높이 1.8 m)다.
+서버(`Match.Tick`)와 예측(`LocalPlayerPredictor`)은 같은 `MovementSimulation.Step(ref state, input, dt, 세계, GameMap.Terrain)`를 호출한다. 세계는 `GameMap.Boxes` 뒤에 닫힌 문을 붙인 배열이다(Phase 12. 서버 `DoorSet.World`, Client `PredictedDoors.World`. `Map.md` "문"). 탑승 중에는 `Step` 대신 `DropTransport.Ride`다(`Movement.md` "수송기"). 지형은 Shared 상수 `GameMap`: 높이 격자(`HeightField`) + 축 정렬 박스이고, 캐릭터는 AABB(반폭 0.35 m, 높이 1.8 m)다.
 
 Step 순서:
 1. 입력 검증(비유한 값 0, 이동 길이 ≤ 1), Yaw·수평 속도 계산.
@@ -138,7 +146,7 @@ Step 순서:
 3. 접지 판정은 상태 없이 매 Step: `VelocityY ≤ 0`이고 발밑 ±0.02 m(`GroundProbe`) 안에 바닥이나 박스 윗면이 있으면 Y를 그 면에 정확히 맞춘다. 접지면 `VelocityY = Jump ? 7 : 0`, 아니면 중력.
 4. X → Z → Y 축 분리 Sweep. 각 축에서 나머지 두 축이 겹치는 박스 중 진행 방향 가장 가까운 면까지(Skin만큼 띄움) 이동한다(바닥 y=0은 Skin 없이 정확히 0). 거리에 상관없이 모든 앞쪽 박스를 보므로 빠른 낙하도 판을 뚫지 않는다. Y가 막히면 `VelocityY = 0`.
 
-접지 여부를 상태에 저장하지 않으므로 Snapshot 형식은 그대로다. 박스 위에 서 있으면 Y가 윗면 값으로 고정되어 예측과 서버가 같은 값을 내고, 재조정 떨림이 없다. 서버 보정으로 예측이 박스 안에 들어가도 재적용 첫 Step이 밀어낸다. 점프 최고점은 30 Hz 이산 적분으로 약 1.34 m(연속식은 1.225 m)라 1 m 박스는 오르고 1.5 m 박스는 못 오른다. 접지 판정이 부동소수 오차(약 1e-7 m)를 접지로 보므로 점프가 Phase 0보다 한 Tick 일찍 나갈 수 있다. 서버와 Client가 같은 판정을 쓰므로 서로 어긋나지 않는다.
+위 순서는 지상 이동(`Ground`·`Crouch`·`Slide`)의 것이다. Phase 12에서 `Step`은 `MoveState.Mode`로 지상, `Vault`, 공중(`Freefall`·`Glide`)으로 갈라지고, 수평 속도·기력도 상태로 이어진다(`Movement.md`). 접지 여부는 여전히 상태에 저장하지 않고 매 Step 다시 계산한다. 박스 위에 서 있으면 Y가 윗면 값으로 고정되어 예측과 서버가 같은 값을 내고, 재조정 떨림이 없다. 서버 보정으로 예측이 박스 안에 들어가도 재적용 첫 Step이 밀어낸다. 점프 최고점은 30 Hz 이산 적분으로 약 1.34 m(연속식은 1.225 m)라 1 m 박스는 점프로 오르고 1.5 m 박스는 점프로 못 오른다(Phase 12부터 1.5·2 m 박스는 Mantle로 오르고 1 m 박스는 달리며 Hurdle로 넘는다. `Movement.md`). 접지 판정이 부동소수 오차(약 1e-7 m)를 접지로 보므로 점프가 Phase 0보다 한 Tick 일찍 나갈 수 있다. 서버와 Client가 같은 판정을 쓰므로 서로 어긋나지 않는다.
 
 지형(Phase 6 D4): 모든 경사가 0.6 이하라 지형은 수평 이동을 막지 않는다. 바닥 판정·Y Sweep·밀어내기의 바닥은 발밑 지형 높이다. 수평 이동 뒤 발이 지형보다 낮으면 올리고, 이번 Step을 땅에서 시작했고 점프하지 않았으면 `이동 거리 × MaxSlope + GroundProbe` 이내의 내리막에 Y Sweep으로 붙인다(박스 윗면에서 멈춘다).
 
@@ -148,12 +156,12 @@ Step 순서:
 
 발사는 입력 명령에 실린다(Phase 3 D1): Fire 비트 + 조준(AimYaw, AimPitch) + ViewTick. 따라서 입력의 중복 전송·Seq 중복 제거·Tick당 1개 규칙을 그대로 따르고, 입력보다 빨리 쏠 수 없다.
 
-- **조준(Phase 3 D2):** Client는 카메라 광선이 맞은 점(원격 플레이어는 서버 판정 상자 크기의 `BoxCollider`가 있어 조준점이 몸 위에 온다)과 캐릭터 눈(발 + 1.6 m)을 이어 Yaw/Pitch를 구한다. 눈의 발 위치는 렌더 위치가 아니라 입력마다 그 입력의 Step을 마친 예측 위치다(`LocalPlayerPredictor.SetAim`). 서버가 그 입력을 처리한 뒤의 위치이기 때문이다. 한 프레임에 Step이 여럿이면 앞선 입력은 각자 자기 위치에서 조준한다. 규약은 카메라와 같다(Yaw 0 = +Z, Yaw 90 = +X, 양의 Pitch = 아래). 서버는 같은 눈에서 같은 방향으로 쏘므로 어깨 카메라 시차가 있어도 조준점이 가리키는 곳을 맞힌다.
+- **조준(Phase 3 D2):** Client는 카메라 광선이 맞은 점(원격 플레이어는 서버 판정 상자 크기의 `BoxCollider`가 있어 조준점이 몸 위에 온다)과 캐릭터 눈(발 + 1.6 m. Phase 12: 웅크리기·슬라이드는 발 + 1.0 m, 서버 `CombatRules.EyeHeightOf`와 Client `AimSolver`가 같다)을 이어 Yaw/Pitch를 구한다. 눈의 발 위치는 렌더 위치가 아니라 입력마다 그 입력의 Step을 마친 예측 위치다(`LocalPlayerPredictor.SetAim`). 서버가 그 입력을 처리한 뒤의 위치이기 때문이다. 한 프레임에 Step이 여럿이면 앞선 입력은 각자 자기 위치에서 조준한다. 규약은 카메라와 같다(Yaw 0 = +Z, Yaw 90 = +X, 양의 Pitch = 아래). 서버는 같은 눈에서 같은 방향으로 쏘므로 어깨 카메라 시차가 있어도 조준점이 가리키는 곳을 맞힌다.
 - **무기(Phase 3 D4, D5):** 수치는 서버 `weapons.json`에만 있다(Vesper AR: 20 / 3 Tick / 30발 / 60 Tick / 150 m / 자동 / Medium 탄, Kestrel LR: 90 / 38 Tick / 5발 / 75 Tick / 300 m / 단발 / Heavy 탄. 1.25 s × 30 Hz = 37.5는 38로 반올림. Phase 4에서 Wisp SMG가 추가됐다: "인벤토리와 Loot"). 시작 시 검증하고 틀리면 서버가 뜨지 않는다. Join 직후 `WeaponCatalog`로 Client에 간다. Slot1/2/3 = 무기 목록이 아니라 인벤토리 칸 0/1/2다(칸에 든 무기는 줍기로 정해진다).
-- **서버 Tick 순서:** (Phase 5: 경기 흐름 전환 → Zone 진행·피해가 맨 앞에 온다. "Battle Royale (Phase 5)") → (`DevRespawn`만) 부활 시각이 된 플레이어 부활 → (`DevRespawn`만) Loot 재생성 → 플레이어마다 입력 1개(죽어 있으면 Seq만 확인 응답, 이동·발사 없음, 중력도 없음) → 이동 Step → 재장전 완료 확인 → **실제로 받은 입력일 때만** 사용 취소 → 칸 선택 → 버리기 → 줍기 → 재장전 → 발사 → 사용 시작 → (매 Tick) 사용 완료 → (Phase 5: 종료 판정) → `ServerTick++` → 바뀐 인벤토리 전송 → (Phase 5: 바뀐 `MatchState`·`ZoneState`) → 모든 플레이어 위치를 History에 기록 → Snapshot. 누락 입력 반복(Phase 0 유예)은 이동만 반복하고 줍기·버리기·사용·교체·재장전·발사는 하지 않는다. 줍기·버리기·사용은 "인벤토리와 Loot"에 있다.
+- **서버 Tick 순서:** (Phase 5: 경기 흐름 전환 → Zone 진행·피해가 맨 앞에 온다. "Battle Royale (Phase 5)") → (`DevRespawn`만) 부활 시각이 된 플레이어 부활 → (`DevRespawn`만) Loot 재생성 → 플레이어마다 입력 1개(죽어 있으면 Seq만 확인 응답, 이동·발사 없음, 중력도 없음) → 이동(Phase 12: 탑승 중이면 `Ride`, 아니면 `Step`과 그 결과 처리: 문 밀치기, 이동 이상 검사, 낙하 피해) → 재장전 완료 확인 → **실제로 받은 입력일 때만** 사용 취소 → 칸 선택 → 버리기 → 줍기 → 재장전 → 발사 → 사용 시작 → (매 Tick) 사용 완료 → (Phase 5: 종료 판정) → `ServerTick++` → 바뀐 인벤토리 전송 → (Phase 5: 바뀐 `MatchState`·`ZoneState`) → (Phase 12: 바뀐 `DoorStates`) → 모든 플레이어 위치와 이동 모드를 History에 기록 → Snapshot. (실제로 받은 입력의) 사용 취소·칸 선택·버리기·줍기·재장전·발사·사용 시작은 이동을 마친 뒤의 모드가 지상·웅크리기·슬라이드일 때만 한다(Phase 12 D12). 막힌 동안에도 Fire를 누른 상태(`FireHeld`)는 입력을 따른다. 누른 채 착지한 반자동 무기는 새로 눌러야 쏜다(최종 검토 C9, Client `WeaponState`도 같다). 누락 입력 반복(Phase 0 유예)은 이동만 반복하고 줍기·버리기·사용·교체·재장전·발사는 하지 않는다. 줍기·버리기·사용은 "인벤토리와 Loot"에 있다.
 - **무기 규칙(Phase 3 D14, 서버 Tick 기준):** 교체는 Slot 비트가 하나만 켜졌을 때(둘 이상이면 무시), 교체하면 재장전 취소. 재장전은 탄창이 가득이 아니고 그 무기 탄약 종류의 보유량이 1 이상일 때만 시작하고, 끝나면 보유량에서 탄창으로 옮긴다(보유량 0이면 시작하지 않는다). 발사는 칸이 비어 있지 않고, 탄 > 0, 재장전 중 아님, `now ≥ 그 칸의 NextFireTick`, 조준 각이 유한할 때만. 단발은 Fire를 새로 누른 입력에서만. 마지막 탄을 쏘거나 빈 탄창으로 쏘려 하면 자동 재장전(보유량이 있을 때). 탄창과 발사 간격은 칸별이다. Snapshot의 `ReloadRemainingTicks`는 재장전 중이면 마지막 Tick에도 1 이상이다(0은 "재장전 아님").
-- **판정(Phase 3 D7):** 눈에서 조준 방향으로 사거리까지, 맵 박스, 지형 삼각형(광선이 지나는 칸만 검사, `HitScan.TraceTerrain`), y=0 평면(격자 밖으로 나간 광선용. 박스는 slab 교차), 그리고 쏜 사람을 뺀 살아 있는 플레이어의 이동 AABB(반폭 0.35 m, 높이 1.8 m) 중 가장 가까운 것에 맞는다. 머리 판정·탄 퍼짐·반동은 없다(`spread`·`recoil`은 데이터 필드만 있고 쓰지 않는다).
-- **Lag Compensation(Phase 3 D6):** 플레이어마다 32칸 위치 링(`PositionHistory`)에 매 Tick 끝 위치를 기록한다. 발사 판정은 다른 플레이어를 ViewTick 위치로 되감는다(두 기록 사이 보간). ViewTick은 `[최신 Tick − 12, 최신 Tick]`(0.4 s, 30 Hz 기준. SimHz가 높으면 링 `Capacity − 1` = 31 Tick으로 한 번 더 잘린다)으로 잘리고, NaN이면 최신 Tick이다. 기록이 모자라면 가장 오래된 기록을 쓴다. Join·부활 때 History를 새로 시작하므로 되감기가 시체 위치에 닿지 않는다. 쏜 사람 자신은 되감지 않는다. 원격 플레이어는 약 133 ms(4 Tick) 과거로 보이고 입력 버퍼가 1 Tick을 더 쓰므로, 왕복 지연에 남는 여유는 약 7 Tick(약 233 ms)이다. 왕복 지연이 약 200 ms를 넘으면 빠르게 움직이는 상대를 빗나갈 수 있고, 벽 뒤로 숨은 뒤 최대 약 400 ms 동안 맞을 수 있다(D6의 비용).
+- **판정(Phase 3 D7):** 눈에서 조준 방향으로 사거리까지, 맵 박스와 닫힌 문(Phase 12. 열린 문은 없는 것과 같다), 지형 삼각형(광선이 지나는 칸만 검사, `HitScan.TraceTerrain`), y=0 평면(격자 밖으로 나간 광선용. 박스는 slab 교차), 그리고 쏜 사람을 뺀 살아 있는 플레이어의 이동 AABB(반폭 0.35 m, 높이 1.8 m. Phase 12: 그 사람의 모드로 정한다. 웅크리기·슬라이드는 1.2 m, `Transport` 탑승자는 맞지 않는다) 중 가장 가까운 것에 맞는다. 머리 판정·탄 퍼짐·반동은 없다(`spread`·`recoil`은 데이터 필드만 있고 쓰지 않는다).
+- **Lag Compensation(Phase 3 D6):** 플레이어마다 32칸 위치 링(`PositionHistory`)에 매 Tick 끝 위치와 이동 모드(Phase 12. 되감은 시점의 모드로 맞는 높이를 정한다)를 기록한다. 문은 되감지 않는다. 사격은 지금의 문 상태로 추적한다(고정 박스와 같다). 발사 판정은 다른 플레이어를 ViewTick 위치로 되감는다(두 기록 사이 보간). ViewTick은 `[최신 Tick − 12, 최신 Tick]`(0.4 s, 30 Hz 기준. SimHz가 높으면 링 `Capacity − 1` = 31 Tick으로 한 번 더 잘린다)으로 잘리고, NaN이면 최신 Tick이다. 기록이 모자라면 가장 오래된 기록을 쓴다. Join·부활 때 History를 새로 시작하므로 되감기가 시체 위치에 닿지 않는다. 쏜 사람 자신은 되감지 않는다. 원격 플레이어는 약 133 ms(4 Tick) 과거로 보이고 입력 버퍼가 1 Tick을 더 쓰므로, 왕복 지연에 남는 여유는 약 7 Tick(약 233 ms)이다. 왕복 지연이 약 200 ms를 넘으면 빠르게 움직이는 상대를 빗나갈 수 있고, 벽 뒤로 숨은 뒤 최대 약 400 ms 동안 맞을 수 있다(D6의 비용).
 - **피해·사망·부활(Phase 3 D8, D9):** Health 최대 100, Shield 최대 100(Phase 4부터 시작 Shield는 0이고 채우려면 Shield Cell을 쓴다). 피해는 Shield부터, 남은 만큼 Health, 0 아래로 내려가지 않는다. Health가 0이 되면 사망: `PlayerDied`(전원), 판정 대상에서 빠지고 입력은 무시되며, 진행 중이던 재장전과 회복은 취소되고 가진 것은 떨어진다("인벤토리와 Loot"). 부활은 `DevRespawn` 서버(Phase 3·4 테스트 아레나)에서만 한다: `SimHz × 3` Tick 뒤 `Match.SpawnPosition(id)`에서 Health 100·Shield 0·빈손(빈 인벤토리, 칸 0)으로 부활하고 `PlayerRespawned`(전원). 운영(`DevRespawn = false`)에서는 경기 중 사망이 영구적이다(Phase 5 D4. `BattleRoyale.md`). 부활 때 누락 입력 반복(LastInput·MissedTicks)도 새로 시작해 이전 삶의 이동을 되풀이하지 않는다. `DamageTaken` → `PlayerDied` → `PlayerRespawned`는 같은 ReliableOrdered 채널이라 이 순서로 도착한다.
 - **Client 예측 범위(Phase 3 D12):** 내 발사 연출은 `WeaponState`(서버 규칙의 표시용 사본, 예측 입력마다 1 Step)가 "서버가 쏠 것"이라고 할 때 바로 그린다. 서버 `ShotFired` 중 내 것은 무시한다. `WeaponState`는 입력마다의 결과(Phase 4부터 탄약 보유량 포함)를 64칸 링에 저장하고, Snapshot 수신자 블록이 오면 ack 시점의 기록과 비교한다. 다르면 그 시점을 서버 값으로 맞추고 ack 이후의 입력(아직 서버가 처리하지 않은 것)을 다시 적용한다(이동 재조정과 같은 방식). 기록보다 오래된 ack면 재적용 없이 서버 값에서 다시 시작한다. 명중·피해·사망은 서버 이벤트만 표시한다.
 - **사망 중 예측:** `PlayerDied`(내 것)를 받으면 예측기는 이동하지 않고, Seq는 계속 올리되 이동 0·버튼 없음 입력을 보낸다(부활 직후 서버가 이 입력 일부를 살아 있는 상태로 처리하기 때문). 사망 중 Snapshot은 서버 위치로 바로 맞춘다. `PlayerRespawned`를 받으면 예측기를 새로 만들지 않고 같은 예측기의 상태만 Spawn 위치로 되돌린다. **Seq는 유지한다**(1부터 다시 세면 서버가 이미 소비한 Seq 이하를 버려 모든 입력이 무시된다). 생존 비트가 예측기 상태와 다른 Snapshot(다른 생의 것)은 재조정에 쓰지 않는다.
@@ -165,7 +173,7 @@ Step 순서:
 - **Loot(D5–D7):** Spawn Point는 Shared `LootPoints`(50곳, 테이블 `Floor`·`Building`·`Tower`, `GameMap` 옆. `Map.md`)다. 서버는 모든 Point에서 표를 굴려 아이템을 만든다. 운영 서버는 경기 시작 Tick에 굴리고(시드 `LootSeed + 판 번호`) 그 전(대기·카운트다운·결과 화면)에는 월드에 아이템이 없다. `DevRespawn` 서버는 Match를 만들 때 굴린다(시드 `LootSeed`). 난수는 Game Loop 스레드가 가진 `System.Random` 하나(경기마다 새로 만든다)라서 시드가 같으면 배치가 같다. 무기는 Id를 균등하게, 등급은 가중치로, 탄창은 가득. 탄약은 종류를 균등하게 줍는 양만큼. 다 가져간 Point는 `DevRespawn`일 때만 `LootRespawnSeconds`(기본 30) 뒤 다시 굴린다(0이면 끔). 경기 중에는 다시 생기지 않는다(Phase 5 D4). 타이머는 Point의 아이템이 완전히 사라질 때만 시작한다(부분 줍기는 타이머를 시작하지도 버리지도 않는다: 남은 수량이 월드에 있는 동안 Point는 비어 있지 않다). 타이머가 끝났을 때 그 Point의 아이템이 아직 월드에 있으면 다시 굴리지 않고 타이머를 버린다(Spawn Point 표식이 붙은 아이템은 Point마다 살아 있는 것이 최대 1개, `RefillLootPoints`). 떨어뜨린 아이템은 다시 생기지 않고, 칸이 다 찬 교환으로 나온 무기도 G처럼 플레이어 앞에 떨어지므로 Point 위에 겹치지 않는다.
 - **월드 아이템(D13):** 최대 256개. 가득 차면 가장 오래 전에 떨어진 아이템부터 지우고(`ItemRemoved`를 먼저 보낸 뒤 새 `ItemSpawned`), Spawn Point 아이템은 지우지 않는다. ItemId는 1–65535를 한 바퀴 돈 뒤에야 다시 쓴다.
 - **인벤토리(D1, D10):** 무기 칸 3개(무기, 등급, 탄창, 칸별 다음 발사 Tick), 현재 칸, 탄약 3종 보유량, Medkit·Shield Cell 개수. 서버가 소유하고 Client는 `InventoryState`를 표시만 한다. 시작과 부활은 빈손(Shield 0, Health 100)이다. 빈 칸도 선택할 수 있고, 빈 칸에서는 발사·재장전하지 않는다. 아이템은 월드가 받은 뒤에만 인벤토리에서 빠진다(Drop·교환·사망 Drop 모두. 월드가 거절하면 인벤토리에 남는다). 재장전은 보유량에서 탄창으로 옮기고, 보유량이 0이면 시작하지 않는다(Snapshot에 끝나지 않는 재장전이 나오지 않는다). 피해 = 무기 피해 × 등급 배율, 소수점은 0에서 멀어지게 반올림(`decimal` 계산), 최소 1. Shield 최대는 100이다.
-- **서버 Tick 순서(살아 있는 플레이어):** 이동 → 재장전 완료 → (**실제로 받은 입력일 때만**) 사용 취소 → 칸 선택 → 버리기 → 줍기 → 재장전 → 발사 → 사용 시작 → (매 Tick) 사용 완료. Tick 전체 앞에는 (`DevRespawn`일 때만) 부활과 Loot 재생성이, 끝에는 `ServerTick++` → 바뀐 인벤토리의 `InventoryState` → 바뀐 `MatchState`·`ZoneState` → History → Snapshot이 온다. 누락 입력 반복은 이동만 반복하고, 줍기·버리기·사용·교체는 반복하지 않는다.
+- **서버 Tick 순서(살아 있는 플레이어):** 이동(Phase 12: 탑승 중이면 `Ride`) → 재장전 완료 → (**실제로 받은 입력일 때만**) 사용 취소 → 칸 선택 → 버리기 → 줍기 → 재장전 → 발사 → 사용 시작 → (매 Tick) 사용 완료. Tick 전체 앞에는 (`DevRespawn`일 때만) 부활과 Loot 재생성이, 끝에는 `ServerTick++` → 바뀐 인벤토리의 `InventoryState` → 바뀐 `MatchState`·`ZoneState` → History → Snapshot이 온다. 누락 입력 반복은 이동만 반복하고, 줍기·버리기·사용·교체는 반복하지 않는다.
 - **줍기(D8, D9):** E를 누른 입력에서 서버가 발 기준 수평 2.0 m·수직 2.0 m 안의 가장 가까운(3D 거리, 같으면 작은 ItemId) 아이템을 고른다. Client는 ItemId를 보내지 않는다. 무기: 첫 빈 칸에(빈손이면 그 칸을 손에 든다), 칸이 다 차 있으면 현재 칸과 바꾸고 원래 무기는 G처럼 플레이어 앞 1 m에 떨어진다(주운 자리가 아니다). 탄약·소모품: 한도까지만 받고 나머지는 수량을 줄여 바닥에 남긴다(`ItemSpawned` Upsert). 받을 수 없으면 `Full`, 범위 안에 없으면 `NothingInRange`. 같은 Tick에 둘이 누르면 먼저 처리된 플레이어만 얻는다.
 - **버리기·사망 Drop(D12):** G는 현재 무기를 발 앞 1 m에 탄창째 떨어뜨린다. 발 높이 0.5 m에서 그 방향으로 박스에 막히면(지형은 막지 않는다. 얇은 벽 너머 포함), 또는 계산한 지점이 박스 안이면(수평은 엄밀히 안쪽, 높이는 `Min.Y <= y < Max.Y`라 바닥 박스 안의 y = 0도 안쪽이다) 발밑에 떨어뜨린다. 떨어진 곳은 그 위치의 지형 높이, 또는 발 높이 + `GroundProbe` 이하에서 더 높은 박스 윗면이다(아이템은 나중에 떨어지지 않는다). 사망 Drop의 원 위 지점에도 같은 규칙이 적용된다. 죽으면 무기·탄약 종류·소모품 종류마다 1개씩 시체 둘레 1 m 원 위에 `PlayerDied` 뒤에 떨어뜨리고 인벤토리를 비운다. 무기를 버렸다 다시 주워 발사 간격을 건너뛸 수 없다(버린 무기의 다음 발사 Tick이 새로 주운 무기에 걸린다).
 - **회복(D11):** 4 = Medkit(90 Tick, Health +50), 5 = Shield Cell(60 Tick, Shield +25), 둘 다 최대 100. 이미 최대면 시작하지 않는다. 발사(Fire 비트)·칸 선택 비트·G·다른 회복을 누르면 취소되고(다른 회복은 같은 Tick에 새로 시작), 이동은 취소하지 않는다. 죽으면 회복과 재장전이 함께 취소된다(사망 Drop은 인벤토리를 `Clear`하지 않으므로 `Kill`이 직접 취소한다). 사용 중 상태는 `InventoryState`의 Using·UseRemainingTicks로 Client에 간다.
@@ -182,6 +190,16 @@ Step 순서:
 - **경기 전 피해 차단(D2):** 경기 전(대기·카운트다운)과 결과 화면에서는 발사·궤적(`ShotFired`, 맞은 사람에서 멈춘 끝점)은 그대로지만 피해가 없고 `HitConfirmed`·`DamageTaken`도 없다.
 - **Zone 원(D11):** Client는 `ZoneState`의 From·To와 ShrinkStart·End Tick으로 서버 `SafeZone.Sample`과 같은 식(`ZoneMath.Sample`)으로 원을 그린다. 반지름 0인 원은 안이 없다(`IsOutside`는 서버·Client 모두 `radius <= 0`이면 밖이다). 두 식이 같은지는 서버 테스트(`ZoneMathParityTests`)가 Client 파일을 컴파일해 고정한다. Client의 시각은 "렌더 Tick + 보간 지연"(서버 현재 Tick 추정)이다.
 - **판 시작·재시작의 이동:** 서버는 모두의 Spawn 이동을 `PlayerRespawned`(전원, 내 Seq 유지)로 알린다. 내 예측기는 부활과 같은 경로로 상태만 되돌리고, 다른 사람의 보간 기록은 위 "원격 플레이어"의 `Teleport`로 정리한다.
+
+## 투입과 문 (Phase 12)
+
+설계 근거: `Docs/specs/2026-10-02-phase12-deployment-traversal-design.md` D5, D9, D16. 이동 규칙은 `Movement.md`, 흐름은 `BattleRoyale.md` "공중 투입", 문은 `Map.md` "문"이다.
+
+- **탑승 Tick 대응:** 수송기는 Snapshot에 실리지 않는다. `TransportRoute`가 한 번 가고, 양쪽이 같은 `DropRoute.PositionAt(tick)`으로 위치를 구한다. 서버는 탑승자를 그 Tick에 시뮬레이션되는 서버 Tick(`ServerTick + 1`)의 경로 위치에 둔다. Client 예측은 입력 Seq의 서버 Tick을 `ServerTick − Ack + Seq`로 구한다. `ServerTick − Ack`는 Ack가 0보다 큰 Snapshot마다 새로 잡는다. Ack가 0인 처음에는 기준이 없으므로 탑승을 예측하지 않고 탑승자를 Ack 0 Snapshot의 서버 위치에 둔다(보정으로 세지 않는다). 첫 Ack 뒤의 다시 계산도 보정으로 세지 않는다(최종 검토 B6). Seq와 서버 Tick은 한 입력에 Tick 하나씩이라 둘의 차이가 일정하기 때문에, 예측한 탑승 위치가 서버가 그 입력을 처리하는 Tick의 위치와 같다. 수송기 상자를 그리는 Tick은 렌더 Tick(원격 플레이어와 같은 보간 지연)이다. 내가 타고 있는 동안만 내 예측 Tick으로 그린다(탑승 위치·카메라와 같이 움직이게). 판이 `WaitingForPlayers`·`Starting`으로 돌아가면 Client와 봇은 지난 경로를 지운다(최종 검토 B2, C14).
+- **뛰어내리기·글라이더·Vault·문은 새 패킷이 없다.** Jump(`Transport`에서는 뛰어내리기, `Freefall`에서는 글라이더, 지상에서는 점프 또는 Vault)와 Interact(문, 없으면 줍기)를 다시 쓴다. 서버가 모드를 보고 거른다(중복 뛰어내리기는 무시).
+- **문 예측:** 예측은 서버의 `DoorStates`에 자기 예측(내가 밀친 문, 내가 E로 연 문)을 겹쳐 쓴다(`PredictedDoors`). 예측은 다음 `DoorStates`가 오거나 1초(`PredictionSeconds`)가 지나면, 둘 중 먼저 오는 쪽에서 서버 상태로 돌아간다. 서버가 거부한 예측이 남지 않게 하기 위해서다. 문을 밀치는 순간 Client가 서버보다 한 왕복 먼저 통과해 짧은 보정이 생길 수 있다(받아들인다). 연결이 끊기면 모든 문이 닫힌 것으로 되돌린다.
+- **재접속과 Ack 0:** Resume이나 늦은 합류의 첫 Snapshot은 Ack가 0이다. 이미 예측하고 있어도 서버의 모드가 예측과 다르면(공중에서 돌아온 경우) 서버 상태로 맞춘다. 같으면 무시한다(Phase 3의 규칙). 끊긴 동안 서버는 빈 입력으로 이동을 이어 가므로(0.5초 뒤 정지, 탑승자는 구간 끝에서 강제로 뛰어내림) 서버의 모드가 앞서 있을 수 있다.
+- **재접속 때 전송:** `TransportRoute`(공중 투입 경기 중일 때), `DoorStates`는 접속 순서에 들어 있다. 모드와 Self는 다음 Snapshot이 알려 준다.
 
 ## 전적 조회 (Phase 11 D8)
 
@@ -206,8 +224,20 @@ Step 순서:
 - `StatsRequest`: 본문이 있으면 `Malformed`(잘못된 패킷). Join이 성공하지 않은 연결의 요청이나 연결당 2초 안의 요청은 잘못된 패킷이 아니라 `limited`로만 센다(Kick 없음).
 - 연결 요청의 DevPlayerId(이름)는 1–32바이트의 올바른 UTF-8이고 제어 문자(C0, DEL, C1), 서식 문자(폭 0 문자, 방향 제어, BOM), 줄·문단 구분자가 없어야 한다. 아니면 `BadRequest`로 거절한다. 규칙은 Shared `ProtocolConstants.IsValidPlayerName` 하나이고 `ConnectRequestData.TryRead`가 검사한다(타이틀과 봇도 같은 규칙을 쓴다). 깨진 바이트는 대체 문자(3바이트)로 읽혀 32바이트를 넘을 수 있고, 그러면 그 이름을 `PlayerSpawned`에 못 써 다른 Client가 그 플레이어를 못 본다(Phase 11). `Match`는 그래도 넘친 `PlayerSpawned`를 보내지 않고 센다(`Server.md`).
 - 거절된 연결 요청(`ServerFull`, `BadRequest`, `VersionMismatch`)을 이유별로 센다. 로그는 Debug다(요청 폭주가 로그를 채우지 않게).
-- Fuzz 테스트(시드 고정): 무작위 바이트 10만 개를 모든 파서에(`StatsResponse` 포함, `ProtocolFuzzTests`), NaN·±Inf·큰 값·음수 Seq·ViewTick이 든 입력으로 `Match`를 수백 Tick 돌려 예외가 없고 위치·체력이 유한함을(`InputFuzzTests`), 무작위 패킷을 보내는 peer 하나만 `Kicked`로 끊기고 다른 peer는 계속 Snapshot을 받음을(`FuzzIntegrationTests`) 확인한다.
+- Fuzz 테스트(시드 고정): 무작위 바이트 10만 개를 모든 파서에(`StatsResponse`와 Phase 12의 `TransportRoute`·`DoorStates` 포함, `ProtocolFuzzTests`), NaN·±Inf·큰 값·음수 Seq·ViewTick이 든 입력으로 `Match`를 수백 Tick 돌려 예외가 없고 위치·체력이 유한함을(`InputFuzzTests`), 무작위 패킷을 보내는 peer 하나만 `Kicked`로 끊기고 다른 peer는 계속 Snapshot을 받음을(`FuzzIntegrationTests`) 확인한다.
 - 전투 입력: 조준 각이 NaN/Infinity면 그 입력은 발사하지 않는다(탄·간격 소모 없음). Pitch는 ±89°로 자른다. ViewTick은 되감기 범위로 자른다. Slot 비트가 둘 이상 켜져 있으면 교체하지 않는다. 명중 대상은 Client가 정하지 않는다.
 - 아이템 입력: 줍기 대상·위치·수량은 Client가 보내지 않는다(Interact 비트뿐). Medkit·Shield Cell 비트가 함께 켜져 있으면 사용하지 않는다. 받은 패킷의 아이템 값(Kind, DefId, 등급, 수량, 비유한 위치)은 Client의 `TryRead`가 거른다.
-- 위치는 서버가 계산하므로 순간이동·속도 조작은 구조적으로 불가능하다.
+- 위치는 서버가 계산하므로 순간이동·속도 조작은 구조적으로 불가능하다. Phase 12의 이동 모드도 같다. Client는 모드·속도·기력을 보내지 않고 입력만 보낸다.
+- **상태 전환 규칙(Phase 12 D12):** `Step`의 규칙으로 서버가 정한다. 모르는 버튼 비트는 버린다(`Crouch` 비트는 통과한다).
+  - 죽음·관전: 이동 없음.
+  - `Transport`·`Freefall`·`Glide`·`Vault`: 사격·재장전·줍기·상호작용(문)·회복·칸 바꾸기·버리기가 안 된다. 이미 진행 중인 재장전·회복은 계속된다. 제한은 이동이 끝난 뒤의 모드로 판단한다.
+  - `Freefall`·`Glide`: 웅크리기·슬라이드가 안 된다. 입력은 무시한다.
+  - `Ground` → `Glide`·`Freefall` 직접 전환은 없다. 공중 모드는 `Transport`에서만 들어간다. `Transport`에서는 구간 앞의 Jump를 무시한다.
+  - 서버의 이동 이상 검사(`movementAnomalies`)는 규칙이 아니라 자기 점검이다. 정상이면 0이다(`Movement.md`).
 - 경기 패킷(Client의 `TryRead`): 알 수 없는 State, Alive > Participants, 비유한·음수 반지름, ShrinkEnd < ShrinkStart, Placement 0 또는 Participants 초과인 결과는 버린다.
+- Phase 12 패킷(Client와 봇의 `TryRead`):
+  - `TransportRoute`: 좌표가 ±127 밖(NaN 포함), 고도가 음수, 길이 0 Tick 또는 76800 Tick 초과면 읽기 실패.
+  - `DoorStates`: 문 5개를 넘는 비트(bit5 이상)가 켜져 있으면 읽기 실패.
+  - `PlayerRespawned`: `Mode`가 6(`Transport`)보다 크면 읽기 실패. `PlayerDied`: `Cause`가 1보다 크면 읽기 실패.
+  - Snapshot 헤더: 수신자 블록의 기력이 10000(가득)보다 크면 헤더 읽기 실패(범위 밖 블록 거절).
+  - Entity `Flags`의 모드가 6보다 크면 읽기 실패가 아니라 `Ground`로 읽는다.

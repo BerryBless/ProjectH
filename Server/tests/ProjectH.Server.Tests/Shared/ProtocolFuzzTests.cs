@@ -24,7 +24,7 @@ public class ProtocolFuzzTests
             int length = n % 100 == 0 ? random.Next(buffer.Length + 1) : random.Next(65);
             random.NextBytes(buffer.AsSpan(0, length));
             // Half of them start with a valid packet id, so the body parsers also see plausible headers.
-            if (length > 0 && random.Next(2) == 0) buffer[0] = (byte)random.Next(1, (int)PacketId.StatsResponse + 1);
+            if (length > 0 && random.Next(2) == 0) buffer[0] = (byte)random.Next(1, (int)PacketId.DoorStates + 1);
             ReadOnlySpan<byte> data = buffer.AsSpan(0, length);
 
             serverParsed += ServerSide(data);
@@ -105,6 +105,10 @@ public class ProtocolFuzzTests
         if (MatchResult.TryRead(ref r, out _)) ok++;
         r = new PacketReader(data);
         if (StatsResponse.TryRead(ref r, out _)) ok++;   // Phase 11
+        r = new PacketReader(data);
+        if (TransportRoutePacket.TryRead(ref r, out _)) ok++;   // Phase 12
+        r = new PacketReader(data);
+        if (DoorStatesPacket.TryRead(ref r, out _)) ok++;
         return ok;
     }
 }

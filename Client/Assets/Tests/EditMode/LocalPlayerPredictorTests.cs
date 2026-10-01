@@ -24,6 +24,18 @@ namespace ProjectH.Client.Tests
         private static SnapshotEntity Alive(System.Numerics.Vector3 position, float velocityY = 0f, float yaw = 0f)
             => new SnapshotEntity { Position = position, VelocityY = velocityY, Yaw = yaw, Flags = SnapshotEntity.AliveFlag };
 
+        // Phase 12: the snapshot's self block (the owner's horizontal velocity, energy and tick counters) of a server
+        // state, and of a rested player standing still (for hand-made entities).
+        private static SnapshotSelf SelfOf(in MoveState s) => new SnapshotSelf
+        {
+            Energy = (ushort)(MoveState.MaxEnergyHundredths - s.EnergySpent),
+            HorizontalVelocity = s.HorizontalVelocity,
+            ModeTicks = s.ModeTicks,
+            EnergyDelayTicks = s.EnergyDelayTicks,
+        };
+
+        private static readonly SnapshotSelf Rested = new SnapshotSelf { Energy = MoveState.MaxEnergyHundredths };
+
         [Test]
         public void Advance_ProducesOneSeqPerStep_AndPacketHoldsNewestThree()
         {
@@ -47,7 +59,7 @@ namespace ProjectH.Client.Tests
             // Server processed inputs 1..2 exactly as the client did.
             var server = new MoveState();
             for (int i = 0; i < 2; i++) MovementSimulation.Step(ref server, new InputCommand { MoveY = 1f }, Step, GameMap.Boxes, GameMap.Terrain);
-            predictor.Reconcile(Alive(server.Position, server.VelocityY, server.Yaw), 2);
+            predictor.Reconcile(Alive(server.Position, server.VelocityY, server.Yaw), SelfOf(server), 2, 0);
 
             Assert.AreEqual(before.z, predictor.PredictedPosition.z, 1e-4f);
         }
@@ -63,7 +75,7 @@ namespace ProjectH.Client.Tests
             var server = new MoveState();
             MovementSimulation.Step(ref server, new InputCommand { MoveY = 1f }, Step, GameMap.Boxes, GameMap.Terrain);
             server.Position.X += 1f;
-            predictor.Reconcile(Alive(server.Position, server.VelocityY, server.Yaw), 1);
+            predictor.Reconcile(Alive(server.Position, server.VelocityY, server.Yaw), SelfOf(server), 1, 0);
 
             // Inputs 2..3 are replayed on top of the corrected state.
             Assert.AreEqual(before.x + 1f, predictor.PredictedPosition.x, 1e-4f);
@@ -74,7 +86,7 @@ namespace ProjectH.Client.Tests
         public void Reconcile_WithNoAckAndNoInputs_SnapsToServer()
         {
             var predictor = NewPredictor();
-            predictor.Reconcile(Alive(new System.Numerics.Vector3(3f, 0f, 4f)), 0);
+            predictor.Reconcile(Alive(new System.Numerics.Vector3(3f, 0f, 4f)), Rested, 0, 0);
             Assert.AreEqual(new Vector3(3f, 0f, 4f), predictor.PredictedPosition);
         }
 
@@ -87,7 +99,7 @@ namespace ProjectH.Client.Tests
             AdvanceSteps(predictor, 2, Vector2.up);
             Vector3 before = predictor.PredictedPosition;
 
-            predictor.Reconcile(Alive(new System.Numerics.Vector3(3f, 0f, 4f)), 0);
+            predictor.Reconcile(Alive(new System.Numerics.Vector3(3f, 0f, 4f)), Rested, 0, 0);
 
             Assert.AreEqual(before, predictor.PredictedPosition);
         }
@@ -248,8 +260,8 @@ namespace ProjectH.Client.Tests
             float beforeYaw = predictor.RenderYaw;
 
             var entity = Alive(new System.Numerics.Vector3(x, 0f, 0f), velocityY, yaw);
-            predictor.Reconcile(entity, 0);
-            predictor.Reconcile(entity, 1);
+            predictor.Reconcile(entity, Rested, 0, 0);
+            predictor.Reconcile(entity, Rested, 1, 0);
 
             Assert.AreEqual(before, predictor.PredictedPosition);
             Assert.AreEqual(beforeYaw, predictor.RenderYaw);
@@ -288,7 +300,7 @@ namespace ProjectH.Client.Tests
             predictor.SetDead();
 
             var body = new System.Numerics.Vector3(0f, 0f, 0.1f);
-            predictor.Reconcile(new SnapshotEntity { Position = body, Flags = 0 }, 1);
+            predictor.Reconcile(new SnapshotEntity { Position = body, Flags = 0 }, Rested, 1, 0);
 
             Assert.AreEqual(new Vector3(0f, 0f, 0.1f), predictor.PredictedPosition);
         }
@@ -315,7 +327,7 @@ namespace ProjectH.Client.Tests
             // The server respawned before taking seq 5, stepped seq 5 (empty) at the spawn point and acked it.
             var server = spawn;
             MovementSimulation.Step(ref server, new InputCommand { Seq = 5 }, Step, GameMap.Boxes, GameMap.Terrain);
-            predictor.Reconcile(Alive(server.Position, server.VelocityY, server.Yaw), 5);
+            predictor.Reconcile(Alive(server.Position, server.VelocityY, server.Yaw), SelfOf(server), 5, 0);
 
             Assert.AreEqual(predicted.x, predictor.PredictedPosition.x, 1e-4f);
             Assert.AreEqual(predicted.z, predictor.PredictedPosition.z, 1e-4f);
@@ -329,18 +341,18 @@ namespace ProjectH.Client.Tests
             AdvanceSteps(predictor, 2, Vector2.up);
             Vector3 before = predictor.PredictedPosition;
 
-            predictor.Reconcile(new SnapshotEntity { Position = new System.Numerics.Vector3(9f, 0f, 9f), Flags = 0 }, 1);   // dead, but no PlayerDied yet
+            predictor.Reconcile(new SnapshotEntity { Position = new System.Numerics.Vector3(9f, 0f, 9f), Flags = 0 }, Rested, 1, 0);   // dead, but no PlayerDied yet
             Assert.AreEqual(before, predictor.PredictedPosition);
 
             predictor.SetDead();
-            predictor.Reconcile(Alive(new System.Numerics.Vector3(-9f, 0f, -9f)), 2);   // alive, but no PlayerRespawned yet
+            predictor.Reconcile(Alive(new System.Numerics.Vector3(-9f, 0f, -9f)), Rested, 2, 0);   // alive, but no PlayerRespawned yet
             Assert.AreEqual(before, predictor.PredictedPosition);
 
             // The main reorder: PlayerRespawned (Reliable) overtakes the last dead snapshot (Sequenced, other channel).
             predictor.Respawn(new MoveState { Position = new System.Numerics.Vector3(5f, 0f, 5f) });
             AdvanceSteps(predictor, 3, Vector2.up);                                        // seq 3-5 alive from the spawn
             Vector3 afterRespawn = predictor.PredictedPosition;
-            predictor.Reconcile(new SnapshotEntity { Position = new System.Numerics.Vector3(9f, 0f, 9f), Flags = 0 }, 4);   // old life's body
+            predictor.Reconcile(new SnapshotEntity { Position = new System.Numerics.Vector3(9f, 0f, 9f), Flags = 0 }, Rested, 4, 0);   // old life's body
             Assert.AreEqual(afterRespawn, predictor.PredictedPosition);
         }
     }

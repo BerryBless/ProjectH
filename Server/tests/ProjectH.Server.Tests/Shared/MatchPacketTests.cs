@@ -131,11 +131,12 @@ public class MatchPacketTests
     }
 
     [Fact]
-    public void PlayerDied_CarriesPlacement_In6Bytes()
+    public void PlayerDied_CarriesPlacement_In7Bytes()
     {
+        // Phase 12 D10: one more byte, the cause (TraversalPacketTests).
         var writer = new PacketWriter(_buffer);
         PlayerDied.Write(ref writer, new PlayerDied { VictimId = 2, KillerId = 0, Placement = 4 });
-        Assert.Equal(6, writer.Length);
+        Assert.Equal(7, writer.Length);
         var reader = ReaderAfterId(writer.Length, PacketId.PlayerDied);
         Assert.True(PlayerDied.TryRead(ref reader, out var died));
         Assert.Equal(2, died.VictimId);

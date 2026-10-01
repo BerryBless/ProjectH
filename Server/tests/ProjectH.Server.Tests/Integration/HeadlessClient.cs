@@ -79,6 +79,8 @@ public sealed class HeadlessClient : IDisposable
     public List<MatchResult> MatchResults { get; } = new();
     // Phase 11 D8: every StatsResponse in arrival order.
     public List<StatsResponse> StatsResponses { get; } = new();
+    // Phase 12: every TransportRoute in arrival order.
+    public List<DropRoute> TransportRoutes { get; } = new();
 
     public void Connect(int port, string devPlayerId, ushort protocolVersion = ProtocolConstants.ProtocolVersion)
     {
@@ -231,6 +233,9 @@ public sealed class HeadlessClient : IDisposable
                 break;
             case PacketId.StatsResponse:
                 if (StatsResponse.TryRead(ref r, out var stats)) StatsResponses.Add(stats);
+                break;
+            case PacketId.TransportRoute:
+                if (TransportRoutePacket.TryRead(ref r, out var route)) TransportRoutes.Add(route);
                 break;
         }
     }

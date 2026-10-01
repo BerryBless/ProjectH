@@ -41,6 +41,7 @@ public sealed class HealthCounters
     private long _loopFailures;
     private long _matchResets;
     private long _stalls;
+    private long _movementAnomalies;
     // Gauges, written by the game loop once per tick.
     private int _peers;
     private int _players;
@@ -66,6 +67,8 @@ public sealed class HealthCounters
     public void AddLoopFailure() => Interlocked.Increment(ref _loopFailures);
     public void AddMatchReset() => Interlocked.Increment(ref _matchResets);
     public void AddStall() => Interlocked.Increment(ref _stalls);
+    // Phase 12 D12: a move faster than its mode allows (Match's self-check; should stay 0).
+    public void AddMovementAnomaly() => Interlocked.Increment(ref _movementAnomalies);
 
     public void SetGauges(int peers, int players, int graced, MatchFlowState state)
     {
@@ -89,6 +92,7 @@ public sealed class HealthCounters
     public long LoopFailures => Interlocked.Read(ref _loopFailures);
     public long MatchResets => Interlocked.Read(ref _matchResets);
     public long Stalls => Interlocked.Read(ref _stalls);
+    public long MovementAnomalies => Interlocked.Read(ref _movementAnomalies);
     public int Peers => Volatile.Read(ref _peers);
     public int Players => Volatile.Read(ref _players);
     public int Graced => Volatile.Read(ref _graced);

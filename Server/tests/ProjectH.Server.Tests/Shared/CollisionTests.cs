@@ -22,9 +22,10 @@ public class CollisionTests
 
     // Wall 1 m thick, x 2..3, long along Z.
     private static readonly Box[] Wall = { B(2f, 0f, -50f, 3f, 3f, 50f) };
-    // Box 2 x 2 m footprint, x 2..4, 1 m high (reachable) or 1.5 m high (not reachable).
+    // Box 2 x 2 m footprint, x 2..4, 1 m high (reachable) or 2.5 m high (not reachable: above the Phase 12 mantle range,
+    // MovementTuning.MantleMaxHeight 2.1 m; a 1.5 m box is mantled since Phase 12, VaultTests).
     private static readonly Box[] LowBox = { B(2f, 0f, -2f, 4f, 1f, 2f) };
-    private static readonly Box[] HighBox = { B(2f, 0f, -2f, 4f, 1.5f, 2f) };
+    private static readonly Box[] HighBox = { B(2f, 0f, -2f, 4f, 2.5f, 2f) };
 
     [Fact]
     public void WalkIntoWall_StopsAtFace_WithoutOverlap()
@@ -92,7 +93,7 @@ public class CollisionTests
         for (int i = 0; i < 90; i++)
         {
             MovementSimulation.Step(ref s, jumpForward, Dt, HighBox, HeightField.Flat);
-            Assert.True(s.Position.X + Hw <= 2f);   // never gets over the 1.5 m edge (apex 1.344 m)
+            Assert.True(s.Position.X + Hw <= 2f);   // never gets over the 2.5 m edge (apex 1.344 m, no mantle above 2.1 m)
             Assert.False(MovementSimulation.OverlapsAny(s.Position, HighBox));
         }
     }

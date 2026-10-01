@@ -21,8 +21,12 @@ namespace ProjectH.Shared.Simulation
         private const float WallThickness = 0.5f;
         private const float RoofThickness = 0.25f;
         private const float DoorWidth = 1.5f;
+        // Phase 12 D9: a door fills its gap: DoorWidth wide, the wall's height, DoorThickness thick, centred in the wall.
+        public const float DoorThickness = 0.2f;
+        public const int DoorCount = 5;
 
         private static readonly Box[] s_boxes;
+        private static readonly Box[] s_doors;
 
         // Static constructor: the hills must exist before the terrain is built from them (field initializers would run
         // in textual order).
@@ -39,6 +43,7 @@ namespace ProjectH.Shared.Simulation
             });
 
             var boxes = new List<Box>(128);
+            var doors = new List<Box>(DoorCount);
 
             // Outer walls, 4 m high, 1 m thick. North and south run the full width; east and west stop CornerSlit short
             // of them, so each corner is a slit the character cannot enter (CharacterCannotLeaveThroughASlit).
@@ -48,12 +53,12 @@ namespace ProjectH.Shared.Simulation
             boxes.Add(Box.FromCenterSize(new Vector3(-HalfSize - 0.5f, 2f, 0f), new Vector3(1f, 4f, 2f * (HalfSize - CornerSlit))));
 
             // Rustvale (village, north-west): three 8 x 8 m houses.
-            AddHouse(boxes, -54f, 54f, 8f, 8f, doorSouth: true);
-            AddHouse(boxes, -38f, 52f, 8f, 8f, doorSouth: true);
-            AddHouse(boxes, -50f, 38f, 8f, 8f, doorSouth: false, doorNorth: true);
+            AddHouse(boxes, doors, -54f, 54f, 8f, 8f, doorSouth: true);
+            AddHouse(boxes, doors, -38f, 52f, 8f, 8f, doorSouth: true);
+            AddHouse(boxes, doors, -50f, 38f, 8f, 8f, doorSouth: false, doorNorth: true);
 
             // Gearworks (depot, north-east): one 16 x 12 m warehouse with a door on each long side, crates around it.
-            AddHouse(boxes, 46f, 50f, 16f, 12f, doorSouth: true, doorNorth: true);
+            AddHouse(boxes, doors, 46f, 50f, 16f, 12f, doorSouth: true, doorNorth: true);
             boxes.Add(Box.FromCenterSize(new Vector3(36f, 0.5f, 40f), new Vector3(2f, 1f, 2f)));     // low crate (climbable)
             boxes.Add(Box.FromCenterSize(new Vector3(57f, 0.5f, 40f), new Vector3(2f, 1f, 2f)));     // low crate (climbable)
             boxes.Add(Box.FromCenterSize(new Vector3(58f, 0.75f, 60f), new Vector3(2f, 1.5f, 2f)));  // high crate
@@ -91,28 +96,33 @@ namespace ProjectH.Shared.Simulation
             boxes.Add(Box.FromCenterSize(new Vector3(20f, 1.5f, -66f), new Vector3(WallThickness, WallHeight, 6f)));
 
             s_boxes = boxes.ToArray();
+            s_doors = doors.ToArray();
         }
 
         public static ReadOnlySpan<Box> Boxes => s_boxes;
+
+        // Phase 12 D9: the doors, in the order above (the three Rustvale houses: south, south, north; then Gearworks: north, south). Not part of
+        // Boxes: a door is open or closed, and only the closed ones join the collision world (DoorStates bit i = Doors[i]).
+        public static ReadOnlySpan<Box> Doors => s_doors;
 
         public static HeightField Terrain { get; }
 
         // D6: a one-storey building of width (X) x depth (Z), walls 3 m high and 0.5 m thick, a 1.5 m door in the middle
         // of the south and/or north wall, and a roof slab stacked on the walls. The east and west walls stop CornerSlit
         // short of the north and south walls, so no two walls touch side by side.
-        private static void AddHouse(List<Box> boxes, float cx, float cz, float width, float depth, bool doorSouth, bool doorNorth = false)
+        private static void AddHouse(List<Box> boxes, List<Box> doors, float cx, float cz, float width, float depth, bool doorSouth, bool doorNorth = false)
         {
             float halfW = width * 0.5f;
             float halfD = depth * 0.5f;
-            AddLongWall(boxes, cx, cz + halfD - WallThickness * 0.5f, halfW, doorNorth);
-            AddLongWall(boxes, cx, cz - halfD + WallThickness * 0.5f, halfW, doorSouth);
+            AddLongWall(boxes, doors, cx, cz + halfD - WallThickness * 0.5f, halfW, doorNorth);
+            AddLongWall(boxes, doors, cx, cz - halfD + WallThickness * 0.5f, halfW, doorSouth);
             float sideLength = depth - 2f * WallThickness - 2f * CornerSlit;
             boxes.Add(Box.FromCenterSize(new Vector3(cx + halfW - WallThickness * 0.5f, WallHeight * 0.5f, cz), new Vector3(WallThickness, WallHeight, sideLength)));
             boxes.Add(Box.FromCenterSize(new Vector3(cx - halfW + WallThickness * 0.5f, WallHeight * 0.5f, cz), new Vector3(WallThickness, WallHeight, sideLength)));
             boxes.Add(new Box(new Vector3(cx - halfW, WallHeight, cz - halfD), new Vector3(cx + halfW, WallHeight + RoofThickness, cz + halfD)));
         }
 
-        private static void AddLongWall(List<Box> boxes, float cx, float z, float halfW, bool door)
+        private static void AddLongWall(List<Box> boxes, List<Box> doors, float cx, float z, float halfW, bool door)
         {
             float zMin = z - WallThickness * 0.5f;
             float zMax = z + WallThickness * 0.5f;
@@ -124,6 +134,7 @@ namespace ProjectH.Shared.Simulation
             float halfDoor = DoorWidth * 0.5f;
             boxes.Add(new Box(new Vector3(cx - halfW, 0f, zMin), new Vector3(cx - halfDoor, WallHeight, zMax)));
             boxes.Add(new Box(new Vector3(cx + halfDoor, 0f, zMin), new Vector3(cx + halfW, WallHeight, zMax)));
+            doors.Add(new Box(new Vector3(cx - halfDoor, 0f, z - DoorThickness * 0.5f), new Vector3(cx + halfDoor, WallHeight, z + DoorThickness * 0.5f)));
         }
     }
 }

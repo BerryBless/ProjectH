@@ -1,5 +1,6 @@
 using System.Numerics;
 using ProjectH.Shared.Protocol;
+using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Bots;
 
@@ -22,6 +23,8 @@ public sealed class BotView
     public SnapshotSelf Self;
     public Vector3 MyPosition;
     public bool Alive;
+    // Phase 12 D15: our movement mode (our entity's flags, or PlayerRespawned).
+    public MovementMode MyMode;
     public readonly SnapshotEntity[] Others = new SnapshotEntity[ProtocolConstants.MaxSnapshotEntities];
     public int OtherCount;
 
@@ -38,6 +41,18 @@ public sealed class BotView
     public int DeathsSeen;        // PlayerDied received (anyone)
     public int MatchResults;      // MatchResult received
     public MatchResult LastResult;
+    // Phase 12 D15: the running match's drop transport route (TransportRoute).
+    public bool HasRoute;
+    public DropRoute Route;
+
+    // MatchState. Phase 12: a new round's countdown (WaitingForPlayers, Starting) ends the last round's route; the next one
+    // comes with the next match start, after this state on the same ordered channel.
+    public void ApplyMatch(in MatchState match)
+    {
+        Match = match;
+        HasMatchState = true;
+        if (match.State == MatchFlowState.WaitingForPlayers || match.State == MatchFlowState.Starting) HasRoute = false;
+    }
 
     // Phase 7 D4 rule 2: the dev sandbox (no MatchState ever) is always "in a match".
     public bool InMatch => !HasMatchState || Match.State == MatchFlowState.Playing || Match.State == MatchFlowState.FinalPhase;
@@ -60,6 +75,7 @@ public sealed class BotView
         {
             MyPosition = entity.Position;
             Alive = entity.IsAlive;
+            MyMode = entity.Mode;
             return;
         }
         if (OtherCount < Others.Length) Others[OtherCount++] = entity;
@@ -82,6 +98,7 @@ public sealed class BotView
         if (respawned.EntityId != MyId) return;
         Alive = true;
         MyPosition = respawned.Position;
+        MyMode = respawned.Mode;
     }
 
     // The weapon in a slot, or null when the slot is empty or the catalog has not arrived.
