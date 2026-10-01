@@ -1,6 +1,6 @@
 # Database
 
-Phase 9(Persistence). MySQL에는 영속 데이터만 저장한다: 계정, 프로필, 누적 통계, 경기 기록. 실시간 위치·전투 상태는 저장하지 않는다. 설계 근거: `Docs/specs/2026-10-01-phase9-persistence-design.md`.
+Phase 9(Persistence), Phase 10(DB 재연결). MySQL에는 영속 데이터만 저장한다: 계정, 프로필, 누적 통계, 경기 기록. 실시간 위치·전투 상태는 저장하지 않는다. 설계 근거: `Docs/specs/2026-10-01-phase9-persistence-design.md`, `Docs/specs/2026-10-01-phase10-hardening-design.md`(D8).
 
 Game Loop는 DB를 기다리지 않는다. DB가 없거나 꺼져 있어도 서버는 정상 동작하고, 기록만 남지 않는다.
 
@@ -85,7 +85,7 @@ Game Loop(경기가 끝나는 Tick) → MatchRecord 하나 → MatchHistoryQueue
 
 ## 실패 처리와 종료
 
-- 시작할 때 DB에 연결하지 못하면(또는 `Enabled=false`) 이번 실행은 저장하지 않는다. 기록은 버리고 `Discarded`로 센다. 서버는 정상 동작한다. 재연결은 없고, 서버를 다시 켜면 다시 연결한다.
+- DB 재연결(Phase 10 D8): 시작할 때 DB에 연결하지 못해도 Writer는 계속 돈다(Warning 로그). 기록마다 스키마 준비부터 다시 시도하고, 실패하면 보통 재시도(`MaxAttempts`)를 거쳐 `Failed`가 된다. 그래서 서버를 먼저 켜고 DB를 나중에 띄워도 그 뒤의 경기는 저장된다. `Enabled=false`일 때만 기록을 버리고 `Discarded`로 센다. 서버는 어느 쪽이든 정상 동작한다. 디스크 보관은 하지 않는다. DB가 오래 없으면 기록마다 연결 시간 초과(5초)만큼 Writer가 늦어진다. 큐 16개로 버티고, 넘치면 `Dropped`다. Game Loop는 기다리지 않는다.
 - 저장이 실패하면 일시적인(transient) 오류는 기록마다 최대 `MaxAttempts`번 시도한다(시도 사이 1초, 2초 대기). 그래도 실패하면 로그(판 번호·인원)와 `Failed`를 남긴다.
 - transient가 아닌 `MySqlException`(제약·데이터 오류)은 몇 번을 해도 같으므로 재시도하지 않고 바로 `Failed`로 센다.
 - 저장은 at-least-once다. COMMIT은 성공했는데 응답이 유실되면 재시도가 같은 경기를 두 번 저장할 수 있다.
@@ -99,12 +99,13 @@ Game Loop(경기가 끝나는 Tick) → MatchRecord 하나 → MatchHistoryQueue
 | 카운터 | 뜻 |
 |---|---|
 | `Saved` | 저장에 성공한 경기 수(Writer) |
-| `Failed` | 시도를 모두 쓰거나 재시도 불가 오류로 포기한 경기 수(Writer) |
-| `Discarded` | DB가 없어서, 종료 시간 안에 못 저장해서(취소된 진행 중 저장 포함), 또는 Writer가 예외로 멈춰서 버린 기록 수(Writer) |
+| `Failed` | 시도를 모두 쓰거나 재시도 불가 오류로 포기한 경기 수. DB가 없어서 저장하지 못한 기록도 여기에 센다(Writer) |
+| `Discarded` | `Enabled=false`여서, 종료 시간 안에 못 저장해서(취소된 진행 중 저장 포함), 또는 Writer가 예외로 멈춰서 버린 기록 수(Writer) |
 | `MatchSinkFailures` | 기록을 만들거나 큐에 넣다가 예외가 난 경기 수(`Match`, Stats 줄) |
 | `Dropped` | 큐가 가득 차거나 닫혀서 버린 기록 수(`MatchHistoryQueue`) |
 
-- 시작 로그: `Match history: connected, schema ready.` 또는 `database unavailable; this run will not save matches.`
+- 시작 로그: `Match history: connected, schema ready.` 또는 `database unavailable at start (...); each finished match will try again.`(Warning)
+- Health 줄 `db saved/failed/discarded/dropped`(누적, `Server.md` "관측")와 Meter `projecth.db_records`(태그 `result`)가 같은 값을 낸다.
 - 경기마다: `saved match {MatchId} (round, players)`
 - 종료할 때 한 줄: `saved=… failed=… discarded=… droppedQueueFull=…`
 
@@ -131,7 +132,7 @@ LIMIT 10;
 ## 테스트
 
 - DB 없는 테스트(기록 내용, 큐, 설정, DB 없는 Writer)는 항상 돈다.
-- MySQL 테스트(`MySqlTests`, `[MySqlFact]` 6개)는 환경 변수 `PROJECTH_TEST_MYSQL`에 연결 문자열이 있을 때만 돈다. 없으면 건너뛰므로 DB 없이 `dotnet test`는 통과하고 건너뛴 테스트가 6개 보인다.
+- MySQL 테스트(`MySqlTests`, `[MySqlFact]` 7개)는 환경 변수 `PROJECTH_TEST_MYSQL`에 연결 문자열이 있을 때만 돈다. 없으면 건너뛰므로 DB 없이 `dotnet test`는 통과하고 건너뛴 테스트가 7개 보인다.
 
 ```bash
 docker compose up -d
@@ -139,12 +140,12 @@ export PROJECTH_TEST_MYSQL="Server=127.0.0.1;Port=3306;Database=projecth;User ID
 dotnet test Server/ProjectH.Server.slnx --filter "FullyQualifiedName~Persistence"
 ```
 
-- 내용: 저장하면 통계가 누적되고 전적이 최신순으로 나온다 / 실패하는 저장은 아무것도 남기지 않는다(롤백) / 같은 DevPlayerId는 한 번만(가장 좋은 순위로) 저장되고 경기는 남는다 / Hosted Writer가 큐의 기록을 저장한다 / 종료 시간에 걸린 진행 중 저장은 `Discarded`로 센다.
+- 내용: 저장하면 통계가 누적되고 전적이 최신순으로 나온다 / 실패하는 저장은 아무것도 남기지 않는다(롤백) / 같은 DevPlayerId는 한 번만(가장 좋은 순위로) 저장되고 경기는 남는다 / Hosted Writer가 큐의 기록을 저장한다 / 종료 시간에 걸린 진행 중 저장은 `Discarded`로 센다 / DB 없이 시작한 Writer는 나중에 DB가 생기면 저장한다(`TheWriter_StartedWithoutTheDatabase_SavesOnceItAppears`. Writer가 쓰는 포트에 아무도 없을 때 기록 하나를 넣어 `Failed`로 세게 한 뒤, 그 포트에서 테스트 MySQL로 잇는 TCP 중계기를 열고 다음 기록이 저장되는지 본다).
 - 테스트도 개발 DB(`projecth`)에 그대로 쓴다. 별도 테스트 스키마는 없고, 이름 충돌을 피하려고 무작위 id를 쓴다. 지우려면 위 "개발 DB 초기화"를 쓴다.
 
 ## 범위 밖
 
 - Client에 통계·전적 보여 주기(새 패킷과 UI)
 - 실제 인증·비밀번호, 표시 이름 바꾸기
-- DB 재연결, 실패한 기록의 디스크 보관(Phase 10 Hardening에서 검토)
+- 실패한 기록의 디스크 보관
 - 마이그레이션 도구, 읽기 API 서버

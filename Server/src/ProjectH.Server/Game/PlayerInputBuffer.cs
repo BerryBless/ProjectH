@@ -52,6 +52,14 @@ public sealed class PlayerInputBuffer
         return true;
     }
 
+    // Phase 10 D2: a resumed player's new connection numbers its inputs from 1 again, so what the old connection
+    // sent and the Seq order it set are forgotten. DroppedCount is a total and stays.
+    public void Reset()
+    {
+        _count = 0;
+        LastTakenSeq = 0;
+    }
+
     public bool TryTake(out InputCommand command)
     {
         if (_count == 0)

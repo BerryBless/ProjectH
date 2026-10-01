@@ -96,4 +96,48 @@ public class ServerOptionsTests
     {
         Assert.Null(new ServerOptions { SimHz = simHz, SnapshotEveryTicks = snapshotEveryTicks }.Validate());
     }
+
+    // Phase 10 spec §1: reconnect grace 10 s (0-60, 0 = off), join timeout 5 s (1-60), input timeout 10 s (0 or 2-300).
+    [Fact]
+    public void HardeningDefaults_MatchSpec()
+    {
+        var options = new ServerOptions();
+        Assert.Equal(10, options.ReconnectGraceSeconds);
+        Assert.Equal(5, options.JoinTimeoutSeconds);
+        Assert.Equal(10, options.InputTimeoutSeconds);
+        Assert.Null(new ServerOptions { ReconnectGraceSeconds = 0, InputTimeoutSeconds = 0 }.Validate());
+        Assert.Null(new ServerOptions { ReconnectGraceSeconds = 60, JoinTimeoutSeconds = 60, InputTimeoutSeconds = 300 }.Validate());
+        Assert.Null(new ServerOptions { JoinTimeoutSeconds = 1, InputTimeoutSeconds = 3, DisconnectTimeoutMs = 1000 }.Validate());
+    }
+
+    // The input sweep must not fire before LiteNetLib's timeout (+ 2 s), or a network loss would lose its grace.
+    [Theory]
+    [InlineData(5000, 7, true)]
+    [InlineData(5000, 6, false)]
+    [InlineData(1000, 3, true)]
+    [InlineData(1000, 2, false)]
+    [InlineData(500, 3, true)]
+    [InlineData(30000, 31, false)]
+    [InlineData(30000, 0, true)]   // off
+    public void Validate_InputTimeout_MustOutlastTheDisconnectTimeout(int disconnectTimeoutMs, int inputTimeout, bool valid)
+    {
+        string? error = new ServerOptions { DisconnectTimeoutMs = disconnectTimeoutMs, InputTimeoutSeconds = inputTimeout }.Validate();
+        Assert.Equal(valid, error == null);
+    }
+
+    [Theory]
+    [InlineData(-1, 5, 10)]
+    [InlineData(61, 5, 10)]
+    [InlineData(10, 0, 10)]
+    [InlineData(10, 61, 10)]
+    [InlineData(10, 5, 1)]
+    [InlineData(10, 5, -1)]
+    [InlineData(10, 5, 301)]
+    public void Validate_RejectsBadHardeningSettings(int grace, int joinTimeout, int inputTimeout)
+    {
+        Assert.NotNull(new ServerOptions
+        {
+            ReconnectGraceSeconds = grace, JoinTimeoutSeconds = joinTimeout, InputTimeoutSeconds = inputTimeout,
+        }.Validate());
+    }
 }

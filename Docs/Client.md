@@ -55,8 +55,22 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
 
 ## Lifetime
 
-생성 순서: 월드(+박스 Material) → InputReader → ShoulderCamera → Crosshair → CombatHud → InventoryHud → WorldItemViews → LocalFireEffects → MatchHud → ZoneView → NetClient. `GameClient.OnDestroy`는 역순으로 해제한다: 이벤트 구독 해제(19개) → NetClient Dispose(`NetManager.Stop`) → 매치 상태(예측기·로컬 뷰·원격 뷰·ServerClock·WeaponState·카탈로그·마지막 InventoryState·월드 아이템 목록과 뷰 반납, 마지막 MatchState·ZoneState·결과, 관전 종료, Zone 숨김, 조준점·HUD·인벤토리 HUD·경기 HUD 숨김, 발사 연출 숨김) → ZoneView Dispose(루트, 원통 Mesh, Material 3개) → MatchHud Dispose(Canvas) → LocalFireEffects Dispose(풀 GameObject·Material) → WorldItemViews Dispose(루트와 풀 전체, Material 8개) → InventoryHud Dispose(Canvas) → CombatHud Dispose(Canvas) → Crosshair Dispose(Canvas) → InputAction Dispose → 플레이어 공유 Material(3개) → 월드·박스 Material 파괴. 연결이 끊기면(`OnDisconnected`) 매치 상태를 지운다. 종료 때 Unity가 오브젝트를 먼저 파괴했을 수 있어(OnDestroy 순서는 보장되지 않음) `Crosshair.SetVisible`, `CombatHud`의 메서드, `LocalFireEffects.HideAll`은 루트가 파괴됐으면 아무것도 하지 않고 돌아온다. 예외가 나면 뒤의 해제가 건너뛰어지기 때문이다.
+생성 순서: 월드(+박스 Material) → InputReader → ShoulderCamera → Crosshair → CombatHud → InventoryHud → WorldItemViews → LocalFireEffects → MatchHud → ZoneView → NetClient. `GameClient.OnDestroy`는 역순으로 해제한다: 이벤트 구독 해제(20개) → NetClient Dispose(`NetManager.Stop`) → 매치 상태(예측기·로컬 뷰·원격 뷰·ServerClock·WeaponState·카탈로그·마지막 InventoryState·월드 아이템 목록과 뷰 반납, 마지막 MatchState·ZoneState·결과, 관전 종료, Zone 숨김, 조준점·HUD·인벤토리 HUD·경기 HUD 숨김, 발사 연출 숨김) → ZoneView Dispose(루트, 원통 Mesh, Material 3개) → MatchHud Dispose(Canvas) → LocalFireEffects Dispose(풀 GameObject·Material) → WorldItemViews Dispose(루트와 풀 전체, Material 8개) → InventoryHud Dispose(Canvas) → CombatHud Dispose(Canvas) → Crosshair Dispose(Canvas) → InputAction Dispose → 플레이어 공유 Material(3개) → 월드·박스 Material 파괴. 연결이 끊기면(`OnDisconnected`) 매치 상태를 지운다. 종료 때 Unity가 오브젝트를 먼저 파괴했을 수 있어(OnDestroy 순서는 보장되지 않음) `Crosshair.SetVisible`, `CombatHud`의 메서드, `LocalFireEffects.HideAll`은 루트가 파괴됐으면 아무것도 하지 않고 돌아온다. 예외가 나면 뒤의 해제가 건너뛰어지기 때문이다.
 `renderer.material`은 쓰지 않는다(복제됨). 캡슐은 스폰/디스폰 때만 생성·파괴하므로 풀링하지 않는다. `RemotePlayers`는 Spawn/Despawn/Clear로만 증감하고, 보간 히스토리는 플레이어당 8개 고정이다. 발사 연출은 궤적 16·탄착 32개를 생성자에서 한 번 만들고 `RingCursor`로 오래된 것부터 재사용하므로 늘어나지 않는다. 발사·카메라의 Physics 호출은 단일 결과 버전만 쓴다.
+
+## 끊김과 자동 재접속 (Phase 10)
+
+설계 근거: `Docs/specs/2026-10-01-phase10-hardening-design.md` D10. 코드는 서버 종료·Kick·Timeout 같은 이유(`DisconnectCode`, `Networking.md` "끊기와 재접속")를 받아 다시 접속해도 되는 경우에만 스스로 다시 접속한다.
+
+- `NetClient.LastError`가 코드를 사람이 읽는 문장으로 보여 준다: "Server shut down", "Kicked: too many invalid packets", "Join timed out", "Disconnected: no input for too long", "Server error: the match was reset". 코드가 없으면 LiteNetLib의 이유 이름, 연결 거절은 "Rejected: <사유>"다. 판단 결과는 `NetClient.LastDisconnectCode`와 `LastDisconnectRetryable`에 있다.
+- 재접속 조건: Shared `DisconnectCodes.ShouldReconnect`의 표(원격 종료는 `ServerError`만, `Timeout`·`ConnectionFailed`·`HostUnreachable`·`NetworkUnreachable`은 한다. 직접 끊기·거절·코드 없는 원격 종료는 안 한다)이고, 거기에 그 연결이 연결된 적이 있거나(`Connected` 이벤트) 이미 재접속 사이클 중이어야 한다. 처음 연결이 실패한 것은 다시 하지 않는다.
+- 시각: n번째 시도는 끊김을 안 때부터 1·3·7초 뒤(`DisconnectCodes.ReconnectOffsetSeconds(n)`, `GameClient`, Unscaled 시간)에 시작하고 최대 3번이다. 앞 시도가 실패한 때가 아니라 끊긴 때부터 재므로, 시도가 늦게 실패해도 다음 시도가 밀리지 않는다.
+- 자동 시도는 짧은 연결 예산으로 접속한다(`NetClient.Connect(..., reconnectAttempt: true)`가 LiteNetLib `ReconnectDelay` 250 ms, `MaxConnectAttempts` 5로 바꾼다. 약 1.5초 안에 포기). 직접 Connect는 LiteNetLib 기본값(500 ms × 10, 약 5.5초)으로 되돌린다. 두 값은 LiteNetLib이 연결 중인 peer를 갱신할 때마다 읽는 public 필드라 접속마다 바꿔도 된다(2.1.4에서 확인).
+- 다음 시각이 왔는데 앞 시도가 아직 연결 중이면 `NetClient.CancelConnect()`로 버리고 다음 시도를 시작한다. 버린 peer의 이벤트는 무시한다(`_server`가 아닌 peer). 그래서 버린 시도의 끊김(`DisconnectPeerCalled`)이 사이클을 끝내지 않는다. 셋째 시도는 약 8.5초에 끝나 서버 유예(10초) 안이다.
+- 시도가 연결되면 다음 시각을 지운다. Join(또는 Resumed)이 되면 횟수가 0으로 돌아간다. Join이 거절되면(`MatchFull`) 재접속을 멈춘다(서버가 1초 뒤 코드 없이 끊는다).
+- `DevConnectPanel`이 재접속 중에 "Reconnecting n/3"을 보여 준다(연결 중인 시도, 또는 기다리는 다음 시도의 번호).
+- Connect·Disconnect를 누르면 재접속을 멈춘다(Connect는 새로 접속한다). Connect는 연결이 끊긴 상태에서만 받는다. 연결 중·연결됨이면 무시하고 주소와 id도 바꾸지 않는다.
+- Resumed는 Join과 같다. 서버가 전체 상태를 다시 보낸다. 끊길 때 매치 상태를 지우므로 예측기는 자기 `PlayerSpawned` 위치에서 새로 시작하고 Seq는 1부터다(서버도 Resume 때 그 캐릭터의 입력 상태를 비운다).
 
 ## 실행과 두 Client 확인
 
@@ -65,6 +79,7 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
 3. Standalone: 빌드 후 `ProjectH.exe -autoConnect -devId p2` + Editor Play (`-host`, `-port`도 지정 가능. 기본 127.0.0.1:7777, devId 미지정 시 `dev-<8자리>` 자동 생성)
 4. 조작: 좌클릭(커서 잠금, 잠긴 뒤 누르고 있으면 발사. 경기 중 죽어 있으면 다음 관전 대상), 우클릭(누르는 동안 조준), R(재장전), 1·2·3(무기 칸), E(줍기), G(현재 무기 버리기), 4(Medkit), 5(Shield Cell), WASD, Shift(달리기), Space(점프), Esc(해제), F1(패널). 시작은 빈손이라 먼저 아이템을 주워야 쏠 수 있다.
 5. 경기 확인(Phase 5): 두 Client가 접속하면 "Starting in 10" 카운트다운 → 모두 Spawn으로 옮겨지고 Loot가 생긴다 → Zone 원과 "Zone shrinking in …s" → Zone 밖이면 화면 가장자리가 붉고 체력이 1초마다 준다 → 한 명이 죽으면 관전("Spectating Player n") → 결과("#1 VICTORY" / "ELIMINATED #2 — 0 kills") → 10초 뒤 다음 판 카운트다운. Unity Editor에서의 확인은 사용자가 한다.
+6. 재접속 확인(Phase 10): 경기 중 Client 하나를 끄고 10초 안에 같은 `-devId`로 다시 켜면 같은 캐릭터(위치·체력·인벤토리)로 돌아온다. 서버를 Ctrl+C로 끄면 "Server shut down"이 보이고 재접속하지 않는다. Unity Editor에서의 확인은 사용자가 한다.
 
 ## 자동 검사
 

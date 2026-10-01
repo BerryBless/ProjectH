@@ -14,5 +14,8 @@ namespace ProjectH.Shared.Protocol
         Ok = 0,
         AlreadyJoined = 1,
         MatchFull = 2,
+        // Phase 10 D2: the same DevPlayerId came back within the reconnect grace and took over its character
+        // (same entity id). The client handles it like Ok; the server sends the full state again.
+        Resumed = 3,
     }
 }

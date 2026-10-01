@@ -1,6 +1,6 @@
 # Architecture
 
-Phase 9 Persistence 기준. 설계 근거: `Docs/specs/2026-09-30-phase0-network-sync-design.md`, `Docs/specs/2026-09-30-phase1-character-prototype-design.md`, `Docs/specs/2026-10-01-phase3-combat-design.md`, `Docs/specs/2026-10-01-phase4-inventory-loot-design.md`, `Docs/specs/2026-10-01-phase5-battle-royale-design.md`, `Docs/specs/2026-10-01-phase6-map-design.md`, `Docs/specs/2026-10-01-phase7-bots-design.md`, `Docs/specs/2026-10-01-phase8-optimization-design.md`(Snapshot 분할·양자화, 부하 재측정), `Docs/specs/2026-10-01-phase9-persistence-design.md`(MySQL 경기 기록·통계).
+Phase 10 Hardening 기준. 설계 근거: `Docs/specs/2026-09-30-phase0-network-sync-design.md`, `Docs/specs/2026-09-30-phase1-character-prototype-design.md`, `Docs/specs/2026-10-01-phase3-combat-design.md`, `Docs/specs/2026-10-01-phase4-inventory-loot-design.md`, `Docs/specs/2026-10-01-phase5-battle-royale-design.md`, `Docs/specs/2026-10-01-phase6-map-design.md`, `Docs/specs/2026-10-01-phase7-bots-design.md`, `Docs/specs/2026-10-01-phase8-optimization-design.md`(Snapshot 분할·양자화, 부하 재측정), `Docs/specs/2026-10-01-phase9-persistence-design.md`(MySQL 경기 기록·통계), `Docs/specs/2026-10-01-phase10-hardening-design.md`(끊기 코드, 재접속 유예, Timeout, 예외 복구, 관측).
 
 ```mermaid
 flowchart LR
@@ -15,7 +15,7 @@ flowchart LR
         World[MapWorld: terrain mesh, boxes]
     end
     subgraph Shared[/Shared UPM package/]
-        Protocol[Protocol: packets]
+        Protocol[Protocol: packets, DisconnectCode, DisconnectCodes]
         Sim[Simulation: MovementSimulation, HeightField, GameMap, LootPoints, DropPoints, MapPois]
     end
     subgraph Server[.NET 10 Server]
@@ -25,6 +25,8 @@ flowchart LR
         Match --> ItemsS[Items: Inventory, WorldItems, LootSpawner]
         Match --> Flow[Flow: MatchFlow / Zone: SafeZone]
         Match -->|MatchRecord, TryEnqueue| History[MatchHistoryQueue] --> Writer[MatchHistoryWriter] --> MySQL[(MySQL)]
+        Loop --> Health[HealthCounters] --> Meter[ServerMeter: ProjectH.Server]
+        Watchdog[StallWatchdog] -.reads.-> Loop
     end
     Bots[ProjectH.Bots: headless clients]
     Client <-->|UDP / LiteNetLib| Server
@@ -38,7 +40,7 @@ flowchart LR
 |---|---|
 | `Client/` | Unity. 입력·표시·예측·보간. 결과를 확정하지 않는다. 카메라·조준점은 Client 표시 전용이고, 발사는 입력에 조준 방향만 실어 보낸다(누구를 맞혔는지는 보내지 않는다). Zone 원(`ZoneMath`)과 관전은 표시 전용이고 Shared에 두지 않는다(서버 식과 같은지는 테스트로 고정) |
 | `Server/` | .NET 10 Dedicated Server. 이동 결과와 명중·피해·사망·부활, Loot 배치·줍기·버리기·회복, 투입 지점 배정, 지형 사격 판정, 경기 상태·Safe Zone·Zone 피해·순위·승자를 결정하고 인벤토리를 소유한다. 데이터는 `weapons.json`, `items.json`, `loot.json`, `zones.json`. `src/ProjectH.Bots`: 부하·경기 테스트용 Headless 봇 Client(서버를 참조하지 않는다, `Bots.md`) |
-| `Shared/` | 패킷 DTO, 프로토콜 상수, 이동 계산과 그 지형(박스, 높이 격자)·충돌(`Simulation/`, 로직 예외: `game-core-rules` 4절), 맵 배치 데이터(`LootPoints`, `DropPoints`, `MapPois`, 좌표·이름 상수만: 4절 예외 2) |
+| `Shared/` | 패킷 DTO, 프로토콜 상수, 끊는 이유 코드(`DisconnectCode`)와 재접속 표(`DisconnectCodes`, Client와 봇이 같이 쓴다), 이동 계산과 그 지형(박스, 높이 격자)·충돌(`Simulation/`, 로직 예외: `game-core-rules` 4절), 맵 배치 데이터(`LootPoints`, `DropPoints`, `MapPois`, 좌표·이름 상수만: 4절 예외 2) |
 | `Docs/` | 이 문서들(맵 데이터와 규칙은 `Map.md`) |
 
 ## Shared 소비 방식

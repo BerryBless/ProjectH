@@ -62,15 +62,54 @@ namespace ProjectH.Client.Game
         private bool _fireHeld;
         // D12: the click that locks the cursor must not also fire; fire waits for that button's release.
         private bool _fireBlockedUntilRelease;
+        // Phase 10 D10: where the last Connect went, and the automatic reconnect.
+        //   _reconnectAttempt: attempts started in this cycle (0 = no cycle). Reset by a successful join.
+        //   _dropAt: unscaled time the drop that started the cycle was seen. Attempt n starts at
+        //     _dropAt + DisconnectCodes.ReconnectOffsetSeconds(n) (1, 3, 7 s), however long the earlier ones took.
+        //   _reconnectPending / _reconnectAt: the next attempt's slot. Armed when an attempt starts, so one still
+        //     connecting when its successor's slot comes is cancelled and replaced; cleared once an attempt connects.
+        //   _established: the current connection got as far as connected (a first connect that fails is not retried).
+        private string _host;
+        private int _port;
+        private string _devPlayerId;
+        private int _reconnectAttempt;
+        private bool _reconnectPending;
+        private float _reconnectAt;
+        private float _dropAt;
+        private bool _established;
 
         public ClientState State => _net.State;
         public string LastError => _net.LastError;
         public int RoundTripMs => _net.RoundTripMs;
         public ushort MyEntityId { get; private set; }
+        // Phase 10 D10: 0 = no automatic reconnect running; otherwise the attempt (1..MaxReconnectAttempts) that is
+        // connecting, or the next one while it waits for its slot.
+        public int ReconnectAttempt =>
+            _reconnectPending && _net.State == ClientState.Disconnected ? _reconnectAttempt + 1 : _reconnectAttempt;
 
-        public void Connect(string host, int port, string devPlayerId) => _net.Connect(host, port, devPlayerId);
+        // A manual connect: stops any automatic reconnect and starts over. Ignored while a connection (or an automatic
+        // attempt) is in progress, like NetClient.Connect, so the address of the running connection is kept.
+        public void Connect(string host, int port, string devPlayerId)
+        {
+            if (_net.State != ClientState.Disconnected) return;
+            CancelReconnect();
+            _host = host;
+            _port = port;
+            _devPlayerId = devPlayerId;
+            _net.Connect(host, port, devPlayerId);
+        }
 
-        public void Disconnect() => _net.Disconnect();
+        public void Disconnect()
+        {
+            CancelReconnect();
+            _net.Disconnect();
+        }
+
+        private void CancelReconnect()
+        {
+            _reconnectAttempt = 0;
+            _reconnectPending = false;
+        }
 
         private void Awake()
         {
@@ -95,6 +134,7 @@ namespace ProjectH.Client.Game
             _poiLabel = new PoiLabel();
 
             _net = new NetClient();
+            _net.Connected += OnConnected;
             _net.Joined += OnJoined;
             _net.SpawnReceived += OnSpawned;
             _net.DespawnReceived += OnDespawned;
@@ -119,6 +159,7 @@ namespace ProjectH.Client.Game
         private void Update()
         {
             _net.Poll();
+            UpdateReconnect();
             _input.Update();
             UpdateCursorAndButtons();
 
@@ -271,6 +312,7 @@ namespace ProjectH.Client.Game
 
         private void OnDestroy()
         {
+            _net.Connected -= OnConnected;
             _net.Joined -= OnJoined;
             _net.SpawnReceived -= OnSpawned;
             _net.DespawnReceived -= OnDespawned;
@@ -373,13 +415,51 @@ namespace ProjectH.Client.Game
             return shots;
         }
 
-        private void OnJoined(JoinMatchResponse response)
+        // Phase 10 D10: the next attempt starts in its slot. An attempt still connecting then is given up first (it had
+        // its connect budget, about 1.5 s, so this is rare). Connect sets State to Connecting at once, or leaves it
+        // Disconnected when it failed right away (LastError says why): then the cycle ends.
+        private void UpdateReconnect()
         {
-            if (response.Result != JoinResult.Ok)
+            if (!_reconnectPending || Time.unscaledTime < _reconnectAt) return;
+            _reconnectPending = false;
+            if (_net.State == ClientState.Connecting) _net.CancelConnect();
+            else if (_net.State != ClientState.Disconnected) return;   // connected meanwhile
+
+            _reconnectAttempt++;
+            Debug.Log($"Reconnecting (attempt {_reconnectAttempt}/{DisconnectCodes.MaxReconnectAttempts})");
+            _net.Connect(_host, _port, _devPlayerId, reconnectAttempt: true);
+            if (_net.State == ClientState.Disconnected)
             {
-                Debug.LogWarning($"Join failed: {response.Result}");
+                CancelReconnect();
                 return;
             }
+            if (_reconnectAttempt < DisconnectCodes.MaxReconnectAttempts) ArmReconnect(_reconnectAttempt + 1);
+        }
+
+        private void ArmReconnect(int attempt)
+        {
+            _reconnectPending = true;
+            _reconnectAt = _dropAt + DisconnectCodes.ReconnectOffsetSeconds(attempt);
+        }
+
+        private void OnConnected()
+        {
+            _established = true;
+            _reconnectPending = false;   // this attempt got through: no next slot unless it drops again
+        }
+
+        private void OnJoined(JoinMatchResponse response)
+        {
+            // Phase 10 D2: Resumed is our own character back; everything else arrives as after a join.
+            if (response.Result != JoinResult.Ok && response.Result != JoinResult.Resumed)
+            {
+                // The server refused this join (MatchFull) and closes the connection: trying again would be refused
+                // the same way.
+                Debug.LogWarning($"Join failed: {response.Result}");
+                CancelReconnect();
+                return;
+            }
+            _reconnectAttempt = 0;
             MyEntityId = response.MyEntityId;
             _simHz = response.SimHz;
             _interpolationDelaySeconds = InterpolationSnapshots / response.SnapshotHz;
@@ -562,6 +642,32 @@ namespace ProjectH.Client.Game
             ClearMatchState();
             Cursor.lockState = CursorLockMode.None;
             Debug.Log($"Disconnected: {reason}");
+            ScheduleReconnect();
+        }
+
+        // Phase 10 D10: retry only what DisconnectCodes allows (a lost connection, a match reset), only for a connection
+        // that was established or an attempt of a running cycle, and at most MaxReconnectAttempts times until a join.
+        // A new cycle remembers when the drop was seen; every slot is measured from it. A failed attempt whose
+        // successor's slot is already armed just waits for it.
+        private void ScheduleReconnect()
+        {
+            bool cycle = _established || _reconnectAttempt > 0;
+            _established = false;
+            // Checked first: a reject or a non-retryable close ends the cycle even with a slot armed.
+            if (!_net.LastDisconnectRetryable || !cycle || _host == null)
+            {
+                CancelReconnect();
+                return;
+            }
+            if (_reconnectAttempt == 0) _dropAt = Time.unscaledTime;
+            if (_reconnectPending) return;
+            if (_reconnectAttempt >= DisconnectCodes.MaxReconnectAttempts)
+            {
+                CancelReconnect();
+                return;
+            }
+            ArmReconnect(_reconnectAttempt + 1);
+            Debug.Log($"Reconnecting in {Mathf.Max(0f, _reconnectAt - Time.unscaledTime):F1} s (attempt {_reconnectAttempt + 1}/{DisconnectCodes.MaxReconnectAttempts})");
         }
 
         private void ClearMatchState()

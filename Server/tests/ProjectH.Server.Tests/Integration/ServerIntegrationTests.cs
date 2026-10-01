@@ -21,6 +21,9 @@ public sealed class ServerIntegrationTests : IDisposable
             MinPlayers = 2,   // Phase 5: Validate needs 2 <= MinPlayers <= MaxPlayers, so a test server holds at least 2
             DisconnectTimeoutMs = 1000,
             StatsIntervalSeconds = 60,
+            // Phase 10 D3: FullMatch connects 100 clients before any of them joins; on a slow machine that can take
+            // longer than the 5 s default.
+            JoinTimeoutSeconds = 30,
         }, TestGameData.Create(), NullLogger.Instance);
         loop.Start();
         return loop;

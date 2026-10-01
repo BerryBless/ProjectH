@@ -162,6 +162,91 @@ public class MySqlTests
         Assert.Equal(1, unranked.Kills);
     }
 
+    // Phase 10 D8: the writer starts while the database is unreachable, then the database appears (a TCP forwarder to
+    // the test MySQL opens on the port the writer uses): the next record creates the schema and is saved.
+    [MySqlFact]
+    public async Task TheWriter_StartedWithoutTheDatabase_SavesOnceItAppears()
+    {
+        var target = new MySqlConnectionStringBuilder(MySqlFactAttribute.ConnectionString);
+        int port = UnreachableDatabaseTests.FreePort();
+        var through = new MySqlConnectionStringBuilder(MySqlFactAttribute.ConnectionString)
+        {
+            Server = "127.0.0.1", Port = (uint)port, Pooling = false, ConnectionTimeout = 2,
+        };
+        var queue = new MatchHistoryQueue(4);
+        var options = Options.Create(new PersistenceOptions { Enabled = true, ConnectionString = through.ConnectionString, MaxAttempts = 1 });
+        using var writer = new MatchHistoryWriter(queue, options, NullLogger<MatchHistoryWriter>.Instance);
+        await writer.StartAsync(CancellationToken.None);
+
+        Assert.True(queue.TryEnqueue(Match(10, new PlayerRecord(NewId("n"), 1, 0, 0, 1000))));
+        await UnreachableDatabaseTests.WaitFor(() => writer.Failed == 1);
+        Assert.Equal(1, writer.Failed);
+
+        using var forwarder = new TcpForwarder(port, target.Server, (int)target.Port);
+        string a = NewId("y");
+        Assert.True(queue.TryEnqueue(Match(11, new PlayerRecord(a, 1, 2, 50, 2000))));
+        await UnreachableDatabaseTests.WaitFor(() => writer.Saved == 1);
+        await writer.StopAsync(CancellationToken.None);
+
+        Assert.Equal(1, writer.Saved);
+        Assert.Equal(1, writer.Failed);
+        Assert.Equal(2, (await new MatchStore(MySqlFactAttribute.ConnectionString).GetStatsAsync(a, CancellationToken.None))!.Kills);
+    }
+
+    // Accepts on 127.0.0.1:listenPort and pipes each connection to host:port, until disposed.
+    private sealed class TcpForwarder : IDisposable
+    {
+        private readonly TcpListener _listener;
+        private readonly CancellationTokenSource _stop = new();
+
+        public TcpForwarder(int listenPort, string host, int port)
+        {
+            _listener = new TcpListener(IPAddress.Loopback, listenPort);
+            _listener.Start();
+            _ = AcceptAsync(host, port);
+        }
+
+        private async Task AcceptAsync(string host, int port)
+        {
+            try
+            {
+                while (!_stop.IsCancellationRequested)
+                {
+                    TcpClient inbound = await _listener.AcceptTcpClientAsync(_stop.Token);
+                    _ = PipeAsync(inbound, host, port);
+                }
+            }
+            catch (Exception) when (_stop.IsCancellationRequested)
+            {
+            }
+        }
+
+        private async Task PipeAsync(TcpClient inbound, string host, int port)
+        {
+            using (inbound)
+            using (var outbound = new TcpClient())
+            {
+                try
+                {
+                    await outbound.ConnectAsync(host, port, _stop.Token);
+                    NetworkStream a = inbound.GetStream(), b = outbound.GetStream();
+                    await Task.WhenAny(a.CopyToAsync(b, _stop.Token), b.CopyToAsync(a, _stop.Token));
+                }
+                catch (Exception)
+                {
+                    // A closed side ends the pipe.
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            _stop.Cancel();
+            _listener.Stop();
+            _stop.Dispose();
+        }
+    }
+
     // The hosted writer: start, enqueue, the record lands in the database, stop drains.
     [MySqlFact]
     public async Task TheWriter_SavesWhatTheGameEnqueues()
@@ -226,27 +311,49 @@ public class MySqlTests
     }
 }
 
-// Without a database the writer must not fail the server: records are discarded and counted. Needs no MySQL.
+// Without a database the writer must not fail the server. Phase 10 D8: it keeps trying, so every record without a
+// database is a failed save, counted. Needs no MySQL.
 public class UnreachableDatabaseTests
 {
+    // A loopback port nothing listens on (taken from the OS, then released).
+    internal static int FreePort()
+    {
+        var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        int port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        return port;
+    }
+
+    internal static async Task WaitFor(Func<bool> condition)
+    {
+        var clock = Stopwatch.StartNew();
+        while (!condition() && clock.ElapsedMilliseconds < 15000) await Task.Delay(50);
+    }
+
     [Fact]
-    public async Task TheWriter_WithNoDatabase_DiscardsAndKeepsRunning()
+    public async Task TheWriter_WithNoDatabase_CountsEachRecordAsFailed_AndKeepsRunning()
     {
         var queue = new MatchHistoryQueue(4);
         var options = Options.Create(new PersistenceOptions
         {
             Enabled = true,
-            ConnectionString = "Server=127.0.0.1;Port=1;Database=projecth;User ID=nobody;Password=none;Connection Timeout=1",
+            ConnectionString = $"Server=127.0.0.1;Port={FreePort()};Database=projecth;User ID=nobody;Password=none;Connection Timeout=1;Pooling=false",
+            MaxAttempts = 1,
             ShutdownDrainSeconds = 5,
         });
         using var writer = new MatchHistoryWriter(queue, options, NullLogger<MatchHistoryWriter>.Instance);
         await writer.StartAsync(CancellationToken.None);
         Assert.True(queue.TryEnqueue(new MatchRecord(1, DateTime.UtcNow, DateTime.UtcNow, null, Array.Empty<PlayerRecord>())));
-        var clock = Stopwatch.StartNew();
-        while (writer.Discarded == 0 && clock.ElapsedMilliseconds < 10000) await Task.Delay(50);
+        await WaitFor(() => writer.Failed == 1);
+        Assert.True(queue.TryEnqueue(new MatchRecord(2, DateTime.UtcNow, DateTime.UtcNow, null, Array.Empty<PlayerRecord>())));
+        await WaitFor(() => writer.Failed == 2);
         await writer.StopAsync(CancellationToken.None);
-        Assert.Equal(1, writer.Discarded);
+
+        Assert.Equal(2, writer.Failed);
+        Assert.Equal(0, writer.Discarded);
         Assert.Equal(0, writer.Saved);
+        Assert.Equal(TaskStatus.RanToCompletion, writer.ExecuteTask!.Status);
     }
 
     // The drain limit fires while the writer is still connecting (a server that accepts TCP but never greets): the

@@ -79,14 +79,24 @@ public sealed class BotBrain
     public ushort GoalItem { get; private set; }
     public Vector3 GoalPoint { get; private set; }
 
-    // This tick's input. False = send nothing (not joined, no snapshot yet, or dead: D4 rule 1).
+    // This tick's input. False = send nothing (not joined, or no snapshot yet). A dead or spectating bot returns true
+    // with an empty input (Phase 10 D4), so the server's input timeout does not close it.
     public bool Tick(BotView view, float now, out InputCommand command)
     {
         command = default;
-        if (!view.Joined || !view.HasSnapshot || !view.Alive)
+        if (!view.Joined || !view.HasSnapshot)
         {
             Goal = BotGoal.None;
             return false;
+        }
+        if (!view.Alive)
+        {
+            // Phase 10 D4: like the Unity client, a dead or spectating bot keeps sending empty inputs (no move, no
+            // buttons) while joined, so the server's input timeout does not close it.
+            Goal = BotGoal.None;
+            command.Yaw = _bodyYaw;
+            command.ViewTick = view.ServerTick;
+            return true;
         }
         if (view.HitsLanded != _hitsSeen)
         {

@@ -10,7 +10,7 @@ namespace ProjectH.Server.Tests.Bots;
 public class BotBrainTests
 {
     [Fact]
-    public void NotJoined_NoSnapshot_OrDead_SendsNothing()
+    public void NotJoined_OrNoSnapshot_SendsNothing_AndDead_SendsAnEmptyInput()
     {
         var brain = new BotBrain(1);
         BotView view = Create();
@@ -19,9 +19,14 @@ public class BotBrainTests
         view = Create();
         view.HasSnapshot = false;
         Assert.False(brain.Tick(view, 0f, out _));
+        // Phase 10 D4: dead (or spectating) the bot still sends, as the client does, so it is not closed by the input
+        // timeout; the input moves and fires nothing.
         view = Create();
         view.Alive = false;
-        Assert.False(brain.Tick(view, 0f, out _));
+        Assert.True(brain.Tick(view, 0f, out InputCommand dead));
+        Assert.Equal(0f, dead.MoveX);
+        Assert.Equal(0f, dead.MoveY);
+        Assert.Equal(InputButtons.None, dead.Buttons);
         Assert.Equal(BotGoal.None, brain.Goal);
     }
 

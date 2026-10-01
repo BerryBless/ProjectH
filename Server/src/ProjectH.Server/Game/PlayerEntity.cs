@@ -7,6 +7,10 @@ namespace ProjectH.Server.Game;
 // One joined player. Owned by Match on the game loop thread.
 public sealed class PlayerEntity
 {
+    // Phase 10 D2: the PeerId of a player whose connection dropped and who waits for a reconnect. LiteNetLib reuses
+    // peer ids, so a graced player must not keep its old one: the next connection with that id would get its packets.
+    public const int NoPeer = -1;
+
     public PlayerEntity(ushort entityId, int peerId, string devPlayerId, int inputCapacity)
     {
         EntityId = entityId;
@@ -16,7 +20,8 @@ public sealed class PlayerEntity
     }
 
     public ushort EntityId { get; }
-    public int PeerId { get; }
+    // Changes only for the reconnect grace (D2): NoPeer while graced, the new connection's id after a resume.
+    public int PeerId { get; internal set; }
     public string DevPlayerId { get; }
     public PlayerInputBuffer Inputs { get; }
 
@@ -55,4 +60,8 @@ public sealed class PlayerEntity
 
     // Feet position at the end of each recent tick, for rewinding this player as a target (D6).
     public readonly PositionHistory History = new();
+
+    // Phase 10 D2: the tick the reconnect grace ends at (only meaningful while PeerId is NoPeer).
+    public uint GraceEndTick;
+    public bool IsGraced => PeerId == NoPeer;
 }

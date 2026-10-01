@@ -125,6 +125,37 @@ public class BotPartsTests
         Assert.Contains("bytes", tooLong);
     }
 
+    // Phase 10 D11: --reconnect true|false, off by default.
+    [Fact]
+    public void Options_Reconnect_IsOffByDefault_AndParsed()
+    {
+        Assert.True(BotOptions.TryParse(Array.Empty<string>(), out BotOptions defaults, out _));
+        Assert.False(defaults.Reconnect);
+        Assert.True(BotOptions.TryParse(new[] { "--reconnect", "true" }, out BotOptions on, out string? error), error);
+        Assert.True(on.Reconnect);
+        Assert.True(BotOptions.TryParse(new[] { "--reconnect", "false" }, out BotOptions off, out _));
+        Assert.False(off.Reconnect);
+        Assert.False(BotOptions.TryParse(new[] { "--reconnect", "maybe" }, out _, out _));
+    }
+
+    // D11 with D10's rule: a first connect that fails is no reason to reconnect, even with --reconnect true.
+    [Fact]
+    public void Runner_WithReconnect_DoesNotRetryAFirstConnectThatFails()
+    {
+        int port;
+        using (var probe = new UdpClient(0)) port = ((IPEndPoint)probe.Client.LocalEndPoint!).Port;   // free now, nobody listens
+
+        var lines = new List<string>();
+        var options = new BotOptions { Port = port, Count = 1, ConnectIntervalMs = 0, StatsIntervalSeconds = 1000, Reconnect = true };
+        using var runner = new BotRunner(options, lines.Add);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        runner.Run(cts.Token);
+
+        Assert.False(cts.IsCancellationRequested, "Run did not return on its own");
+        Assert.Equal(0, runner.Reconnects);
+        Assert.True(runner.Connection(0).Retryable);   // ConnectionFailed is a network loss; the runner still did not retry
+    }
+
     [Fact]
     public void Runner_LogsEachDisconnectOnce_AndStopsWhenAllAreGone()
     {

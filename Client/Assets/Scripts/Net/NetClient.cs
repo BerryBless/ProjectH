@@ -26,8 +26,12 @@ namespace ProjectH.Client.Net
         private readonly NetDataWriter _connectData = new NetDataWriter();
         private readonly byte[] _sendBuffer = new byte[ProtocolConstants.MaxPacketSize];
         private readonly SnapshotEntity[] _snapshotEntities = new SnapshotEntity[ProtocolConstants.MaxSnapshotEntities];
+        // The current connection. Events from any other peer (an attempt CancelConnect gave up on) are ignored.
         private NetPeer _server;
         private bool _disposed;
+        // LiteNetLib's own connect budget, used by a manual Connect (Phase 10 D10).
+        private readonly int _defaultReconnectDelay;
+        private readonly int _defaultMaxConnectAttempts;
 
         public NetClient()
         {
@@ -39,6 +43,8 @@ namespace ProjectH.Client.Net
                 IPv6Enabled = false,
                 MtuOverride = ProtocolConstants.Mtu,   // same value as the server so both sides agree on datagram size
             };
+            _defaultReconnectDelay = _net.ReconnectDelay;
+            _defaultMaxConnectAttempts = _net.MaxConnectAttempts;
         }
 
         public event Action Connected;
@@ -69,11 +75,21 @@ namespace ProjectH.Client.Net
 
         public ClientState State { get; private set; } = ClientState.Disconnected;
         public string LastError { get; private set; }
+        // Phase 10 D1, D10: why the last connection ended (None unless the server closed it with a code), and whether
+        // that kind of end may be retried (DisconnectCodes.ShouldReconnect, the same table the bots use).
+        public DisconnectCode LastDisconnectCode { get; private set; }
+        public bool LastDisconnectRetryable { get; private set; }
         public int RoundTripMs => _server != null ? _server.RoundTripTime : 0;
 
-        public void Connect(string host, int port, string devPlayerId)
+        // reconnectAttempt (Phase 10 D10): an automatic attempt gets the short connect budget of DisconnectCodes, so it
+        // gives up within its slot (about 1.5 s instead of LiteNetLib's 5.5 s). A manual connect gets the defaults
+        // back. LiteNetLib reads both fields on every update of a connecting peer (they are plain public fields,
+        // written only by its constructor), so setting them before Connect applies to this connect.
+        public void Connect(string host, int port, string devPlayerId, bool reconnectAttempt = false)
         {
             if (_disposed || State != ClientState.Disconnected) return;
+            _net.ReconnectDelay = reconnectAttempt ? DisconnectCodes.ReconnectRequestIntervalMs : _defaultReconnectDelay;
+            _net.MaxConnectAttempts = reconnectAttempt ? DisconnectCodes.ReconnectRequestAttempts : _defaultMaxConnectAttempts;
             if (!_net.IsRunning && !_net.Start())
             {
                 LastError = "Failed to open a local UDP socket.";
@@ -123,6 +139,18 @@ namespace ProjectH.Client.Net
             if (_server != null) _net.DisconnectPeer(_server);
         }
 
+        // Phase 10 D10: gives up a connect that is still in progress, without a Disconnected event: the caller starts
+        // the next attempt at once. The peer is forgotten before DisconnectPeer, because LiteNetLib may raise that
+        // peer's disconnect inside the call; its events are then ignored (not _server).
+        public void CancelConnect()
+        {
+            if (State != ClientState.Connecting || _server == null) return;
+            NetPeer abandoned = _server;
+            _server = null;
+            State = ClientState.Disconnected;
+            _net.DisconnectPeer(abandoned);
+        }
+
         public void Dispose()
         {
             if (_disposed) return;
@@ -134,6 +162,7 @@ namespace ProjectH.Client.Net
 
         void INetEventListener.OnPeerConnected(NetPeer peer)
         {
+            if (peer != _server) return;   // an abandoned attempt (CancelConnect)
             State = ClientState.Connected;
             var writer = new PacketWriter(_sendBuffer);
             JoinMatchRequest.Write(ref writer);
@@ -143,20 +172,49 @@ namespace ProjectH.Client.Net
 
         void INetEventListener.OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo)
         {
+            if (peer != _server) return;   // an abandoned attempt (CancelConnect): not this connection's end
             _server = null;
             State = ClientState.Disconnected;
-            string reason = disconnectInfo.Reason.ToString();
-            if (disconnectInfo.Reason == DisconnectReason.ConnectionRejected &&
+            DisconnectReason why = disconnectInfo.Reason;
+            bool remoteClose = why == DisconnectReason.RemoteConnectionClose;
+            LastDisconnectCode = remoteClose && disconnectInfo.AdditionalData != null
+                ? DisconnectCodes.Read(disconnectInfo.AdditionalData.GetRemainingBytesSpan())
+                : DisconnectCode.None;
+            bool networkLoss = why == DisconnectReason.Timeout || why == DisconnectReason.ConnectionFailed ||
+                               why == DisconnectReason.HostUnreachable || why == DisconnectReason.NetworkUnreachable;
+            LastDisconnectRetryable = DisconnectCodes.ShouldReconnect(remoteClose, LastDisconnectCode, networkLoss);
+
+            string reason = why.ToString();
+            if (why == DisconnectReason.ConnectionRejected &&
                 disconnectInfo.AdditionalData != null && disconnectInfo.AdditionalData.AvailableBytes > 0)
             {
                 reason = "Rejected: " + (RejectReason)disconnectInfo.AdditionalData.GetByte();
+            }
+            else if (LastDisconnectCode != DisconnectCode.None)
+            {
+                reason = Describe(LastDisconnectCode);
             }
             LastError = reason;
             Disconnected?.Invoke(reason);
         }
 
+        // Constant strings: no allocation.
+        private static string Describe(DisconnectCode code)
+        {
+            switch (code)
+            {
+                case DisconnectCode.ServerShutdown: return "Server shut down";
+                case DisconnectCode.Kicked: return "Kicked: too many invalid packets";
+                case DisconnectCode.JoinTimeout: return "Join timed out";
+                case DisconnectCode.InputTimeout: return "Disconnected: no input for too long";
+                case DisconnectCode.ServerError: return "Server error: the match was reset";
+                default: return "Disconnected";
+            }
+        }
+
         void INetEventListener.OnNetworkReceive(NetPeer peer, NetPacketReader reader, byte channelNumber, DeliveryMethod deliveryMethod)
         {
+            if (peer != _server) return;
             var packet = new PacketReader(reader.GetRemainingBytesSpan());
             if (!packet.TryReadPacketId(out PacketId id)) return;
 
@@ -165,7 +223,8 @@ namespace ProjectH.Client.Net
                 case PacketId.JoinMatchResponse:
                     if (JoinMatchResponse.TryRead(ref packet, out var response))
                     {
-                        if (response.Result == JoinResult.Ok) State = ClientState.Joined;
+                        // Phase 10 D2: Resumed is a join into our own character; the server resends the full state.
+                        if (response.Result == JoinResult.Ok || response.Result == JoinResult.Resumed) State = ClientState.Joined;
                         Joined?.Invoke(response);
                     }
                     break;

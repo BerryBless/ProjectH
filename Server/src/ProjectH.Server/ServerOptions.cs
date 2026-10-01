@@ -32,6 +32,13 @@ public sealed class ServerOptions
     // Phase 6 D9: each match shuffles the drop points with SpawnSeed + round number.
     public int SpawnSeed { get; set; } = 1;
 
+    // Phase 10 (D2-D4): a participant who drops during a match keeps its character this long (0 = off); a connection
+    // must join within JoinTimeoutSeconds; a joined player that sends no input for InputTimeoutSeconds is disconnected
+    // (0 = off).
+    public int ReconnectGraceSeconds { get; set; } = 10;
+    public int JoinTimeoutSeconds { get; set; } = 5;
+    public int InputTimeoutSeconds { get; set; } = 10;
+
     // Each connection produces at most Connected + JoinRequested + Disconnected.
     public int ControlChannelCapacity => MaxPlayers * 3;
     public int InputChannelCapacity => MaxPlayers * InputBufferPerPlayer;
@@ -62,6 +69,17 @@ public sealed class ServerOptions
         if (ResultSeconds < 1 || ResultSeconds > 300) return "ResultSeconds must be 1-300.";
         if (ZoneSeed < 0) return "ZoneSeed must be 0 or more.";
         if (SpawnSeed < 0) return "SpawnSeed must be 0 or more.";
+        if (ReconnectGraceSeconds < 0 || ReconnectGraceSeconds > 60) return "ReconnectGraceSeconds must be 0-60 (0 = off).";
+        if (JoinTimeoutSeconds < 1 || JoinTimeoutSeconds > 60) return "JoinTimeoutSeconds must be 1-60.";
+        // Below 2 s a normal hitch (a scene load, a GC pause on a weak machine) would disconnect live players.
+        if (InputTimeoutSeconds != 0 && (InputTimeoutSeconds < 2 || InputTimeoutSeconds > 300))
+            return "InputTimeoutSeconds must be 0 (off) or 2-300.";
+        // A lost network stops the input too. If the input sweep fired before LiteNetLib's own timeout, it would close
+        // the connection as InputTimeout (a server close, so no reconnect grace) instead of letting the timeout find a
+        // network loss. 2 s of margin covers the timeout's ping granularity. With the 500 ms minimum timeout this makes
+        // 3 s the smallest usable value.
+        if (InputTimeoutSeconds != 0 && (long)InputTimeoutSeconds * 1000 < (long)DisconnectTimeoutMs + 2000)
+            return "InputTimeoutSeconds * 1000 must be at least DisconnectTimeoutMs + 2000 (or 0 = off), so a network loss keeps its reconnect grace.";
         return null;
     }
 }

@@ -1,7 +1,7 @@
 # Networking
 
 Transport: LiteNetLib 2.1.4 (UDP). 프레이밍 `[PacketId: byte][payload]`, little-endian, 수기 직렬화(`PacketWriter`/`PacketReader`).
-`ProtocolVersion`(현재 7. Phase 8: Snapshot을 여러 패킷으로 나누고 엔티티를 양자화했다("Snapshot 분할과 양자화"). Phase 6: 지형과 새 맵 박스로 이동 결과가 바뀌었다. 패킷 형식은 같다. Phase 3에서 입력 명령·Snapshot 형식이 바뀌고 전투 패킷이 생겼고, Phase 4에서 Buttons가 2B가 되고 무기 카탈로그에 탄약 종류가, 아이템 패킷 6종이 생겼고, Phase 5에서 경기 패킷 3종(`MatchState`, `ZoneState`, `MatchResult`)과 `PlayerDied`의 Placement가 생겼다) 불일치 연결은 접속 단계(`OnConnectionRequest`)에서 `RejectReason.VersionMismatch`로 거절된다. 그 외 거절 사유: `ServerFull`(연결 수 ≥ MaxPlayers), `BadRequest`(연결 데이터 없음·파싱 실패·DevPlayerId 빈 문자열). Client는 거절 사유를 `Rejected: <사유>`로 표시한다.
+`ProtocolVersion`(현재 8. Phase 10: 서버가 끊을 때 이유 코드(`DisconnectCode`)를 보내고 `JoinResult.Resumed`가 생겼다("끊기와 재접속 (Phase 10)"). 패킷 형식은 같다. Phase 8: Snapshot을 여러 패킷으로 나누고 엔티티를 양자화했다("Snapshot 분할과 양자화"). Phase 6: 지형과 새 맵 박스로 이동 결과가 바뀌었다. 패킷 형식은 같다. Phase 3에서 입력 명령·Snapshot 형식이 바뀌고 전투 패킷이 생겼고, Phase 4에서 Buttons가 2B가 되고 무기 카탈로그에 탄약 종류가, 아이템 패킷 6종이 생겼고, Phase 5에서 경기 패킷 3종(`MatchState`, `ZoneState`, `MatchResult`)과 `PlayerDied`의 Placement가 생겼다) 불일치 연결은 접속 단계(`OnConnectionRequest`)에서 `RejectReason.VersionMismatch`로 거절된다. 그 외 거절 사유: `ServerFull`(연결 수 ≥ MaxPlayers), `BadRequest`(연결 데이터 없음·파싱 실패·DevPlayerId 빈 문자열). Client는 거절 사유를 `Rejected: <사유>`로 표시한다.
 
 ## MTU
 
@@ -13,7 +13,7 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
 |---|---|---|---|
 | ConnectRequestData | C→S | 연결 요청 데이터 | ProtocolVersion u16, DevPlayerId ≤ 32B (PacketId 없음) |
 | JoinMatchRequest | C→S | ReliableOrdered | 없음 (Client는 연결 직후 자동 전송) |
-| JoinMatchResponse | S→C | ReliableOrdered | Result(Ok / AlreadyJoined / MatchFull), MyEntityId, ServerTick, SimHz, SnapshotHz |
+| JoinMatchResponse | S→C | ReliableOrdered | Result(Ok / AlreadyJoined / MatchFull / Resumed(3)), MyEntityId, ServerTick, SimHz, SnapshotHz |
 | PlayerSpawned | S→C | ReliableOrdered | EntityId, Position, Yaw |
 | PlayerDespawned | S→C | ReliableOrdered | EntityId |
 | PlayerInput | C→S | Unreliable | 최근 입력 1–3개(Seq, MoveX, MoveY, Yaw, Buttons u16, AimYaw, AimPitch, ViewTick = 명령 1개 30B), 오래된 것부터 |
@@ -42,7 +42,7 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
 - Buttons(u16)는 알려진 비트(Jump, Sprint, Fire, Reload, Slot1, Slot2, Slot3, Interact, Drop, UseMedkit, UseShieldCell = 0x07FF)만 남기고 나머지는 버린다. 입력 패킷은 최대 2 + 3 × 30 = 92B다.
 - 이 표의 패킷 크기(`ItemCatalog` 219B, `WorldItems` 952B, `ItemSpawned` 20B, `InventoryState` 22B, 입력 패킷 92B, `MatchState` 11B, `ZoneState` 36B, `MatchResult` 6B 등)는 모두 PacketId 1B를 포함한 전체 바이트 수다. 새 패킷은 모두 1200B 이하다(`ItemPacketTests`, `MatchPacketTests`가 고정). Snapshot 크기는 위 Snapshot 항목을 본다(Phase 7까지는 50명 1167B, v7은 669B). Zone 원은 Snapshot에 싣지 않는다(시작·끝 값과 Tick으로 양쪽이 같은 식으로 보간한다).
 - Client가 "누구를 맞혔다"고 보내는 필드는 없다. 명중은 서버가 조준 방향으로 판정한다.
-- Join 결과: MatchFull이면 응답만 보낸다. 이미 참가한 peer의 중복 Join은 서버 Match에 도달하지 않는다(아래 Validation).
+- Join 결과: Resumed는 끊겼던 참가자가 같은 Entity로 돌아온 것이다("끊기와 재접속"). 늦은 합류와 같은 전체 상태가 이어진다. MatchFull이면 응답만 보내고, 그 연결은 Join한 것으로 치지 않는다. 1초 뒤(응답이 먼저 나가도록) 코드 없이(`None`) 끊는다. Client는 Join 실패를 받으면 자동 재접속을 멈춘다(Phase 10). 이미 참가한 peer의 중복 Join은 서버 Match에 도달하지 않는다(아래 Validation).
 
 ## 접속 순서
 
@@ -50,6 +50,53 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
 2. Server `OnConnectionRequest`에서 검사 후 Accept, `PeerState`를 `peer.Tag`에 설정하고 그 다음에 `Connected` 제어 메시지를 Control 채널에 쓴다. LiteNetLib이 `Accept()` 안에서 `OnPeerConnected`를 동기 호출하는데 그 시점엔 Tag가 아직 없으므로, `OnPeerConnected`에서는 아무것도 하지 않는다.
 3. Client `OnPeerConnected`에서 `JoinMatchRequest` 전송.
 4. Server가 `JoinMatchResponse` → `WeaponCatalog` → `ItemCatalog` → `WorldItems`(분할, 아이템이 없으면 보내지 않는다. 운영 서버는 경기 전에 월드가 비어 있다) → `InventoryState` → 새 플레이어에게 전원의 `PlayerSpawned`, 기존 플레이어에게 새 플레이어의 `PlayerSpawned` → (`DevRespawn`이 꺼져 있으면) `MatchState` → `ZoneState` → (경기 중이면) 본인의 `PlayerDied`(관전).
+5. Resume(Phase 10): 경기 중 끊긴 참가자가 유예 안에 같은 DevPlayerId로 Join하면 `JoinMatchResponse(Resumed, 같은 Entity)` → `WeaponCatalog` → `ItemCatalog` → `WorldItems` → `InventoryState` → 전원의 `PlayerSpawned`(자기 포함, 지금 위치) → `MatchState` → `ZoneState` → (유예 중에 경기가 끝났으면, 즉 `Finished`이면) 본인의 `MatchResult`. 경기 끝에 보낸 결과는 연결이 없어 사라졌으므로 다시 보낸다. 다른 플레이어에게는 아무것도 보내지 않는다(떠난 적이 없다).
+
+## 끊기와 재접속 (Phase 10)
+
+설계 근거: `Docs/specs/2026-10-01-phase10-hardening-design.md`.
+
+**끊는 코드(`DisconnectCode`, D1):** 서버가 끊을 때 LiteNetLib 끊기 데이터 1바이트로 보낸다. 끊김과 한 메시지라 순서 문제가 없다. 데이터가 없거나 모르는 값은 `None`이다(`DisconnectCodes.Read`). Client는 `RemoteConnectionClose`의 추가 데이터에서 읽는다.
+
+| 값 | 코드 | 뜻 | Client 자동 재접속 |
+|---|---|---|---|
+| 0 | `None` | 코드 없음(서버가 이유를 보내지 않았거나 모르는 값) | 안 한다 |
+| 1 | `ServerShutdown` | 서버 종료 | 안 한다 |
+| 2 | `Kicked` | 잘못된 패킷이 `BadPacketDisconnectThreshold`(20)개 | 안 한다 |
+| 3 | `JoinTimeout` | 연결하고 Join하지 않음 | 안 한다 |
+| 4 | `InputTimeout` | Join하고 입력을 보내지 않음 | 안 한다 |
+| 5 | `ServerError` | Tick이 계속 실패해 경기를 초기화함. 또는 서버 Control 채널이 가득 차 연결·Join을 받지 못함 | 한다 |
+
+**재접속 표(Shared `DisconnectCodes.ShouldReconnect(remoteClose, code, networkLoss)`, Client와 봇이 같이 쓴다):**
+
+- 원격 종료(`RemoteConnectionClose`)는 `ServerError`만 다시 한다.
+- `Timeout`·`ConnectionFailed`·`HostUnreachable`·`NetworkUnreachable`은 다시 한다.
+- 직접 끊기·연결 거절·코드 없는 원격 종료는 다시 하지 않는다.
+- 처음 연결이 실패한 것은 사이클을 시작하지 않는다(호출한 쪽이 정한다. Client 동작은 `Client.md`).
+- 한 끊김에 최대 `DisconnectCodes.MaxReconnectAttempts` = 3번이다.
+- 시도 시각(Client와 봇이 같다): n번째 시도는 끊김을 안 때부터 `DisconnectCodes.ReconnectOffsetSeconds(n)` = 1·3·7초 뒤에 시작한다(간격 1·2·4초, 앞 시도가 실패한 때가 아니라 끊긴 때부터 잰다).
+- 자동 시도의 연결 예산: LiteNetLib `ReconnectDelay` 250 ms × `MaxConnectAttempts` 5(`DisconnectCodes.ReconnectRequestIntervalMs`·`ReconnectRequestAttempts`). 한 시도는 (5 + 1) × 250 ms = 약 1.5초 안에 포기한다(측정 1.53초). 기본값(500 ms × 10)이면 약 5.5초 걸려 둘째 시도가 8초쯤, 셋째가 17초쯤으로 밀려 유예(10초)를 넘긴다. 직접 Connect는 기본값을 쓴다.
+- 다음 시각이 왔는데 앞 시도가 아직 연결 중이면 그 시도를 버리고 다음 시도를 시작한다. 셋째 시도는 약 8.5초에 끝나 기본 유예 10초 안이다.
+
+**재접속 유예(D2):**
+
+- 대상: 경기 중(`Playing`·`FinalPhase`) 살아 있는 참가자이고, 서버가 끊지 않은 연결(Client 종료·비정상 종료·네트워크 끊김)이다. 기본 `ReconnectGraceSeconds` 10초(0이면 끈다).
+- 유예 중: 캐릭터는 그 자리에 남는다. 입력이 없다(0.5초 뒤 정지, 위 "Movement"). 맞으면 죽고 Zone 피해도 받는다. 다른 플레이어에게 `PlayerDespawned`를 보내지 않는다.
+- 같은 DevPlayerId로 Join하면 새 연결에 그 캐릭터(위치, 체력, 인벤토리, 순위 상태)를 다시 묶고 위 접속 순서 5번을 보낸다. 새 Client는 Seq를 1부터 센다. 같은 id로 **연결된** 플레이어가 있으면 빼앗지 않고 새 플레이어로 합류한다. 같은 id의 유예 캐릭터가 여럿이면 먼저 끊긴 것이다.
+- 나가는 경우: 유예 중에 죽으면 다음 Tick에 나간다(다시 오면 보통의 늦은 합류, 관전자다). 시간이 다 되어도 나간다. 시간이 다 된 경우는 탈락, 사망 Drop, 이탈자 기록으로 보통의 이탈과 같다. 판 재시작(`Closing`)에서 유예 목록을 비운다. 세 경우 모두 유예 만료로 센다(Health `graceExpiries`, Information 로그에 DevPlayerId).
+- 유예 중에 경기가 끝나면(`Finished`) 결과 화면 동안은 아직 돌아올 수 있고, 돌아오면 자기 `MatchResult`를 다시 받는다(접속 순서 5번).
+- 서버가 끊은 연결(`Kicked`·`InputTimeout` 등 모든 코드)과 경기 밖·사망·관전 상태의 끊김은 유예 없이 바로 나간다.
+- 위험: 인증이 없어 남의 DevPlayerId로 유예 캐릭터를 가져갈 수 있다(spec D2). 개발 단계에서는 받아들이고 인증 단계에서 세션 토큰으로 바꾼다. Client가 비정상 종료한 뒤 서버가 옛 연결의 끊김을 알기 전(최대 `DisconnectTimeoutMs` 5초)에 다시 Join하면 연결된 같은 id로 보여 새 플레이어(관전자)가 된다.
+
+**Timeout(D3, D4):**
+
+- Join Timeout: 연결한 뒤 `JoinTimeoutSeconds`(5초) 안에 Join하지 않으면 `JoinTimeout`으로 끊는다.
+- Input Timeout: Join한 peer가 `InputTimeoutSeconds`(10초, 0이면 끔) 동안 `PlayerInput`을 하나도 보내지 않으면 `InputTimeout`으로 끊는다. Join이 입력 하나로 센다. 죽음·관전·대기 중에도 적용한다. Client와 봇은 Join한 동안 늘 입력을 보낸다.
+- 둘 다 Game Loop의 Tick 수(`SimHz`)로 잰다. 경기를 초기화해도 이어진다.
+- `InputTimeoutSeconds` × 1000은 `DisconnectTimeoutMs` + 2000 이상이어야 한다(시작할 때 검사). 네트워크가 끊기면 입력도 끊긴다. Input Timeout이 LiteNetLib Timeout보다 먼저 오면 서버가 끊은 것(`InputTimeout`)이 되어 유예를 잃기 때문이다.
+- 디버거로 Client를 10초 넘게 멈추면 `InputTimeout`으로 끊긴다(재접속하지 않는다). LiteNetLib 스레드는 Pong을 보내 연결은 살아 있어도 입력은 오지 않기 때문이다.
+
+**서버 종료·경기 초기화:** 종료하면 모든 peer를 `ServerShutdown`으로 끊는다. 종료가 시작되면(`Stop`, 또는 경기 초기화가 거듭 실패해 서버를 멈출 때) 새 연결 요청은 `ServerFull`로 거절한다(프로토콜 변경 없음, Client는 거절에 재접속하지 않는다). Tick이 계속 실패하면 경기를 초기화하면서 `ServerError`로 끊는다(`Server.md` "예외 복구").
 
 ## Tick
 
@@ -139,7 +186,11 @@ Step 순서:
 - 입력: NaN/Infinity → 0, 이동 벡터 길이 > 1 → 정규화(`MovementSimulation.Step`), Yaw가 비유한이면 이전 Yaw 유지. Seq 중복·역행(이미 소비한 Seq 이하) 무시, Tick당 플레이어별 1스텝. 시작 위치가 박스와 겹치면 밀어낸 뒤 이동한다.
 - Join은 연결당 한 번만 처리한다. 두 번째부터는 잘못된 패킷으로 세고 Match에 전달하지 않는다(Control 채널 이벤트 ≤ 3/연결 유지).
 - Join하지 않은 peer의 PlayerInput은 거절(잘못된 패킷). peer별 입력 패킷은 초당 `SimHz * 2`개(기본 60)까지만 받고 초과분은 잘못된 패킷으로 센다(고정 1초 창).
-- 알 수 없는 PacketId, 클라이언트가 보낼 수 없는 PacketId(서버→클라이언트 패킷), 잘리거나 개수가 범위 밖인 PlayerInput → drop하고 잘못된 패킷으로 센다. 연결별 `BadPacketDisconnectThreshold`(20) 이상이면 Disconnect.
+- 알 수 없는 PacketId, 클라이언트가 보낼 수 없는 PacketId(서버→클라이언트 패킷), 잘리거나 개수가 범위 밖인 PlayerInput → drop하고 잘못된 패킷으로 센다. 연결별 `BadPacketDisconnectThreshold`(20) 이상이면 `Kicked` 코드로 끊는다(Warning 로그).
+- 잘못된 패킷은 이유별로 센다(`BadPacketReason` 7가지, Health 줄과 Meter): `UnknownId`(빈 패킷·모르는 첫 바이트), `Malformed`(아는 Id인데 본문이 틀림), `InputBeforeJoin`, `DuplicateJoin`, `InputRate`(초당 상한 초과), `WrongDirection`(서버→Client 패킷 Id), `HandlerException`(받기 핸들러가 던진 예외).
+- 받기 핸들러(`OnNetworkReceive`)는 try/catch로 감싼다. 예외는 그 peer의 잘못된 패킷(`HandlerException`)으로 세고 통계 주기마다 첫 하나만 로그(Error)로 남긴다. LiteNetLib 스레드는 모든 연결을 맡으므로 한 패킷이 그 스레드를 흔들지 못한다.
+- 거절된 연결 요청(`ServerFull`, `BadRequest`, `VersionMismatch`)을 이유별로 센다. 로그는 Debug다(요청 폭주가 로그를 채우지 않게).
+- Fuzz 테스트(시드 고정): 무작위 바이트 10만 개를 모든 파서에(`ProtocolFuzzTests`), NaN·±Inf·큰 값·음수 Seq·ViewTick이 든 입력으로 `Match`를 수백 Tick 돌려 예외가 없고 위치·체력이 유한함을(`InputFuzzTests`), 무작위 패킷을 보내는 peer 하나만 `Kicked`로 끊기고 다른 peer는 계속 Snapshot을 받음을(`FuzzIntegrationTests`) 확인한다.
 - 전투 입력: 조준 각이 NaN/Infinity면 그 입력은 발사하지 않는다(탄·간격 소모 없음). Pitch는 ±89°로 자른다. ViewTick은 되감기 범위로 자른다. Slot 비트가 둘 이상 켜져 있으면 교체하지 않는다. 명중 대상은 Client가 정하지 않는다.
 - 아이템 입력: 줍기 대상·위치·수량은 Client가 보내지 않는다(Interact 비트뿐). Medkit·Shield Cell 비트가 함께 켜져 있으면 사용하지 않는다. 받은 패킷의 아이템 값(Kind, DefId, 등급, 수량, 비유한 위치)은 Client의 `TryRead`가 거른다.
 - 위치는 서버가 계산하므로 순간이동·속도 조작은 구조적으로 불가능하다.

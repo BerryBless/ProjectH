@@ -7,6 +7,10 @@ namespace ProjectH.Bots;
 // every ConnectIntervalMs), receive, decide, send. Run() repeats Step() at the server's SimHz until cancelled or the
 // duration ends, never running more than MaxCatchUpTicks late ticks in a row, and logs a stats line every
 // StatsIntervalSeconds. All bot state is owned by this one thread: no locks. Dispose closes every socket.
+// Phase 10 D11: with Reconnect, a bot whose established connection drops for a retryable reason (the client's table,
+// DisconnectCodes.ShouldReconnect) gets a new connection and brain at DisconnectCodes.ReconnectOffsetSeconds(n) after
+// the drop (1, 3, 7 s, like the Unity client), at most DisconnectCodes.MaxReconnectAttempts times until it has joined
+// again. Each attempt has the short connect budget; one still connecting when the next slot comes is replaced.
 public sealed class BotRunner : IDisposable
 {
     public const int MaxCatchUpTicks = 3;
@@ -17,6 +21,18 @@ public sealed class BotRunner : IDisposable
     private readonly BotConnection[] _connections;
     private readonly BotBrain[] _brains;
     private readonly bool[] _disconnectLogged;   // each bot's disconnect is logged once, when Step first sees it
+    // Phase 10 D11, per bot: when the next attempt is due (NaN = none), when the drop that started the cycle was seen,
+    // attempts started since the bot last joined, and whether the current connection was ever established (a first
+    // connect that fails is not retried).
+    private readonly double[] _reconnectAt;
+    private readonly double[] _dropAt;
+    private readonly int[] _attempts;
+    private readonly bool[] _established;
+    private long _reconnects;
+    // Totals of the connections a reconnect replaced, so the stats line keeps counting across them.
+    private long _retiredInputs;
+    private long _retiredPackets;
+    private long _retiredBytes;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly double[] _loopSamples = new double[LoopSampleCount];
     private readonly double[] _loopScratch = new double[LoopSampleCount];
@@ -38,6 +54,11 @@ public sealed class BotRunner : IDisposable
         _connections = new BotConnection[options.Count];
         _brains = new BotBrain[options.Count];
         _disconnectLogged = new bool[options.Count];
+        _reconnectAt = new double[options.Count];
+        Array.Fill(_reconnectAt, double.NaN);
+        _dropAt = new double[options.Count];
+        _attempts = new int[options.Count];
+        _established = new bool[options.Count];
         for (int i = 0; i < options.Count; i++)
         {
             _connections[i] = new BotConnection();
@@ -46,6 +67,7 @@ public sealed class BotRunner : IDisposable
     }
 
     public int Count => _connections.Length;
+    public long Reconnects => _reconnects;
     public BotConnection Connection(int index) => _connections[index];
     public BotBrain Brain(int index) => _brains[index];
 
@@ -64,14 +86,22 @@ public sealed class BotRunner : IDisposable
         float now = (float)start;
         for (int i = 0; i < _started; i++)
         {
+            if (!double.IsNaN(_reconnectAt[i]) && start >= _reconnectAt[i]) Reconnect(i);
             BotConnection connection = _connections[i];
             if (!connection.Disconnected) connection.Update(elapsedMs);
+            if (connection.Connected && !connection.Disconnected)
+            {
+                _established[i] = true;
+                _reconnectAt[i] = double.NaN;   // this attempt got through: no next slot unless it drops again
+            }
+            if (connection.View.Joined) _attempts[i] = 0;
             if (connection.Disconnected)
             {
                 if (!_disconnectLogged[i])
                 {
                     _disconnectLogged[i] = true;
                     _log($"{_options.BotName(i)} disconnected: {connection.DisconnectReason}");
+                    ScheduleReconnect(i, connection, start);
                 }
                 continue;
             }
@@ -81,6 +111,43 @@ public sealed class BotRunner : IDisposable
         _loopSamples[_loopNext] = (_clock.Elapsed.TotalSeconds - start) * 1000.0;
         _loopNext = (_loopNext + 1) % LoopSampleCount;
         if (_loopCount < LoopSampleCount) _loopCount++;
+    }
+
+    // A drop starts a cycle (its time is the base of every slot); a failed attempt waits for the slot already armed.
+    private void ScheduleReconnect(int i, BotConnection connection, double now)
+    {
+        bool cycle = _established[i] || _attempts[i] > 0;
+        if (!_options.Reconnect || !connection.Retryable || !cycle)
+        {
+            _reconnectAt[i] = double.NaN;
+            return;
+        }
+        if (_attempts[i] == 0) _dropAt[i] = now;
+        if (!double.IsNaN(_reconnectAt[i]) || _attempts[i] >= DisconnectCodes.MaxReconnectAttempts) return;
+        _reconnectAt[i] = _dropAt[i] + DisconnectCodes.ReconnectOffsetSeconds(_attempts[i] + 1);
+    }
+
+    // A fresh connection (its own Seq from 1, as the server expects after a resume) and a fresh brain, same name. The
+    // previous connection, still connecting or already failed, is closed. The next slot is armed at once, so an attempt
+    // that has not connected by then is replaced.
+    private void Reconnect(int i)
+    {
+        _attempts[i]++;
+        _reconnectAt[i] = _attempts[i] < DisconnectCodes.MaxReconnectAttempts
+            ? _dropAt[i] + DisconnectCodes.ReconnectOffsetSeconds(_attempts[i] + 1)
+            : double.NaN;
+        BotConnection old = _connections[i];
+        _retiredInputs += old.InputsSent;
+        _retiredPackets += old.PacketsIn;
+        _retiredBytes += old.BytesIn;
+        old.Dispose();
+        _connections[i] = new BotConnection(reconnect: true);
+        _brains[i] = new BotBrain(unchecked(_options.Seed + i));
+        _disconnectLogged[i] = false;
+        _established[i] = false;
+        _reconnects++;
+        _log($"{_options.BotName(i)} reconnecting (attempt {_attempts[i]}/{DisconnectCodes.MaxReconnectAttempts})");
+        _connections[i].Connect(_options.Host, _options.Port, _options.BotName(i));
     }
 
     public void Run(CancellationToken token)
@@ -128,7 +195,7 @@ public sealed class BotRunner : IDisposable
     private void LogStats(double seconds)
     {
         int connected = 0, joined = 0, alive = 0;
-        long inputs = 0, packets = 0, bytes = 0;
+        long inputs = _retiredInputs, packets = _retiredPackets, bytes = _retiredBytes;
         string match = "none";
         for (int i = 0; i < _connections.Length; i++)
         {
@@ -143,19 +210,20 @@ public sealed class BotRunner : IDisposable
         }
         _log($"Bots connected={connected}/{_connections.Length} joined={joined} alive={alive} match={match} " +
              $"inputs/s={(inputs - _lastInputs) / seconds:F0} pktIn/s={(packets - _lastPackets) / seconds:F0} " +
-             $"bytesIn/s={(bytes - _lastBytes) / seconds:F0} loopMs p95={LoopP95():F2}");
+             $"bytesIn/s={(bytes - _lastBytes) / seconds:F0} loopMs p95={LoopP95():F2} reconnects={_reconnects}");
         _lastInputs = inputs;
         _lastPackets = packets;
         _lastBytes = bytes;
     }
 
-    // True once every bot has been started and every one of them is gone: nothing is left to run.
+    // True once every bot has been started and every one of them is gone for good (no reconnect pending): nothing is
+    // left to run.
     private bool AllDisconnected()
     {
         if (_started < _connections.Length) return false;
         for (int i = 0; i < _connections.Length; i++)
         {
-            if (!_connections[i].Disconnected) return false;
+            if (!_connections[i].Disconnected || !double.IsNaN(_reconnectAt[i])) return false;
         }
         return true;
     }

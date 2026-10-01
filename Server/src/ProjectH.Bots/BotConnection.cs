@@ -18,14 +18,29 @@ public sealed class BotConnection : IDisposable
     private int _sentCount;
     private uint _nextSeq = 1;
 
-    public BotConnection()
+    // reconnect: an automatic reconnect attempt (Phase 10 D11). It gets the short connect budget of DisconnectCodes, so
+    // it fails within its slot instead of after LiteNetLib's default 5.5 s. Each attempt is a new BotConnection.
+    public BotConnection(bool reconnect = false)
     {
         _net = new NetManager(_listener) { UnsyncedEvents = false, AutoRecycle = true };
+        if (reconnect)
+        {
+            _net.ReconnectDelay = DisconnectCodes.ReconnectRequestIntervalMs;
+            _net.MaxConnectAttempts = DisconnectCodes.ReconnectRequestAttempts;
+        }
         _listener.PeerConnectedEvent += _ => OnConnected();
         _listener.PeerDisconnectedEvent += (_, info) =>
         {
             Disconnected = true;
-            DisconnectReason = info.Reason.ToString();
+            // Phase 10 D1, D11: the server's code, and the same reconnect rule as the Unity client (DisconnectCodes).
+            bool remoteClose = info.Reason == LiteNetLib.DisconnectReason.RemoteConnectionClose;
+            Code = remoteClose && info.AdditionalData != null
+                ? DisconnectCodes.Read(info.AdditionalData.GetRemainingBytesSpan())
+                : DisconnectCode.None;
+            bool networkLoss = info.Reason is LiteNetLib.DisconnectReason.Timeout or LiteNetLib.DisconnectReason.ConnectionFailed
+                or LiteNetLib.DisconnectReason.HostUnreachable or LiteNetLib.DisconnectReason.NetworkUnreachable;
+            Retryable = DisconnectCodes.ShouldReconnect(remoteClose, Code, networkLoss);
+            DisconnectReason = Code == DisconnectCode.None ? info.Reason.ToString() : $"{info.Reason} ({Code})";
         };
         _listener.NetworkReceiveEvent += OnReceive;
         _net.StartInManualMode(0);
@@ -35,6 +50,9 @@ public sealed class BotConnection : IDisposable
     public bool Connected { get; private set; }
     public bool Disconnected { get; private set; }
     public string DisconnectReason { get; private set; } = string.Empty;
+    public DisconnectCode Code { get; private set; }
+    // Phase 10 D11: whether this disconnect may be retried (DisconnectCodes.ShouldReconnect).
+    public bool Retryable { get; private set; }
     public long PacketsIn { get; private set; }
     public long BytesIn { get; private set; }
     public long InputsSent { get; private set; }
@@ -97,7 +115,9 @@ public sealed class BotConnection : IDisposable
         switch (id)
         {
             case PacketId.JoinMatchResponse:
-                if (JoinMatchResponse.TryRead(ref r, out var response) && response.Result == JoinResult.Ok)
+                // Phase 10 D2: Resumed is a join too (the server's grace kept this bot's character).
+                if (JoinMatchResponse.TryRead(ref r, out var response) &&
+                    (response.Result == JoinResult.Ok || response.Result == JoinResult.Resumed))
                 {
                     view.Joined = true;
                     view.MyId = response.MyEntityId;

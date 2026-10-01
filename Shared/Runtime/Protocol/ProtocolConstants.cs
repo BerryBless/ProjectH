@@ -8,7 +8,8 @@ namespace ProjectH.Shared.Protocol
         // 5: Phase 5 battle royale (MatchState, ZoneState, MatchResult, Placement in PlayerDied).
         // 6: Phase 6 map (terrain and the new boxes change movement results; packet layouts are unchanged).
         // 7: Phase 8 snapshots (13-byte quantized entities, a snapshot split into up to MaxSnapshotParts packets).
-        public const ushort ProtocolVersion = 7;
+        // 8: Phase 10 hardening (DisconnectCode in the disconnect data, JoinResult.Resumed).
+        public const ushort ProtocolVersion = 8;
 
         public const int MaxDevPlayerIdBytes = 32;
         public const int MaxInputsPerPacket = 3;

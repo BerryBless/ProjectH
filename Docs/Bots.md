@@ -21,8 +21,9 @@ dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 779
 | `--connect-interval-ms` | 100 | 봇 접속 사이 간격 0–10000 (접속 폭주 방지) |
 | `--name-prefix` | bot | 이름 접두어 1–20자 |
 | `--stats-interval` | 10 | 로그 간격(초), 1 이상 |
+| `--reconnect` | false | true면 다시 해도 되는 끊김(Client와 같은 표, `Networking.md` "끊기와 재접속")에서 같은 이름으로 다시 접속한다. 끊긴 때부터 1·3·7초 뒤(Client와 같은 `DisconnectCodes.ReconnectOffsetSeconds`), 끊김마다 최대 3번이다. 시도마다 짧은 연결 예산(250 ms × 5, 약 1.5초)을 쓰고, 다음 시각에 아직 연결 중인 시도는 새 시도로 바꾼다. 처음 접속 실패는 다시 하지 않는다 |
 
-`--stats-interval` 초마다 한 줄을 남긴다: 연결된 수, 살아 있는 수(`alive`), 경기 상태, 보낸 입력/s, 받은 패킷/s, 받은 바이트/s, 봇 루프 p95 ms. 끊긴 봇은 다시 접속하지 않는다(재접속은 Phase 10).
+`--stats-interval` 초마다 한 줄을 남긴다: 연결된 수, 살아 있는 수(`alive`), 경기 상태, 보낸 입력/s, 받은 패킷/s, 받은 바이트/s, 봇 루프 p95 ms, 재접속 수(`reconnects`). `--reconnect true`가 아니면 끊긴 봇은 다시 접속하지 않는다.
 
 ## 구조
 
@@ -46,7 +47,7 @@ dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 779
 
 10 Hz로 다시 판단하고 입력은 매 Tick 보낸다. 위에서부터 처음 맞는 것을 한다.
 
-1. 죽었으면 아무 입력도 보내지 않는다.
+1. 죽었으면 빈 입력(이동·버튼 없음)을 보낸다. 관전 중에도 같다. 서버 Input Timeout(10초)이 죽은 봇을 끊지 않게 하는 것이고 Unity Client와 같다.
 2. 경기 전·결과 화면이면 제자리에 선다. `MatchState`를 받은 적이 없는 `DevRespawn` 서버는 항상 경기 중으로 본다.
 3. Zone: 현재 원 밖이거나, 다음 원이 정해졌는데 그 밖이면 다음 원 중심으로 간다.
 4. 교전: 보이는(시선 검사) 살아 있는 가장 가까운 적이 사거리 안(무기 사거리, 최대 60 m)에 있고 탄이 있으면 조준하고 쏘며 좌우로 움직인다. 탄창이 비면 장전하거나 탄 있는 칸으로 바꾼다.
@@ -76,14 +77,14 @@ Client가 받는 정보만 쓴다. 서버 내부 상태는 보지 않는다.
 
 ## 한계
 
-지금 넣지 않은 것: 길찾기(NavMesh, A*: 건물 안 Loot를 놓칠 때가 있다), 봇 난이도 단계, 팀 AI, 서버 안 봇, 100명 초과, 재접속(Phase 10), Unity의 봇 전용 표시(봇은 일반 원격 플레이어로 보인다). 조준 오차 등 수치는 옵션이 아니라 코드 상수다. 행동은 단조롭다. 목적은 경기·부하 테스트다.
+지금 넣지 않은 것: 길찾기(NavMesh, A*: 건물 안 Loot를 놓칠 때가 있다), 봇 난이도 단계, 팀 AI, 서버 안 봇, 100명 초과, Unity의 봇 전용 표시(봇은 일반 원격 플레이어로 보인다). 조준 오차 등 수치는 옵션이 아니라 코드 상수다. 행동은 단조롭다. 목적은 경기·부하 테스트다.
 
 ## 테스트
 
 `Server/tests/ProjectH.Server.Tests/Bots/` (`ProjectH.Server.Tests`가 `ProjectH.Bots`를 참조).
 
 - `BotBrainTests`: 규칙별 단위 테스트
-  - 접속 전·Snapshot 전·사망이면 입력 없음
+  - 접속 전·Snapshot 전이면 입력 없음, 사망(관전)이면 빈 입력
   - 경기 밖이면 정지, `DevRespawn`(MatchState 없음)은 경기 중으로 본다
   - Zone: 다음 원 밖이면 중심으로, 안이면 목표 아님
   - 교전: 보이는 적은 조준·발사. 벽·언덕 뒤나 사거리 밖은 대상이 아니다. 빈 탄창은 장전, 탄이 없으면 무기 교체, 모두 없으면 싸우지 않음. 반자동은 격발 Tick을 건너뛴다. 맞히지 못하면 대상을 잠시 무시하고, 맞히면 유지

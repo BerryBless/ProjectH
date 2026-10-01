@@ -23,9 +23,14 @@ public sealed class Match
     // west, of the point (inside DropPoints.ClearRadius, so still clear of every box).
     private const float DropLapOffset = 3f;
 
+    // Connected players only. A graced player (Phase 10 D2) is in _players and _graced but not here.
     private readonly Dictionary<int, PlayerEntity> _playersByPeer = new();
-    // Players are removed only in Leave(); both collections are updated together.
+    // Players are removed only in RemovePlayer(); both collections are updated together.
     private readonly List<PlayerEntity> _players = new();
+    // Phase 10 D2: participants whose connection dropped during the match, oldest first. A subset of _players, so at
+    // most MaxPlayers. An entry leaves on a resume, when its grace ends, when it dies, and at the round reset.
+    private readonly List<PlayerEntity> _graced = new();
+    private readonly uint _graceTicks;
     private readonly byte[] _sendBuffer = new byte[ProtocolConstants.MaxPacketSize];
     private readonly SendPacket _send;
     private readonly WeaponCatalog _weapons;
@@ -43,6 +48,9 @@ public sealed class Match
     // Phase 9 D4: where a finished match's record goes (null = nothing is recorded, e.g. most tests). Called on the game
     // loop thread and must not block: production passes MatchHistoryQueue.TryEnqueue.
     private readonly Action<MatchRecord>? _matchSink;
+    // Phase 10 D2, D9: told the DevPlayerId of every graced player that leaves without resuming (grace over, died while
+    // away, or the round reset). Called on the game loop thread and must not block (GameLoop counts and logs it).
+    private readonly Action<string>? _graceExpired;
     // Participants who left during the current match, recorded when they left (they are no longer in _players).
     // At most MaxPlayers entries; cleared when a match starts.
     private readonly List<PlayerRecord> _leftParticipants = new();
@@ -66,10 +74,17 @@ public sealed class Match
     // Test seams: loadout null = StartingLoadout.Empty (the production start, D1); lootPoints null = the
     // map's LootPoints.All; dropPoints null = the map's DropPoints.All (Phase 6 D9).
     public Match(ServerOptions options, GameData data, SendPacket send, StartingLoadout? loadout = null, LootPoint[]? lootPoints = null,
-        Vector3[]? dropPoints = null, Action<MatchRecord>? matchSink = null)
+        Vector3[]? dropPoints = null, Action<MatchRecord>? matchSink = null, Action<string>? graceExpired = null)
     {
         _matchSink = matchSink;
-        _send = send ?? throw new ArgumentNullException(nameof(send));
+        _graceExpired = graceExpired;
+        SendPacket raw = send ?? throw new ArgumentNullException(nameof(send));
+        // Phase 10 D2: the one place packets to a graced player (NoPeer) are dropped. Every send goes through _send.
+        _send = (peerId, data, method) =>
+        {
+            if (peerId != PlayerEntity.NoPeer) raw(peerId, data, method);
+        };
+        _graceTicks = (uint)options.ReconnectGraceSeconds * (uint)options.SimHz;
         ArgumentNullException.ThrowIfNull(data);
         if (data.SimHz != options.SimHz)
             throw new ArgumentException($"Game data was built for SimHz {data.SimHz}, the match runs at {options.SimHz}.", nameof(data));
@@ -112,6 +127,8 @@ public sealed class Match
 
     public uint ServerTick { get; private set; }
     public int PlayerCount => _players.Count;
+    // Phase 10 D2: players kept for a reconnect (included in PlayerCount).
+    public int GracedCount => _graced.Count;
 
     public long TotalBufferDrops
     {
@@ -137,10 +154,26 @@ public sealed class Match
     internal ushort WinnerId { get; private set; }
     // Phase 9: finished matches whose record could not be built or handed to the sink (it threw). Shown in the stats line.
     public long MatchSinkFailures { get; private set; }
+    // Phase 10 D6: the first sink exception since the game loop last took it (logged once per stats interval).
+    private Exception? _sinkError;
+
+    internal Exception? TakeSinkError()
+    {
+        Exception? error = _sinkError;
+        _sinkError = null;
+        return error;
+    }
 
     public JoinResult TryJoin(int peerId, string devPlayerId)
     {
         if (_playersByPeer.ContainsKey(peerId)) return JoinResult.AlreadyJoined;
+        // Phase 10 D2: before the full check, because a graced player's slot is its own.
+        PlayerEntity? graced = FindGraced(devPlayerId);
+        if (graced != null)
+        {
+            Resume(peerId, graced);
+            return JoinResult.Resumed;
+        }
         if (_players.Count >= _maxPlayers)
         {
             SendJoinResponse(peerId, JoinResult.MatchFull, 0);
@@ -181,10 +214,35 @@ public sealed class Match
         return JoinResult.Ok;
     }
 
+    // Phase 10 D2: the connection of peerId is gone. During the match a living participant whose connection was not
+    // closed by the server (allowGrace) stays in the world for ReconnectGraceSeconds: no input, it can be shot and the
+    // zone still hurts it. Everyone else leaves at once. Returns true when the player was kept.
+    public bool Disconnect(int peerId, bool allowGrace)
+    {
+        if (!_playersByPeer.TryGetValue(peerId, out var player)) return false;
+        if (!allowGrace || _graceTicks == 0 || !_flow.InMatch || !player.Participant || !player.Alive)
+        {
+            Leave(peerId);
+            return false;
+        }
+        _playersByPeer.Remove(peerId);
+        player.PeerId = PlayerEntity.NoPeer;
+        player.GraceEndTick = ServerTick + _graceTicks;
+        player.Inputs.Reset();
+        _graced.Add(player);
+        return true;
+    }
+
     public void Leave(int peerId)
     {
-        if (!_playersByPeer.Remove(peerId, out var player)) return;
+        if (_playersByPeer.Remove(peerId, out var player)) RemovePlayer(player);
+    }
+
+    // Leave for a connected or a graced player. Never called inside a loop over _players.
+    private void RemovePlayer(PlayerEntity player)
+    {
         _players.Remove(player);
+        _graced.Remove(player);
 
         var writer = new PacketWriter(_sendBuffer);
         PlayerDespawned.Write(ref writer, new PlayerDespawned { EntityId = player.EntityId });
@@ -214,6 +272,9 @@ public sealed class Match
         // now = the last completed tick; this call simulates tick now + 1. Weapon timers
         // (NextFireTick, ReloadEndTick, RespawnAtTick) are compared against it.
         uint now = ServerTick;
+
+        // Phase 10 D2: first, outside every loop over _players, the graced players whose grace is over.
+        ExpireGrace(now);
 
         // Phase 5 step 1: state transitions (D1). The start and the round reset each happen within this one
         // tick, so no client ever sees a half-reset match (D3, D13).
@@ -280,6 +341,8 @@ public sealed class Match
             player.MissedTicks = 0;
             return true;
         }
+        // This also covers a graced player (Phase 10 D2): its buffer was reset at the drop, so it coasts on its last
+        // input for up to SimHz / 2 ticks and then stands still for the rest of the grace.
         if (player.MissedTicks < _simHz / 2)
         {
             player.MissedTicks++;
@@ -401,19 +464,11 @@ public sealed class Match
         }
         WinnerId = winner?.EntityId ?? 0;
 
-        // D11: each participant still connected gets its own result. Spectators and leavers get none.
+        // D11: each participant still connected gets its own result. Spectators and leavers get none. A graced
+        // participant's result is dropped here (NoPeer); Resume sends it again if it comes back before the round reset.
         foreach (var player in _players)
         {
-            if (!player.Participant) continue;
-            var writer = new PacketWriter(_sendBuffer);
-            MatchResult.Write(ref writer, new MatchResult
-            {
-                WinnerId = WinnerId,
-                Placement = player.Placement,
-                Kills = (byte)Math.Min(player.Kills, byte.MaxValue),
-                Participants = (byte)_flow.Participants,
-            });
-            _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+            if (player.Participant) SendMatchResult(player);
         }
 
         // Phase 9: recorded only after every result is sent, and a failing record is counted, never thrown: the
@@ -423,9 +478,10 @@ public sealed class Match
         {
             _matchSink(BuildRecord(now, winner));
         }
-        catch (Exception)
+        catch (Exception e)
         {
             MatchSinkFailures++;
+            _sinkError ??= e;
         }
     }
 
@@ -631,6 +687,19 @@ public sealed class Match
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    private void SendMatchResult(PlayerEntity player)
+    {
+        var writer = new PacketWriter(_sendBuffer);
+        MatchResult.Write(ref writer, new MatchResult
+        {
+            WinnerId = WinnerId,
+            Placement = player.Placement,
+            Kills = (byte)Math.Min(player.Kills, byte.MaxValue),
+            Participants = (byte)_flow.Participants,
+        });
+        _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
     private void SendPickupResult(PlayerEntity player, PickupResultCode result, ushort itemId)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -721,6 +790,8 @@ public sealed class Match
     // empty inventory, no items in the world (no loot before a match, D2), no zone.
     private void CloseRound(uint now)
     {
+        // Phase 10 D2: the grace ends with the round. Before Reopen counts the players for the next countdown.
+        while (_graced.Count > 0) ExpireGraced(_graced[0]);
         ClearWorldItems();
         foreach (var player in _players)
         {
@@ -937,6 +1008,69 @@ public sealed class Match
         var writer = new PacketWriter(_sendBuffer);
         PlayerSpawned.Write(ref writer, new PlayerSpawned { EntityId = player.EntityId, Position = player.State.Position, Yaw = player.State.Yaw });
         _send(recipientPeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
+    // Phase 10 D2: a graced player leaves when its grace is over, and also once it is dead (killed while away: its
+    // placement is fixed and there is nothing left to resume; coming back is a new spectator, like any late join).
+    private void ExpireGrace(uint now)
+    {
+        for (int i = _graced.Count - 1; i >= 0; i--)
+        {
+            PlayerEntity player = _graced[i];
+            if (player.Alive && now < player.GraceEndTick) continue;
+            ExpireGraced(player);
+        }
+    }
+
+    // Every way a graced player leaves without resuming goes through here, so GameLoop counts each one (D9).
+    private void ExpireGraced(PlayerEntity player)
+    {
+        RemovePlayer(player);
+        _graceExpired?.Invoke(player.DevPlayerId);
+    }
+
+    // D2: the oldest graced, living player with this DevPlayerId, unless a connected player already uses the id (then
+    // the newcomer joins as a new player and takes nothing over).
+    private PlayerEntity? FindGraced(string devPlayerId)
+    {
+        if (_graced.Count == 0) return null;
+        foreach (var player in _playersByPeer.Values)
+        {
+            if (player.DevPlayerId == devPlayerId) return null;
+        }
+        foreach (var player in _graced)
+        {
+            if (player.Alive && player.DevPlayerId == devPlayerId) return player;
+        }
+        return null;
+    }
+
+    // D2: the character goes to the new connection with everything it has (position, health, inventory, placement
+    // state). The new client numbers its inputs from 1, so the input state starts over. It gets what a late joiner
+    // gets; the others never saw it leave, so they are told nothing.
+    private void Resume(int peerId, PlayerEntity player)
+    {
+        _graced.Remove(player);
+        player.PeerId = peerId;
+        _playersByPeer.Add(peerId, player);
+        player.Inputs.Reset();
+        player.LastProcessedSeq = 0;
+        player.LastInput = new InputCommand { Yaw = player.State.Yaw };
+        player.MissedTicks = 0;
+        player.FireHeld = false;
+
+        SendJoinResponse(peerId, JoinResult.Resumed, player.EntityId);
+        SendCatalogs(peerId);
+        SendWorldItems(peerId);
+        SendInventory(player);
+        foreach (var other in _players) SendSpawned(peerId, other);
+        if (!_flow.DevRespawn)
+        {
+            SendMatchState(peerId, _flow.ToWire(_players.Count));
+            SendZoneState(peerId, _zone.ToWire());
+        }
+        // The match ended while it was away: FinishMatch sent its result to no connection, so it gets it now.
+        if (_flow.State == MatchFlowState.Finished && player.Participant) SendMatchResult(player);
     }
 
     // Entity ids are ushort and 0 means "none". With at most 50 players a free id is always found.

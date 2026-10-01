@@ -17,6 +17,8 @@ public sealed class BotOptions
     public int ConnectIntervalMs { get; set; } = 100;
     public string NamePrefix { get; set; } = "bot";
     public int StatsIntervalSeconds { get; set; } = 10;
+    // Phase 10 D11: reconnect after a retryable disconnect (off by default, so load numbers stay comparable).
+    public bool Reconnect { get; set; }
 
     public string? Validate()
     {
@@ -59,6 +61,7 @@ public sealed class BotOptions
                 "--connect-interval-ms" => SetInt(value, v => parsed.ConnectIntervalMs = v),
                 "--name-prefix" => Set(value, v => parsed.NamePrefix = v),
                 "--stats-interval" => SetInt(value, v => parsed.StatsIntervalSeconds = v),
+                "--reconnect" => SetBool(value, v => parsed.Reconnect = v),
                 _ => false,
             };
             if (!ok)
@@ -74,6 +77,13 @@ public sealed class BotOptions
     private static bool Set(string value, Action<string> set)
     {
         set(value);
+        return true;
+    }
+
+    private static bool SetBool(string value, Action<bool> set)
+    {
+        if (!bool.TryParse(value, out bool parsed)) return false;
+        set(parsed);
         return true;
     }
 

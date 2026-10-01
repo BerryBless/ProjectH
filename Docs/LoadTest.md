@@ -131,3 +131,37 @@ Protocol v7 변경 후(Snapshot 패킷당 최대 90명, 2패킷 분할, 엔티�
 - **넣어야 할 조건:** 인터넷 서버의 송신 대역폭 비용이 문제가 될 때다(경기당 약 16.6 Mbps가 비용인 경우). 그때 거리 기반으로 넣고 위 규칙들을 정한다. 입력은 이 절의 수치다.
 - 한계: 루프백이라 지연·손실·대역폭 제한이 없다. 2패킷 중 한쪽만 손실되는 경우는 이 측정에 없다(spec D3: 보간 지연이 흡수한다는 설계이고, 실제 네트워크에서는 측정하지 않았다). 서버와 봇이 같은 CPU를 쓴다.
 - `DevRespawn`에서도 `alive`가 N보다 작은 이유는 Phase 7과 같다(부활 대기 중인 봇).
+
+## Phase 10 확인 (Hardening, Protocol v8)
+
+Phase 10은 Tick마다 하는 일을 더했다:
+- peer 점검(Join·Input Timeout)
+- 재접속 유예 만료 확인
+- Health 게이지 갱신
+
+그래서 Phase 8과 같은 조건으로 50명을 다시 쟀다.
+- 조건: Release, `--Server:MaxPlayers=100 --Server:DevRespawn=true`(DB 저장 끔)
+- 봇 옵션: `--count 50 --duration 120 --connect-interval-ms 30`, `--reconnect` 끔
+- 집계: Stats 12줄 중 처음 2줄을 버린 10줄
+
+| 항목 | Phase 8 | Phase 10 1회 | Phase 10 2회 |
+|---|---|---|---|
+| Tick p95 (10줄의 최댓값) | 0.11 ms | 0.17 ms | 0.13 ms |
+| Tick p95 (10줄의 범위) | — | 0.10–0.17 ms | 0.11–0.13 ms |
+| Tick p99 최댓값 | 0.16 ms | 0.29 ms | 0.20 ms |
+| Tick max 최댓값 | 0.24 ms | 0.48 ms | 0.31 ms |
+| pktIn/s | 1315 | 1500 | 1500 |
+| cpu% | — | 0.1–0.3 | 0.1–0.2 |
+
+- **1회:** 앞 두 줄만 0.17 ms였고 나머지 8줄은 0.10–0.15 ms였다. 그래서 계획대로 한 번 더 쟀다.
+- **2회:** p95 최댓값은 0.13 ms다. Phase 8보다 0.02 ms 높다.
+  - Tick 예산 33.3 ms의 0.06 %다.
+  - 같은 조건의 반복 측정에서도 두 실행이 0.04 ms 차이가 났다.
+  - 그래서 의미 있는 회귀로 보지 않는다. 다만 수치로는 Phase 8보다 낮지 않다.
+- **`pktIn/s`가 1315에서 1500(봇 50 × 30 Hz)이 되었다.** 이제 죽은 봇도 빈 입력을 보내기 때문이다(spec §5). Unity Client와 같은 동작이다.
+- **Health 줄은 두 실행 모두 다음 값이 0이었다:**
+  - Timeout: `kicks kicked`, `joinTimeout`, `inputTimeout`, `serverError`
+  - 잘못된 패킷: 이유별 모든 `badPackets`
+  - 예외 복구: `tickFailures`, `loopFailures`, `matchResets`, `stalls`
+  - 끊김 처리: `disconnects`, `graceStarts`
+- 봇 쪽 `reconnects=0`이다.

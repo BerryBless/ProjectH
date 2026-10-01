@@ -20,9 +20,9 @@ public class ProtocolConstantsTests
     }
 
     [Fact]
-    public void ProtocolVersion_IsSeven()
+    public void ProtocolVersion_IsEight()
     {
-        // Phase 8 changed the snapshot layout (parts, 13-byte entities); v6 clients must be rejected at connect.
-        Assert.Equal((ushort)7, ProtocolConstants.ProtocolVersion);
+        // Phase 10 added the disconnect codes and JoinResult.Resumed; v7 clients must be rejected at connect.
+        Assert.Equal((ushort)8, ProtocolConstants.ProtocolVersion);
     }
 }

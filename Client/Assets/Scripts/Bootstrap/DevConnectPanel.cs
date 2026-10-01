@@ -1,5 +1,6 @@
 using ProjectH.Client.Game;
 using ProjectH.Client.Net;
+using ProjectH.Shared.Protocol;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -45,6 +46,9 @@ namespace ProjectH.Client.Bootstrap
             GUILayout.BeginArea(new Rect(10, 10, 340, 190), GUI.skin.box);
             GUILayout.Label($"State: {_client.State}   RTT: {_client.RoundTripMs} ms   Entity: {_client.MyEntityId}");
             if (!string.IsNullOrEmpty(_client.LastError)) GUILayout.Label(_client.LastError);
+            // Phase 10 D10: Connect below stops the automatic reconnect and starts over.
+            if (_client.ReconnectAttempt > 0)
+                GUILayout.Label($"Reconnecting {_client.ReconnectAttempt}/{DisconnectCodes.MaxReconnectAttempts}");
 
             if (_client.State == ClientState.Disconnected)
             {

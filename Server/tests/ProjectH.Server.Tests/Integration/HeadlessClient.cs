@@ -27,8 +27,11 @@ public sealed class HeadlessClient : IDisposable
         {
             Disconnected = true;
             DisconnectReason = info.Reason;
-            if (info.AdditionalData != null && info.AdditionalData.AvailableBytes > 0)
+            // Phase 10 D1: a reject carries a RejectReason, a server close a DisconnectCode, both as one byte.
+            if (info.Reason == LiteNetLib.DisconnectReason.ConnectionRejected && info.AdditionalData != null && info.AdditionalData.AvailableBytes > 0)
                 RejectReason = (RejectReason)info.AdditionalData.GetByte();
+            if (info.Reason == LiteNetLib.DisconnectReason.RemoteConnectionClose && info.AdditionalData != null)
+                DisconnectCode = DisconnectCodes.Read(info.AdditionalData.GetRemainingBytesSpan());
         };
         _listener.NetworkReceiveEvent += OnReceive;
         _net.Start();
@@ -38,6 +41,7 @@ public sealed class HeadlessClient : IDisposable
     public bool Disconnected { get; private set; }
     public DisconnectReason DisconnectReason { get; private set; }
     public RejectReason RejectReason { get; private set; }
+    public DisconnectCode DisconnectCode { get; private set; }
     public JoinMatchResponse? JoinResponse { get; private set; }
     public ushort MyEntityId => JoinResponse?.MyEntityId ?? 0;
     public HashSet<ushort> Spawned { get; } = new();
@@ -78,6 +82,14 @@ public sealed class HeadlessClient : IDisposable
         ConnectRequestData.Write(ref writer, new ConnectRequestData { ProtocolVersion = protocolVersion, DevPlayerId = devPlayerId });
         var data = new NetDataWriter();
         data.Put(_buffer, 0, writer.Length);
+        _peer = _net.Connect("127.0.0.1", port, data);
+    }
+
+    // A connect request with arbitrary payload (Phase 10: malformed requests are rejected and counted).
+    public void ConnectRaw(int port, byte[] payload)
+    {
+        var data = new NetDataWriter();
+        data.Put(payload);
         _peer = _net.Connect("127.0.0.1", port, data);
     }
 

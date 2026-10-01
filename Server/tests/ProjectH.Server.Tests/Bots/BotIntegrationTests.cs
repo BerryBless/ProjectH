@@ -24,8 +24,8 @@ public sealed class BotIntegrationTests
         return server;
     }
 
-    private static BotRunner Bots(GameLoop server, int count) =>
-        new(new BotOptions { Port = server.LocalPort, Count = count, ConnectIntervalMs = 0 }, _ => { });
+    private static BotRunner Bots(GameLoop server, int count, bool reconnect = false) =>
+        new(new BotOptions { Port = server.LocalPort, Count = count, ConnectIntervalMs = 0, Reconnect = reconnect }, _ => { });
 
     // Steps the bots at about 30 Hz until the condition holds or the time runs out.
     private static bool RunUntil(BotRunner bots, Func<bool> condition, int timeoutMs)
@@ -60,6 +60,50 @@ public sealed class BotIntegrationTests
         using BotRunner bots = Bots(server, 2);
         Assert.True(RunUntil(bots, () => bots.Connection(0).View.DeathsSeen > 0 || bots.Connection(1).View.DeathsSeen > 0, 30000),
             $"nobody died (goals {bots.Brain(0).Goal}/{bots.Brain(1).Goal}, hits {bots.Connection(0).View.HitsLanded}/{bots.Connection(1).View.HitsLanded})");
+    }
+
+    // Phase 10 D11: a match reset closes the bots with ServerError, which the shared table retries; they come back about
+    // a second later and join the new match.
+    [Fact]
+    public void BotsWithReconnect_ComeBackAfterAMatchReset()
+    {
+        using GameLoop server = StartServer(new ServerOptions { MaxPlayers = 4 }, TestGameData.Create());
+        using BotRunner bots = Bots(server, 2, reconnect: true);
+        Assert.True(RunUntil(bots, () => bots.Connection(0).View.Joined && bots.Connection(1).View.Joined, 10000), "joined");
+
+        server.TickFaultHook = () => throw new InvalidOperationException("test fault");
+        Assert.True(RunUntil(bots, () => server.Health.MatchResets == 1, 10000), "reset");
+        server.TickFaultHook = null;
+
+        Assert.True(RunUntil(bots, () => bots.Reconnects == 2 && bots.Connection(0).View.Joined && bots.Connection(1).View.Joined, 10000),
+            $"rejoined (reconnects {bots.Reconnects})");
+        Assert.Equal(4, server.Health.Joins);   // two joins before the reset, two after
+    }
+
+    // D11: a kick is not retried, even with --reconnect true.
+    [Fact]
+    public void ABotClosedWithANonRetryableCode_StaysOut()
+    {
+        // 5 s: the smallest input timeout that is valid with the 3 s disconnect timeout (DisconnectTimeoutMs + 2 s).
+        using GameLoop server = StartServer(new ServerOptions { MaxPlayers = 4, InputTimeoutSeconds = 5 }, TestGameData.Create());
+        using BotRunner bots = Bots(server, 1, reconnect: true);
+        Assert.True(RunUntil(bots, () => bots.Connection(0).View.Joined, 10000), "joined");
+        // Keep the connection alive (pings answered) but stop the brain: no input, so the server closes it with
+        // InputTimeout and not with LiteNetLib's network timeout.
+        var clock = Stopwatch.StartNew();
+        // Pumped by hand until the close arrives: a Step after the pause would pass the whole pause as one elapsed time,
+        // and the bot's own LiteNetLib timeout would fire before it reads the server's close.
+        while (!bots.Connection(0).Disconnected && clock.ElapsedMilliseconds < 10000)
+        {
+            bots.Connection(0).Update(50f);
+            Thread.Sleep(50);
+        }
+        Assert.True(bots.Connection(0).Disconnected, "closed");
+        Assert.Equal(1, server.Health.Kicks(DisconnectCode.InputTimeout));
+        Assert.True(bots.Connection(0).Code == DisconnectCode.InputTimeout, bots.Connection(0).DisconnectReason);
+        Assert.False(bots.Connection(0).Retryable);
+        RunUntil(bots, () => false, 1500);
+        Assert.Equal(0, bots.Reconnects);
     }
 
     [Fact]

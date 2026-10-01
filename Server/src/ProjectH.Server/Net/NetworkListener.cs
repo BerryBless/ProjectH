@@ -1,6 +1,7 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using LiteNetLib;
 using Microsoft.Extensions.Logging;
 using ProjectH.Server.Diagnostics;
@@ -15,61 +16,111 @@ public sealed class NetworkListener : INetEventListener
     private static readonly byte[] RejectVersionMismatch = { (byte)RejectReason.VersionMismatch };
     private static readonly byte[] RejectServerFull = { (byte)RejectReason.ServerFull };
     private static readonly byte[] RejectBadRequest = { (byte)RejectReason.BadRequest };
+    // Phase 10 D1: one shared array per code; LiteNetLib copies the data into its own packet.
+    private static readonly byte[][] CloseData =
+    {
+        new[] { (byte)DisconnectCode.None },
+        new[] { (byte)DisconnectCode.ServerShutdown },
+        new[] { (byte)DisconnectCode.Kicked },
+        new[] { (byte)DisconnectCode.JoinTimeout },
+        new[] { (byte)DisconnectCode.InputTimeout },
+        new[] { (byte)DisconnectCode.ServerError },
+    };
 
     private readonly ServerOptions _options;
     private readonly InboundChannels _channels;
     private readonly ServerStats _stats;
+    private readonly HealthCounters _health;
     private readonly ILogger _logger;
+    // 1 once a receive-handler exception was logged in the current stats interval (D5: the first one only).
+    private int _handlerErrorLogged;
+    // Set once by GameLoop (Stop, or the fatal path of repeated match resets) and never cleared: a stopping server
+    // accepts no new connection. Written by the game loop or the host's thread, read on LiteNetLib's thread.
+    private volatile bool _stopping;
 
-    public NetworkListener(ServerOptions options, InboundChannels channels, ServerStats stats, ILogger logger)
+    public NetworkListener(ServerOptions options, InboundChannels channels, ServerStats stats, HealthCounters health, ILogger logger)
     {
         _options = options;
         _channels = channels;
         _stats = stats;
+        _health = health;
         _logger = logger;
     }
 
     // Set once by GameLoop right after creating the NetManager (the two reference each other).
     public NetManager Manager { get; set; } = null!;
 
+    // The disconnect data that carries code (D1).
+    public static byte[] DataOf(DisconnectCode code) => CloseData[(int)code];
+
+    // Phase 10 D1: every server-side close of one peer goes through here. The code is stored before Disconnect is
+    // called (see PeerState.CloseCode). Safe from any thread: NetPeer.Disconnect is thread-safe.
+    public static void Close(NetPeer peer, DisconnectCode code)
+    {
+        if (peer.Tag is PeerState state) state.TrySetCloseCode(code);
+        peer.Disconnect(DataOf(code));
+    }
+
+    // Called by the game loop at each stats line: the next receive-handler exception is logged again.
+    public void ResetLogLimits() => Volatile.Write(ref _handlerErrorLogged, 0);
+
+    // From now on every connection request is refused (as ServerFull: no protocol change, and the client does not
+    // retry a reject). A request already accepted is closed by Stop's DisconnectAll like every other connection.
+    public void BeginStopping() => _stopping = true;
+    internal bool IsStopping => _stopping;
+
     public void OnConnectionRequest(ConnectionRequest request)
     {
-        if (Manager.ConnectedPeersCount >= _options.MaxPlayers)
+        if (_stopping || Manager.ConnectedPeersCount >= _options.MaxPlayers)
         {
-            request.Reject(RejectServerFull);
+            Reject(request, RejectReason.ServerFull, RejectServerFull);
             return;
         }
 
         var data = request.Data;
         if (data == null || data.AvailableBytes == 0)
         {
-            request.Reject(RejectBadRequest);
+            Reject(request, RejectReason.BadRequest, RejectBadRequest);
             return;
         }
 
         var reader = new PacketReader(new ReadOnlySpan<byte>(data.RawData, data.Position, data.AvailableBytes));
         if (!ConnectRequestData.TryRead(ref reader, out var connect))
         {
-            request.Reject(RejectBadRequest);
+            Reject(request, RejectReason.BadRequest, RejectBadRequest);
             return;
         }
         if (connect.ProtocolVersion != ProtocolConstants.ProtocolVersion)
         {
-            request.Reject(RejectVersionMismatch);
+            Reject(request, RejectReason.VersionMismatch, RejectVersionMismatch);
             return;
         }
 
         NetPeer peer = request.Accept();
         peer.Tag = new PeerState(connect.DevPlayerId);
+        _health.AddConnection();
+        _logger.LogInformation("Peer {PeerId} ({DevPlayerId}) connected from {EndPoint}", peer.Id, connect.DevPlayerId, request.RemoteEndPoint);
 
         // Connected is announced here, not in OnPeerConnected: with UnsyncedEvents LiteNetLib raises
         // OnPeerConnected synchronously inside Accept(), before Tag is assigned above. Writing after
         // the Tag assignment guarantees the game loop never sees a peer without its PeerState.
+        // A full channel is a server fault, so the close says ServerError (D1): the client may retry, and the code is
+        // set before the disconnect, so the game loop never gives this connection a grace.
         if (!_channels.Control.Writer.TryWrite(new ControlMessage(ControlKind.Connected, peer.Id, peer, connect.DevPlayerId)))
         {
             _logger.LogCritical("Control channel full; disconnecting peer {PeerId}", peer.Id);
-            peer.Disconnect();
+            _health.AddKick(DisconnectCode.ServerError);
+            Close(peer, DisconnectCode.ServerError);
         }
+    }
+
+    // D5: rejects are counted by reason and logged at Debug only, because a flood of connection requests must not
+    // flood the log.
+    private void Reject(ConnectionRequest request, RejectReason reason, byte[] data)
+    {
+        _health.AddReject(reason);
+        _logger.LogDebug("Rejected connection from {EndPoint}: {Reason}", request.RemoteEndPoint, reason);
+        request.Reject(data);
     }
 
     public void OnPeerConnected(NetPeer peer)
@@ -80,6 +131,12 @@ public sealed class NetworkListener : INetEventListener
 
     public void OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo)
     {
+        _health.AddDisconnect(disconnectInfo.Reason == DisconnectReason.Timeout);
+        if (peer.Tag is PeerState state)
+        {
+            _logger.LogInformation("Peer {PeerId} ({DevPlayerId}) disconnected: {Reason} (server code {Code})",
+                peer.Id, state.DevPlayerId, disconnectInfo.Reason, state.CloseCode);
+        }
         // If this message is lost the session is still removed: the game loop also drops
         // sessions whose peer is no longer Connected.
         if (!_channels.Control.Writer.TryWrite(new ControlMessage(ControlKind.Disconnected, peer.Id, peer, null)))
@@ -88,6 +145,26 @@ public sealed class NetworkListener : INetEventListener
 
     public void OnNetworkReceive(NetPeer peer, NetPacketReader reader, byte channelNumber, DeliveryMethod deliveryMethod)
     {
+        // D5: nothing a packet does may escape into LiteNetLib's thread, which serves every connection. A throw is a
+        // server bug; it is counted against this peer like an invalid packet and logged once per stats interval.
+        try
+        {
+            Receive(peer, reader);
+        }
+        catch (Exception ex)
+        {
+            if (Interlocked.Exchange(ref _handlerErrorLogged, 1) == 0)
+                _logger.LogError(ex, "Exception while handling a packet from peer {PeerId}", peer.Id);
+            OnBadPacket(peer, BadPacketReason.HandlerException);
+        }
+    }
+
+    // Test seam (D5): a hook that runs at the start of every receive, so a test can make the handler throw.
+    internal Action? ReceiveFaultHook { get; set; }
+
+    private void Receive(NetPeer peer, NetPacketReader reader)
+    {
+        ReceiveFaultHook?.Invoke();
         // AutoRecycle is on: the reader's buffer is reused after this returns, so everything the
         // game loop needs is copied into value-type messages here.
         ReadOnlySpan<byte> data = reader.GetRemainingBytesSpan();
@@ -96,7 +173,7 @@ public sealed class NetworkListener : INetEventListener
         var packet = new PacketReader(data);
         if (!packet.TryReadPacketId(out PacketId id))
         {
-            OnBadPacket(peer);
+            OnBadPacket(peer, BadPacketReason.UnknownId);
             return;
         }
 
@@ -107,14 +184,15 @@ public sealed class NetworkListener : INetEventListener
                 // client fill the Control channel and get other peers disconnected.
                 if (peer.Tag is not PeerState joinState || joinState.JoinRequested)
                 {
-                    OnBadPacket(peer);
+                    OnBadPacket(peer, BadPacketReason.DuplicateJoin);
                     break;
                 }
                 joinState.JoinRequested = true;
                 if (!_channels.Control.Writer.TryWrite(new ControlMessage(ControlKind.JoinRequested, peer.Id, peer, null)))
                 {
                     _logger.LogCritical("Control channel full; disconnecting peer {PeerId}", peer.Id);
-                    peer.Disconnect();
+                    _health.AddKick(DisconnectCode.ServerError);
+                    Close(peer, DisconnectCode.ServerError);
                 }
                 break;
 
@@ -122,21 +200,25 @@ public sealed class NetworkListener : INetEventListener
                 // The Input channel is shared by all peers and drops the oldest message when full,
                 // so one peer must not be able to fill it: inputs before Join and inputs above the
                 // per-peer rate are rejected here and count toward the bad-packet kick.
-                if (peer.Tag is not PeerState inputState || !inputState.JoinRequested ||
-                    !inputState.TryCountInputPacket(Environment.TickCount64, _options.MaxInputPacketsPerSecond))
+                if (peer.Tag is not PeerState inputState || !inputState.JoinRequested)
                 {
-                    OnBadPacket(peer);
+                    OnBadPacket(peer, BadPacketReason.InputBeforeJoin);
+                    break;
+                }
+                if (!inputState.TryCountInputPacket(Environment.TickCount64, _options.MaxInputPacketsPerSecond))
+                {
+                    OnBadPacket(peer, BadPacketReason.InputRate);
                     break;
                 }
                 if (PlayerInputPacket.TryRead(ref packet, out var input))
                     _channels.Input.Writer.TryWrite(new InputMessage(peer.Id, peer, input));
                 else
-                    OnBadPacket(peer);
+                    OnBadPacket(peer, BadPacketReason.Malformed);
                 break;
 
             default:
                 // Server-to-client packet ids are never valid from a client.
-                OnBadPacket(peer);
+                OnBadPacket(peer, BadPacketReason.WrongDirection);
                 break;
         }
     }
@@ -155,16 +237,19 @@ public sealed class NetworkListener : INetEventListener
     {
     }
 
-    private void OnBadPacket(NetPeer peer)
+    private void OnBadPacket(NetPeer peer, BadPacketReason reason)
     {
         _stats.AddBadPacket();
+        _health.AddBadPacket(reason);
         if (peer.Tag is not PeerState state) return;
         state.BadPackets++;
         if (state.BadPackets >= _options.BadPacketDisconnectThreshold && !state.Kicked)
         {
             state.Kicked = true;
-            _logger.LogWarning("Disconnecting peer {PeerId} ({DevPlayerId}) after {Count} invalid packets", peer.Id, state.DevPlayerId, state.BadPackets);
-            peer.Disconnect();
+            _health.AddKick(DisconnectCode.Kicked);
+            _logger.LogWarning("Kicking peer {PeerId} ({DevPlayerId}) after {Count} invalid packets (last: {Reason})",
+                peer.Id, state.DevPlayerId, state.BadPackets, reason);
+            Close(peer, DisconnectCode.Kicked);
         }
     }
 }
