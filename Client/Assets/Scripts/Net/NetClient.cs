@@ -72,6 +72,8 @@ namespace ProjectH.Client.Net
         public event Action<MatchState> MatchStateReceived;
         public event Action<ZoneState> ZoneStateReceived;
         public event Action<MatchResult> MatchResultReceived;
+        // Phase 11 D8: the answer to RequestStats (a class allocated by its reader, once per answer).
+        public event Action<StatsResponse> StatsReceived;
 
         public ClientState State { get; private set; } = ClientState.Disconnected;
         public string LastError { get; private set; }
@@ -79,6 +81,12 @@ namespace ProjectH.Client.Net
         // that kind of end may be retried (DisconnectCodes.ShouldReconnect, the same table the bots use).
         public DisconnectCode LastDisconnectCode { get; private set; }
         public bool LastDisconnectRetryable { get; private set; }
+        // Phase 11 D6: the rest of what the disconnected screen explains (UiText.Disconnect). Connect resets the reject,
+        // the join answer and the start failure; a disconnect sets the reason (and the reject, when refused).
+        public DisconnectReason LastDisconnectReason { get; private set; }
+        public RejectReason LastRejectReason { get; private set; }
+        public JoinResult LastJoinResult { get; private set; }
+        public bool LastConnectStartFailed { get; private set; }
         public int RoundTripMs => _server != null ? _server.RoundTripTime : 0;
 
         // reconnectAttempt (Phase 10 D10): an automatic attempt gets the short connect budget of DisconnectCodes, so it
@@ -88,6 +96,9 @@ namespace ProjectH.Client.Net
         public void Connect(string host, int port, string devPlayerId, bool reconnectAttempt = false)
         {
             if (_disposed || State != ClientState.Disconnected) return;
+            LastRejectReason = RejectReason.None;
+            LastJoinResult = JoinResult.Ok;
+            LastConnectStartFailed = true;   // until the connect below is under way
             _net.ReconnectDelay = reconnectAttempt ? DisconnectCodes.ReconnectRequestIntervalMs : _defaultReconnectDelay;
             _net.MaxConnectAttempts = reconnectAttempt ? DisconnectCodes.ReconnectRequestAttempts : _defaultMaxConnectAttempts;
             if (!_net.IsRunning && !_net.Start())
@@ -118,6 +129,7 @@ namespace ProjectH.Client.Net
                 return;
             }
             LastError = null;
+            LastConnectStartFailed = _server == null;
             State = _server != null ? ClientState.Connecting : ClientState.Disconnected;
         }
 
@@ -139,12 +151,24 @@ namespace ProjectH.Client.Net
             if (_server != null) _net.DisconnectPeer(_server);
         }
 
+        // Phase 11 D8: asks for this player's statistics; the answer comes as StatsReceived. False when not joined.
+        public bool RequestStats()
+        {
+            if (State != ClientState.Joined) return false;
+            var writer = new PacketWriter(_sendBuffer);
+            StatsRequest.Write(ref writer);
+            _server.Send(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+            return true;
+        }
+
         // Phase 10 D10: gives up a connect that is still in progress, without a Disconnected event: the caller starts
-        // the next attempt at once. The peer is forgotten before DisconnectPeer, because LiteNetLib may raise that
-        // peer's disconnect inside the call; its events are then ignored (not _server).
+        // the next attempt at once. Phase 11: also a connection that is connected but not joined yet (the disconnected
+        // screen's Cancel), so the Last* fields keep the end that started the reconnect cycle. The peer is forgotten
+        // before DisconnectPeer, because LiteNetLib may raise that peer's disconnect inside the call; its events are
+        // then ignored (not _server). A joined connection is never given up this way (Disconnect raises the event).
         public void CancelConnect()
         {
-            if (State != ClientState.Connecting || _server == null) return;
+            if ((State != ClientState.Connecting && State != ClientState.Connected) || _server == null) return;
             NetPeer abandoned = _server;
             _server = null;
             State = ClientState.Disconnected;
@@ -183,12 +207,15 @@ namespace ProjectH.Client.Net
             bool networkLoss = why == DisconnectReason.Timeout || why == DisconnectReason.ConnectionFailed ||
                                why == DisconnectReason.HostUnreachable || why == DisconnectReason.NetworkUnreachable;
             LastDisconnectRetryable = DisconnectCodes.ShouldReconnect(remoteClose, LastDisconnectCode, networkLoss);
+            LastDisconnectReason = why;
+            LastRejectReason = RejectReason.None;
 
             string reason = why.ToString();
             if (why == DisconnectReason.ConnectionRejected &&
                 disconnectInfo.AdditionalData != null && disconnectInfo.AdditionalData.AvailableBytes > 0)
             {
-                reason = "Rejected: " + (RejectReason)disconnectInfo.AdditionalData.GetByte();
+                LastRejectReason = (RejectReason)disconnectInfo.AdditionalData.GetByte();
+                reason = "Rejected: " + LastRejectReason;
             }
             else if (LastDisconnectCode != DisconnectCode.None)
             {
@@ -223,6 +250,7 @@ namespace ProjectH.Client.Net
                 case PacketId.JoinMatchResponse:
                     if (JoinMatchResponse.TryRead(ref packet, out var response))
                     {
+                        LastJoinResult = response.Result;
                         // Phase 10 D2: Resumed is a join into our own character; the server resends the full state.
                         if (response.Result == JoinResult.Ok || response.Result == JoinResult.Resumed) State = ClientState.Joined;
                         Joined?.Invoke(response);
@@ -311,6 +339,10 @@ namespace ProjectH.Client.Net
 
                 case PacketId.MatchResult:
                     if (MatchResult.TryRead(ref packet, out var result)) MatchResultReceived?.Invoke(result);
+                    break;
+
+                case PacketId.StatsResponse:
+                    if (StatsResponse.TryRead(ref packet, out var stats)) StatsReceived?.Invoke(stats);
                     break;
             }
         }

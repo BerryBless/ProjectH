@@ -43,6 +43,8 @@ public class MonitoringTests
         loop.Health.AddReject(RejectReason.ServerFull);
         loop.Health.AddKick(DisconnectCode.InputTimeout);
         loop.Health.AddBadPacket(BadPacketReason.WrongDirection);
+        loop.StatsQueries.AddLimited();
+        loop.StatsQueries.AddLimited();
         loop.RunTickGuarded();
 
         loop.LogPeriodic();
@@ -61,6 +63,7 @@ public class MonitoringTests
                      "badPackets unknownId=0", "malformed=", "beforeJoin=", "duplicateJoin=", "inputRate=", "wrongDirection=1", "handlerException=",
                      "tickFailures=0", "loopFailures=0", "matchResets=0", "stalls=0",
                      "db saved=3 failed=1 discarded=2 dropped=4",
+                     "stats requests=0 limited=2 busy=0 unavailable=0 undelivered=0",
                  })
         {
             Assert.Contains(item, line);
@@ -72,7 +75,11 @@ public class MonitoringTests
     [Fact]
     public void TheMeter_PublishesTheHealthCounters()
     {
-        var health = new HealthCounters { Persistence = () => new PersistenceCounts(5, 0, 0, 1) };
+        var health = new HealthCounters
+        {
+            Persistence = () => new PersistenceCounts(5, 0, 0, 1),
+            StatsQueries = () => new StatsQueryCounts(Requests: 6, Limited: 2, Busy: 1, Unavailable: 3, Undelivered: 4),
+        };
         health.AddConnection();
         health.AddConnection();
         health.AddKick(DisconnectCode.Kicked);
@@ -104,6 +111,11 @@ public class MonitoringTests
         Assert.Contains(("projecth.db_records", 1L, "result=dropped"), seen);
         Assert.Contains(("projecth.match_state", (long)MatchFlowState.Playing, ""), seen);
         Assert.Contains(("projecth.grace_expiries", 1L, ""), seen);
+        Assert.Contains(("projecth.stats_queries", 6L, "result=requests"), seen);
+        Assert.Contains(("projecth.stats_queries", 2L, "result=limited"), seen);
+        Assert.Contains(("projecth.stats_queries", 1L, "result=busy"), seen);
+        Assert.Contains(("projecth.stats_queries", 3L, "result=unavailable"), seen);
+        Assert.Contains(("projecth.stats_queries", 4L, "result=undelivered"), seen);
         // B7: a shutdown is not a kick, so it has no series.
         Assert.DoesNotContain(seen, s => s.Name == "projecth.kicks" && s.Tags.Contains(nameof(DisconnectCode.ServerShutdown)));
         Assert.Equal(4, seen.Count(s => s.Name == "projecth.kicks"));

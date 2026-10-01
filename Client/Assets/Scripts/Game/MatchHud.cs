@@ -1,25 +1,24 @@
+using ProjectH.Client.UI;
 using ProjectH.Shared.Protocol;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace ProjectH.Client.Game
 {
-    // D14: the match HUD on one Screen Space Overlay canvas built in code (UGUI legacy Text with the built-in font,
-    // like CombatHud): the state line and the zone line at the top, the result in the middle, "Spectating" below
-    // it, and red screen edges while the local player stands outside the zone. No GraphicRaycaster; nothing is a
+    // D14: the match HUD on one Screen Space Overlay canvas built in code (UGUI legacy Text with UiFont, Phase 11 D2):
+    // the state line and the zone line at the top, "관전 중" near the bottom (the result is the result screen's, Phase 11
+    // D7), and red screen edges while the local player stands outside the zone. No GraphicRaycaster; nothing is a
     // raycast target. Text is set only when MatchHudText rebuilt a string, and the edges only toggle, so an
     // unchanged HUD allocates nothing per frame. Dispose destroys the canvas.
     public sealed class MatchHud : System.IDisposable
     {
         private const int FontSize = 22;
-        private const int ResultFontSize = 40;
         private const float EdgeThickness = 28f;
 
         private readonly MatchHudText _text = new MatchHudText();
         private readonly GameObject _root;
         private readonly Text _status;
         private readonly Text _zone;
-        private readonly Text _result;
         private readonly Text _spectating;
         private readonly GameObject _edges;
         private bool _visible;
@@ -45,12 +44,10 @@ namespace ProjectH.Client.Game
             CreateEdge(edgesRect, new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(EdgeThickness, 0f));   // right
             _edges.SetActive(false);
 
-            Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            Font font = UiFont.Get();
             _status = CreateText("Status", font, FontSize, new Vector2(0.5f, 1f), new Vector2(0f, -20f));
             _zone = CreateText("Zone", font, FontSize, new Vector2(0.5f, 1f), new Vector2(0f, -50f));
             _zone.color = new Color(0.6f, 0.85f, 1f);
-            _result = CreateText("Result", font, ResultFontSize, new Vector2(0.5f, 0.5f), new Vector2(0f, 60f));
-            _result.color = new Color(1f, 0.85f, 0.3f);
             _spectating = CreateText("Spectating", font, FontSize, new Vector2(0.5f, 0f), new Vector2(0f, 130f));
 
             _root.SetActive(false);
@@ -74,16 +71,10 @@ namespace ProjectH.Client.Game
             if (_root != null && _text.SetZone(hint, seconds)) _zone.text = _text.Zone;
         }
 
-        // placement 0 hides the result.
-        public void SetResult(bool won, int placement, int kills)
+        // 0 hides the line. name: PlayerSpawned's name of that player, null when not known.
+        public void SetSpectating(ushort entityId, string name)
         {
-            if (_root != null && _text.SetResult(won, placement, kills)) _result.text = _text.Result;
-        }
-
-        // 0 hides the line.
-        public void SetSpectating(ushort entityId)
-        {
-            if (_root != null && _text.SetSpectating(entityId)) _spectating.text = _text.Spectating;
+            if (_root != null && _text.SetSpectating(entityId, name)) _spectating.text = _text.Spectating;
         }
 
         // Red screen edges while the local player is outside the zone.
@@ -114,6 +105,7 @@ namespace ProjectH.Client.Game
             text.alignment = TextAnchor.MiddleCenter;
             text.color = Color.white;
             text.raycastTarget = false;
+            text.supportRichText = false;   // Phase 11: player names are shown as typed, never as markup
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
             text.text = string.Empty;
             return text;

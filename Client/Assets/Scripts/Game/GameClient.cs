@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using ProjectH.Client.Bootstrap;
 using ProjectH.Client.CameraControl;
 using ProjectH.Client.Input;
 using ProjectH.Client.Net;
+using ProjectH.Client.UI;
 using ProjectH.Shared.Protocol;
 using ProjectH.Shared.Simulation;
 using UnityEngine;
@@ -32,6 +34,26 @@ namespace ProjectH.Client.Game
         private MatchHud _matchHud;
         private ZoneView _zoneView;
         private PoiLabel _poiLabel;
+        private KillFeed _killFeed;
+        // Phase 11 D9: entity id -> name from PlayerSpawned. At most one entry per player in the match: removed on
+        // despawn, cleared with the match state (disconnect).
+        private readonly Dictionary<ushort, string> _names = new Dictionary<ushort, string>();
+        // Phase 11 D5, set by UiRoot every frame from UiFlow: may a click lock the cursor, and is game input blocked.
+        private bool _cursorLockAllowed = true;
+        private bool _inputBlocked;
+        // This frame's game-input block (a screen up or the cursor free), set in Update: the crosshair shows exactly when
+        // input goes through.
+        private bool _blockedThisFrame;
+        // Phase 11 D7: how this round ended for us (from our own PlayerDied); the killer's name is kept because the killer
+        // may leave before the result. Reset by our respawn (the next round) and with the match state.
+        private bool _died;
+        private bool _killedByZone;
+        private string _killerName;
+        // Phase 11 D8: the newest statistics answer, when the request in effect was sent and when an answer came
+        // (unscaled seconds, negative = never). Cleared with the match state.
+        private StatsResponse _stats;
+        private float _statsSentAt = -1f;
+        private float _statsAnsweredAt = -1f;
         private readonly SpectatorCamera _spectator = new SpectatorCamera();
         private NetClient _net;
         private LocalPlayerPredictor _predictor;
@@ -87,6 +109,89 @@ namespace ProjectH.Client.Game
         public int ReconnectAttempt =>
             _reconnectPending && _net.State == ClientState.Disconnected ? _reconnectAttempt + 1 : _reconnectAttempt;
 
+        // ---- Phase 11: read-only state for the UI (UiRoot draws it; nothing here changes the game) ----
+
+        // D6: why the last connection ended.
+        public DisconnectSummary LastDisconnect => new DisconnectSummary
+        {
+            StartFailed = _net.LastConnectStartFailed,
+            Reason = _net.LastDisconnectReason,
+            Code = _net.LastDisconnectCode,
+            Reject = _net.LastRejectReason,
+            Join = _net.LastJoinResult,
+        };
+
+        // D6: seconds until the next automatic attempt starts; 0 while an attempt is connecting or none is running.
+        public float NextReconnectIn =>
+            _reconnectPending && _net.State == ClientState.Disconnected ? Mathf.Max(0f, _reconnectAt - Time.unscaledTime) : 0f;
+
+        // D9: the name a PlayerSpawned gave this entity, or null when it is not known.
+        public string NameOf(ushort entityId) => _names.TryGetValue(entityId, out string name) ? name : null;
+
+        // D7: the match as the HUD sees it, and how the round ended for us.
+        public bool HasMatch => _hasMatch;
+        public MatchState Match => _match;
+        public bool HasResult => _hasResult;
+        public MatchResult Result => _result;
+        // Counts MatchResults since the start (UiFlow opens the result screen once per new one).
+        public int ResultCount { get; private set; }
+        public bool DiedThisRound => _died;
+        public bool KilledByZone => _killedByZone;
+        public string KillerName => _killerName;
+
+        // D7: whole seconds until the current state's timer ends (Starting, Finished), 0 without one.
+        public int StateSecondsLeft
+        {
+            get
+            {
+                if (!_hasMatch || _clock == null || !_clock.IsReady || _simHz <= 0) return 0;
+                double tick = _renderTick + _interpolationDelaySeconds * _simHz;
+                return _match.StateEndTick > tick ? (int)Math.Ceiling((_match.StateEndTick - tick) / _simHz) : 0;
+            }
+        }
+
+        // D4, D5: Esc and F1 of this frame, read by UiRoot (InputReader stays the only Input System user).
+        public bool EscapePressed => _input.EscapePressed;
+        public bool DebugTogglePressed => _input.DebugTogglePressed;
+
+        // D5: UiRoot passes UiFlow's outputs every frame. Without a screen up a click locks the cursor as before; with
+        // one up the cursor is freed and movement, fire, aim and look are zero (inputs still go out, empty).
+        public void SetUiControl(bool allowCursorLock, bool blockInput)
+        {
+            _cursorLockAllowed = allowCursorLock;
+            _inputBlocked = blockInput;
+        }
+
+        // D8: the newest answer and the times the stats window compares (StatsWait).
+        public StatsResponse LastStats => _stats;
+        public float StatsSentAt => _statsSentAt;
+        public float StatsAnsweredAt => _statsAnsweredAt;
+
+        // D8: sends a request unless one went out less than StatsWait.ResendSeconds ago (the server would drop it; its
+        // answer is here or on the way). Returns when the request in effect was sent (negative = none could be sent).
+        // A send that fails forgets the older request, so the window says "no answer" instead of showing the answer to
+        // that older request as this one's.
+        public float RequestStats()
+        {
+            float now = Time.unscaledTime;
+            if (StatsWait.MaySend(now, _statsSentAt)) _statsSentAt = _net.RequestStats() ? now : -1f;
+            return _statsSentAt;
+        }
+
+        // D6: the disconnected screen's Cancel. Stops the automatic reconnect; an attempt still connecting, or connected
+        // and waiting for its join answer, is given up without a disconnect event, so the reason on screen stays the one
+        // that started the cycle. Nothing of a match arrives before the join answer, so there is no match state to
+        // clear; the attempt no longer counts as established (a later manual connect that fails is not retried).
+        public void StopReconnecting()
+        {
+            CancelReconnect();
+            if (_net.State == ClientState.Connecting || _net.State == ClientState.Connected)
+            {
+                _net.CancelConnect();
+                _established = false;
+            }
+        }
+
         // A manual connect: stops any automatic reconnect and starts over. Ignored while a connection (or an automatic
         // attempt) is in progress, like NetClient.Connect, so the address of the running connection is kept.
         public void Connect(string host, int port, string devPlayerId)
@@ -132,6 +237,7 @@ namespace ProjectH.Client.Game
             _matchHud = new MatchHud();
             _zoneView = new ZoneView();
             _poiLabel = new PoiLabel();
+            _killFeed = new KillFeed();
 
             _net = new NetClient();
             _net.Connected += OnConnected;
@@ -154,6 +260,7 @@ namespace ProjectH.Client.Game
             _net.MatchStateReceived += OnMatchState;
             _net.ZoneStateReceived += OnZoneState;
             _net.MatchResultReceived += OnMatchResult;
+            _net.StatsReceived += OnStats;
         }
 
         private void Update()
@@ -172,12 +279,17 @@ namespace ProjectH.Client.Game
 
             if (_predictor == null) return;
 
-            _camera.ApplyLook(_input.LookDelta, _aiming);
+            // Phase 11 D5: with a screen up or the cursor free, no look, move, sprint or fire, and keys pressed meanwhile
+            // are dropped. The predictor still steps, so empty inputs keep going out (the Phase 10 input timeout).
+            bool blocked = _inputBlocked || Cursor.lockState != CursorLockMode.Locked;
+            _blockedThisFrame = blocked;
+            _camera.ApplyLook(blocked ? Vector2.zero : _input.LookDelta, _aiming);
             InputButtons held = InputButtons.None;
-            if (_input.Sprint) held |= InputButtons.Sprint;
+            if (!blocked && _input.Sprint) held |= InputButtons.Sprint;
             if (_fireHeld) held |= InputButtons.Fire;
+            if (blocked) _input.QueuedButtons = InputButtons.None;
             InputButtons queued = _input.QueuedButtons;
-            _pendingSteps += _predictor.Advance(Time.deltaTime, _input.Move, _camera.Yaw, held, ref queued);
+            _pendingSteps += _predictor.Advance(Time.deltaTime, blocked ? Vector2.zero : _input.Move, _camera.Yaw, held, ref queued);
             _input.QueuedButtons = queued;
 
             PlayerViewFactory.Pose(_predictor.RenderPosition, _predictor.RenderYaw, !_predictor.IsDead, out Vector3 position, out Quaternion rotation);
@@ -188,6 +300,7 @@ namespace ProjectH.Client.Game
         {
             // Before the early return: items spin (and are visible) before the local player has spawned. No allocation.
             _worldItems.Tick(Time.time);
+            _killFeed.Tick(Time.unscaledTime);
             if (_predictor == null) return;
             float now = Time.time;
             bool alive = !_predictor.IsDead;
@@ -199,7 +312,7 @@ namespace ProjectH.Client.Game
             // Phase 6 D7: the place name of whoever the camera follows. Text changes only when the place does.
             _poiLabel.SetVisible(true);
             _poiLabel.SetPosition(followFeet);
-            _crosshair.SetVisible(alive);
+            _crosshair.SetVisible(alive && !_blockedThisFrame);
 
             // After the camera moved, so aim, tracer and the sent inputs all use the crosshair of this frame.
             Vector3 aimPoint = FindAimPoint();
@@ -237,16 +350,15 @@ namespace ProjectH.Client.Game
             UpdateMatchHud(alive);
         }
 
-        // D14: state line, zone line and circle, red edges outside the zone, result, spectating. Strings are rebuilt
-        // only on change (MatchHudText). Times use the estimated current server tick: the render tick plus the
-        // interpolation delay.
+        // D14: state line, zone line and circle, red edges outside the zone, spectating. Strings are rebuilt only on
+        // change (MatchHudText). Times use the estimated current server tick: the render tick plus the interpolation
+        // delay. Phase 11 D7: the result is the result screen's (UiRoot), no longer a HUD line.
         private void UpdateMatchHud(bool alive)
         {
             if (!_hasMatch || _clock == null || !_clock.IsReady || _simHz <= 0) return;
             double tick = _renderTick + _interpolationDelaySeconds * _simHz;
 
-            int secondsLeft = _match.StateEndTick > tick ? (int)Math.Ceiling((_match.StateEndTick - tick) / _simHz) : 0;
-            _matchHud.SetStatus(_match.State, secondsLeft, _match.Alive, _match.Participants, _match.MinPlayers);
+            _matchHud.SetStatus(_match.State, StateSecondsLeft, _match.Alive, _match.Participants, _match.MinPlayers);
 
             bool inMatch = _match.State == MatchFlowState.Playing || _match.State == MatchFlowState.FinalPhase;
             int zoneSeconds = 0;
@@ -256,9 +368,8 @@ namespace ProjectH.Client.Game
             _matchHud.SetOutside(inMatch && alive && ZoneMath.IsOutside(_zone, feet.x, feet.z, tick));
             _zoneView.Tick(tick);
 
-            if (_hasResult) _matchHud.SetResult(_result.WinnerId == MyEntityId, _result.Placement, _result.Kills);
-            else _matchHud.SetResult(false, 0, 0);
-            _matchHud.SetSpectating(_spectator.Active ? _spectator.Target : (ushort)0);
+            ushort watched = _spectator.Active ? _spectator.Target : (ushort)0;
+            _matchHud.SetSpectating(watched, NameOf(watched));
         }
 
         // D15: slots, heals, the heal bar and the "[E]" prompt. Strings are rebuilt only on change (InventoryHudText).
@@ -332,8 +443,10 @@ namespace ProjectH.Client.Game
             _net.MatchStateReceived -= OnMatchState;
             _net.ZoneStateReceived -= OnZoneState;
             _net.MatchResultReceived -= OnMatchResult;
+            _net.StatsReceived -= OnStats;
             _net.Dispose();
             ClearMatchState();
+            _killFeed.Dispose();
             _zoneView.Dispose();
             _matchHud.Dispose();
             _poiLabel.Dispose();
@@ -353,6 +466,8 @@ namespace ProjectH.Client.Game
                 }
             }
             if (_terrainMesh != null) Destroy(_terrainMesh);
+            // Last: every HUD that used the font is gone (UiRoot's screens go with this GameObject too).
+            UiFont.Release();
         }
 
         // Left click locks a free cursor (only once joined) and fires while it is locked (D12).
@@ -360,12 +475,14 @@ namespace ProjectH.Client.Game
         // Phase 5 D5: while spectating, a left click on a locked cursor moves to the next player and never fires;
         // the button must be released before it fires again (a click held into the next round does not shoot).
         // The click that locks the cursor neither fires nor cycles.
+        // Phase 11 D5: Esc no longer unlocks here; it opens the menu (UiFlow), and with any screen up the cursor is
+        // freed for its buttons and a click does not lock it.
         private void UpdateCursorAndButtons()
         {
             bool locked = Cursor.lockState == CursorLockMode.Locked;
-            if (_input.UnlockCursorPressed)
+            if (!_cursorLockAllowed)
             {
-                Cursor.lockState = CursorLockMode.None;
+                if (locked) Cursor.lockState = CursorLockMode.None;
                 locked = false;
             }
             else if (!locked && _input.FirePressed && State == ClientState.Joined)
@@ -381,8 +498,8 @@ namespace ProjectH.Client.Game
             }
 
             if (!_input.FireHeld) _fireBlockedUntilRelease = false;
-            _fireHeld = locked && _input.FireHeld && !_fireBlockedUntilRelease && !_spectator.Active;
-            _aiming = locked && _input.AimHeld;
+            _fireHeld = locked && !_inputBlocked && _input.FireHeld && !_fireBlockedUntilRelease && !_spectator.Active;
+            _aiming = locked && !_inputBlocked && _input.AimHeld;
         }
 
         // What the crosshair is on. Remote players have colliders on PlayerViewFactory.RemoteHitLayer, so the
@@ -492,8 +609,8 @@ namespace ProjectH.Client.Game
         // Feedback only (the inventory changes through InventoryState). Constant strings: no allocation.
         private void OnPickupResult(PickupResult result)
         {
-            if (result.Result == PickupResultCode.Full) _inventoryHud.ShowNotice("Inventory full", Time.time);
-            else if (result.Result == PickupResultCode.NothingInRange) _inventoryHud.ShowNotice("Nothing to pick up", Time.time);
+            if (result.Result == PickupResultCode.Full) _inventoryHud.ShowNotice("가방이 가득 찼습니다", Time.time);
+            else if (result.Result == PickupResultCode.NothingInRange) _inventoryHud.ShowNotice("주울 수 있는 물건이 없습니다", Time.time);
         }
 
         // Phase 4: what sits in each slot, the reserves, heals and the heal channel (D14). The current slot
@@ -512,6 +629,7 @@ namespace ProjectH.Client.Game
 
         private void OnSpawned(PlayerSpawned spawned)
         {
+            _names[spawned.EntityId] = spawned.Name;
             if (spawned.EntityId == MyEntityId)
             {
                 if (_predictor != null) return;
@@ -532,6 +650,7 @@ namespace ProjectH.Client.Game
         private void OnDespawned(ushort entityId)
         {
             _remotePlayers.Despawn(entityId);
+            _names.Remove(entityId);
         }
 
         private void OnSnapshot(in WorldSnapshotHeader header, SnapshotEntity[] entities, int count)
@@ -576,7 +695,20 @@ namespace ProjectH.Client.Game
 
         private void OnPlayerDied(PlayerDied died)
         {
+            // Phase 11 D10: every death but the "you are spectating" notice a newcomer gets at join (Match sends it with
+            // no killer and no placement; a zone death in a match has a placement, and the dev sandbox has no zone). The
+            // line is built once here, so the feed allocates per death, never per frame.
+            bool notice = died.KillerId == 0 && died.Placement == 0;
+            string killer = died.KillerId == 0 ? null : UiText.NameOr(NameOf(died.KillerId), died.KillerId);
+            if (!notice) _killFeed.Add(UiText.KillLine(killer, UiText.NameOr(NameOf(died.VictimId), died.VictimId)), Time.unscaledTime);
+
             if (died.VictimId != MyEntityId || _predictor == null) return;
+            if (!notice)
+            {
+                _died = true;
+                _killedByZone = died.KillerId == 0;
+                _killerName = killer;
+            }
             _predictor.SetDead();
             PlayerViewFactory.SetAlive(_localRenderer, null, true, false);
             // D4, D5: in a match death is permanent, so no respawn countdown: watch the killer instead. A newcomer
@@ -605,6 +737,9 @@ namespace ProjectH.Client.Game
             _predictor.Respawn(new MoveState { Position = respawned.Position, Yaw = respawned.Yaw });
             _input.QueuedButtons = InputButtons.None;
             _spectator.End();
+            _died = false;
+            _killedByZone = false;
+            _killerName = null;
             // Empty until the server's InventoryState for the new life arrives (sent right after this event).
             if (_weapons != null) _weapons.Clear();
             PlayerViewFactory.SetAlive(_localRenderer, null, true, true);
@@ -634,6 +769,13 @@ namespace ProjectH.Client.Game
         {
             _result = result;
             _hasResult = true;
+            ResultCount++;
+        }
+
+        private void OnStats(StatsResponse response)
+        {
+            _stats = response;
+            _statsAnsweredAt = Time.unscaledTime;
         }
 
         private void OnDisconnected(string reason)
@@ -690,11 +832,18 @@ namespace ProjectH.Client.Game
             _match = default;
             _zone = default;
             _hasResult = false;
+            _names.Clear();
+            _killFeed.Clear();
+            _died = false;
+            _killedByZone = false;
+            _killerName = null;
+            _stats = null;
+            _statsSentAt = -1f;
+            _statsAnsweredAt = -1f;
             _spectator.End();
             _zoneView.Clear();
             _matchHud.SetOutside(false);
-            _matchHud.SetResult(false, 0, 0);
-            _matchHud.SetSpectating(0);
+            _matchHud.SetSpectating(0, null);
             _matchHud.SetVisible(false);
             _poiLabel.SetVisible(false);
             _crosshair.SetVisible(false);

@@ -1,11 +1,12 @@
+using ProjectH.Client.UI;
 using ProjectH.Shared.Simulation;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace ProjectH.Client.Game
 {
-    // Phase 6 D7: the name of the place the followed player stands in, top left (UGUI legacy Text with the built-in
-    // font, like MatchHud). The text is set only when the place changes, from the constant names in MapPois, so an
+    // Phase 6 D7: the name of the place the followed player stands in, top left (UGUI legacy Text with UiFont, like
+    // MatchHud). The text is set only when the place changes, from the constant names in MapPois, so an
     // unchanged label allocates nothing per frame. No GraphicRaycaster; nothing is a raycast target. Dispose destroys
     // the canvas.
     public sealed class PoiLabel : System.IDisposable
@@ -34,11 +35,12 @@ namespace ProjectH.Client.Game
             rect.sizeDelta = new Vector2(400f, FontSize + 20f);
 
             _text = go.AddComponent<Text>();
-            _text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            _text.font = UiFont.Get();
             _text.fontSize = FontSize;
             _text.alignment = TextAnchor.UpperLeft;
             _text.color = new Color(1f, 0.95f, 0.8f);
             _text.raycastTarget = false;
+            _text.supportRichText = false;   // Phase 11: every UI text is plain text
             _text.horizontalOverflow = HorizontalWrapMode.Overflow;
             _text.text = string.Empty;
 

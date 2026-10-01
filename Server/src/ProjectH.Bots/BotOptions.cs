@@ -32,6 +32,9 @@ public sealed class BotOptions
         // The name goes into the connect request as DevPlayerId; the server rejects one longer than the limit in UTF-8 bytes.
         if (Encoding.UTF8.GetByteCount(BotName(Count - 1)) > ProtocolConstants.MaxDevPlayerIdBytes)
             return $"--name-prefix is too long: the longest bot name must be at most {ProtocolConstants.MaxDevPlayerIdBytes} UTF-8 bytes.";
+        // The server's whole name rule (no control characters, no unpaired surrogate), so a bad prefix fails here, not at connect.
+        if (!ProtocolConstants.IsValidPlayerName(BotName(Count - 1)))
+            return "--name-prefix must not contain control characters.";
         if (StatsIntervalSeconds < 1) return "--stats-interval must be at least 1.";
         return null;
     }

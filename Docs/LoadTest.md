@@ -165,3 +165,26 @@ Phase 10은 Tick마다 하는 일을 더했다:
   - 예외 복구: `tickFailures`, `loopFailures`, `matchResets`, `stalls`
   - 끊김 처리: `disconnects`, `graceStarts`
 - 봇 쪽 `reconnects=0`이다.
+
+## Phase 11 확인 (게임 UI, Protocol v9)
+
+서버 쪽 변경은 Tick마다 하는 일 하나뿐이다. 전적 응답 큐 비우기이고, 요청이 없으면 빈 큐 확인 한 번이다. Phase 10과 같은 조건으로 50명을 한 번 쟀다. 봇은 전적을 요청하지 않는다.
+
+| 항목 | Phase 10 (2회) | Phase 11 |
+|---|---|---|
+| Tick p95 (10줄의 범위) | 0.11–0.13 ms | 0.10–0.15 ms |
+| Tick p95 (10줄의 최댓값) | 0.13 ms | 0.15 ms |
+| Tick p99 최댓값 | 0.20 ms | 0.23 ms |
+| Tick max 최댓값 | 0.31 ms | 0.39 ms |
+| pktIn/s | 1500 | 1500 |
+| cpu% | 0.1–0.2 | 0.2 |
+
+- 10줄 중 8줄은 p95가 0.10–0.11 ms였다. 0.13·0.15 ms는 마지막 두 줄이다.
+- Phase 10 두 실행 사이의 차이(0.04 ms)와 같은 크기라서 회귀로 보지 않는다. Tick 예산 33.3 ms에 비하면 매우 작다.
+- Health 줄에서 다음 값은 모두 0이었다.
+  - Kick: `kicks`
+  - 잘못된 패킷: 이유별 `badPackets`
+  - Tick 실패: `tickFailures`, `loopFailures`
+  - 경기 초기화: `matchResets`
+  - 멈춤: `stalls`
+- 봇 `reconnects=0`.

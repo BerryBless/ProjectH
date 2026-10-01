@@ -1,0 +1,205 @@
+using System;
+using ProjectH.Client.Bootstrap;
+using ProjectH.Client.Game;
+using ProjectH.Client.Net;
+using ProjectH.Shared.Protocol;
+using UnityEngine;
+
+namespace ProjectH.Client.UI
+{
+    // Phase 11: the game UI. Builds the EventSystem (when the scene has none), one interactive canvas for the screens
+    // (title, menu, disconnected, result, statistics) and the F1 debug line; every frame it feeds UiFlow what GameClient
+    // reports, shows the screen UiFlow chose (only when its Version changed), passes the cursor and input outputs to
+    // GameClient (D5) and updates the one visible screen. Button handlers call GameClient and the flow.
+    // Lifetime: lives on GameClient's GameObject for the whole session; OnDestroy destroys everything it made. The font
+    // belongs to GameClient (UiFont.Release in its OnDestroy).
+    [RequireComponent(typeof(GameClient))]
+    public sealed class UiRoot : MonoBehaviour
+    {
+        // D4: the last address, port and name typed on the title screen.
+        private const string HostKey = "ProjectH.Host";
+        private const string PortKey = "ProjectH.Port";
+        private const string NameKey = "ProjectH.Name";
+
+        private readonly UiFlow _flow = new UiFlow();
+        private GameClient _client;
+        private GameObject _eventSystem;   // made here (destroyed here), or null when the scene had one
+        private GameObject _canvas;
+        private TitleScreen _title;
+        private MenuScreen _menu;
+        private DisconnectScreen _disconnect;
+        private ResultScreen _result;
+        private StatsWindow _stats;
+        private DebugOverlay _debug;
+        private int _shownVersion = -1;
+        private UiScreen _shownScreen = UiScreen.Title;
+        private bool _shownStats;
+        // The address of the last connect, for Retry.
+        private string _host;
+        private int _port;
+        private string _name;
+        private float _statsSentAt = -1f;
+        private TimeSpan _utcOffset;
+
+        private void Awake()
+        {
+            _client = GetComponent<GameClient>();
+            _eventSystem = UiFactory.EnsureEventSystem();
+            _canvas = UiFactory.CreateCanvas("UiScreens", 110, interactive: true);   // above every HUD and the crosshair (100)
+            Transform root = _canvas.transform;
+            // Creation order is drawing order: the statistics window last, over the menu and the result.
+            _title = new TitleScreen(root, Connect, CancelConnect, Quit);
+            _menu = new MenuScreen(root, _flow.ContinuePressed, _flow.OpenStats, Leave, Quit);
+            _disconnect = new DisconnectScreen(root, _client.StopReconnecting, Retry, Leave);
+            _result = new ResultScreen(root, _flow.ContinuePressed, _flow.OpenStats);
+            _stats = new StatsWindow(root, _flow.CloseStats);
+            _debug = new DebugOverlay();
+        }
+
+        // After every Awake on this GameObject, so GameClient is ready when the command line connects at once.
+        private void Start()
+        {
+            LaunchArgs args = LaunchArgs.FromCommandLine();
+            if (args.AutoConnect)
+            {
+                _title.Fill(args.Host, args.Port, args.DevPlayerId);
+                // Not saved: a test launch's address and name must not replace what the player typed last.
+                StartConnect(args.Host, args.Port, args.DevPlayerId);
+            }
+            else
+            {
+                _title.Fill(PlayerPrefs.GetString(HostKey, args.Host), PlayerPrefs.GetInt(PortKey, args.Port),
+                    PlayerPrefs.GetString(NameKey, args.DevPlayerId));
+            }
+            Apply();
+        }
+
+        private void Update()
+        {
+            if (_client.DebugTogglePressed) _debug.Toggle();
+            if (_client.EscapePressed) _flow.EscapePressed();
+
+            UiConnection connection = _client.State == ClientState.Joined ? UiConnection.Joined
+                : _client.State == ClientState.Disconnected ? UiConnection.Offline
+                : UiConnection.Connecting;
+            _flow.Update(connection, _client.ReconnectAttempt > 0, _client.ResultCount, _client.HasMatch, _client.Match.State);
+            if (_flow.Version != _shownVersion) Apply();
+            _client.SetUiControl(_flow.AllowCursorLock, _flow.BlocksGameInput);
+
+            switch (_flow.Screen)
+            {
+                case UiScreen.Title:
+                    _title.SetConnectEnabled(_client.State == ClientState.Disconnected);
+                    break;
+                case UiScreen.Disconnected:
+                    // Constant strings: no allocation. The progress line is rebuilt once per second at most.
+                    _disconnect.SetReason(UiText.Disconnect(_client.LastDisconnect));
+                    _disconnect.SetRetryEnabled(_client.State == ClientState.Disconnected);
+                    if (_flow.Reconnecting)
+                        _disconnect.SetProgress(_client.ReconnectAttempt, DisconnectCodes.MaxReconnectAttempts, Mathf.CeilToInt(_client.NextReconnectIn));
+                    break;
+                case UiScreen.Result:
+                    _result.SetSecondsLeft(_client.StateSecondsLeft);
+                    break;
+            }
+            if (_flow.StatsOpen) _stats.Tick(Time.unscaledTime, _statsSentAt, _client.StatsAnsweredAt, _client.LastStats, _utcOffset);
+            _debug.Tick(_client.State, _client.RoundTripMs, _client.MyEntityId);
+        }
+
+        // Shows what UiFlow chose. Runs only when its Version changed (or at start).
+        private void Apply()
+        {
+            UiScreen screen = _flow.Screen;
+            UiScreen previous = _shownScreen;
+
+            _title.SetVisible(screen == UiScreen.Title || screen == UiScreen.Connecting);
+            _title.SetConnecting(screen == UiScreen.Connecting);
+            if (screen == UiScreen.Title && previous != UiScreen.Title)
+            {
+                // Back on the title: why the connection ended, unless the player left on purpose.
+                _title.SetMessage(previous == UiScreen.Disconnected ? UiText.Disconnect(_client.LastDisconnect) : string.Empty);
+            }
+            _menu.SetVisible(screen == UiScreen.Menu);
+            _disconnect.SetVisible(screen == UiScreen.Disconnected);
+            _disconnect.SetReconnecting(_flow.Reconnecting);
+            _result.SetVisible(screen == UiScreen.Result);
+            if (screen == UiScreen.Result && previous != UiScreen.Result) ShowResult();
+
+            _stats.SetVisible(_flow.StatsOpen);
+            if (_flow.StatsOpen && !_shownStats)
+            {
+                // D8: one request per opening (GameClient reuses one younger than the server's limit).
+                _statsSentAt = _client.RequestStats();
+                _utcOffset = TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow);
+            }
+
+            _shownScreen = screen;
+            _shownStats = _flow.StatsOpen;
+            _shownVersion = _flow.Version;
+        }
+
+        private void ShowResult()
+        {
+            MatchResult r = _client.Result;
+            bool won = r.WinnerId != 0 && r.WinnerId == _client.MyEntityId;
+            string winner = r.WinnerId == 0 ? null : UiText.NameOr(_client.NameOf(r.WinnerId), r.WinnerId);
+            _result.Show(won, r.Placement, r.Participants, r.Kills, winner, _client.DiedThisRound, _client.KilledByZone, _client.KillerName);
+        }
+
+        // The title's Connect: the only path that saves the address, port and name (D4).
+        private void Connect(string host, int port, string name)
+        {
+            if (_client.State != ClientState.Disconnected) return;
+            PlayerPrefs.SetString(HostKey, host);
+            PlayerPrefs.SetInt(PortKey, port);
+            PlayerPrefs.SetString(NameKey, name);
+            PlayerPrefs.Save();
+            StartConnect(host, port, name);
+        }
+
+        // Only from Disconnected: GameClient.Connect ignores a connect while the previous connection is still closing,
+        // and the flow must not show "connecting" for a connect that never started.
+        private void StartConnect(string host, int port, string name)
+        {
+            if (_client.State != ClientState.Disconnected) return;
+            _host = host;
+            _port = port;
+            _name = name;
+            _client.Connect(host, port, name);
+            _flow.ConnectRequested();
+        }
+
+        private void Retry()
+        {
+            if (_host == null) return;
+            StartConnect(_host, _port, _name);
+        }
+
+        // Connecting "cancel".
+        private void CancelConnect()
+        {
+            _client.Disconnect();
+            _flow.LeaveRequested();
+        }
+
+        // Menu "disconnect", Disconnected "to title": also stops an automatic reconnect.
+        private void Leave()
+        {
+            _client.Disconnect();
+            _flow.LeaveRequested();
+        }
+
+        // A built player closes. In the Editor Application.Quit does nothing (stop Play Mode instead).
+        private static void Quit()
+        {
+            Application.Quit();
+        }
+
+        private void OnDestroy()
+        {
+            _debug?.Dispose();
+            if (_canvas != null) Destroy(_canvas);
+            if (_eventSystem != null) Destroy(_eventSystem);
+        }
+    }
+}

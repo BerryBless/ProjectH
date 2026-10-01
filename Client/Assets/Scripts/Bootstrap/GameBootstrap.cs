@@ -1,4 +1,5 @@
 using ProjectH.Client.Game;
+using ProjectH.Client.UI;
 using UnityEngine;
 
 namespace ProjectH.Client.Bootstrap
@@ -6,7 +7,7 @@ namespace ProjectH.Client.Bootstrap
     public static class GameBootstrap
     {
         // Runs after the first scene loads, in any scene, so the prototype needs no scene or prefab
-        // edits. Creates exactly one GameClient that lives for the whole session.
+        // edits. Creates exactly one GameClient that lives for the whole session, and its game UI (Phase 11).
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
         {
@@ -19,7 +20,7 @@ namespace ProjectH.Client.Bootstrap
             var go = new GameObject("GameClient");
             Object.DontDestroyOnLoad(go);
             go.AddComponent<GameClient>();
-            go.AddComponent<DevConnectPanel>();
+            go.AddComponent<UiRoot>();
         }
     }
 }

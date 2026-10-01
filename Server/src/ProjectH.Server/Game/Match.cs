@@ -154,6 +154,8 @@ public sealed class Match
     internal ushort WinnerId { get; private set; }
     // Phase 9: finished matches whose record could not be built or handed to the sink (it threw). Shown in the stats line.
     public long MatchSinkFailures { get; private set; }
+    // Phase 11: PlayerSpawned packets that could not be encoded (a name over the limit) and so were not sent.
+    public long SpawnEncodeFailures { get; private set; }
     // Phase 10 D6: the first sink exception since the game loop last took it (logged once per stats interval).
     private Exception? _sinkError;
 
@@ -1006,7 +1008,18 @@ public sealed class Match
     private void SendSpawned(int recipientPeerId, PlayerEntity player)
     {
         var writer = new PacketWriter(_sendBuffer);
-        PlayerSpawned.Write(ref writer, new PlayerSpawned { EntityId = player.EntityId, Position = player.State.Position, Yaw = player.State.Yaw });
+        // Phase 11 D9: the name is the DevPlayerId the connect request already validated (ProtocolConstants.IsValidPlayerName).
+        PlayerSpawned.Write(ref writer, new PlayerSpawned
+        {
+            EntityId = player.EntityId, Position = player.State.Position, Yaw = player.State.Yaw, Name = player.DevPlayerId,
+        });
+        // Should be unreachable after the connect check. A spawn without its name would be refused by every client (the
+        // player invisible but able to shoot), so nothing is sent; GameLoop logs the first failure.
+        if (writer.Overflowed)
+        {
+            SpawnEncodeFailures++;
+            return;
+        }
         _send(recipientPeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 

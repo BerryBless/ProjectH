@@ -49,6 +49,8 @@ public sealed class HealthCounters
 
     // Phase 9 counters of the match history writer (null = no writer, e.g. tests). Set once before the loop starts.
     public Func<PersistenceCounts>? Persistence { get; set; }
+    // Phase 11 D8 counters of the statistics path (StatsQueryQueue). Set once by GameLoop's constructor.
+    public Func<StatsQueryCounts>? StatsQueries { get; set; }
 
     public void AddReject(RejectReason reason) => Interlocked.Increment(ref _rejects[(int)reason]);
     public void AddKick(DisconnectCode code) => Interlocked.Increment(ref _kicks[(int)code]);

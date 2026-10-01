@@ -5,6 +5,7 @@ using System.Threading;
 using LiteNetLib;
 using Microsoft.Extensions.Logging;
 using ProjectH.Server.Diagnostics;
+using ProjectH.Server.Persistence;
 using ProjectH.Shared.Protocol;
 
 namespace ProjectH.Server.Net;
@@ -31,6 +32,7 @@ public sealed class NetworkListener : INetEventListener
     private readonly InboundChannels _channels;
     private readonly ServerStats _stats;
     private readonly HealthCounters _health;
+    private readonly StatsQueryQueue _statsQueries;
     private readonly ILogger _logger;
     // 1 once a receive-handler exception was logged in the current stats interval (D5: the first one only).
     private int _handlerErrorLogged;
@@ -38,12 +40,14 @@ public sealed class NetworkListener : INetEventListener
     // accepts no new connection. Written by the game loop or the host's thread, read on LiteNetLib's thread.
     private volatile bool _stopping;
 
-    public NetworkListener(ServerOptions options, InboundChannels channels, ServerStats stats, HealthCounters health, ILogger logger)
+    public NetworkListener(ServerOptions options, InboundChannels channels, ServerStats stats, HealthCounters health,
+        StatsQueryQueue statsQueries, ILogger logger)
     {
         _options = options;
         _channels = channels;
         _stats = stats;
         _health = health;
+        _statsQueries = statsQueries;
         _logger = logger;
     }
 
@@ -214,6 +218,27 @@ public sealed class NetworkListener : INetEventListener
                     _channels.Input.Writer.TryWrite(new InputMessage(peer.Id, peer, input));
                 else
                     OnBadPacket(peer, BadPacketReason.Malformed);
+                break;
+
+            case PacketId.StatsRequest:
+                // Phase 11 D8: the request has no body. It is taken only from a connection whose join succeeded
+                // (PeerState.Joined, published by the game loop for Ok and Resumed only, so a refused or still pending
+                // join gets nothing) and at most once per MinRequestIntervalMs; otherwise it is dropped without an
+                // answer and counted as Limited, not as an invalid packet, so pressing the button repeatedly never gets
+                // a player kicked. A full request queue is answered Busy at once.
+                if (packet.Remaining != 0)
+                {
+                    OnBadPacket(peer, BadPacketReason.Malformed);
+                    break;
+                }
+                if (peer.Tag is not PeerState statsState || !statsState.Joined ||
+                    !statsState.TryCountStatsRequest(Environment.TickCount64, StatsQueryQueue.MinRequestIntervalMs))
+                {
+                    _statsQueries.AddLimited();
+                    break;
+                }
+                if (!_statsQueries.TryEnqueue(new StatsQuery(peer.Id, peer, statsState.DevPlayerId, Environment.TickCount64)))
+                    _statsQueries.TryReply(new StatsReply(peer.Id, peer, StatsResponse.Of(StatsStatus.Busy)));
                 break;
 
             default:

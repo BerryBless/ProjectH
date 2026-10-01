@@ -25,5 +25,8 @@ namespace ProjectH.Shared.Protocol
         MatchState = 19,
         ZoneState = 20,
         MatchResult = 21,
+        // Phase 11 D8: statistics on request.
+        StatsRequest = 22,
+        StatsResponse = 23,
     }
 }

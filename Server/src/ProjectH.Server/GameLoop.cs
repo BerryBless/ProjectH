@@ -45,6 +45,9 @@ public sealed class GameLoop : IDisposable
     private readonly StartingLoadout? _loadout;
     private readonly System.Numerics.Vector3[]? _dropPoints;
     private readonly Action<Persistence.MatchRecord>? _matchSink;
+    // Phase 11 D8: requests in (network threads), answers out (this thread sends them). Buffer for one answer.
+    private readonly StatsQueryQueue _statsQueries;
+    private readonly byte[] _statsReplyBuffer = new byte[StatsResponse.MaxSize];
     private Match _match;
     // Removed on Disconnected messages and by the stale-peer sweep; never outlives the connection.
     private readonly Dictionary<int, NetPeer> _peers = new();
@@ -70,6 +73,7 @@ public sealed class GameLoop : IDisposable
     // The sink error a reset took from the match it threw away, until the next stats line logs it (D6).
     private Exception? _carriedSinkError;
     private long _loopFailuresSinceStats;
+    private bool _spawnEncodeFailureLogged;   // Phase 11: the first PlayerSpawned encode failure was logged
     private readonly Action? _onFatal;
     private readonly TimeProvider _time;
     // Phase 10 D9: when the last tick attempt ended (TimeProvider timestamp), read by StallWatchdog on a timer thread.
@@ -88,9 +92,11 @@ public sealed class GameLoop : IDisposable
     // matchSink: Phase 9, where finished matches are recorded (MatchHistoryQueue.TryEnqueue; null = not recorded).
     // onFatal: Phase 10 D6, called once (on the loop thread, must not block) when resets keep failing; production stops
     // the host with exit code 1. time: the clock of the reset window (tests pass a manual one).
+    // statsQueries: Phase 11 D8, the statistics path shared with StatsQueryService; null = a queue nobody answers (tests
+    // that do not need answers), so requests wait there and, once it is full, are answered Busy.
     public GameLoop(ServerOptions options, GameData data, ILogger logger, StartingLoadout? loadout = null,
         System.Numerics.Vector3[]? dropPoints = null, Action<Persistence.MatchRecord>? matchSink = null,
-        Action? onFatal = null, TimeProvider? time = null)
+        Action? onFatal = null, TimeProvider? time = null, StatsQueryQueue? statsQueries = null)
     {
         string? error = options.Validate();
         if (error != null) throw new ArgumentException(error, nameof(options));
@@ -107,7 +113,9 @@ public sealed class GameLoop : IDisposable
         _channels = new InboundChannels(options, _stats);
         _joinTimeoutTicks = (long)options.JoinTimeoutSeconds * options.SimHz;
         _inputTimeoutTicks = (long)options.InputTimeoutSeconds * options.SimHz;
-        _listener = new NetworkListener(options, _channels, _stats, _health, logger);
+        _statsQueries = statsQueries ?? new StatsQueryQueue();
+        _health.StatsQueries = () => _statsQueries.Counts;
+        _listener = new NetworkListener(options, _channels, _stats, _health, _statsQueries, logger);
         _net = new NetManager(_listener, null)
         {
             UnsyncedEvents = true,
@@ -142,6 +150,7 @@ public sealed class GameLoop : IDisposable
     internal InboundChannels Channels => _channels;
     internal Match Match => _match;
     internal NetworkListener Listener => _listener;
+    internal StatsQueryQueue StatsQueries => _statsQueries;
     internal Action? TickFaultHook { get => _tickFaultHook; set => _tickFaultHook = value; }
     internal Action? RemoveFaultHook { get => _removeFaultHook; set => _removeFaultHook = value; }
     internal Action? LoopFaultHook { get => _loopFaultHook; set => _loopFaultHook = value; }
@@ -373,6 +382,7 @@ public sealed class GameLoop : IDisposable
         DrainControl();
         DrainInput();
         SweepPeers();
+        SendStatsReplies();
         _match.Tick();
         _health.SetGauges(_peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State);
     }
@@ -516,6 +526,25 @@ public sealed class GameLoop : IDisposable
         }
     }
 
+    // Phase 11 D8: the answers StatsQueryService (or a network thread, for Busy) left in the reply queue, at most the
+    // queue's capacity per tick, so this never waits. Before Match.Tick, so a failing match does not hold them back. An
+    // answer whose connection is gone, or whose peer id now belongs to another connection, is dropped and counted.
+    private void SendStatsReplies()
+    {
+        for (int budget = _statsQueries.Capacity; budget > 0 && _statsQueries.TryTakeReply(out StatsReply reply); budget--)
+        {
+            if (!_peers.TryGetValue(reply.PeerId, out NetPeer? peer) || !ReferenceEquals(peer, reply.Peer))
+            {
+                _statsQueries.AddUndelivered();
+                continue;
+            }
+            var writer = new PacketWriter(_statsReplyBuffer);
+            StatsResponse.Write(ref writer, reply.Response);
+            peer.Send(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+            _stats.AddOut(writer.Length);
+        }
+    }
+
     private void SendToPeer(int peerId, ReadOnlySpan<byte> data, DeliveryMethod method)
     {
         if (!_peers.TryGetValue(peerId, out var peer)) return;
@@ -536,6 +565,13 @@ public sealed class GameLoop : IDisposable
         Exception? sinkError = _carriedSinkError ?? current;
         _carriedSinkError = null;
         if (sinkError != null) _logger.LogError(sinkError, "Recording a finished match failed (first failure of this interval)");
+        // Phase 11: should never happen (the connect request checks the name), so once per process is enough.
+        if (!_spawnEncodeFailureLogged && _match.SpawnEncodeFailures > 0)
+        {
+            _spawnEncodeFailureLogged = true;
+            _logger.LogError("{Count} PlayerSpawned packets could not be encoded and were not sent (a player name over the limit)",
+                _match.SpawnEncodeFailures);
+        }
     }
 
     private void LogStats()
@@ -568,6 +604,7 @@ public sealed class GameLoop : IDisposable
     {
         HealthCounters h = _health;
         PersistenceCounts db = h.Persistence?.Invoke() ?? default;
+        StatsQueryCounts sq = h.StatsQueries?.Invoke() ?? default;
         _logger.LogInformation(
             "Health peers={Peers} players={Players} graced={Graced} match={State}#{Round} " +
             "connections={Connections} joins={Joins} resumed={Resumed} graceStarts={GraceStarts} graceExpiries={GraceExpiries} " +
@@ -577,7 +614,8 @@ public sealed class GameLoop : IDisposable
             "badPackets unknownId={BadUnknown} malformed={BadMalformed} beforeJoin={BadBeforeJoin} duplicateJoin={BadDuplicate} " +
             "inputRate={BadRate} wrongDirection={BadDirection} handlerException={BadHandler} " +
             "tickFailures={TickFailures} loopFailures={LoopFailures} matchResets={Resets} stalls={Stalls} " +
-            "db saved={DbSaved} failed={DbFailed} discarded={DbDiscarded} dropped={DbDropped}",
+            "db saved={DbSaved} failed={DbFailed} discarded={DbDiscarded} dropped={DbDropped} " +
+            "stats requests={StatsRequests} limited={StatsLimited} busy={StatsBusy} unavailable={StatsUnavailable} undelivered={StatsUndelivered}",
             _peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State, _match.Flow.Round,
             h.Connections, h.Joins, h.Resumes, h.GraceStarts, h.GraceExpiries,
             h.DisconnectTimeouts, h.DisconnectOthers,
@@ -587,7 +625,8 @@ public sealed class GameLoop : IDisposable
             h.BadPackets(BadPacketReason.DuplicateJoin), h.BadPackets(BadPacketReason.InputRate), h.BadPackets(BadPacketReason.WrongDirection),
             h.BadPackets(BadPacketReason.HandlerException),
             h.TickFailures, h.LoopFailures, h.MatchResets, h.Stalls,
-            db.Saved, db.Failed, db.Discarded, db.Dropped);
+            db.Saved, db.Failed, db.Discarded, db.Dropped,
+            sq.Requests, sq.Limited, sq.Busy, sq.Unavailable, sq.Undelivered);
     }
 
     // Total processor time of this process (all threads), every StatsIntervalSeconds: not on the tick path.

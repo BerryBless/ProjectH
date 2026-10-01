@@ -36,11 +36,15 @@ namespace ProjectH.Shared.Protocol
         }
     }
 
+    // Phase 11 D9: Name is the player's DevPlayerId (1-32 bytes of UTF-8, the same limit as the connect request). It
+    // comes once per spawn, never with snapshots, so the client can show names in the kill feed, the spectator line
+    // and the result. The reader allocates the string: join time only.
     public struct PlayerSpawned
     {
         public ushort EntityId;
         public Vector3 Position;
         public float Yaw;
+        public string Name;
 
         public static void Write(ref PacketWriter writer, in PlayerSpawned s)
         {
@@ -48,6 +52,7 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt16(s.EntityId);
             writer.WriteVector3(s.Position);
             writer.WriteSingle(s.Yaw);
+            writer.WriteString(s.Name, ProtocolConstants.MaxDevPlayerIdBytes);
         }
 
         public static bool TryRead(ref PacketReader reader, out PlayerSpawned s)
@@ -57,6 +62,7 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadUInt16(out s.EntityId);
             reader.TryReadVector3(out s.Position);
             reader.TryReadSingle(out s.Yaw);
+            if (!reader.TryReadString(ProtocolConstants.MaxDevPlayerIdBytes, out s.Name) || s.Name.Length == 0) return false;
             return true;
         }
     }

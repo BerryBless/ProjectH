@@ -20,9 +20,9 @@ public class ProtocolConstantsTests
     }
 
     [Fact]
-    public void ProtocolVersion_IsEight()
+    public void ProtocolVersion_IsNine()
     {
-        // Phase 10 added the disconnect codes and JoinResult.Resumed; v7 clients must be rejected at connect.
-        Assert.Equal((ushort)8, ProtocolConstants.ProtocolVersion);
+        // Phase 11 added StatsRequest/StatsResponse and the name in PlayerSpawned; v8 clients must be rejected at connect.
+        Assert.Equal((ushort)9, ProtocolConstants.ProtocolVersion);
     }
 }

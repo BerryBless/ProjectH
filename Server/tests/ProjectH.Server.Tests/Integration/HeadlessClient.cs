@@ -45,6 +45,8 @@ public sealed class HeadlessClient : IDisposable
     public JoinMatchResponse? JoinResponse { get; private set; }
     public ushort MyEntityId => JoinResponse?.MyEntityId ?? 0;
     public HashSet<ushort> Spawned { get; } = new();
+    // Phase 11 D9: the name each PlayerSpawned carried, by entity id.
+    public Dictionary<ushort, string> SpawnNames { get; } = new();
     public HashSet<ushort> Despawned { get; } = new();
     public Dictionary<ushort, SnapshotEntity> LastSnapshot { get; } = new();
     public uint LastAckInputSeq { get; private set; }
@@ -75,6 +77,8 @@ public sealed class HeadlessClient : IDisposable
     public List<MatchState> MatchStates { get; } = new();
     public List<ZoneState> ZoneStates { get; } = new();
     public List<MatchResult> MatchResults { get; } = new();
+    // Phase 11 D8: every StatsResponse in arrival order.
+    public List<StatsResponse> StatsResponses { get; } = new();
 
     public void Connect(int port, string devPlayerId, ushort protocolVersion = ProtocolConstants.ProtocolVersion)
     {
@@ -86,6 +90,9 @@ public sealed class HeadlessClient : IDisposable
     }
 
     // A connect request with arbitrary payload (Phase 10: malformed requests are rejected and counted).
+    // The peer id the server gave this connection (LiteNetLib's RemoteId), for tests about reused ids.
+    public int ServerPeerId => _peer.RemoteId;
+
     public void ConnectRaw(int port, byte[] payload)
     {
         var data = new NetDataWriter();
@@ -118,6 +125,13 @@ public sealed class HeadlessClient : IDisposable
 
     public void SendRaw(byte[] data) => _peer.Send(data, DeliveryMethod.ReliableOrdered);
 
+    public void SendStatsRequest()
+    {
+        var writer = new PacketWriter(_buffer);
+        StatsRequest.Write(ref writer);
+        _peer.Send(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
     public void Poll() => _net.PollEvents();
 
     // Simulates a crash: the socket closes without telling the server.
@@ -135,7 +149,11 @@ public sealed class HeadlessClient : IDisposable
                 if (JoinMatchResponse.TryRead(ref r, out var response)) JoinResponse = response;
                 break;
             case PacketId.PlayerSpawned:
-                if (PlayerSpawned.TryRead(ref r, out var spawned)) Spawned.Add(spawned.EntityId);
+                if (PlayerSpawned.TryRead(ref r, out var spawned))
+                {
+                    Spawned.Add(spawned.EntityId);
+                    SpawnNames[spawned.EntityId] = spawned.Name;
+                }
                 break;
             case PacketId.PlayerDespawned:
                 if (PlayerDespawned.TryRead(ref r, out var despawned)) Despawned.Add(despawned.EntityId);
@@ -210,6 +228,9 @@ public sealed class HeadlessClient : IDisposable
                 break;
             case PacketId.MatchResult:
                 if (MatchResult.TryRead(ref r, out var result)) MatchResults.Add(result);
+                break;
+            case PacketId.StatsResponse:
+                if (StatsResponse.TryRead(ref r, out var stats)) StatsResponses.Add(stats);
                 break;
         }
     }

@@ -19,7 +19,8 @@ namespace ProjectH.Shared.Protocol
             data = default;
             if (!reader.TryReadUInt16(out data.ProtocolVersion)) return false;
             if (!reader.TryReadString(ProtocolConstants.MaxDevPlayerIdBytes, out string id)) return false;
-            if (id.Length == 0) return false;
+            // Phase 11: valid UTF-8 without control characters, so the name always fits PlayerSpawned (see the rule).
+            if (!ProtocolConstants.IsValidPlayerName(id)) return false;
             data.DevPlayerId = id;
             return true;
         }

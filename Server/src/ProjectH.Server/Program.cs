@@ -34,6 +34,11 @@ builder.Services.Configure<HostOptions>(host =>
 // Health line). Still registered before the game server, so it still stops after it.
 builder.Services.AddSingleton<MatchHistoryWriter>();
 builder.Services.AddHostedService(services => services.GetRequiredService<MatchHistoryWriter>());
+// Phase 11 D8: statistics on request. The queue links the network threads, StatsQueryService and the game loop. The
+// service is registered before the game server, so on shutdown the game loop stops first (no request comes in and no
+// answer goes out after that), then the service.
+builder.Services.AddSingleton(_ => new StatsQueryQueue(StatsQueryQueue.DefaultCapacity));
+builder.Services.AddHostedService<StatsQueryService>();
 builder.Services.AddHostedService<GameServerService>();
 
 IHost host = builder.Build();   // RunAsync disposes the host

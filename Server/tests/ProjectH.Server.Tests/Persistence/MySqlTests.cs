@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using MySqlConnector;
 using ProjectH.Server.Persistence;
+using ProjectH.Shared.Protocol;
 
 namespace ProjectH.Server.Tests.Persistence;
 
@@ -308,6 +309,66 @@ public class MySqlTests
         Assert.Equal(0, writer.Failed);
         Assert.Equal(1, writer.Discarded);
         Assert.Null(await new MatchStore(MySqlFactAttribute.ConnectionString).GetStatsAsync(blocked, CancellationToken.None));
+    }
+
+    // Phase 11 D8: what a player asks for, through the service as the server runs it.
+    private static async Task<StatsResponse> AskAsync(string devPlayerId)
+    {
+        var queue = new StatsQueryQueue();
+        var options = Options.Create(new PersistenceOptions { Enabled = true, ConnectionString = MySqlFactAttribute.ConnectionString });
+        using var service = new StatsQueryService(queue, options, NullLogger<StatsQueryService>.Instance);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            Assert.True(queue.TryEnqueue(new StatsQuery(1, null!, devPlayerId, Environment.TickCount64)));
+            var clock = Stopwatch.StartNew();
+            while (clock.ElapsedMilliseconds < 10000)
+            {
+                if (queue.TryTakeReply(out StatsReply reply)) return reply.Response;
+                await Task.Delay(20);
+            }
+            throw new TimeoutException("no reply");
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [MySqlFact]
+    public async Task AStatsQuery_AfterSavedMatches_AnswersOk_WithTotalsAndTheNewestMatchFirst()
+    {
+        MatchStore store = await StoreAsync();
+        string a = NewId("q"), b = NewId("r");
+        await store.SaveAsync(Match(21, new PlayerRecord(a, 1, 2, 300, 240000), new PlayerRecord(b, 2, 1, 150, 200000)), CancellationToken.None);
+        await store.SaveAsync(Match(22, new PlayerRecord(a, 2, 0, 50, 90500), new PlayerRecord(b, 1, 3, 400, 250000)), CancellationToken.None);
+
+        StatsResponse r = await AskAsync(a);
+
+        Assert.Equal(StatsStatus.Ok, r.Status);
+        Assert.Equal(2u, r.Summary.Matches);
+        Assert.Equal(1u, r.Summary.Wins);
+        Assert.Equal(2u, r.Summary.Kills);
+        Assert.Equal(1u, r.Summary.Deaths);
+        Assert.Equal(350u, r.Summary.Damage);
+        Assert.Equal(330u, r.Summary.SurvivalSeconds);
+        Assert.Equal(2, r.Rows.Length);
+        Assert.Equal(22u, r.Rows[0].Round);
+        Assert.Equal(2, r.Rows[0].Placement);
+        Assert.Equal(90500u, r.Rows[0].SurvivalMs);
+        Assert.Equal(21u, r.Rows[1].Round);
+        Assert.Equal(1, r.Rows[1].Placement);
+        Assert.Equal(2, r.Rows[1].Players);
+        Assert.True(Math.Abs(DateTimeOffset.UtcNow.ToUnixTimeSeconds() - r.Rows[0].EndedUnixSeconds) < 600);
+    }
+
+    [MySqlFact]
+    public async Task AStatsQuery_ForAnIdWithNoMatch_AnswersNoRecord()
+    {
+        await StoreAsync();
+        StatsResponse r = await AskAsync(NewId("none"));
+        Assert.Equal(StatsStatus.NoRecord, r.Status);
+        Assert.Empty(r.Rows);
     }
 }
 

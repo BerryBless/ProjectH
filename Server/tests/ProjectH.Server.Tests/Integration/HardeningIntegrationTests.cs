@@ -12,7 +12,7 @@ namespace ProjectH.Server.Tests.Integration;
 public sealed class HardeningIntegrationTests
 {
     internal static GameLoop StartServer(int maxPlayers = 4, int joinTimeout = 5, int inputTimeout = 10, int grace = 10,
-        int minPlayers = 2, int countdown = 10)
+        int minPlayers = 2, int countdown = 10, ProjectH.Server.Persistence.StatsQueryQueue? statsQueries = null)
     {
         var loop = new GameLoop(new ServerOptions
         {
@@ -26,7 +26,7 @@ public sealed class HardeningIntegrationTests
             JoinTimeoutSeconds = joinTimeout,
             InputTimeoutSeconds = inputTimeout,
             ReconnectGraceSeconds = grace,
-        }, TestGameData.Create(), NullLogger.Instance, TestGameData.CombatLoadout);
+        }, TestGameData.Create(), NullLogger.Instance, TestGameData.CombatLoadout, statsQueries: statsQueries);
         loop.Start();
         return loop;
     }

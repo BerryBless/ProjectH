@@ -1,10 +1,11 @@
+using ProjectH.Client.UI;
 using ProjectH.Shared.Protocol;
 
 namespace ProjectH.Client.Game
 {
     // The strings of the match HUD (D14), built only when a shown value changes, so a HUD that shows the same
     // thing every frame allocates nothing. Pure (no UnityEngine): MatchHud puts a string on screen when its Set*
-    // call returns true. English for the same reason as the other HUDs (the built-in font's Hangul is untested).
+    // call returns true. Phase 11 D2, D11: Korean (UiFont has Hangul); the match result moved to the result screen.
     public sealed class MatchHudText
     {
         private MatchFlowState _state = (MatchFlowState)255;   // forces the first SetStatus to build
@@ -12,20 +13,17 @@ namespace ProjectH.Client.Game
         private int _statusB = -1;
         private ZoneHint _zoneHint;
         private int _zoneSeconds = -1;
-        private int _resultPlacement = -1;
-        private int _resultKills = -1;
-        private bool _resultWon;
         private ushort _spectating;
+        private string _spectatingName;
 
         // How many strings were built so far (tests check that unchanged values build nothing).
         public int Rebuilds { get; private set; }
         public string Status { get; private set; } = string.Empty;
         public string Zone { get; private set; } = string.Empty;
-        public string Result { get; private set; } = string.Empty;
         public string Spectating { get; private set; } = string.Empty;
 
-        // The top line: "Waiting for players 1/2", "Starting in 7", "Alive 3/5", "Match over". secondsLeft is
-        // used while Starting; alive / participants / minPlayers come from MatchState.
+        // The top line: "플레이어를 기다리는 중 1/2", "시작까지 7초", "생존 3/5", "경기 종료". secondsLeft is used while
+        // Starting; alive / participants / minPlayers come from MatchState.
         public bool SetStatus(MatchFlowState state, int secondsLeft, int alive, int participants, int minPlayers)
         {
             int a;
@@ -44,18 +42,18 @@ namespace ProjectH.Client.Game
             _statusB = b;
             switch (state)
             {
-                case MatchFlowState.WaitingForPlayers: Status = "Waiting for players " + a + "/" + b; break;
-                case MatchFlowState.Starting: Status = "Starting in " + a; break;
+                case MatchFlowState.WaitingForPlayers: Status = "플레이어를 기다리는 중 " + a + "/" + b; break;
+                case MatchFlowState.Starting: Status = "시작까지 " + a + "초"; break;
                 case MatchFlowState.Playing:
-                case MatchFlowState.FinalPhase: Status = "Alive " + a + "/" + b; break;
-                case MatchFlowState.Finished: Status = "Match over"; break;
+                case MatchFlowState.FinalPhase: Status = "생존 " + a + "/" + b; break;
+                case MatchFlowState.Finished: Status = "경기 종료"; break;
                 default: Status = string.Empty; break;
             }
             Rebuilds++;
             return true;
         }
 
-        // "Zone shrinking in 12s" / "Zone closing" / nothing.
+        // "자기장 축소까지 12초" / "자기장 축소 중" / nothing.
         public bool SetZone(ZoneHint hint, int seconds)
         {
             if (hint != ZoneHint.ShrinksIn) seconds = 0;
@@ -64,35 +62,22 @@ namespace ProjectH.Client.Game
             _zoneSeconds = seconds;
             switch (hint)
             {
-                case ZoneHint.ShrinksIn: Zone = "Zone shrinking in " + seconds + "s"; break;
-                case ZoneHint.Closing: Zone = "Zone closing"; break;
+                case ZoneHint.ShrinksIn: Zone = "자기장 축소까지 " + seconds + "초"; break;
+                case ZoneHint.Closing: Zone = "자기장 축소 중"; break;
                 default: Zone = string.Empty; break;
             }
             Rebuilds++;
             return true;
         }
 
-        // The result in the middle of the screen: "#1 VICTORY" for the winner, "ELIMINATED #3 — 2 kills"
-        // otherwise. placement 0 hides it.
-        public bool SetResult(bool won, int placement, int kills)
+        // Phase 11 D9: "관전 중: alice", or "관전 중: 플레이어 3" when that player's name is not known. 0 hides it. The name
+        // is PlayerSpawned's string, compared by reference.
+        public bool SetSpectating(ushort entityId, string name)
         {
-            if (won == _resultWon && placement == _resultPlacement && kills == _resultKills) return false;
-            _resultWon = won;
-            _resultPlacement = placement;
-            _resultKills = kills;
-            if (placement <= 0) Result = string.Empty;
-            else if (won) Result = "#" + placement + " VICTORY";
-            else Result = "ELIMINATED #" + placement + " — " + kills + (kills == 1 ? " kill" : " kills");
-            Rebuilds++;
-            return true;
-        }
-
-        // "Spectating Player 3" (no names on the wire: the entity id). 0 hides it.
-        public bool SetSpectating(ushort entityId)
-        {
-            if (entityId == _spectating) return false;
+            if (entityId == _spectating && ReferenceEquals(name, _spectatingName)) return false;
             _spectating = entityId;
-            Spectating = entityId == 0 ? string.Empty : "Spectating Player " + entityId;
+            _spectatingName = name;
+            Spectating = entityId == 0 ? string.Empty : "관전 중: " + UiText.NameOr(name, entityId);
             Rebuilds++;
             return true;
         }

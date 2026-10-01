@@ -29,6 +29,11 @@
          compare it with the server's SafeZone on the same inputs. Pure C# (no UnityEngine); the server itself
          never references client code. -->
     <Compile Include="..\..\..\Client\Assets\Scripts\Game\ZoneMath.cs" Link="ClientCopies\ZoneMath.cs" />
+    <!-- Phase 11 D3, D10, D11: the client's screen flow, UI strings and kill feed ring, tested here the same way (pure C#,
+         no UnityEngine). UiText uses LiteNetLib's DisconnectReason, which this project gets through the server. -->
+    <Compile Include="..\..\..\Client\Assets\Scripts\UI\UiFlow.cs" Link="ClientCopies\UI\UiFlow.cs" />
+    <Compile Include="..\..\..\Client\Assets\Scripts\UI\UiText.cs" Link="ClientCopies\UI\UiText.cs" />
+    <Compile Include="..\..\..\Client\Assets\Scripts\UI\KillFeedModel.cs" Link="ClientCopies\UI\KillFeedModel.cs" />
   </ItemGroup>
 
 </Project>

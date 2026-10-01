@@ -5,6 +5,7 @@ using ProjectH.Shared.Protocol;
 namespace ProjectH.Client.Tests
 {
     // D14 / Client Hot Path: MatchHud calls every Set* each frame; a string is built only when a shown value changed.
+    // Phase 11: Korean texts, the spectated player's name, and no result line (the result screen shows it).
     public class MatchHudTextTests
     {
         [Test]
@@ -12,15 +13,15 @@ namespace ProjectH.Client.Tests
         {
             var text = new MatchHudText();
             text.SetStatus(MatchFlowState.WaitingForPlayers, 0, 1, 1, 2);
-            Assert.AreEqual("Waiting for players 1/2", text.Status);
+            Assert.AreEqual("플레이어를 기다리는 중 1/2", text.Status);
             text.SetStatus(MatchFlowState.Starting, 7, 2, 2, 2);
-            Assert.AreEqual("Starting in 7", text.Status);
+            Assert.AreEqual("시작까지 7초", text.Status);
             text.SetStatus(MatchFlowState.Playing, 0, 3, 5, 2);
-            Assert.AreEqual("Alive 3/5", text.Status);
+            Assert.AreEqual("생존 3/5", text.Status);
             text.SetStatus(MatchFlowState.FinalPhase, 0, 2, 5, 2);
-            Assert.AreEqual("Alive 2/5", text.Status);
+            Assert.AreEqual("생존 2/5", text.Status);
             text.SetStatus(MatchFlowState.Finished, 0, 1, 5, 2);
-            Assert.AreEqual("Match over", text.Status);
+            Assert.AreEqual("경기 종료", text.Status);
         }
 
         [Test]
@@ -52,40 +53,46 @@ namespace ProjectH.Client.Tests
         {
             var text = new MatchHudText();
             Assert.IsTrue(text.SetZone(ZoneHint.ShrinksIn, 12));
-            Assert.AreEqual("Zone shrinking in 12s", text.Zone);
+            Assert.AreEqual("자기장 축소까지 12초", text.Zone);
             Assert.IsFalse(text.SetZone(ZoneHint.ShrinksIn, 12));
             Assert.IsTrue(text.SetZone(ZoneHint.Closing, 0));
-            Assert.AreEqual("Zone closing", text.Zone);
+            Assert.AreEqual("자기장 축소 중", text.Zone);
             Assert.IsFalse(text.SetZone(ZoneHint.Closing, 5));   // seconds do not matter while closing
             Assert.IsTrue(text.SetZone(ZoneHint.None, 0));
             Assert.AreEqual(string.Empty, text.Zone);
         }
 
         [Test]
-        public void Result_Texts()
-        {
-            var text = new MatchHudText();
-            text.SetResult(true, 1, 4);
-            Assert.AreEqual("#1 VICTORY", text.Result);
-            text.SetResult(false, 3, 2);
-            Assert.AreEqual("ELIMINATED #3 — 2 kills", text.Result);
-            text.SetResult(false, 2, 1);
-            Assert.AreEqual("ELIMINATED #2 — 1 kill", text.Result);
-            Assert.IsFalse(text.SetResult(false, 2, 1));
-            text.SetResult(false, 0, 0);
-            Assert.AreEqual(string.Empty, text.Result);
-        }
-
-        [Test]
         public void Spectating_Texts_AndBuildsOnlyOnChange()
         {
             var text = new MatchHudText();
-            Assert.IsFalse(text.SetSpectating(0));
-            Assert.IsTrue(text.SetSpectating(3));
-            Assert.AreEqual("Spectating Player 3", text.Spectating);
-            Assert.IsFalse(text.SetSpectating(3));
-            Assert.IsTrue(text.SetSpectating(0));
+            const string alice = "alice";
+            Assert.IsFalse(text.SetSpectating(0, null));
+            Assert.IsTrue(text.SetSpectating(3, alice));
+            Assert.AreEqual("관전 중: alice", text.Spectating);
+            Assert.IsFalse(text.SetSpectating(3, alice));
+            Assert.IsTrue(text.SetSpectating(4, null));
+            Assert.AreEqual("관전 중: 플레이어 4", text.Spectating);
+            Assert.IsTrue(text.SetSpectating(0, null));
             Assert.AreEqual(string.Empty, text.Spectating);
+        }
+
+        // The watched player's PlayerSpawned may arrive after the camera started following it: the same id with its
+        // name rebuilds the line once, then nothing more.
+        [Test]
+        public void Spectating_NameArrivingLater_ForTheSameId_RebuildsOnce()
+        {
+            var text = new MatchHudText();
+            Assert.IsTrue(text.SetSpectating(5, null));
+            Assert.AreEqual("관전 중: 플레이어 5", text.Spectating);
+            Assert.IsFalse(text.SetSpectating(5, null));
+
+            const string bob = "bob";
+            Assert.IsTrue(text.SetSpectating(5, bob));
+            Assert.AreEqual("관전 중: bob", text.Spectating);
+            int rebuilds = text.Rebuilds;
+            Assert.IsFalse(text.SetSpectating(5, bob));
+            Assert.AreEqual(rebuilds, text.Rebuilds);
         }
     }
 }

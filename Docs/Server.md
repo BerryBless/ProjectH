@@ -51,13 +51,14 @@ MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 �
 | `GameLoop` 전용 스레드(Background) | 채널 소비, Timeout 검사, `Match.Tick`, Snapshot 송신, 통계·Health 로그. 멈춰도 프로세스 종료를 막지 않는다(종료의 Join 5초 제한이 의미가 있도록) | `Match`, `_peers` 단독 소유(경기 초기화로 `Match`를 바꾸는 것도 이 스레드) |
 | `StallWatchdog` Timer 스레드(Phase 10) | 1초마다 Game Loop의 마지막 Tick 시각을 `Volatile`로 읽기만 한다. Timer 콜백이 겹치면 뒤의 것은 바로 돌아간다(`Interlocked` 플래그, Lock 없음) | `GameLoop.LastTickTimestamp`(읽기), `HealthCounters`(`Interlocked`) |
 | `MatchHistoryWriter`(Hosted Service, async, Game Loop 밖) | `MatchHistoryQueue`에서 경기 기록을 읽어 MySQL에 저장(Phase 9). Game Loop는 큐에 넣기만 하고 DB를 기다리지 않는다 | `MatchHistoryQueue`(읽기), `MatchStore`, 카운터(`Interlocked`) |
+| `StatsQueryService`(Hosted Service, async, Game Loop 밖, Phase 11) | `StatsQueryQueue`의 요청 채널의 유일한 소비자. 요청마다 DB를 조회해(조회당 3초 제한, 넘기면 그 조회를 취소) 답 채널에 넣는다. 큐에서 5초 넘게 기다린 요청은 조회하지 않고 `Unavailable`로 답한다(Client가 이미 포기했다). 예외를 밖으로 내보내지 않는다(실패는 `Unavailable` 답). 응답 송신은 하지 않는다(Game Loop가 한다) | `StatsQueryQueue`(요청 읽기·답 쓰기), 자기 `MatchStore`, 카운터(`Interlocked`) |
 
 `NetManager`는 `UnsyncedEvents = true`, `AutoRecycle = true`. 그래서 `NetworkListener`가 받은 데이터는 그 자리에서 값 타입 메시지로 복사한다.
 
 우리 코드는 Lock을 쓰지 않는다. 스레드 간 전달은 `System.Threading.Channels`, 카운터는 `Interlocked`. 따라서 Lock Ordering·Deadlock 대상이 없다.
 Lock을 추가하게 되면 이 문서에 순서를 적는다.
 
-Tick 루프: `DrainControl` → `DrainInput` → `SweepPeers`(stale peer 정리 + Join·Input Timeout + Join 거절된 peer 끊기) → `Match.Tick`(맨 앞에서 `ExpireGrace`). Tick이 5 Tick 이상 밀리면 밀린 분을 건너뛴다(`lateTicksSkipped`). Tick 예외는 "예외 복구"를 본다.
+Tick 루프: `DrainControl` → `DrainInput` → `SweepPeers`(stale peer 정리 + Join·Input Timeout + Join 거절된 peer 끊기) → `SendStatsReplies`(전적 답 최대 32개) → `Match.Tick`(맨 앞에서 `ExpireGrace`). Tick이 5 Tick 이상 밀리면 밀린 분을 건너뛴다(`lateTicksSkipped`). Tick 예외는 "예외 복구"를 본다.
 
 `Match.Tick`은 플레이어마다 `MovementSimulation.Step(ref state, input, 1/SimHz, GameMap.Boxes, GameMap.Terrain)`를 호출한다(Shared 지형과 충돌. 규칙은 `Networking.md` "이동 충돌"). 박스 58개(128개 이하) × 100명 × 30 Hz, 지형 높이 조회는 칸 하나라 무시할 수준이고 할당이 없다. 대기 Spawn은 중앙 광장(반지름 12 m) 안의 5 m 원 위다(`GameMapTests`). 경기 시작은 투입 지점을 쓴다(`BattleRoyale.md`).
 
@@ -79,7 +80,8 @@ Snapshot 송신(Phase 8): `Match.SendSnapshots`가 플레이어 목록을 90명�
 - Tick 예외의 로그 호출도 try/catch로 감싼다(로거나 깨진 경기 상태를 읽다가 던져도 `RunTickGuarded`는 던지지 않는다).
 - `SimHz × 3`번 연속 실패(3초)하면 경기를 초기화한다: 모든 peer를 `ServerError`로 끊고 `Match`를 새로 만든다(진행 중인 판은 기록하지 않는다). Client와 봇은 자동으로 다시 접속해서 새 판에 들어온다. `matchResets`로 센다.
 - 10분 안에 초기화가 3번이면(3번째로 쳐야 할 때) 코드의 문제로 보고 Critical 로그를 남기고 서버를 끝낸다(`StopApplication`, 종료 코드 1). 이 경우는 초기화가 일어나지 않으므로 `matchResets`로 세지 않는다. 이때는 peer를 먼저 `ServerError`로 끊지 않는다(다시 접속해 올 수 있으므로). 새 연결 요청은 이때부터 `ServerFull`로 거절한다. Game Loop는 Tick을 멈추고 Stop을 기다리며, Stop이 `ServerShutdown`으로 끊는다.
-- 경기 기록 sink 예외는 구간마다 첫 하나를 Error 로그로 남긴다(`matchSinkFailures`는 그대로 센다). 초기화가 버리는 `Match`에 아직 로그하지 않은 sink 예외가 있으면 `GameLoop`가 넘겨받아 다음 Stats 때 로그한다.
+- 경기 기록 sink 예외는 구간마다 첫 하나를 Error 로그로 남긴다(`matchSinkFailures`는 그대로 센다).
+- `PlayerSpawned`를 쓰다 넘치면(이름이 32바이트를 넘음. 연결 요청 검사 뒤라 일어나지 않아야 한다) `Match`는 반쯤 쓴 패킷을 보내지 않고 `SpawnEncodeFailures`로 센다. `GameLoop`는 Stats 때 처음 한 번만 Error 로그를 남긴다(Phase 11). 초기화가 버리는 `Match`에 아직 로그하지 않은 sink 예외가 있으면 `GameLoop`가 넘겨받아 다음 Stats 때 로그한다.
 - `Program`이 `AppDomain.UnhandledException`(Critical 로그, `Console.Error`에도 기록. 로그 큐가 프로세스 종료 전에 비지 않을 수 있어서다)과 `TaskScheduler.UnobservedTaskException`(Error 로그, 관찰한 것으로 처리)을 로그로 남긴다. 처리되지 않은 예외는 런타임이 정한 대로 프로세스를 끝낸다.
 
 ## Queue
@@ -90,6 +92,8 @@ Snapshot 송신(Phase 8): `Match.SendSnapshots`가 플레이어 목록을 90명�
 | Input 채널 | MaxPlayers × InputBufferPerPlayer | 가장 오래된 입력 폐기(inputDrops) |
 | PlayerInputBuffer(플레이어별) | InputBufferPerPlayer(8) | 가장 오래된 입력 폐기(bufferDrops) |
 | `MatchHistoryQueue`(Phase 9) | `Persistence:QueueCapacity`(16) | Reject: 기록을 버리고 `Dropped`를 센다. 생산자 Game Loop(경기당 1회), 소비자 `MatchHistoryWriter` 하나 |
+| `StatsQueryQueue` 요청 채널(Phase 11) | 32 | Reject: 수신 스레드가 요청자에게 `Busy`를 답한다(`busy`). 생산자 수신 스레드, 소비자 `StatsQueryService` 하나 |
+| `StatsQueryQueue` 응답 채널(Phase 11) | 32 | Reject: 답을 버리고 `undelivered`를 센다(Client는 5초 뒤 "응답 없음"). 생산자 `StatsQueryService`와 수신 스레드(`Busy`), 소비자 Game Loop |
 
 Game Loop는 Tick당 입력 메시지를 최대 `MaxInputMessagesPerTick`개만 소비한다. Control 채널은 연결당 이벤트가 최대 3개(Connected, Join, Disconnected)라는 전제로 크기를 정했고, 이 전제는 "Join은 연결당 1회" 규칙(`PeerState.JoinRequested`)이 지킨다. Input 채널은 모든 peer가 공유하므로, Join 전 입력 거절과 peer별 초당 입력 상한(`SimHz * 2`)으로 한 peer가 채널을 독점하지 못하게 한다.
 
@@ -102,8 +106,8 @@ Game Loop는 Tick당 입력 메시지를 최대 `MaxInputMessagesPerTick`개만 
 - 경기 상태(`MatchFlow`의 수, `PlayerEntity`의 Participant·Placement·Kills)는 고정 필드다. 판 재시작(`Closing`)이 월드 아이템을 모두 지우고 모두를 Spawn에 살려 두므로 판이 바뀌어도 아무것도 쌓이지 않는다.
 - 월드 아이템은 256개가 상한이고(가장 오래된 Drop부터 지움), Spawn Point 타이머는 Point마다 하나씩 고정 배열이다.
 - Session 유예(Phase 10): `Match._graced`(유예 중인 캐릭터 목록)는 최대 `MaxPlayers`개다. 항목은 재접속(Resume)했을 때, 유예 시간이 끝났을 때, 죽었을 때, 판이 재시작할 때 제거된다. Resume이 아닌 세 경우는 `graceExpiries`로 센다.
-- Join 거절(Phase 10): `Match`가 Join을 거절하면(`MatchFull`, 유예 캐릭터가 자리를 차지한 경우) 그 peer는 Join한 것으로 치지 않는다(`PeerState.JoinRefused`). Join Timeout·Input Timeout 대상이 아니고, `SweepPeers`가 1초(`SimHz` Tick) 뒤 코드 없이(`None`) 끊는다. 바로 끊지 않는 것은 ReliableOrdered `JoinMatchResponse(MatchFull)`가 먼저 나가게 하기 위해서다. Kick으로 세지 않는다.
-- 종료(D7): Ctrl+C → Host `StopAsync` → 새 연결 거절 시작(`NetworkListener.BeginStopping`, 이후 요청은 `ServerFull`) → Tick 멈춤(Game Loop 스레드 Join, 5초 제한. 넘으면 Critical 로그를 남기고 진행) → 모든 peer에 `DisconnectAll(ServerShutdown)` → peer가 0이 되거나 최대 1초 기다림 → `NetManager.Stop` → `MatchHistoryWriter`(큐를 닫고 남은 기록을 `ShutdownDrainSeconds` 동안 저장. Writer를 먼저 등록해서 Host가 역순으로 멈추므로 Game Loop 뒤에 멈춘다). Host `ShutdownTimeout`은 90초(`ShutdownDrainSeconds` 최대 60초 + 30초)라 저장 시간 제한이 Host 기본 30초에 잘리지 않는다. `GameServerService.StopAsync`는 이 일을 Thread Pool에서 하고 Host 토큰까지만 기다린다(호출 스레드를 막지 않는다). 진행 중인 판은 끝나지 않았으므로 기록하지 않는다.
+- Join 거절(Phase 10): `Match`가 Join을 거절하면(`MatchFull`, 유예 캐릭터가 자리를 차지한 경우) 그 peer는 Join한 것으로 치지 않는다(`PeerState.JoinRefused`). Join Timeout·Input Timeout 대상이 아니고, `SweepPeers`가 1초(`SimHz` Tick) 뒤 코드 없이(`None`) 끊는다. 바로 끊지 않는 것은 ReliableOrdered `JoinMatchResponse(MatchFull)`가 먼저 나가게 하기 위해서다. Kick으로 세지 않는다. 전적 요청도 받지 않는다: 수신 스레드는 Game Loop가 `Ok`·`Resumed`일 때만 쓰는 `PeerState.Joined`(volatile, Game Loop만 쓰고 수신 스레드가 읽는 유일한 Game Loop 필드)를 보고 전적 요청을 받는다(Phase 11).
+- 종료(D7): Ctrl+C → Host `StopAsync` → 새 연결 거절 시작(`NetworkListener.BeginStopping`, 이후 요청은 `ServerFull`) → Tick 멈춤(Game Loop 스레드 Join, 5초 제한. 넘으면 Critical 로그를 남기고 진행) → 모든 peer에 `DisconnectAll(ServerShutdown)` → peer가 0이 되거나 최대 1초 기다림 → `NetManager.Stop` → `StatsQueryService`(요청 읽기를 멈춘다. 큐에 남은 요청은 답하지 않는다. 받아 줄 Game Loop가 이미 멈췄다) → `MatchHistoryWriter`(큐를 닫고 남은 기록을 `ShutdownDrainSeconds` 동안 저장). 등록 순서가 Writer → `StatsQueryService` → `GameServerService`라 Host가 역순으로 멈춘다: Game Loop → `StatsQueryService` → Writer. Host `ShutdownTimeout`은 90초(`ShutdownDrainSeconds` 최대 60초 + 30초)라 저장 시간 제한이 Host 기본 30초에 잘리지 않는다. `GameServerService.StopAsync`는 이 일을 Thread Pool에서 하고 Host 토큰까지만 기다린다(호출 스레드를 막지 않는다). 진행 중인 판은 끝나지 않았으므로 기록하지 않는다.
 
 ## 관측
 
@@ -121,6 +125,7 @@ Health peers players graced match=<State>#<Round>
   badPackets unknownId malformed beforeJoin duplicateJoin inputRate wrongDirection handlerException
   tickFailures loopFailures matchResets stalls
   db saved failed discarded dropped
+  stats requests limited busy unavailable undelivered
 ```
 
 - `peers`: 열린 연결 수. `players`: 경기의 플레이어 수(유예 중 포함). `graced`: 재접속을 기다리는 플레이어 수.
@@ -130,6 +135,7 @@ Health peers players graced match=<State>#<Round>
 - `badPackets` 7개 항목: 잘못된 패킷(이유별, `Networking.md` "Validation").
 - `tickFailures`·`loopFailures`·`matchResets`: 예외 복구 카운터. `stalls`: Watchdog이 센 멈춤.
 - `db`: `MatchHistoryWriter`의 `Saved`·`Failed`·`Discarded`와 큐의 `Dropped`(`Database.md`).
+- `stats`(Phase 11, 전적 조회): `requests`는 요청 채널에 받아들인 요청 수. `limited`는 답 없이 버린 요청(Join이 성공하지 않은 연결이거나 같은 연결의 앞 요청 뒤 2초 안). `busy`·`unavailable`은 그 상태로 답한 수(`busy`: 요청 채널이 가득 참, `unavailable`: Persistence 꺼짐·큐에서 5초 넘게 기다림(조회하지 않음)·DB 실패·3초 초과). `undelivered`는 나가지 못한 답(응답 채널이 가득 참, 또는 요청한 연결이 이미 없음). `Networking.md` "전적 조회".
 
 **Meter:** 같은 수치를 `System.Diagnostics.Metrics`의 `Meter("ProjectH.Server")`로도 낸다(`ServerMeter`, Observable 계측기만 쓴다. Game Loop에서 기록하지 않고, 읽는 쪽이 부를 때 `HealthCounters`를 읽는다). 새 패키지도 열린 포트도 없다.
 
@@ -148,9 +154,12 @@ dotnet-counters monitor -n ProjectH.Server --counters ProjectH.Server
 | `projecth.bad_packets` | Counter | `reason` = `BadPacketReason` 7가지 |
 | `projecth.tick_failures`, `projecth.loop_failures`, `projecth.match_resets`, `projecth.stalls` | Counter | |
 | `projecth.db_records` | Counter | `result` = `saved` / `failed` / `discarded` / `dropped` |
+| `projecth.stats_queries` | Counter | `result` = `requests` / `limited` / `busy` / `unavailable` / `undelivered` |
 
 **Stall Watchdog:** `StallWatchdog`가 1초마다 Game Loop의 마지막 Tick 끝 시각을 본다. 2초 넘게 Tick이 없으면 Critical 로그를 한 번 남기고 `stalls`를 센다. Tick이 돌아오면 걸린 시간을 Warning으로 남긴다. Deadlock이나 무한 루프처럼 예외 없이 멈추는 경우를 로그 없이 놓치지 않게 한다. 종료 중과, 일부러 쉬는 경우(서버가 끝나기를 기다리는 동안)는 멈춤으로 보지 않는다.
 
 **로그:** 콘솔 로그에 시각이 붙는다(`appsettings.json`의 `Logging:Console:FormatterOptions:TimestampFormat`, `yyyy-MM-dd HH:mm:ss.fff`). 접속·Join·이탈·재접속·Join/Input Timeout으로 끊기는 연결·유예 만료마다 한 번 Information이다. Kick(잘못된 패킷)은 Warning, 거절된 연결 요청은 Debug다(`Logging:LogLevel`을 Debug로 올려야 보인다).
+
+전적 조회 로그(`StatsQueryService`): 시작할 때 Persistence가 꺼져 있으면 "Stats queries: persistence disabled; every request is answered Unavailable."(Information). DB 실패가 시작될 때 Warning 한 줄("the database failed … answering Unavailable until it recovers"), 회복될 때 Information 한 줄("the database answers again"). 실패가 계속되는 동안은 요청마다 로그하지 않는다.
 
 봇(부하·경기 테스트용 Client)의 실행은 `Bots.md`를 본다. 서버는 봇을 구분하지 않는다.

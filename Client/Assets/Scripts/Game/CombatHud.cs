@@ -1,9 +1,10 @@
+using ProjectH.Client.UI;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace ProjectH.Client.Game
 {
-    // D13: combat HUD built in code on one Screen Space Overlay canvas (UGUI legacy Text, built-in font; no
+    // D13: combat HUD built in code on one Screen Space Overlay canvas (UGUI legacy Text with UiFont, Phase 11 D2; no
     // TextMeshPro, which needs imported assets). No GraphicRaycaster and nothing is a raycast target.
     // Strings are rebuilt only when a shown value changes, so an idle HUD allocates nothing per frame.
     // Dispose destroys the canvas.
@@ -44,8 +45,7 @@ namespace ProjectH.Client.Game
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = 90;   // under the crosshair (100)
 
-            // Unity 6 built-in font; Arial.ttf is no longer a built-in resource.
-            Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            Font font = UiFont.Get();
             _vitals = CreateText("Vitals", font, new Vector2(0f, 0f), new Vector2(20f, 20f), TextAnchor.LowerLeft);
             _weapon = CreateText("Weapon", font, new Vector2(1f, 0f), new Vector2(-20f, 20f), TextAnchor.LowerRight);
             _center = CreateText("Center", font, new Vector2(0.5f, 0.5f), new Vector2(0f, -80f), TextAnchor.MiddleCenter);
@@ -86,7 +86,7 @@ namespace ProjectH.Client.Game
             if (_root == null || (health == _health && shield == _shield)) return;
             _health = health;
             _shield = shield;
-            _vitals.text = "HP " + health + "   SH " + shield;
+            _vitals.text = "체력 " + health + "   실드 " + shield;
         }
 
         // Phase 4: magazine / reserve rounds of the weapon's ammo type.
@@ -98,7 +98,7 @@ namespace ProjectH.Client.Game
             _ammo = ammo;
             _reserve = reserve;
             _reloading = reloading;
-            _weapon.text = reloading ? name + "   reloading..." : name + "   " + ammo + " / " + reserve;
+            _weapon.text = reloading ? name + "   재장전 중..." : name + "   " + ammo + " / " + reserve;
         }
 
         public void ClearWeapon()
@@ -168,7 +168,7 @@ namespace ProjectH.Client.Game
                 if (seconds != _countdown)
                 {
                     _countdown = seconds;
-                    _center.text = "DEAD   respawn in " + seconds;
+                    _center.text = "사망   " + seconds + "초 뒤 부활";
                 }
             }
         }
@@ -195,6 +195,7 @@ namespace ProjectH.Client.Game
             text.alignment = alignment;
             text.color = Color.white;
             text.raycastTarget = false;
+            text.supportRichText = false;   // Phase 11: every UI text is plain text
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
             text.text = string.Empty;
             return text;

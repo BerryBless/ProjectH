@@ -41,7 +41,7 @@ namespace ProjectH.Client.Tests
         {
             var text = new InventoryHudText();
             Assert.IsTrue(text.SetConsumables(2, 3));
-            Assert.AreEqual("[4] Medkit x2    [5] Shield Cell x3", text.Consumables);
+            Assert.AreEqual("[4] 구급상자 x2    [5] 실드 셀 x3", text.Consumables);
             Assert.IsFalse(text.SetConsumables(2, 3));
             Assert.IsTrue(text.SetConsumables(1, 3));
             Assert.AreEqual(2, text.Rebuilds);
@@ -55,13 +55,13 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual(string.Empty, text.Prompt);
 
             Assert.IsTrue(text.SetPrompt(7, 30, Vesper, Rare));
-            Assert.AreEqual("[E] Pick up Vesper AR [Rare]", text.Prompt);
+            Assert.AreEqual("[E] 줍기: Vesper AR [Rare]", text.Prompt);
             Assert.IsFalse(text.SetPrompt(7, 30, Vesper, Rare));
 
             Assert.IsTrue(text.SetPrompt(9, 60, "Light Rounds", null));
-            Assert.AreEqual("[E] Pick up Light Rounds x60", text.Prompt);
+            Assert.AreEqual("[E] 줍기: Light Rounds x60", text.Prompt);
             Assert.IsTrue(text.SetPrompt(9, 12, "Light Rounds", null));   // partial pickup left 12
-            Assert.AreEqual("[E] Pick up Light Rounds x12", text.Prompt);
+            Assert.AreEqual("[E] 줍기: Light Rounds x12", text.Prompt);
 
             Assert.IsTrue(text.SetPrompt(0, 0, null, null));
             Assert.AreEqual(string.Empty, text.Prompt);

@@ -47,6 +47,7 @@ public sealed class ServerMeter : IDisposable
         _meter.CreateObservableCounter("projecth.match_resets", () => h.MatchResets);
         _meter.CreateObservableCounter("projecth.stalls", () => h.Stalls);
         _meter.CreateObservableCounter("projecth.db_records", () => DbRecords(h));
+        _meter.CreateObservableCounter("projecth.stats_queries", () => StatsQueries(h));
     }
 
     public void Dispose() => _meter.Dispose();
@@ -83,6 +84,21 @@ public sealed class ServerMeter : IDisposable
             new Measurement<long>(c.Failed, Tag("result", "failed")),
             new Measurement<long>(c.Discarded, Tag("result", "discarded")),
             new Measurement<long>(c.Dropped, Tag("result", "dropped")),
+        };
+    }
+
+    // Phase 11 D8: the statistics path.
+    private static Measurement<long>[] StatsQueries(HealthCounters h)
+    {
+        if (h.StatsQueries is not { } source) return Array.Empty<Measurement<long>>();
+        StatsQueryCounts c = source();
+        return new[]
+        {
+            new Measurement<long>(c.Requests, Tag("result", "requests")),
+            new Measurement<long>(c.Limited, Tag("result", "limited")),
+            new Measurement<long>(c.Busy, Tag("result", "busy")),
+            new Measurement<long>(c.Unavailable, Tag("result", "unavailable")),
+            new Measurement<long>(c.Undelivered, Tag("result", "undelivered")),
         };
     }
 }

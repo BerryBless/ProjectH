@@ -50,6 +50,76 @@ public class PacketTests
         Assert.False(ConnectRequestData.TryRead(ref reader, out _));
     }
 
+    // Phase 11: the raw name bytes of a connect request (version 1).
+    private bool TryReadConnectName(byte[] name, out string id)
+    {
+        _buffer[0] = 1;
+        _buffer[1] = 0;
+        _buffer[2] = (byte)name.Length;
+        name.CopyTo(_buffer, 3);
+        var reader = new PacketReader(_buffer.AsSpan(0, 3 + name.Length));
+        bool ok = ConnectRequestData.TryRead(ref reader, out var data);
+        id = data.DevPlayerId;
+        return ok;
+    }
+
+    // Phase 11: a name every other client can be sent (it still fits PlayerSpawned after decoding) and can show.
+    [Theory]
+    [InlineData(new byte[] { 0xFF })]                                       // never valid in UTF-8
+    [InlineData(new byte[] { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF })]   // 11 bytes -> 33 decoded
+    [InlineData(new byte[] { 0x61, 0xEA, 0xB0 })]                           // "a" + a cut 3-byte sequence
+    [InlineData(new byte[] { 0xF0, 0x90, 0x80, 0x41 })]                     // a cut 4-byte sequence: 4 bytes in and out
+    [InlineData(new byte[] { 0xED, 0xA0, 0x80 })]                           // an encoded surrogate (CESU)
+    [InlineData(new byte[] { 0xC0, 0xAF })]                                 // an overlong "/"
+    [InlineData(new byte[] { 0xEF, 0xBF, 0xBD })]                           // U+FFFD itself
+    [InlineData(new byte[] { 0x61, 0x00 })]                                 // C0: NUL
+    [InlineData(new byte[] { 0x61, 0x09, 0x62 })]                           // C0: tab
+    [InlineData(new byte[] { 0x7F })]                                       // DEL
+    [InlineData(new byte[] { 0xC2, 0x9B })]                                 // C1: U+009B
+    public void ConnectRequestData_InvalidUtf8OrControlCharacters_AreRejected(byte[] name)
+    {
+        Assert.False(TryReadConnectName(name, out _));
+    }
+
+    [Fact]
+    public void ConnectRequestData_ValidNames_UpTo32Bytes_AreAccepted()
+    {
+        // 10 Hangul syllables (30 bytes) + "ab" = 32 bytes.
+        byte[] korean = System.Text.Encoding.UTF8.GetBytes("가나다라마바사아자차ab");
+        Assert.Equal(32, korean.Length);
+        Assert.True(TryReadConnectName(korean, out string id));
+        Assert.Equal("가나다라마바사아자차ab", id);
+
+        byte[] emoji = System.Text.Encoding.UTF8.GetBytes("a😀");   // a surrogate pair: 4 bytes
+        Assert.True(TryReadConnectName(emoji, out id));
+        Assert.Equal("a😀", id);
+    }
+
+    [Theory]
+    [InlineData("alice", true)]
+    [InlineData("밥 a-b_c.d", true)]
+    [InlineData("abcdefghijabcdefghijabcdefghij12", true)]    // 32 bytes
+    [InlineData("abcdefghijabcdefghijabcdefghij123", false)]  // 33 bytes
+    [InlineData("가나다라마바사아자차카", false)]                // 33 bytes
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    [InlineData("a\u0007", false)]
+    [InlineData("a\u0085", false)]
+    [InlineData("a�", false)]
+    [InlineData("a\uD800", false)]          // a lone high surrogate
+    [InlineData("a\uDC00b", false)]         // a lone low surrogate
+    [InlineData("a\u200Bb", false)]         // zero-width space (format)
+    [InlineData("a\u202Eb", false)]         // right-to-left override (format)
+    [InlineData("a\uFEFFb", false)]         // BOM / zero-width no-break space (format)
+    [InlineData("a\u2028b", false)]         // line separator
+    [InlineData("a\u2029b", false)]         // paragraph separator
+    [InlineData("a b", true)]               // an ordinary space is a separator, not a format character
+    [InlineData("😀", true)]      // a pair
+    public void IsValidPlayerName(string? name, bool valid)
+    {
+        Assert.Equal(valid, ProtocolConstants.IsValidPlayerName(name!));
+    }
+
     [Fact]
     public void PlayerInput_RoundTrip_KeepsOrderAndAimFields()
     {
@@ -149,11 +219,12 @@ public class PacketTests
     public void SpawnAndDespawn_RoundTrip()
     {
         var writer = new PacketWriter(_buffer);
-        PlayerSpawned.Write(ref writer, new PlayerSpawned { EntityId = 3, Position = new Vector3(1, 0, 2), Yaw = 45f });
+        PlayerSpawned.Write(ref writer, new PlayerSpawned { EntityId = 3, Position = new Vector3(1, 0, 2), Yaw = 45f, Name = "p3" });
         var reader = ReaderAfterId(writer.Length, PacketId.PlayerSpawned);
         Assert.True(PlayerSpawned.TryRead(ref reader, out var s));
         Assert.Equal(3, s.EntityId);
         Assert.Equal(new Vector3(1, 0, 2), s.Position);
+        Assert.Equal("p3", s.Name);
 
         writer = new PacketWriter(_buffer);
         PlayerDespawned.Write(ref writer, new PlayerDespawned { EntityId = 3 });

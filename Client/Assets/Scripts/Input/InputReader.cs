@@ -23,7 +23,8 @@ namespace ProjectH.Client.Input
         private readonly InputAction _drop;
         private readonly InputAction _useMedkit;
         private readonly InputAction _useShieldCell;
-        private readonly InputAction _unlockCursor;
+        private readonly InputAction _escape;
+        private readonly InputAction _debugToggle;
 
         public InputReader()
         {
@@ -48,7 +49,9 @@ namespace ProjectH.Client.Input
             _drop = new InputAction("Drop", InputActionType.Button, "<Keyboard>/g");
             _useMedkit = new InputAction("UseMedkit", InputActionType.Button, "<Keyboard>/4");
             _useShieldCell = new InputAction("UseShieldCell", InputActionType.Button, "<Keyboard>/5");
-            _unlockCursor = new InputAction("UnlockCursor", InputActionType.Button, "<Keyboard>/escape");
+            // Phase 11 D5: Esc opens and closes the menu (UiFlow decides; the cursor follows it). F1: the debug line (D4).
+            _escape = new InputAction("Escape", InputActionType.Button, "<Keyboard>/escape");
+            _debugToggle = new InputAction("DebugToggle", InputActionType.Button, "<Keyboard>/f1");
 
             _move.Enable();
             _look.Enable();
@@ -64,7 +67,8 @@ namespace ProjectH.Client.Input
             _drop.Enable();
             _useMedkit.Enable();
             _useShieldCell.Enable();
-            _unlockCursor.Enable();
+            _escape.Enable();
+            _debugToggle.Enable();
         }
 
         public Vector2 Move => _move.ReadValue<Vector2>();
@@ -73,7 +77,8 @@ namespace ProjectH.Client.Input
         public bool FirePressed => _fire.WasPressedThisFrame();
         public bool FireHeld => _fire.IsPressed();
         public bool AimHeld => _aim.IsPressed();
-        public bool UnlockCursorPressed => _unlockCursor.WasPressedThisFrame();
+        public bool EscapePressed => _escape.WasPressedThisFrame();
+        public bool DebugTogglePressed => _debugToggle.WasPressedThisFrame();
 
         // Jump, Reload, Slot1-3, Interact, Drop and the two heal presses since the last simulation step that
         // used them. Rendering runs
@@ -111,7 +116,8 @@ namespace ProjectH.Client.Input
             _drop.Dispose();
             _useMedkit.Dispose();
             _useShieldCell.Dispose();
-            _unlockCursor.Dispose();
+            _escape.Dispose();
+            _debugToggle.Dispose();
         }
     }
 }

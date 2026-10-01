@@ -51,6 +51,23 @@ public class MatchPacketSendTests
         Assert.DoesNotContain(PacketId.MatchResult, sent);
     }
 
+    // Phase 11: a PlayerSpawned whose name does not fit (unreachable through the connect check, which Match does not
+    // repeat) is not sent half-written; it is counted for GameLoop's log. The other spawns still go out.
+    [Fact]
+    public void ASpawnWhoseNameDoesNotFit_IsNotSent_AndIsCounted()
+    {
+        var sent = new System.Collections.Generic.List<(int Peer, PacketId Id)>();
+        var match = new Match(new ServerOptions { MaxPlayers = 2, DevRespawn = true }, TestGameData.Create(),
+            (peer, data, _) => sent.Add((peer, (PacketId)data[0])));
+        match.TryJoin(1, "a");
+        Assert.Equal(JoinResult.Ok, match.TryJoin(2, new string('x', ProtocolConstants.MaxDevPlayerIdBytes + 1)));
+
+        // Peer 2 gets a's spawn only; peer 1 never gets the long-named spawn.
+        Assert.Equal(1, sent.Count(s => s.Peer == 2 && s.Id == PacketId.PlayerSpawned));
+        Assert.Equal(1, sent.Count(s => s.Peer == 1 && s.Id == PacketId.PlayerSpawned));
+        Assert.Equal(2, match.SpawnEncodeFailures);
+    }
+
     // Only changes are broadcast: an idle wait sends nothing; a join, the countdown, the start and a death do.
     [Fact]
     public void MatchState_IsBroadcastOnlyWhenItChanges()

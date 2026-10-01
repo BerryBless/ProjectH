@@ -1,10 +1,11 @@
+using ProjectH.Client.UI;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace ProjectH.Client.Game
 {
     // D15: inventory HUD and pickup prompt on one Screen Space Overlay canvas built in code (UGUI legacy Text
-    // with the built-in font, like CombatHud). No GraphicRaycaster; nothing is a raycast target. Text is set
+    // with UiFont, like CombatHud). No GraphicRaycaster; nothing is a raycast target. Text is set
     // only when InventoryHudText rebuilt a string, so an unchanged HUD allocates nothing per frame; the heal
     // bar changes only a RectTransform size. Dispose destroys the canvas.
     public sealed class InventoryHud : System.IDisposable
@@ -41,7 +42,7 @@ namespace ProjectH.Client.Game
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = 91;   // above CombatHud (90), under the crosshair (100)
 
-            Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            Font font = UiFont.Get();
             for (int i = 0; i < _slots.Length; i++)
                 _slots[i] = CreateText("Slot" + (i + 1), font, new Vector2(0.5f, 0f), new Vector2(0f, 88f - 22f * i), TextAnchor.LowerCenter);
             _consumables = CreateText("Consumables", font, new Vector2(0.5f, 0f), new Vector2(0f, 20f), TextAnchor.LowerCenter);
@@ -146,6 +147,7 @@ namespace ProjectH.Client.Game
             text.alignment = alignment;
             text.color = Color.white;
             text.raycastTarget = false;
+            text.supportRichText = false;   // Phase 11: every UI text is plain text
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
             text.text = string.Empty;
             return text;

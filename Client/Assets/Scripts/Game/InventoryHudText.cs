@@ -61,22 +61,22 @@ namespace ProjectH.Client.Game
             if (medkits == _medkits && shieldCells == _shieldCells) return false;
             _medkits = medkits;
             _shieldCells = shieldCells;
-            Consumables = "[4] Medkit x" + medkits + "    [5] Shield Cell x" + shieldCells;
+            Consumables = "[4] 구급상자 x" + medkits + "    [5] 실드 셀 x" + shieldCells;
             Rebuilds++;
             return true;
         }
 
         // itemId 0 = nothing in reach. rarity null = a stack (ammo, heal), shown with its amount:
-        // "[E] Pick up Vesper AR [Rare]", "[E] Pick up Light Rounds x60". The text changes with the target
-        // or its amount (a partial pickup leaves a smaller stack).
+        // "[E] 줍기: Vesper AR [Rare]", "[E] 줍기: Light Rounds x60" (item names are the server catalog's). The text
+        // changes with the target or its amount (a partial pickup leaves a smaller stack).
         public bool SetPrompt(ushort itemId, ushort amount, string name, string rarity)
         {
             if (itemId == _promptItem && amount == _promptAmount) return false;
             _promptItem = itemId;
             _promptAmount = amount;
             if (itemId == 0) Prompt = string.Empty;
-            else if (rarity != null) Prompt = "[E] Pick up " + name + " [" + rarity + "]";
-            else Prompt = "[E] Pick up " + name + " x" + amount;
+            else if (rarity != null) Prompt = "[E] 줍기: " + name + " [" + rarity + "]";
+            else Prompt = "[E] 줍기: " + name + " x" + amount;
             Rebuilds++;
             return true;
         }

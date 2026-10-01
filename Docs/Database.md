@@ -109,9 +109,19 @@ Game Loop(경기가 끝나는 Tick) → MatchRecord 하나 → MatchHistoryQueue
 - 경기마다: `saved match {MatchId} (round, players)`
 - 종료할 때 한 줄: `saved=… failed=… discarded=… droppedQueueFull=…`
 
+## 조회 경로 (Phase 11 D8)
+
+설계 근거: `Docs/specs/2026-10-01-phase11-game-ui-design.md` D8, 5절. Client가 전적을 요청하면(`Networking.md` "전적 조회") `StatsQueryService`(Hosted Service, Game Loop 밖)가 읽는다.
+
+- `StatsQueryService`는 자기 `MatchStore`(Writer와 같은 연결 문자열)로 `GetStatsAsync`를 부르고, 기록이 있으면 `GetHistoryAsync(10)`을 부른다. 매 호출이 풀링된 연결을 열고 돌려준다.
+- 조회마다 3초 제한이다. 취소 토큰과 `WaitAsync`를 함께 건다. MySqlConnector는 서버 인사말(greeting)을 기다리는 동안 취소를 따르지 않아서(측정: `Connection Timeout=4`에서 4.05초) 토큰만으로는 제한을 지킬 수 없다. 제한을 넘겨 남겨진 조회는 Connection Timeout(5초)까지 뒤에서 남을 수 있고, 그 수는 서비스가 한 번에 하나만 처리하는 것과 연결 시간 제한으로 묶인다.
+- 결과는 `StatsResponse`로 바꾼다. DB는 64비트 합을 갖고 있어서 u32로 자르고, 누적 생존 시간은 초 단위다. 최근 경기는 최대 10개, 최신순이다.
+- 기록이 없으면 `NoRecord`, 실패·시간 초과·Persistence 꺼짐은 `Unavailable`이다. 예외는 밖으로 나가지 않는다.
+- 두 쿼리는 Transaction 없이 따로 읽는다. 그 사이에 경기가 저장되면 요약과 행이 한 경기 어긋날 수 있다(다음에 열면 맞는다).
+
 ## 조회 예시
 
-서버는 읽기 API를 두지 않는다. `MatchStore.GetStatsAsync`, `GetHistoryAsync`는 테스트와 도구용이다. SQL로 직접 볼 때:
+서버는 Client 요청에 이 두 쿼리로 답한다(위 절). SQL로 직접 볼 때:
 
 ```sql
 -- 내 통계
@@ -132,7 +142,7 @@ LIMIT 10;
 ## 테스트
 
 - DB 없는 테스트(기록 내용, 큐, 설정, DB 없는 Writer)는 항상 돈다.
-- MySQL 테스트(`MySqlTests`, `[MySqlFact]` 7개)는 환경 변수 `PROJECTH_TEST_MYSQL`에 연결 문자열이 있을 때만 돈다. 없으면 건너뛰므로 DB 없이 `dotnet test`는 통과하고 건너뛴 테스트가 7개 보인다.
+- MySQL 테스트(`MySqlTests`, `[MySqlFact]` 9개)는 환경 변수 `PROJECTH_TEST_MYSQL`에 연결 문자열이 있을 때만 돈다. 없으면 건너뛰므로 DB 없이 `dotnet test`는 통과하고 건너뛴 테스트가 9개 보인다.
 
 ```bash
 docker compose up -d
@@ -141,11 +151,11 @@ dotnet test Server/ProjectH.Server.slnx --filter "FullyQualifiedName~Persistence
 ```
 
 - 내용: 저장하면 통계가 누적되고 전적이 최신순으로 나온다 / 실패하는 저장은 아무것도 남기지 않는다(롤백) / 같은 DevPlayerId는 한 번만(가장 좋은 순위로) 저장되고 경기는 남는다 / Hosted Writer가 큐의 기록을 저장한다 / 종료 시간에 걸린 진행 중 저장은 `Discarded`로 센다 / DB 없이 시작한 Writer는 나중에 DB가 생기면 저장한다(`TheWriter_StartedWithoutTheDatabase_SavesOnceItAppears`. Writer가 쓰는 포트에 아무도 없을 때 기록 하나를 넣어 `Failed`로 세게 한 뒤, 그 포트에서 테스트 MySQL로 잇는 TCP 중계기를 열고 다음 기록이 저장되는지 본다).
+- Phase 11: `AStatsQuery_AfterSavedMatches_AnswersOk_WithTotalsAndTheNewestMatchFirst`(저장한 경기를 `StatsQueryService`가 `Ok`와 통계·최근 경기로 답한다), `AStatsQuery_ForAnIdWithNoMatch_AnswersNoRecord`. DB 없는 `StatsQueryTests`(응답 변환, Persistence 꺼짐, 멈춘 DB에 대한 시간 제한 포함)는 항상 돈다.
 - 테스트도 개발 DB(`projecth`)에 그대로 쓴다. 별도 테스트 스키마는 없고, 이름 충돌을 피하려고 무작위 id를 쓴다. 지우려면 위 "개발 DB 초기화"를 쓴다.
 
 ## 범위 밖
 
-- Client에 통계·전적 보여 주기(새 패킷과 UI)
 - 실제 인증·비밀번호, 표시 이름 바꾸기
 - 실패한 기록의 디스크 보관
 - 마이그레이션 도구, 읽기 API 서버
