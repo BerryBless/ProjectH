@@ -43,7 +43,7 @@ namespace ProjectH.Client.Game
             }
 
             var renderer = go.GetComponent<Renderer>();
-            EnsureMaterials(renderer.sharedMaterial);
+            EnsureMaterials(LitMaterial.Source(renderer.sharedMaterial));
             renderer.sharedMaterial = isLocal ? _localMaterial : _remoteMaterial;
             return go.transform;
         }

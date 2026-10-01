@@ -52,10 +52,10 @@ namespace ProjectH.Client.Game
 
             _root = new GameObject("ZoneView");
 
-            // The opaque line materials are copies of a primitive's default material, so their shader is in the
-            // build (the same approach as LocalFireEffects). Never renderer.material (clones per object).
+            // The opaque line materials are copies of URP's Lit material (LitMaterial: a primitive's default material
+            // is magenta in a build). Never renderer.material (clones per object).
             var probe = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Material source = probe.GetComponent<Renderer>().sharedMaterial;
+            Material source = LitMaterial.Source(probe.GetComponent<Renderer>().sharedMaterial);
             _currentMaterial = new Material(source) { color = CurrentColor };
             _targetMaterial = new Material(source) { color = TargetColor };
             // The wall uses the built-in Sprites/Default: always included in player builds, alpha blended and

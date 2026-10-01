@@ -28,9 +28,9 @@ namespace ProjectH.Client.Bootstrap
             outside.transform.localPosition = new Vector3(0f, -0.05f, 0f);
             outside.transform.localScale = new Vector3(40f, 1f, 40f);
 
-            // Copies of the primitive's default material, so the shader is guaranteed to be in the build.
+            // Copies of URP's Lit material (LitMaterial: a primitive's default material is magenta in a build).
             Renderer outsideRenderer = outside.GetComponent<Renderer>();
-            Material source = outsideRenderer.sharedMaterial;
+            Material source = LitMaterial.Source(outsideRenderer.sharedMaterial);
             var terrainMaterial = new Material(source) { color = new Color(0.42f, 0.55f, 0.36f) };
             var structureMaterial = new Material(source) { color = new Color(0.55f, 0.56f, 0.6f) };
             var coverMaterial = new Material(source) { color = new Color(0.62f, 0.5f, 0.36f) };

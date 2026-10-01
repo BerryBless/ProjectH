@@ -146,13 +146,13 @@ namespace ProjectH.Client.Game
             _free[_freeCount++] = view;
         }
 
-        // The primitive's mesh is a built-in asset that outlives the temporary object; its material is the
-        // template (its shader is guaranteed to be in the build).
+        // The primitive's mesh is a built-in asset that outlives the temporary object. The template is URP's Lit
+        // material (LitMaterial: a primitive's default material is magenta in a build).
         private static Mesh BuiltinMesh(PrimitiveType type, ref Material template)
         {
             var go = GameObject.CreatePrimitive(type);
             Mesh mesh = go.GetComponent<MeshFilter>().sharedMesh;
-            if (template == null) template = go.GetComponent<Renderer>().sharedMaterial;
+            if (template == null) template = LitMaterial.Source(go.GetComponent<Renderer>().sharedMaterial);
             // Immediate: a deferred destroy would leave its collider in the world for the first frame.
             Object.DestroyImmediate(go);
             return mesh;

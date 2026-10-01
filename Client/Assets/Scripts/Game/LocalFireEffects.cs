@@ -43,9 +43,9 @@ namespace ProjectH.Client.Game
                 // Marks must not block later shots or the camera.
                 Object.Destroy(impact.GetComponent<Collider>());
                 var renderer = impact.GetComponent<Renderer>();
-                // One material for all effects, copied from the primitive's default so its shader is
-                // guaranteed to be in the build. Never renderer.material (clones per object).
-                if (_material == null) _material = new Material(renderer.sharedMaterial) { color = new Color(1f, 0.85f, 0.2f) };
+                // One material for all effects, copied from URP's Lit material (LitMaterial: a primitive's default
+                // material is magenta in a build). Never renderer.material (clones per object).
+                if (_material == null) _material = new Material(LitMaterial.Source(renderer.sharedMaterial)) { color = new Color(1f, 0.85f, 0.2f) };
                 renderer.sharedMaterial = _material;
                 renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                 impact.transform.SetParent(_root.transform, false);
