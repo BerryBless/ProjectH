@@ -42,8 +42,9 @@ public sealed class GameLoop : IDisposable
 
     // loadout: test seam (D1); null = StartingLoadout.Empty, the production start. dropPoints: test seam (Phase 6 D9);
     // null = the map's DropPoints.All.
+    // matchSink: Phase 9, where finished matches are recorded (MatchHistoryQueue.TryEnqueue; null = not recorded).
     public GameLoop(ServerOptions options, GameData data, ILogger logger, StartingLoadout? loadout = null,
-        System.Numerics.Vector3[]? dropPoints = null)
+        System.Numerics.Vector3[]? dropPoints = null, Action<Persistence.MatchRecord>? matchSink = null)
     {
         string? error = options.Validate();
         if (error != null) throw new ArgumentException(error, nameof(options));
@@ -67,7 +68,7 @@ public sealed class GameLoop : IDisposable
             IPv6Enabled = false,
         };
         listener.Manager = _net;
-        _match = new Match(options, data, SendToPeer, loadout, dropPoints: dropPoints);
+        _match = new Match(options, data, SendToPeer, loadout, dropPoints: dropPoints, matchSink: matchSink);
     }
 
     public int LocalPort => _net.LocalPort;
@@ -242,11 +243,13 @@ public sealed class GameLoop : IDisposable
         _logger.LogInformation(
             "Stats players={Players} pktIn/s={PktIn:F0} bytesIn/s={BytesIn:F0} pktOut/s={PktOut:F0} bytesOut/s={BytesOut:F0} " +
             "tickMs p50={P50:F2} p95={P95:F2} p99={P99:F2} max={Max:F2} inputDrops={Drops} bufferDrops={BufferDrops} " +
-            "badPackets={Bad} lateTicksSkipped={Late} exceptions={Exceptions} gc={Gc0}/{Gc1}/{Gc2} workingSetMB={WorkingSet:F0} cpu%={Cpu:F1}",
+            "badPackets={Bad} lateTicksSkipped={Late} exceptions={Exceptions} gc={Gc0}/{Gc1}/{Gc2} workingSetMB={WorkingSet:F0} cpu%={Cpu:F1} " +
+            "matchSinkFailures={SinkFailures}",
             _match.PlayerCount, c.PacketsIn / seconds, c.BytesIn / seconds, c.PacketsOut / seconds, c.BytesOut / seconds,
             t.P50, t.P95, t.P99, t.Max, c.InputDrops, _match.TotalBufferDrops,
             c.BadPackets, _lateTicksSkipped, _exceptionCount,
-            GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2), Environment.WorkingSet / 1048576.0, cpuPercent);
+            GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2), Environment.WorkingSet / 1048576.0, cpuPercent,
+            _match.MatchSinkFailures);
         _exceptionsSinceStats = 0;
     }
 

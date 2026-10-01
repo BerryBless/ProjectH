@@ -33,14 +33,15 @@ internal sealed class RoyaleHarness
     // record false: sent packets are dropped instead of copied, for allocation tests.
     public RoyaleHarness(StartingLoadout? loadout = null, string zonesJson = TestGameData.ZonesJson, int maxPlayers = 6,
         int minPlayers = 2, string lootJson = TestGameData.LootJson, bool record = true,
-        Vector3[]? dropPoints = null)
+        Vector3[]? dropPoints = null, Action<ProjectH.Server.Persistence.MatchRecord>? matchSink = null)
     {
         SendPacket send = record ? (peer, data, method) => Packets.Add(new Sent(peer, data.ToArray(), method)) : static (_, _, _) => { };
         Match = new Match(new ServerOptions
             {
                 MaxPlayers = maxPlayers, MinPlayers = minPlayers, StartCountdownSeconds = 1, ResultSeconds = 1,
             },
-            TestGameData.Create(lootJson: lootJson, zonesJson: zonesJson), send, loadout, dropPoints: dropPoints ?? LobbyRingDrops);
+            TestGameData.Create(lootJson: lootJson, zonesJson: zonesJson), send, loadout, dropPoints: dropPoints ?? LobbyRingDrops,
+            matchSink: matchSink);
     }
 
     public Match Match { get; }

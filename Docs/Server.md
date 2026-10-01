@@ -7,6 +7,8 @@ dotnet run --project Server/src/ProjectH.Server
 dotnet test Server/ProjectH.Server.slnx
 ```
 
+MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 컨테이너, `Database.md`)를 실행한다. DB가 없어도 서버는 정상 동작하고 기록만 남지 않는다. DB 설정은 `appsettings.json`의 `Persistence` 절(`Database.md`).
+
 설정: `Server/src/ProjectH.Server/appsettings.json`의 `Server` 섹션. 명령줄로 덮어쓰기: `-- --Server:Port=7778`. 잘못된 값이면 시작 시 종료된다(`ServerOptions.Validate`, `GameLoop` 생성자에서 예외).
 
 | 키 | 기본값 | 범위 / 의미 |
@@ -44,6 +46,7 @@ dotnet test Server/ProjectH.Server.slnx
 |---|---|---|
 | LiteNetLib 스레드 | `NetworkListener`: 연결 요청 검사, 패킷 검증·파싱 | `InboundChannels`(쓰기), `PeerState` |
 | `GameLoop` 전용 스레드 | 채널 소비, `Match.Tick`, Snapshot 송신, 통계 로그 | `Match`, `_peers` 단독 소유 |
+| `MatchHistoryWriter`(Hosted Service, async, Game Loop 밖) | `MatchHistoryQueue`에서 경기 기록을 읽어 MySQL에 저장(Phase 9). Game Loop는 큐에 넣기만 하고 DB를 기다리지 않는다 | `MatchHistoryQueue`(읽기), `MatchStore`, 카운터(`Interlocked`) |
 
 `NetManager`는 `UnsyncedEvents = true`, `AutoRecycle = true`. 그래서 `NetworkListener`가 받은 데이터는 그 자리에서 값 타입 메시지로 복사한다.
 
@@ -69,6 +72,7 @@ Snapshot 송신(Phase 8): `Match.SendSnapshots`가 플레이어 목록을 90명�
 | Control 채널 | MaxPlayers × 3 | TryWrite 실패 → 해당 peer Disconnect(Critical 로그). Disconnected 메시지가 유실되면 stale-peer 정리가 대신 처리 |
 | Input 채널 | MaxPlayers × InputBufferPerPlayer | 가장 오래된 입력 폐기(inputDrops) |
 | PlayerInputBuffer(플레이어별) | InputBufferPerPlayer(8) | 가장 오래된 입력 폐기(bufferDrops) |
+| `MatchHistoryQueue`(Phase 9) | `Persistence:QueueCapacity`(16) | Reject: 기록을 버리고 `Dropped`를 센다. 생산자 Game Loop(경기당 1회), 소비자 `MatchHistoryWriter` 하나 |
 
 Game Loop는 Tick당 입력 메시지를 최대 `MaxInputMessagesPerTick`개만 소비한다. Control 채널은 연결당 이벤트가 최대 3개(Connected, Join, Disconnected)라는 전제로 크기를 정했고, 이 전제는 "Join은 연결당 1회" 규칙(`PeerState.JoinRequested`)이 지킨다. Input 채널은 모든 peer가 공유하므로, Join 전 입력 거절과 peer별 초당 입력 상한(`SimHz * 2`)으로 한 peer가 채널을 독점하지 못하게 한다.
 
@@ -80,11 +84,11 @@ Game Loop는 Tick당 입력 메시지를 최대 `MaxInputMessagesPerTick`개만 
 - 플레이어별 전투 상태는 `PlayerEntity`에 있고 플레이어와 함께 사라진다. 위치 History는 32칸 고정 링이라 늘어나지 않고, Join·부활 때 새로 시작한다. 인벤토리는 칸 3개·탄약 3종 고정 배열이다. 경기 중에 접속을 끊은 참가자의 인벤토리는 남은 사람들에게 사망 Drop처럼 떨어진다(Phase 5 D10). 경기 밖(대기·결과 화면·`DevRespawn`)에서 끊으면 떨어뜨리지 않고 사라진다.
 - 경기 상태(`MatchFlow`의 수, `PlayerEntity`의 Participant·Placement·Kills)는 고정 필드다. 판 재시작(`Closing`)이 월드 아이템을 모두 지우고 모두를 Spawn에 살려 두므로 판이 바뀌어도 아무것도 쌓이지 않는다.
 - 월드 아이템은 256개가 상한이고(가장 오래된 Drop부터 지움), Spawn Point 타이머는 Point마다 하나씩 고정 배열이다.
-- 종료: Ctrl+C → Host `StopAsync` → `GameLoop.Stop`(Game Loop 스레드 Join) → `NetManager.Stop(true)`.
+- 종료: Ctrl+C → Host `StopAsync` → `GameLoop.Stop`(Game Loop 스레드 Join) → `NetManager.Stop(true)` → `MatchHistoryWriter`(큐를 닫고 남은 기록을 `ShutdownDrainSeconds` 동안 저장. Writer를 먼저 등록해서 Host가 역순으로 멈추므로 Game Loop 뒤에 멈춘다). Host `ShutdownTimeout`은 90초(`ShutdownDrainSeconds` 최대 60초 + 30초)라 저장 시간 제한이 Host 기본 30초에 잘리지 않는다.
 
 ## 관측
 
-10초마다 한 줄: `Stats players=… pktIn/s … bytesOut/s … tickMs p50/p95/p99/max … inputDrops bufferDrops badPackets lateTicksSkipped exceptions gc workingSetMB cpu%`. `cpu%`는 프로세스 CPU 시간 증가 / (Stats 간격 × 논리 프로세서 수) × 100이다(Phase 7 D10, 코어 하나를 다 쓰면 100 / 코어 수). 부하 측정 결과는 `LoadTest.md`.
+10초마다 한 줄: `Stats players=… pktIn/s … bytesOut/s … tickMs p50/p95/p99/max … inputDrops bufferDrops badPackets lateTicksSkipped exceptions gc workingSetMB cpu% matchSinkFailures`. `cpu%`는 프로세스 CPU 시간 증가 / (Stats 간격 × 논리 프로세서 수) × 100이다(Phase 7 D10, 코어 하나를 다 쓰면 100 / 코어 수). `matchSinkFailures`는 경기 기록을 만들거나 큐에 넣다가 예외가 난 경기 수(누적)다. 이 예외는 결과 전송 뒤에 잡아서 세기만 하고 Game Loop를 멈추지 않는다(Phase 9). 부하 측정 결과는 `LoadTest.md`.
 패킷 단위 로그는 없다. Tick 예외는 통계 주기당 1회만 로그한다.
 
 봇(부하·경기 테스트용 Client)의 실행은 `Bots.md`를 본다. 서버는 봇을 구분하지 않는다.

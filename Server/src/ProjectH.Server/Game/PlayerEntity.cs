@@ -39,6 +39,10 @@ public sealed class PlayerEntity
     public bool Participant;
     public byte Placement;
     public int Kills;
+    // Phase 9 (§37): damage this player dealt to others during the match (shield and health actually removed, no
+    // overkill), and the tick it was eliminated (0 = still in). Reset when a match starts.
+    public int DamageDealt;
+    public uint EliminatedTick;
 
     // Phase 4 (D10): weapons, magazines, per-slot fire intervals, ammo reserves and consumables. Replaced
     // by the starting loadout at join and respawn.

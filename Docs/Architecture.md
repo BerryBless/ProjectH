@@ -1,6 +1,6 @@
 # Architecture
 
-Phase 8 Optimization 기준. 설계 근거: `Docs/specs/2026-09-30-phase0-network-sync-design.md`, `Docs/specs/2026-09-30-phase1-character-prototype-design.md`, `Docs/specs/2026-10-01-phase3-combat-design.md`, `Docs/specs/2026-10-01-phase4-inventory-loot-design.md`, `Docs/specs/2026-10-01-phase5-battle-royale-design.md`, `Docs/specs/2026-10-01-phase6-map-design.md`, `Docs/specs/2026-10-01-phase7-bots-design.md`, `Docs/specs/2026-10-01-phase8-optimization-design.md`(Snapshot 분할·양자화, 부하 재측정).
+Phase 9 Persistence 기준. 설계 근거: `Docs/specs/2026-09-30-phase0-network-sync-design.md`, `Docs/specs/2026-09-30-phase1-character-prototype-design.md`, `Docs/specs/2026-10-01-phase3-combat-design.md`, `Docs/specs/2026-10-01-phase4-inventory-loot-design.md`, `Docs/specs/2026-10-01-phase5-battle-royale-design.md`, `Docs/specs/2026-10-01-phase6-map-design.md`, `Docs/specs/2026-10-01-phase7-bots-design.md`, `Docs/specs/2026-10-01-phase8-optimization-design.md`(Snapshot 분할·양자화, 부하 재측정), `Docs/specs/2026-10-01-phase9-persistence-design.md`(MySQL 경기 기록·통계).
 
 ```mermaid
 flowchart LR
@@ -24,6 +24,7 @@ flowchart LR
         Match --> Combat[Combat: WeaponRules, HitScan, PositionHistory]
         Match --> ItemsS[Items: Inventory, WorldItems, LootSpawner]
         Match --> Flow[Flow: MatchFlow / Zone: SafeZone]
+        Match -->|MatchRecord, TryEnqueue| History[MatchHistoryQueue] --> Writer[MatchHistoryWriter] --> MySQL[(MySQL)]
     end
     Bots[ProjectH.Bots: headless clients]
     Client <-->|UDP / LiteNetLib| Server
@@ -51,4 +52,4 @@ flowchart LR
 - Server: NuGet `LiteNetLib` 2.1.4.
 - Client: 같은 버전(2.1.4, netstandard2.1)의 DLL을 `Client/Assets/Plugins/LiteNetLib/LiteNetLib.dll`에 둔다. Git UPM 패키지는 `.meta` 파일이 없어 Unity가 무시하므로 쓰지 않는다. `manifest.json`과 `ProjectH.Client.asmdef` 참조에 LiteNetLib 항목이 없고, DLL은 자동 참조된다.
 
-DB는 아직 사용하지 않는다(`Database.md`).
+DB(Phase 9): 경기가 끝나면 Game Loop가 `MatchRecord` 하나를 큐에 넣고, 별도 async Writer가 한 Transaction으로 MySQL에 저장한다. Game Loop는 DB를 기다리지 않고, DB가 없어도 서버는 돈다(`Database.md`).

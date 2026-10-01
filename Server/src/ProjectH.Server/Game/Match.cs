@@ -6,6 +6,7 @@ using ProjectH.Server.Game.Combat;
 using ProjectH.Server.Game.Flow;
 using ProjectH.Server.Game.Items;
 using ProjectH.Server.Game.Zone;
+using ProjectH.Server.Persistence;
 using ProjectH.Shared.Protocol;
 using ProjectH.Shared.Simulation;
 
@@ -39,6 +40,13 @@ public sealed class Match
     // Phase 6 D9: the drop points and this match's shuffled order of them. Fixed arrays, filled at the match start.
     private readonly Vector3[] _dropPoints;
     private readonly int[] _dropOrder;
+    // Phase 9 D4: where a finished match's record goes (null = nothing is recorded, e.g. most tests). Called on the game
+    // loop thread and must not block: production passes MatchHistoryQueue.TryEnqueue.
+    private readonly Action<MatchRecord>? _matchSink;
+    // Participants who left during the current match, recorded when they left (they are no longer in _players).
+    // At most MaxPlayers entries; cleared when a match starts.
+    private readonly List<PlayerRecord> _leftParticipants = new();
+    private DateTime _matchStartedUtc;
     private uint _matchStartTick;
     // What every client was last told (D11): a new MatchState or ZoneState is broadcast at the end of a tick only
     // when it differs. Never sent in the dev sandbox (no match flow there).
@@ -58,8 +66,9 @@ public sealed class Match
     // Test seams: loadout null = StartingLoadout.Empty (the production start, D1); lootPoints null = the
     // map's LootPoints.All; dropPoints null = the map's DropPoints.All (Phase 6 D9).
     public Match(ServerOptions options, GameData data, SendPacket send, StartingLoadout? loadout = null, LootPoint[]? lootPoints = null,
-        Vector3[]? dropPoints = null)
+        Vector3[]? dropPoints = null, Action<MatchRecord>? matchSink = null)
     {
+        _matchSink = matchSink;
         _send = send ?? throw new ArgumentNullException(nameof(send));
         ArgumentNullException.ThrowIfNull(data);
         if (data.SimHz != options.SimHz)
@@ -126,6 +135,8 @@ public sealed class Match
     internal uint MatchStartTick => _matchStartTick;
     // The last match's winner (D9), 0 = none among the connected players. Set when the match finishes.
     internal ushort WinnerId { get; private set; }
+    // Phase 9: finished matches whose record could not be built or handed to the sink (it threw). Shown in the stats line.
+    public long MatchSinkFailures { get; private set; }
 
     public JoinResult TryJoin(int peerId, string devPlayerId)
     {
@@ -185,8 +196,11 @@ public sealed class Match
         {
             player.Alive = false;
             player.Placement = _flow.Eliminate();
+            player.EliminatedTick = ServerTick;
             DropEverything(player);
         }
+        // Phase 9: a participant who leaves still belongs to the match record.
+        if (_flow.InMatch && player.Participant && _matchSink != null) _leftParticipants.Add(RecordOf(player, ServerTick));
     }
 
     public void EnqueueInput(int peerId, in PlayerInputPacket packet)
@@ -334,7 +348,9 @@ public sealed class Match
 
     private void ApplyHit(PlayerEntity shooter, PlayerEntity target, ushort damage)
     {
+        int before = target.Health + target.Shield;
         bool killed = CombatRules.ApplyDamage(ref target.Health, ref target.Shield, damage);
+        if (_flow.InMatch && shooter.Participant && shooter != target) shooter.DamageDealt += before - (target.Health + target.Shield);
 
         var writer = new PacketWriter(_sendBuffer);
         HitConfirmed.Write(ref writer, new HitConfirmed { TargetId = target.EntityId, Damage = damage, Killed = killed });
@@ -398,6 +414,18 @@ public sealed class Match
                 Participants = (byte)_flow.Participants,
             });
             _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+        }
+
+        // Phase 9: recorded only after every result is sent, and a failing record is counted, never thrown: the
+        // players' results and the rest of this tick must not depend on persistence.
+        if (_matchSink == null) return;
+        try
+        {
+            _matchSink(BuildRecord(now, winner));
+        }
+        catch (Exception)
+        {
+            MatchSinkFailures++;
         }
     }
 
@@ -630,6 +658,7 @@ public sealed class Match
         {
             placement = _flow.Eliminate();
             victim.Placement = placement;
+            victim.EliminatedTick = ServerTick;
             if (killer != null && killer != victim) killer.Kills++;
         }
 
@@ -675,7 +704,11 @@ public sealed class Match
             player.Participant = true;
             player.Placement = 0;
             player.Kills = 0;
+            player.DamageDealt = 0;
+            player.EliminatedTick = 0;
         }
+        _leftParticipants.Clear();
+        _matchStartedUtc = DateTime.UtcNow;
         _loot.Restart(unchecked(_lootSeed + _flow.Round));
         for (int point = 0; point < _loot.Count; point++) SpawnItem(_loot.Roll(point), _loot.Position(point), point);
         _zone.Start(now, unchecked(_zoneSeed + _flow.Round));
@@ -920,6 +953,36 @@ public sealed class Match
             if (p.EntityId == id) return true;
         }
         return false;
+    }
+
+    // Phase 9 D4: the record of the match that just finished: every participant still here plus those who left. Built
+    // once per match on the game loop thread (the only allocation of the finish tick); the sink must not block.
+    private MatchRecord BuildRecord(uint now, PlayerEntity? winner)
+    {
+        var players = new List<PlayerRecord>(_players.Count + _leftParticipants.Count);
+        foreach (var player in _players)
+        {
+            if (player.Participant) players.Add(RecordOf(player, now));
+        }
+        players.AddRange(_leftParticipants);
+        // A winner who left (the last two left before this tick, D9) gets no MatchResult, but the record keeps its win.
+        string? winnerId = winner?.DevPlayerId;
+        if (winnerId == null)
+        {
+            foreach (PlayerRecord left in _leftParticipants)
+            {
+                if (left.Placement == 1) winnerId = left.DevPlayerId;
+            }
+        }
+        return new MatchRecord(_flow.Round, _matchStartedUtc, DateTime.UtcNow, winnerId, players);
+    }
+
+    // Survival runs from the match start to the elimination, or to `now` for a player still in.
+    private PlayerRecord RecordOf(PlayerEntity player, uint now)
+    {
+        uint end = player.EliminatedTick != 0 ? player.EliminatedTick : now;
+        int survivalMs = (int)((ulong)(end - _matchStartTick) * 1000UL / (ulong)_simHz);
+        return new PlayerRecord(player.DevPlayerId, player.Placement, player.Kills, player.DamageDealt, survivalMs);
     }
 
     // Phase 6 D9: resets the order to 0..n-1 and shuffles it (Fisher-Yates), so the result depends on the seed only.

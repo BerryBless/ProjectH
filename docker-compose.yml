@@ -1,0 +1,24 @@
+# Phase 9: local MySQL for development and the persistence tests. Development credentials only; a real deployment
+# overrides them with environment variables (PROJECTH_DB_PASSWORD, PROJECTH_DB_ROOT_PASSWORD).
+# Start: docker compose up -d   Stop: docker compose down   (add -v to drop the data volume)
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: projecth-mysql
+    environment:
+      MYSQL_DATABASE: projecth
+      MYSQL_USER: projecth
+      MYSQL_PASSWORD: ${PROJECTH_DB_PASSWORD:-projecth_dev}
+      MYSQL_ROOT_PASSWORD: ${PROJECTH_DB_ROOT_PASSWORD:-projecth_root_dev}
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - projecth-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uprojecth", "-p${PROJECTH_DB_PASSWORD:-projecth_dev}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  projecth-mysql-data:
