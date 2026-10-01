@@ -34,6 +34,12 @@ public sealed class PlayerEntity
     public bool Alive;
     public uint RespawnAtTick;
 
+    // Phase 5 (D3, D9, D12): set when a match starts. A participant keeps its placement once eliminated
+    // (0 = still in, or not a participant); kills count only during the match.
+    public bool Participant;
+    public byte Placement;
+    public int Kills;
+
     // Phase 4 (D10): weapons, magazines, per-slot fire intervals, ammo reserves and consumables. Replaced
     // by the starting loadout at join and respawn.
     public readonly Inventory Inventory = new();

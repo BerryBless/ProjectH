@@ -33,7 +33,7 @@ public class CombatMatchTests
     }
 
     private Match NewMatch(GameData data) =>
-        new(new ServerOptions { MaxPlayers = 3, SnapshotEveryTicks = 2 }, data,
+        new(new ServerOptions { MaxPlayers = 3, SnapshotEveryTicks = 2, DevRespawn = true }, data,
             (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)), TestGameData.CombatLoadout);
 
     private PlayerEntity Join(int peer, Vector3 feet)

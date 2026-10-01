@@ -16,9 +16,19 @@ public sealed class ServerOptions
     public int DisconnectTimeoutMs { get; set; } = 5000;
     public int StatsIntervalSeconds { get; set; } = 10;
     // Phase 4 (D5, D7): seed of the game loop's loot Random (same seed = same loot), and how long a
-    // looted spawn point stays empty. 0 turns respawning off (the battle royale rule, Match Flow phase).
+    // looted spawn point stays empty. Phase 5 (D4): used only with DevRespawn; a match never refills loot.
+    // Each match rolls its loot with LootSeed + round number (D3).
     public int LootSeed { get; set; } = 1;
     public int LootRespawnSeconds { get; set; } = 30;
+
+    // Phase 5 (D1, D4, D6): the match flow. A countdown starts once MinPlayers are connected; the result
+    // screen lasts ResultSeconds. DevRespawn = the Phase 3/4 sandbox (no match flow, respawn and loot refill
+    // on, loot from the start); off in production. Each match rolls its zone with ZoneSeed + round number.
+    public int MinPlayers { get; set; } = 2;
+    public int StartCountdownSeconds { get; set; } = 10;
+    public int ResultSeconds { get; set; } = 10;
+    public bool DevRespawn { get; set; }
+    public int ZoneSeed { get; set; } = 1;
 
     // Each connection produces at most Connected + JoinRequested + Disconnected.
     public int ControlChannelCapacity => MaxPlayers * 3;
@@ -43,6 +53,12 @@ public sealed class ServerOptions
         if (StatsIntervalSeconds < 1) return "StatsIntervalSeconds must be positive.";
         if (LootSeed < 0) return "LootSeed must be 0 or more.";
         if (LootRespawnSeconds < 0 || LootRespawnSeconds > 3600) return "LootRespawnSeconds must be 0-3600 (0 = off).";
+        // 1 is rejected: a lone player is the only one alive, so the match would finish on its first tick and the
+        // flow would cycle Starting -> Finished forever.
+        if (MinPlayers < 2 || MinPlayers > MaxPlayers) return "MinPlayers must be 2-MaxPlayers (a match needs at least two players).";
+        if (StartCountdownSeconds < 1 || StartCountdownSeconds > 300) return "StartCountdownSeconds must be 1-300.";
+        if (ResultSeconds < 1 || ResultSeconds > 300) return "ResultSeconds must be 1-300.";
+        if (ZoneSeed < 0) return "ZoneSeed must be 0 or more.";
         return null;
     }
 }

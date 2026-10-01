@@ -22,7 +22,7 @@ public class MatchWorldItemsTests
     private readonly List<Sent> _sent = new();
 
     private Match NewMatch(int seed = 1, LootPoint[]? points = null) =>
-        new(new ServerOptions { MaxPlayers = 4, LootSeed = seed }, TestGameData.Create(),
+        new(new ServerOptions { MaxPlayers = 4, LootSeed = seed, DevRespawn = true }, TestGameData.Create(),
             (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)), lootPoints: points);
 
     private static PacketReader Reader(Sent s)
@@ -175,7 +175,7 @@ public class MatchWorldItemsTests
     [Fact]
     public void SpawnAndRemove_AllocateNothing()
     {
-        var match = new Match(new ServerOptions { MaxPlayers = 2 }, TestGameData.Create(), static (_, _, _) => { });
+        var match = new Match(new ServerOptions { MaxPlayers = 2, DevRespawn = true },TestGameData.Create(), static (_, _, _) => { });
         match.TryJoin(1, "a");
         LootRoll roll = Ammo();
         ushort warm = match.SpawnItem(roll, Vector3.Zero, -1);

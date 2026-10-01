@@ -1,6 +1,7 @@
 using System;
 using ProjectH.Server.Game;
 using ProjectH.Server.Game.Items;
+using ProjectH.Server.Game.Zone;
 
 namespace ProjectH.Server.Tests;
 
@@ -63,6 +64,45 @@ internal static class TestGameData
         }
         """;
 
+    // Spec §1 zones.json (D7).
+    public const string ZonesJson = """
+        {
+          "initialCenter": [0, 0],
+          "initialRadius": 30,
+          "arenaHalfSize": 19.5,
+          "phases": [
+            {"waitSeconds":20,"shrinkSeconds":15,"targetRadius":20,"damagePerSecond":1},
+            {"waitSeconds":15,"shrinkSeconds":12,"targetRadius":12,"damagePerSecond":2},
+            {"waitSeconds":12,"shrinkSeconds":10,"targetRadius":6,"damagePerSecond":5},
+            {"waitSeconds":10,"shrinkSeconds":8,"targetRadius":2,"damagePerSecond":10},
+            {"waitSeconds":8,"shrinkSeconds":8,"targetRadius":0,"damagePerSecond":20}
+          ]
+        }
+        """;
+
+    // Short phases for match tests (spec §6 "짧은 테스트용 Zone"): 1 s waits and shrinks, the whole zone is over
+    // 4 s after the start, and the last phase kills 100 health in 2 s.
+    public const int ShortPhase1Damage = 10;
+    public const int ShortPhase2Damage = 50;
+    public const string ShortZonesJson = """
+        {
+          "initialCenter": [0, 0],
+          "initialRadius": 30,
+          "arenaHalfSize": 19.5,
+          "phases": [
+            {"waitSeconds":1,"shrinkSeconds":1,"targetRadius":10,"damagePerSecond":10},
+            {"waitSeconds":1,"shrinkSeconds":1,"targetRadius":0,"damagePerSecond":50}
+          ]
+        }
+        """;
+
+    public static ZoneData Zones(int simHz = 30, string json = ZonesJson)
+    {
+        if (!ZoneData.TryParse(json, simHz, out var zones, out string? error))
+            throw new InvalidOperationException("Test zones are invalid: " + error);
+        return zones!;
+    }
+
     public static ItemCatalog Items(int simHz = 30)
     {
         if (!ItemCatalog.TryParse(ItemsJson, simHz, out var items, out string? error))
@@ -92,9 +132,9 @@ internal static class TestGameData
         return loot!;
     }
 
-    public static GameData Create(int simHz = 30, float autoRange = 100f, string lootJson = LootJson)
+    public static GameData Create(int simHz = 30, float autoRange = 100f, string lootJson = LootJson, string zonesJson = ZonesJson)
     {
         ItemCatalog items = Items(simHz);
-        return new GameData(TestWeapons.Create(simHz, autoRange), items, Loot(items, lootJson));
+        return new GameData(TestWeapons.Create(simHz, autoRange), items, Loot(items, lootJson), Zones(simHz, zonesJson));
     }
 }

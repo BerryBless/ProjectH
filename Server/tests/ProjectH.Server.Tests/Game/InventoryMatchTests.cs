@@ -32,7 +32,7 @@ public class InventoryMatchTests
     }
 
     private Match NewMatch(StartingLoadout? loadout) =>
-        new(new ServerOptions { MaxPlayers = 3 }, TestGameData.Create(),
+        new(new ServerOptions { MaxPlayers = 3, DevRespawn = true }, TestGameData.Create(),
             (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)), loadout);
 
     private PlayerEntity Join(int peer, Vector3 feet)

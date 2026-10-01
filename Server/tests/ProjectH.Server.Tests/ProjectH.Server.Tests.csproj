@@ -23,4 +23,11 @@
     <ProjectReference Include="..\..\src\ProjectH.Shared\ProjectH.Shared.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Phase 5: the client's display copy of the zone formula, compiled here only so ZoneMathParityTests can
+         compare it with the server's SafeZone on the same inputs. Pure C# (no UnityEngine); the server itself
+         never references client code. -->
+    <Compile Include="..\..\..\Client\Assets\Scripts\Game\ZoneMath.cs" Link="ClientCopies\ZoneMath.cs" />
+  </ItemGroup>
+
 </Project>

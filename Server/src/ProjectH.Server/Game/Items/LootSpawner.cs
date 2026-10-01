@@ -12,7 +12,7 @@ public sealed class LootSpawner
     private readonly GameData _data;
     private readonly LootPoint[] _points;
     private readonly int[] _tables;
-    private readonly Random _rng;
+    private Random _rng;
     private readonly uint _respawnTicks;    // 0 = a looted point stays empty
     private readonly bool[] _waiting;       // the point's item was taken and a refill is due at _refillAt
     private readonly uint[] _refillAt;
@@ -52,6 +52,14 @@ public sealed class LootSpawner
     }
 
     public bool IsDue(int point, uint now) => _waiting[point] && now >= _refillAt[point];
+
+    // Phase 5 D3: every match rolls its loot from its own seed (LootSeed + round), with no timers pending.
+    // One Random per match start, never per tick.
+    public void Restart(int seed)
+    {
+        _rng = new Random(seed);
+        Array.Clear(_waiting);
+    }
 
     public void OnRefilled(int point) => _waiting[point] = false;
 }

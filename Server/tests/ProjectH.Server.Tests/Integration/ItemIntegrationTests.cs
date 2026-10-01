@@ -24,6 +24,7 @@ public sealed class ItemIntegrationTests : IDisposable
             MaxPlayers = 4,
             DisconnectTimeoutMs = 1000,
             StatsIntervalSeconds = 60,
+            DevRespawn = true,   // Phase 5 D4: the Phase 3/4 sandbox (respawn, no match flow)
             LootRespawnSeconds = 0,
         }, TestGameData.Create(lootJson: TestGameData.WeaponsOnlyLootJson), NullLogger.Instance,
             new StartingLoadout { Medkits = 1 });

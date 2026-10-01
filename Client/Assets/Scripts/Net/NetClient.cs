@@ -62,6 +62,10 @@ namespace ProjectH.Client.Net
         public event Action<ushort> ItemRemovedReceived;
         public event Action<InventoryState> InventoryReceived;
         public event Action<PickupResult> PickupResultReceived;
+        // Phase 5 match flow (D11): structs, so raising them does not allocate. A dev-respawn server sends none.
+        public event Action<MatchState> MatchStateReceived;
+        public event Action<ZoneState> ZoneStateReceived;
+        public event Action<MatchResult> MatchResultReceived;
 
         public ClientState State { get; private set; } = ClientState.Disconnected;
         public string LastError { get; private set; }
@@ -236,6 +240,18 @@ namespace ProjectH.Client.Net
 
                 case PacketId.PickupResult:
                     if (PickupResult.TryRead(ref packet, out var pickup)) PickupResultReceived?.Invoke(pickup);
+                    break;
+
+                case PacketId.MatchState:
+                    if (MatchState.TryRead(ref packet, out var match)) MatchStateReceived?.Invoke(match);
+                    break;
+
+                case PacketId.ZoneState:
+                    if (ZoneState.TryRead(ref packet, out var zone)) ZoneStateReceived?.Invoke(zone);
+                    break;
+
+                case PacketId.MatchResult:
+                    if (MatchResult.TryRead(ref packet, out var result)) MatchResultReceived?.Invoke(result);
                     break;
             }
         }

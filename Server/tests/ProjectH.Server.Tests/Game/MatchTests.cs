@@ -21,7 +21,7 @@ public class MatchTests
 
     public MatchTests()
     {
-        _match = new Match(new ServerOptions { MaxPlayers = 3, SnapshotEveryTicks = 2 }, TestGameData.Create(),
+        _match = new Match(new ServerOptions { MaxPlayers = 3, SnapshotEveryTicks = 2, DevRespawn = true },TestGameData.Create(),
             (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)));
     }
 

@@ -147,7 +147,7 @@ public class ItemCatalogTests
     public void GameData_RejectsCatalogsBuiltForDifferentSimHz()
     {
         var items = TestGameData.Items(simHz: 60);
-        Assert.Throws<ArgumentException>(() => new GameData(TestWeapons.Create(simHz: 30), items, TestGameData.Loot(items)));
+        Assert.Throws<ArgumentException>(() => new GameData(TestWeapons.Create(simHz: 30), items, TestGameData.Loot(items), TestGameData.Zones()));
     }
 
     // D5 "all references exist": a table named by a LootPoint must be in loot.json.
@@ -159,7 +159,7 @@ public class ItemCatalogTests
             { "rarityWeights": { "Common": 1, "Uncommon": 1, "Rare": 1, "Epic": 1, "Legendary": 1 },
               "tables": { "Floor": [ { "kind": "Ammo", "weight": 1 } ] } }
             """);
-        var ex = Assert.Throws<ArgumentException>(() => new GameData(TestWeapons.Create(), items, noTower));
+        var ex = Assert.Throws<ArgumentException>(() => new GameData(TestWeapons.Create(), items, noTower, TestGameData.Zones()));
         Assert.Contains("Tower", ex.Message);
     }
 }

@@ -10,7 +10,7 @@ using ProjectH.Shared.Simulation;
 namespace ProjectH.Server.Tests.Integration;
 
 // Minimal client for tests: same wire protocol as the Unity client, no prediction or rendering.
-// Every received combat and item event is kept in a list; a test client lives for one test only.
+// Every received combat, item and match event is kept in a list; a test client lives for one test only.
 public sealed class HeadlessClient : IDisposable
 {
     private readonly EventBasedNetListener _listener = new();
@@ -64,6 +64,11 @@ public sealed class HeadlessClient : IDisposable
     public List<ushort> ItemsRemoved { get; } = new();
     public List<InventoryState> Inventories { get; } = new();
     public List<PickupResult> PickupResults { get; } = new();
+
+    // Phase 5: every match event in arrival order.
+    public List<MatchState> MatchStates { get; } = new();
+    public List<ZoneState> ZoneStates { get; } = new();
+    public List<MatchResult> MatchResults { get; } = new();
 
     public void Connect(int port, string devPlayerId, ushort protocolVersion = ProtocolConstants.ProtocolVersion)
     {
@@ -181,6 +186,15 @@ public sealed class HeadlessClient : IDisposable
                 break;
             case PacketId.PickupResult:
                 if (PickupResult.TryRead(ref r, out var pickup)) PickupResults.Add(pickup);
+                break;
+            case PacketId.MatchState:
+                if (MatchState.TryRead(ref r, out var match)) MatchStates.Add(match);
+                break;
+            case PacketId.ZoneState:
+                if (ZoneState.TryRead(ref r, out var zone)) ZoneStates.Add(zone);
+                break;
+            case PacketId.MatchResult:
+                if (MatchResult.TryRead(ref r, out var result)) MatchResults.Add(result);
                 break;
         }
     }

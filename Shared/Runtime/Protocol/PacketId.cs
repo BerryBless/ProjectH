@@ -22,5 +22,8 @@ namespace ProjectH.Shared.Protocol
         ItemRemoved = 16,
         InventoryState = 17,
         PickupResult = 18,
+        MatchState = 19,
+        ZoneState = 20,
+        MatchResult = 21,
     }
 }

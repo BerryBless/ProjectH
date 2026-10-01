@@ -51,6 +51,39 @@ public class ServerOptionsTests
         Assert.Null(new ServerOptions { LootRespawnSeconds = 0, LootSeed = 0 }.Validate());
     }
 
+    // Phase 5 spec §1: MinPlayers 2 (2-MaxPlayers), countdown and result 10 s, DevRespawn off, ZoneSeed.
+    [Fact]
+    public void MatchFlowDefaults_MatchSpec()
+    {
+        var options = new ServerOptions();
+        Assert.Equal(2, options.MinPlayers);
+        Assert.Equal(10, options.StartCountdownSeconds);
+        Assert.Equal(10, options.ResultSeconds);
+        Assert.False(options.DevRespawn);
+        Assert.Equal(1, options.ZoneSeed);
+        Assert.Null(new ServerOptions { MinPlayers = 2, MaxPlayers = 2 }.Validate());
+        Assert.Null(new ServerOptions { MinPlayers = 16, MaxPlayers = 16, ZoneSeed = 0 }.Validate());
+    }
+
+    [Theory]
+    [InlineData(0, 16, 10, 10, 1)]    // nobody needed
+    [InlineData(1, 16, 10, 10, 1)]    // one player finishes the match on its first tick and loops forever
+    [InlineData(1, 1, 10, 10, 1)]
+    [InlineData(17, 16, 10, 10, 1)]   // more than can join
+    [InlineData(2, 1, 10, 10, 1)]     // MaxPlayers 1 with the default MinPlayers 2
+    [InlineData(2, 16, 0, 10, 1)]
+    [InlineData(2, 16, 301, 10, 1)]
+    [InlineData(2, 16, 10, 0, 1)]
+    [InlineData(2, 16, 10, 301, 1)]
+    [InlineData(2, 16, 10, 10, -1)]
+    public void Validate_RejectsBadMatchFlowSettings(int minPlayers, int maxPlayers, int countdown, int result, int zoneSeed)
+    {
+        Assert.NotNull(new ServerOptions
+        {
+            MinPlayers = minPlayers, MaxPlayers = maxPlayers, StartCountdownSeconds = countdown, ResultSeconds = result, ZoneSeed = zoneSeed,
+        }.Validate());
+    }
+
     [Theory]
     [InlineData(30, 1)]
     [InlineData(30, 3)]

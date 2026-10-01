@@ -98,7 +98,7 @@ namespace ProjectH.Shared.Protocol
             id = PacketId.None;
             if (!TryReadByte(out byte raw)) return false;
             // Upper bound is the highest id in PacketId; raise it whenever a packet is added.
-            if (raw < (byte)PacketId.JoinMatchRequest || raw > (byte)PacketId.PickupResult) return false;
+            if (raw < (byte)PacketId.JoinMatchRequest || raw > (byte)PacketId.MatchResult) return false;
             id = (PacketId)raw;
             return true;
         }

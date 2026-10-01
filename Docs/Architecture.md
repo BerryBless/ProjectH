@@ -1,6 +1,6 @@
 # Architecture
 
-Phase 4 Inventory / Loot 기준. 설계 근거: `Docs/specs/2026-09-30-phase0-network-sync-design.md`, `Docs/specs/2026-09-30-phase1-character-prototype-design.md`, `Docs/specs/2026-10-01-phase3-combat-design.md`, `Docs/specs/2026-10-01-phase4-inventory-loot-design.md`.
+Phase 5 Battle Royale 기준. 설계 근거: `Docs/specs/2026-09-30-phase0-network-sync-design.md`, `Docs/specs/2026-09-30-phase1-character-prototype-design.md`, `Docs/specs/2026-10-01-phase3-combat-design.md`, `Docs/specs/2026-10-01-phase4-inventory-loot-design.md`, `Docs/specs/2026-10-01-phase5-battle-royale-design.md`.
 
 ```mermaid
 flowchart LR
@@ -11,6 +11,7 @@ flowchart LR
         Net --> Predictor
         Net --> Hud[CombatHud, WeaponState]
         Net --> Items[WorldItemViews, InventoryHud]
+        Net --> MatchC[MatchHud, ZoneView, SpectatorCamera]
     end
     subgraph Shared[/Shared UPM package/]
         Protocol[Protocol: packets]
@@ -21,6 +22,7 @@ flowchart LR
         Loop --> Match
         Match --> Combat[Combat: WeaponRules, HitScan, PositionHistory]
         Match --> ItemsS[Items: Inventory, WorldItems, LootSpawner]
+        Match --> Flow[Flow: MatchFlow / Zone: SafeZone]
     end
     Client <-->|UDP / LiteNetLib| Server
     Client -.uses.-> Shared
@@ -29,8 +31,8 @@ flowchart LR
 
 | 폴더 | 역할 |
 |---|---|
-| `Client/` | Unity. 입력·표시·예측·보간. 결과를 확정하지 않는다. 카메라·조준점은 Client 표시 전용이고, 발사는 입력에 조준 방향만 실어 보낸다(누구를 맞혔는지는 보내지 않는다) |
-| `Server/` | .NET 10 Dedicated Server. 이동 결과와 명중·피해·사망·부활, Loot 배치·줍기·버리기·회복을 결정하고 인벤토리를 소유한다. 데이터는 `weapons.json`, `items.json`, `loot.json` |
+| `Client/` | Unity. 입력·표시·예측·보간. 결과를 확정하지 않는다. 카메라·조준점은 Client 표시 전용이고, 발사는 입력에 조준 방향만 실어 보낸다(누구를 맞혔는지는 보내지 않는다). Zone 원(`ZoneMath`)과 관전은 표시 전용이고 Shared에 두지 않는다(서버 식과 같은지는 테스트로 고정) |
+| `Server/` | .NET 10 Dedicated Server. 이동 결과와 명중·피해·사망·부활, Loot 배치·줍기·버리기·회복, 경기 상태·Safe Zone·Zone 피해·순위·승자를 결정하고 인벤토리를 소유한다. 데이터는 `weapons.json`, `items.json`, `loot.json`, `zones.json` |
 | `Shared/` | 패킷 DTO, 프로토콜 상수, 이동 계산과 그 지형 박스·충돌(`Simulation/`, 로직 예외: `game-core-rules` 4절), 맵 배치 데이터(`LootPoints`, 좌표 상수만: 4절 예외 2) |
 | `Docs/` | 이 문서들 |
 

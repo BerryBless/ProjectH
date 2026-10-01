@@ -1,0 +1,12 @@
+{
+  "initialCenter": [0, 0],
+  "initialRadius": 30,
+  "arenaHalfSize": 19.5,
+  "phases": [
+    {"waitSeconds":20,"shrinkSeconds":15,"targetRadius":20,"damagePerSecond":1},
+    {"waitSeconds":15,"shrinkSeconds":12,"targetRadius":12,"damagePerSecond":2},
+    {"waitSeconds":12,"shrinkSeconds":10,"targetRadius":6,"damagePerSecond":5},
+    {"waitSeconds":10,"shrinkSeconds":8,"targetRadius":2,"damagePerSecond":10},
+    {"waitSeconds":8,"shrinkSeconds":8,"targetRadius":0,"damagePerSecond":20}
+  ]
+}

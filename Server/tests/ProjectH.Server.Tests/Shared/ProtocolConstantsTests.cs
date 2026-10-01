@@ -16,10 +16,9 @@ public class ProtocolConstantsTests
     }
 
     [Fact]
-    public void ProtocolVersion_IsFour()
+    public void ProtocolVersion_IsFive()
     {
-        // Phase 4 changed the input command and the weapon catalog and added item packets; v3 clients
-        // must be rejected at connect.
-        Assert.Equal((ushort)4, ProtocolConstants.ProtocolVersion);
+        // Phase 5 added the match packets and Placement in PlayerDied; v4 clients must be rejected at connect.
+        Assert.Equal((ushort)5, ProtocolConstants.ProtocolVersion);
     }
 }

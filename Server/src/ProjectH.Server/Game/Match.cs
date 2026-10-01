@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Numerics;
 using LiteNetLib;
 using ProjectH.Server.Game.Combat;
+using ProjectH.Server.Game.Flow;
 using ProjectH.Server.Game.Items;
+using ProjectH.Server.Game.Zone;
 using ProjectH.Shared.Protocol;
 using ProjectH.Shared.Simulation;
 
@@ -26,6 +28,15 @@ public sealed class Match
     private readonly ItemCatalog _items;
     private readonly WorldItems _worldItems = new();
     private readonly LootSpawner _loot;
+    private readonly MatchFlow _flow;
+    private readonly SafeZone _zone;
+    private readonly int _lootSeed;
+    private readonly int _zoneSeed;
+    private uint _matchStartTick;
+    // What every client was last told (D11): a new MatchState or ZoneState is broadcast at the end of a tick only
+    // when it differs. Never sent in the dev sandbox (no match flow there).
+    private MatchState _sentMatchState;
+    private ZoneState _sentZoneState;
     private readonly StartingLoadout _loadout;
     private readonly int _maxPlayers;
     private readonly int _snapshotEveryTicks;
@@ -58,11 +69,24 @@ public sealed class Match
         _tickSeconds = 1f / options.SimHz;
         _respawnTicks = CombatRules.TicksFromSeconds(CombatRules.RespawnSeconds, options.SimHz);
         _maxRewindTicks = CombatRules.MaxRewindTicks(options.SimHz);
+        _flow = new MatchFlow(options.MinPlayers, (uint)options.StartCountdownSeconds * (uint)options.SimHz,
+            (uint)options.ResultSeconds * (uint)options.SimHz, options.DevRespawn);
+        _zone = new SafeZone(data.Zones);
+        _lootSeed = options.LootSeed;
+        _zoneSeed = options.ZoneSeed;
+        _sentMatchState = _flow.ToWire(0);
+        _sentZoneState = _zone.ToWire();
 
-        // D6: the server fills every spawn point when the match starts; clients get the list at join.
+        // Phase 5 D4: loot refills only in the dev sandbox; a match never refills a looted point.
+        uint lootRespawnTicks = options.DevRespawn ? (uint)options.LootRespawnSeconds * (uint)options.SimHz : 0u;
         _loot = new LootSpawner(lootPoints is null ? LootPoints.All : new ReadOnlySpan<LootPoint>(lootPoints), data, options.LootSeed,
-            (uint)options.LootRespawnSeconds * (uint)options.SimHz);
-        for (int point = 0; point < _loot.Count; point++) SpawnItem(_loot.Roll(point), _loot.Position(point), point);
+            lootRespawnTicks);
+        // The dev sandbox fills every spawn point now (Phase 4 D6); clients get the list at join. A battle royale
+        // server has no loot before the match (Phase 5 D2): the match start rolls it (D3).
+        if (options.DevRespawn)
+        {
+            for (int point = 0; point < _loot.Count; point++) SpawnItem(_loot.Roll(point), _loot.Position(point), point);
+        }
     }
 
     public uint ServerTick { get; private set; }
@@ -82,6 +106,14 @@ public sealed class Match
 
     // Test seam (InternalsVisibleTo): the store itself. Match is the only writer.
     internal WorldItems WorldItems => _worldItems;
+    // Test seam: the match state machine. Match is the only writer.
+    internal MatchFlow Flow => _flow;
+    // Test seam: the safe zone of the current match. Match is the only writer.
+    internal SafeZone Zone => _zone;
+    // The tick the current match started at (zone damage counts whole seconds from it).
+    internal uint MatchStartTick => _matchStartTick;
+    // The last match's winner (D9), 0 = none among the connected players. Set when the match finishes.
+    internal ushort WinnerId { get; private set; }
 
     public JoinResult TryJoin(int peerId, string devPlayerId)
     {
@@ -95,6 +127,10 @@ public sealed class Match
         var player = new PlayerEntity(AllocateEntityId(), peerId, devPlayerId, _inputCapacity);
         player.State.Position = SpawnPosition(player.EntityId);
         ResetCombat(player);
+        // D10: a newcomer during a match spectates until the next round (dead, not a participant). It never
+        // counts as alive, so it cannot keep the match from ending.
+        bool spectator = _flow.InMatch;
+        if (spectator) player.Alive = false;
         player.History.Reset(ServerTick, player.State.Position);
         _playersByPeer.Add(peerId, player);
         _players.Add(player);
@@ -110,6 +146,15 @@ public sealed class Match
         {
             if (other != player) SendSpawned(other.PeerId, player);
         }
+        // Phase 5 (D11): where the match and the zone stand, after the spawns so the join order of Phase 4 holds.
+        if (!_flow.DevRespawn)
+        {
+            SendMatchState(peerId, _flow.ToWire(_players.Count));
+            SendZoneState(peerId, _zone.ToWire());
+        }
+        // Reliable, after its own spawn: the newcomer's client knows it is dead (spectating) before any input.
+        // Only to the newcomer; the others see it dead from the snapshot flag.
+        if (spectator) SendDied(peerId, new PlayerDied { VictimId = player.EntityId });
         return JoinResult.Ok;
     }
 
@@ -121,6 +166,15 @@ public sealed class Match
         var writer = new PacketWriter(_sendBuffer);
         PlayerDespawned.Write(ref writer, new PlayerDespawned { EntityId = player.EntityId });
         foreach (var other in _players) _send(other.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+
+        // D10: leaving a match is an elimination. What it carried goes to the ground for the others (the death
+        // drop, sent to the remaining players only), and it no longer counts as alive. It gets no result.
+        if (_flow.InMatch && player.Participant && player.Alive)
+        {
+            player.Alive = false;
+            player.Placement = _flow.Eliminate();
+            DropEverything(player);
+        }
     }
 
     public void EnqueueInput(int peerId, in PlayerInputPacket packet)
@@ -135,9 +189,29 @@ public sealed class Match
         // (NextFireTick, ReloadEndTick, RespawnAtTick) are compared against it.
         uint now = ServerTick;
 
-        foreach (var player in _players)
+        // Phase 5 step 1: state transitions (D1). The start and the round reset each happen within this one
+        // tick, so no client ever sees a half-reset match (D3, D13).
+        switch (_flow.Update(now, _players.Count))
         {
-            if (!player.Alive && now >= player.RespawnAtTick) Respawn(player);
+            case FlowEvent.MatchStarted:
+                StartMatch(now);
+                break;
+            case FlowEvent.RoundClosed:
+                CloseRound(now);
+                break;
+        }
+
+        // Step 2: the zone's phase and its damage (D8).
+        if (_flow.InMatch) UpdateZone(now);
+
+        // D4: death is permanent in a match; the dev sandbox respawns (Phase 3 D9). Refills are off in a match
+        // (the spawner was built with 0 respawn ticks).
+        if (_flow.RespawnAllowed)
+        {
+            foreach (var player in _players)
+            {
+                if (!player.Alive && now >= player.RespawnAtTick) Respawn(player);
+            }
         }
         RefillLootPoints(now);
 
@@ -157,8 +231,13 @@ public sealed class Match
             ConsumableRules.Complete(player, _items, now);   // step 9: every tick, input or not
         }
 
+        // Phase 5 step 5: one participant (or none) left ends the match (D9). Deaths of this tick, from the zone
+        // and from shots, already have their placements.
+        if (_flow.ShouldFinish) FinishMatch(now);
+
         ServerTick++;
         SendInventoryChanges();
+        SendMatchChanges();
         // After every move of this tick, so all players are recorded at the same moment. A snapshot with
         // ServerTick N shows exactly the positions recorded at N, which is what ViewTick refers to.
         foreach (var player in _players) player.History.Record(ServerTick, player.State.Position);
@@ -236,7 +315,9 @@ public sealed class Match
         ShotFired.Write(ref writer, new ShotFired { ShooterId = shooter.EntityId, Start = origin, End = origin + direction * nearest });
         Broadcast(writer.WrittenSpan, DeliveryMethod.Unreliable);
 
-        if (target != null) ApplyHit(shooter, target, damage);
+        // Phase 5 D2: before (and after) the match a shot still stops at the player it hit (the tracer shows
+        // it), but it does no damage and the shooter gets no HitConfirmed.
+        if (target != null && _flow.DamageAllowed) ApplyHit(shooter, target, damage);
     }
 
     private void ApplyHit(PlayerEntity shooter, PlayerEntity target, ushort damage)
@@ -259,6 +340,53 @@ public sealed class Match
         _send(target.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
 
         if (killed) Kill(target, shooter);
+    }
+
+    // D7, D8: the next phase when the shrink is over, then, once per second since the start, zone damage to
+    // everyone outside the circle at this tick. Health only: the shield does not stop the zone. Players are
+    // processed in list order, which fixes the placements of deaths in the same tick (D9).
+    private void UpdateZone(uint now)
+    {
+        if (_zone.Advance(now) && _zone.IsFinalPhase) _flow.EnterFinalPhase();
+        if (now == _matchStartTick || (now - _matchStartTick) % _simHz != 0) return;
+        ushort damage = _zone.DamagePerSecond;
+        if (damage == 0) return;
+        foreach (var player in _players)
+        {
+            if (!player.Alive || !_zone.IsOutside(player.State.Position, now)) continue;
+            player.Health = Math.Max(0, player.Health - damage);
+            if (player.Health == 0) Kill(player, null);
+        }
+    }
+
+    // D9: the living participant wins; when the last ones died in the same tick, the one processed last (the
+    // only placement 1). A winner who already left is no winner (0).
+    private void FinishMatch(uint now)
+    {
+        _flow.Finish(now);
+        PlayerEntity? winner = null;
+        foreach (var player in _players)
+        {
+            if (!player.Participant) continue;
+            if (player.Alive) player.Placement = 1;
+            if (player.Placement == 1) winner = player;
+        }
+        WinnerId = winner?.EntityId ?? 0;
+
+        // D11: each participant still connected gets its own result. Spectators and leavers get none.
+        foreach (var player in _players)
+        {
+            if (!player.Participant) continue;
+            var writer = new PacketWriter(_sendBuffer);
+            MatchResult.Write(ref writer, new MatchResult
+            {
+                WinnerId = WinnerId,
+                Placement = player.Placement,
+                Kills = (byte)Math.Min(player.Kills, byte.MaxValue),
+                Participants = (byte)_flow.Participants,
+            });
+            _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+        }
     }
 
     // D8, D9: the server picks the nearest item in range itself; the client never names one, so it cannot
@@ -423,6 +551,46 @@ public sealed class Match
         return SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, TestArena.Boxes), -1) != 0;
     }
 
+    // End of tick (D11): the match state when any of its fields changed (state, timer, alive and player counts,
+    // round), the zone when its phase changed. Each is one small Reliable packet to everyone.
+    private void SendMatchChanges()
+    {
+        if (_flow.DevRespawn) return;
+        MatchState match = _flow.ToWire(_players.Count);
+        if (!match.SameAs(_sentMatchState))
+        {
+            _sentMatchState = match;
+            foreach (var p in _players) SendMatchState(p.PeerId, match);
+        }
+        ZoneState zone = _zone.ToWire();
+        if (!zone.SameAs(_sentZoneState))
+        {
+            _sentZoneState = zone;
+            foreach (var p in _players) SendZoneState(p.PeerId, zone);
+        }
+    }
+
+    private void SendMatchState(int peerId, in MatchState state)
+    {
+        var writer = new PacketWriter(_sendBuffer);
+        MatchState.Write(ref writer, state);
+        _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
+    private void SendZoneState(int peerId, in ZoneState zone)
+    {
+        var writer = new PacketWriter(_sendBuffer);
+        ZoneState.Write(ref writer, zone);
+        _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
+    private void SendDied(int peerId, in PlayerDied died)
+    {
+        var writer = new PacketWriter(_sendBuffer);
+        PlayerDied.Write(ref writer, died);
+        _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
     private void SendPickupResult(PlayerEntity player, PickupResultCode result, ushort itemId)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -432,7 +600,9 @@ public sealed class Match
 
     // D9: death is decided here. The same ReliableOrdered channel carries DamageTaken, PlayerDied and
     // PlayerRespawned, so every client sees them in that order.
-    private void Kill(PlayerEntity victim, PlayerEntity killer)
+    // killer null = the zone (Phase 5 D8): KillerId 0, nobody gets the kill. During a match the death is
+    // permanent and takes the next placement (D9); the killer's count rises unless it killed itself (D12).
+    private void Kill(PlayerEntity victim, PlayerEntity? killer)
     {
         victim.Alive = false;
         victim.RespawnAtTick = ServerTick + _respawnTicks;
@@ -443,8 +613,16 @@ public sealed class Match
         // must not heal the corpse or the respawned player.
         ConsumableRules.Cancel(victim.Inventory);
 
+        byte placement = 0;
+        if (_flow.InMatch && victim.Participant)
+        {
+            placement = _flow.Eliminate();
+            victim.Placement = placement;
+            if (killer != null && killer != victim) killer.Kills++;
+        }
+
         var writer = new PacketWriter(_sendBuffer);
-        PlayerDied.Write(ref writer, new PlayerDied { VictimId = victim.EntityId, KillerId = killer.EntityId });
+        PlayerDied.Write(ref writer, new PlayerDied { VictimId = victim.EntityId, KillerId = killer?.EntityId ?? 0, Placement = placement });
         Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
 
         // After PlayerDied, so every client hears of the death before the items appear.
@@ -466,6 +644,54 @@ public sealed class Match
         var writer = new PacketWriter(_sendBuffer);
         PlayerRespawned.Write(ref writer, new PlayerRespawned { EntityId = player.EntityId, Position = player.State.Position, Yaw = player.State.Yaw });
         Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
+    // D3: Starting -> Playing, in this one tick: everyone to the spawn ring, empty-handed with Health 100 and
+    // Shield 0 (the loadout), the world cleared and filled with this match's loot, the participants fixed, the
+    // zone started. Respawn keeps Seq, so clients re-sync their prediction exactly as after a death.
+    private void StartMatch(uint now)
+    {
+        ClearWorldItems();
+        foreach (var player in _players)
+        {
+            Respawn(player);
+            player.Participant = true;
+            player.Placement = 0;
+            player.Kills = 0;
+        }
+        _loot.Restart(unchecked(_lootSeed + _flow.Round));
+        for (int point = 0; point < _loot.Count; point++) SpawnItem(_loot.Roll(point), _loot.Position(point), point);
+        _zone.Start(now, unchecked(_zoneSeed + _flow.Round));
+        if (_zone.IsFinalPhase) _flow.EnterFinalPhase();   // a one-phase zone is final from the start
+        _matchStartTick = now;
+        WinnerId = 0;
+    }
+
+    // D13: Finished -> Closing -> the next round, in this one tick: everyone alive on the spawn ring with an
+    // empty inventory, no items in the world (no loot before a match, D2), no zone.
+    private void CloseRound(uint now)
+    {
+        ClearWorldItems();
+        foreach (var player in _players)
+        {
+            Respawn(player);
+            player.Participant = false;
+            player.Placement = 0;
+        }
+        _zone.Reset();
+        _flow.Reopen(now, _players.Count);
+    }
+
+    // Removes every world item, telling every client. Spawn-point timers are not involved (the spawner restarts).
+    private void ClearWorldItems()
+    {
+        while (_worldItems.Count > 0)
+        {
+            int last = _worldItems.Count - 1;
+            ushort itemId = _worldItems[last].Data.ItemId;
+            _worldItems.RemoveAt(last);
+            BroadcastItemRemoved(itemId);
+        }
     }
 
     private void ResetCombat(PlayerEntity player)

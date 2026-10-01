@@ -28,6 +28,9 @@ namespace ProjectH.Client.Game
         private InventoryHud _inventoryHud;
         private WorldItemViews _worldItems;
         private LocalFireEffects _fireEffects;
+        private MatchHud _matchHud;
+        private ZoneView _zoneView;
+        private readonly SpectatorCamera _spectator = new SpectatorCamera();
         private NetClient _net;
         private LocalPlayerPredictor _predictor;
         private Transform _localView;
@@ -46,6 +49,13 @@ namespace ProjectH.Client.Game
         private int _pendingSteps;        // inputs predicted in Update, aimed and sent in LateUpdate
         private int _health;
         private int _shield;
+        // Phase 5 (D11): the newest MatchState and ZoneState. A dev-respawn server sends neither: _hasMatch stays
+        // false and the client behaves as in Phase 4 (respawn countdown, no match HUD, no zone).
+        private bool _hasMatch;
+        private MatchState _match;
+        private ZoneState _zone;
+        private bool _hasResult;
+        private MatchResult _result;
         private bool _aiming;
         private bool _fireHeld;
         // D12: the click that locks the cursor must not also fire; fire waits for that button's release.
@@ -78,6 +88,8 @@ namespace ProjectH.Client.Game
             _inventoryHud = new InventoryHud();
             _worldItems = new WorldItemViews();
             _fireEffects = new LocalFireEffects();
+            _matchHud = new MatchHud();
+            _zoneView = new ZoneView();
 
             _net = new NetClient();
             _net.Joined += OnJoined;
@@ -96,6 +108,9 @@ namespace ProjectH.Client.Game
             _net.ItemReceived += OnItem;
             _net.ItemRemovedReceived += OnItemRemoved;
             _net.PickupResultReceived += OnPickupResult;
+            _net.MatchStateReceived += OnMatchState;
+            _net.ZoneStateReceived += OnZoneState;
+            _net.MatchResultReceived += OnMatchResult;
         }
 
         private void Update()
@@ -133,7 +148,10 @@ namespace ProjectH.Client.Game
             float now = Time.time;
             bool alive = !_predictor.IsDead;
 
-            _camera.Follow(_predictor.RenderPosition, _aiming, Time.deltaTime);
+            // D5: dead in a match, the camera follows the watched player where it is drawn; otherwise our own view.
+            _spectator.Update(_remotePlayers);
+            Vector3 followFeet = _spectator.TryGetFeet(_remotePlayers, _renderTick, out Vector3 watched) ? watched : _predictor.RenderPosition;
+            _camera.Follow(followFeet, _aiming, Time.deltaTime);
             _crosshair.SetVisible(alive);
 
             // After the camera moved, so aim, tracer and the sent inputs all use the crosshair of this frame.
@@ -169,6 +187,31 @@ namespace ProjectH.Client.Game
             _hud.Tick(_camera.Yaw, now);
 
             UpdateInventoryHud(alive, now);
+            UpdateMatchHud(alive);
+        }
+
+        // D14: state line, zone line and circle, red edges outside the zone, result, spectating. Strings are rebuilt
+        // only on change (MatchHudText). Times use the estimated current server tick: the render tick plus the
+        // interpolation delay.
+        private void UpdateMatchHud(bool alive)
+        {
+            if (!_hasMatch || _clock == null || !_clock.IsReady || _simHz <= 0) return;
+            double tick = _renderTick + _interpolationDelaySeconds * _simHz;
+
+            int secondsLeft = _match.StateEndTick > tick ? (int)Math.Ceiling((_match.StateEndTick - tick) / _simHz) : 0;
+            _matchHud.SetStatus(_match.State, secondsLeft, _match.Alive, _match.Participants, _match.MinPlayers);
+
+            bool inMatch = _match.State == MatchFlowState.Playing || _match.State == MatchFlowState.FinalPhase;
+            int zoneSeconds = 0;
+            ZoneHint hint = inMatch ? ZoneMath.Hint(_zone, tick, _simHz, out zoneSeconds) : ZoneHint.None;
+            _matchHud.SetZone(hint, zoneSeconds);
+            Vector3 feet = _predictor.PredictedPosition;
+            _matchHud.SetOutside(inMatch && alive && ZoneMath.IsOutside(_zone, feet.x, feet.z, tick));
+            _zoneView.Tick(tick);
+
+            if (_hasResult) _matchHud.SetResult(_result.WinnerId == MyEntityId, _result.Placement, _result.Kills);
+            else _matchHud.SetResult(false, 0, 0);
+            _matchHud.SetSpectating(_spectator.Active ? _spectator.Target : (ushort)0);
         }
 
         // D15: slots, heals, the heal bar and the "[E]" prompt. Strings are rebuilt only on change (InventoryHudText).
@@ -238,8 +281,13 @@ namespace ProjectH.Client.Game
             _net.ItemReceived -= OnItem;
             _net.ItemRemovedReceived -= OnItemRemoved;
             _net.PickupResultReceived -= OnPickupResult;
+            _net.MatchStateReceived -= OnMatchState;
+            _net.ZoneStateReceived -= OnZoneState;
+            _net.MatchResultReceived -= OnMatchResult;
             _net.Dispose();
             ClearMatchState();
+            _zoneView.Dispose();
+            _matchHud.Dispose();
             _fireEffects.Dispose();
             _worldItems.Dispose();
             _inventoryHud.Dispose();
@@ -253,6 +301,9 @@ namespace ProjectH.Client.Game
 
         // Left click locks a free cursor (only once joined) and fires while it is locked (D12).
         // Aim and fire only count while the cursor is locked, i.e. while the mouse controls the game.
+        // Phase 5 D5: while spectating, a left click on a locked cursor moves to the next player and never fires;
+        // the button must be released before it fires again (a click held into the next round does not shoot).
+        // The click that locks the cursor neither fires nor cycles.
         private void UpdateCursorAndButtons()
         {
             bool locked = Cursor.lockState == CursorLockMode.Locked;
@@ -267,9 +318,14 @@ namespace ProjectH.Client.Game
                 locked = true;
                 _fireBlockedUntilRelease = true;
             }
+            else if (locked && _input.FirePressed && _spectator.Active)
+            {
+                _spectator.Cycle();
+                _fireBlockedUntilRelease = true;
+            }
 
             if (!_input.FireHeld) _fireBlockedUntilRelease = false;
-            _fireHeld = locked && _input.FireHeld && !_fireBlockedUntilRelease;
+            _fireHeld = locked && _input.FireHeld && !_fireBlockedUntilRelease && !_spectator.Active;
             _aiming = locked && _input.AimHeld;
         }
 
@@ -429,19 +485,61 @@ namespace ProjectH.Client.Game
             if (died.VictimId != MyEntityId || _predictor == null) return;
             _predictor.SetDead();
             PlayerViewFactory.SetAlive(_localRenderer, null, true, false);
-            _hud.ShowDeath(Time.time);
+            // D4, D5: in a match death is permanent, so no respawn countdown: watch the killer instead. A newcomer
+            // during a match is told the same way (KillerId 0). The dev sandbox keeps the Phase 3 countdown.
+            if (_hasMatch)
+            {
+                _spectator.Begin(died.KillerId);
+                // A fire button held through the death must not shoot when the next round respawns us: it has to
+                // be released first (a held button never makes FirePressed, so the cycle branch cannot block it).
+                _fireBlockedUntilRelease = true;
+            }
+            else _hud.ShowDeath(Time.time);
         }
 
         private void OnPlayerRespawned(PlayerRespawned respawned)
         {
-            // Other players' views follow their snapshot flags (RemotePlayers.Push).
-            if (respawned.EntityId != MyEntityId || _predictor == null) return;
+            // Other players' alive state follows their snapshot flags (RemotePlayers.Push). Their teleport is told
+            // here too, because the match start and the round reset do not flip the flag (alive -> alive).
+            if (respawned.EntityId != MyEntityId)
+            {
+                _remotePlayers.Teleport(respawned.EntityId, respawned.Position.ToUnity());
+                return;
+            }
+            if (_predictor == null) return;
+            // Also the match start and the round reset (Phase 5 D3, D13): the same teleport, Seq continues.
             _predictor.Respawn(new MoveState { Position = respawned.Position, Yaw = respawned.Yaw });
             _input.QueuedButtons = InputButtons.None;
+            _spectator.End();
             // Empty until the server's InventoryState for the new life arrives (sent right after this event).
             if (_weapons != null) _weapons.Clear();
             PlayerViewFactory.SetAlive(_localRenderer, null, true, true);
             _hud.HideDeath();
+        }
+
+        private void OnMatchState(MatchState state)
+        {
+            _match = state;
+            if (!_hasMatch)
+            {
+                _hasMatch = true;
+                _matchHud.SetVisible(true);
+            }
+            // The result stays up during Finished and goes with the next round's countdown.
+            if (state.State == MatchFlowState.WaitingForPlayers || state.State == MatchFlowState.Starting) _hasResult = false;
+        }
+
+        private void OnZoneState(ZoneState zone)
+        {
+            _zone = zone;
+            _zoneView.SetZone(zone);
+        }
+
+        // Only participants get one (D11).
+        private void OnMatchResult(MatchResult result)
+        {
+            _result = result;
+            _hasResult = true;
         }
 
         private void OnDisconnected(string reason)
@@ -468,6 +566,16 @@ namespace ProjectH.Client.Game
             _worldItems.Clear();
             _pendingSteps = 0;
             _renderTick = 0;
+            _hasMatch = false;
+            _match = default;
+            _zone = default;
+            _hasResult = false;
+            _spectator.End();
+            _zoneView.Clear();
+            _matchHud.SetOutside(false);
+            _matchHud.SetResult(false, 0, 0);
+            _matchHud.SetSpectating(0);
+            _matchHud.SetVisible(false);
             _crosshair.SetVisible(false);
             _hud.HideDeath();
             _hud.SetVisible(false);

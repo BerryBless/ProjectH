@@ -101,6 +101,83 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual(-5f, position.x, 1e-4f);
         }
 
+        // Phase 5: PlayerRespawned (ReliableOrdered) and snapshots (Sequenced) are on different channels, so the
+        // event can come before or after the first snapshots from the spawn point. Either way the view snaps.
+        private static readonly Vector3 Far = new Vector3(40f, 0f, 0f);
+        private static readonly Vector3 Spawn = new Vector3(-20f, 0f, 0f);
+
+        [Test]
+        public void Teleport_EventFirst_DropsTheOldHistory()
+        {
+            var interp = new RemotePlayerInterpolator();
+            interp.Push(10, Far, 0f);
+            interp.Push(12, Far, 0f);
+            interp.Teleport(Spawn);
+            interp.Push(14, Spawn, 0f);
+
+            Assert.IsTrue(interp.TrySample(11.0, out Vector3 position, out _));
+            Assert.AreEqual(Spawn.x, position.x, 1e-4f);   // no slide from Far
+        }
+
+        [Test]
+        public void Teleport_EventLate_KeepsTheSamplesFromTheSpawn()
+        {
+            var interp = new RemotePlayerInterpolator();
+            interp.Push(10, Far, 0f);
+            interp.Push(12, Far, 0f);
+            interp.Push(14, Spawn, 0f);
+            interp.Push(16, Spawn + new Vector3(1f, 0f, 0f), 0f);
+            interp.Teleport(Spawn);
+
+            Assert.IsTrue(interp.TrySample(15.0, out Vector3 between, out _));
+            Assert.AreEqual(Spawn.x + 0.5f, between.x, 1e-4f);   // both post-respawn samples kept
+            Assert.IsTrue(interp.TrySample(11.0, out Vector3 early, out _));
+            Assert.AreEqual(Spawn.x, early.x, 1e-4f);            // the old ones are gone
+        }
+
+        [Test]
+        public void Teleport_AfterTheDeadToAliveClear_IsIdempotent()
+        {
+            var interp = new RemotePlayerInterpolator();
+            interp.Push(10, Far, 0f);
+            interp.Clear();   // what RemotePlayers.Push does on the alive flag flip
+            interp.Push(14, Spawn, 0f);
+            interp.Push(16, Spawn + new Vector3(1f, 0f, 0f), 0f);
+            interp.Teleport(Spawn);
+            interp.Teleport(Spawn);
+
+            Assert.IsTrue(interp.TrySample(15.0, out Vector3 position, out _));
+            Assert.AreEqual(Spawn.x + 0.5f, position.x, 1e-4f);
+        }
+
+        // Accepted residual: an old sample within the keep radius (5 m) of the spawn point cannot be told apart from
+        // a post-respawn one, so it is kept (the view then slides less than 5 m). Farther ones are dropped.
+        [Test]
+        public void Teleport_KeepsOldSamplesWithin5m_DropsFartherOnes()
+        {
+            var interp = new RemotePlayerInterpolator();
+            interp.Push(8, Spawn + new Vector3(6f, 0f, 0f), 0f);     // 6 m: dropped
+            interp.Push(10, Spawn + new Vector3(4.9f, 0f, 0f), 0f);  // 4.9 m: kept
+            interp.Push(12, Spawn + new Vector3(4f, 0f, 0f), 0f);    // 4 m: kept
+            interp.Teleport(Spawn);
+
+            Assert.IsTrue(interp.TrySample(0.0, out Vector3 oldest, out _));
+            Assert.AreEqual(Spawn.x + 4.9f, oldest.x, 1e-4f);
+            Assert.IsTrue(interp.TrySample(11.0, out Vector3 between, out _));
+            Assert.AreEqual(Spawn.x + 4.45f, between.x, 1e-4f);
+        }
+
+        [Test]
+        public void Teleport_NonFiniteTarget_IsIgnored()
+        {
+            var interp = new RemotePlayerInterpolator();
+            interp.Push(10, Far, 0f);
+            interp.Teleport(new Vector3(float.NaN, 0f, 0f));
+
+            Assert.IsTrue(interp.TrySample(10.0, out Vector3 position, out _));
+            Assert.AreEqual(Far.x, position.x, 1e-4f);
+        }
+
         [Test]
         public void ServerClock_RenderTick_NeverGoesBackwards()
         {

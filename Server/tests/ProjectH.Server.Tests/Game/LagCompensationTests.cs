@@ -27,7 +27,7 @@ public class LagCompensationTests
 
     public LagCompensationTests()
     {
-        _match = new Match(new ServerOptions { MaxPlayers = 2 }, TestGameData.Create(), (_, _, _) => { }, TestGameData.CombatLoadout);
+        _match = new Match(new ServerOptions { MaxPlayers = 2, DevRespawn = true },TestGameData.Create(), (_, _, _) => { }, TestGameData.CombatLoadout);
         _match.TryJoin(1, "shooter");
         _match.TryJoin(2, "target");
         _match.TryGetPlayer(1, out _shooter);
@@ -106,7 +106,7 @@ public class LagCompensationTests
     public void Shooter_FiresFromCurrentPosition()
     {
         var shots = new List<Vector3>();
-        var match = new Match(new ServerOptions { MaxPlayers = 1 }, TestGameData.Create(), (_, data, _) =>
+        var match = new Match(new ServerOptions { MaxPlayers = 1, DevRespawn = true },TestGameData.Create(), (_, data, _) =>
         {
             var reader = new PacketReader(data);
             if (reader.TryReadPacketId(out PacketId id) && id == PacketId.ShotFired && ShotFired.TryRead(ref reader, out var shot))
@@ -127,7 +127,7 @@ public class LagCompensationTests
     [Fact]
     public void AfterRespawn_RewindFindsSpawnPoint_NotTheBody()
     {
-        var match = new Match(new ServerOptions { MaxPlayers = 2 }, TestGameData.Create(), static (_, _, _) => { }, TestGameData.CombatLoadout);
+        var match = new Match(new ServerOptions { MaxPlayers = 2, DevRespawn = true },TestGameData.Create(), static (_, _, _) => { }, TestGameData.CombatLoadout);
         match.TryJoin(1, "shooter");
         match.TryJoin(2, "target");
         match.TryGetPlayer(1, out var shooter);
@@ -139,7 +139,8 @@ public class LagCompensationTests
         target.History.Reset(match.ServerTick, body);
         target.Alive = false;
         target.RespawnAtTick = match.ServerTick + 5;
-        while (!target.Alive) match.Tick();
+        for (int i = 0; i < 300 && !target.Alive; i++) match.Tick();
+        Assert.True(target.Alive);
         Vector3 spawn = Match.SpawnPosition(target.EntityId);
         Assert.Equal(spawn, target.State.Position);
 
@@ -156,7 +157,7 @@ public class LagCompensationTests
     [Fact]
     public void FiringTick_AllocatesNothing()
     {
-        var match = new Match(new ServerOptions { MaxPlayers = 2 }, TestGameData.Create(), static (_, _, _) => { }, TestGameData.CombatLoadout);
+        var match = new Match(new ServerOptions { MaxPlayers = 2, DevRespawn = true },TestGameData.Create(), static (_, _, _) => { }, TestGameData.CombatLoadout);
         match.TryJoin(1, "shooter");
         match.TryJoin(2, "target");
         match.TryGetPlayer(1, out var shooter);

@@ -32,7 +32,7 @@ public class PickupDropTests
     }
 
     private Match NewMatch(StartingLoadout loadout, LootPoint[]? lootPoints = null) =>
-        new(new ServerOptions { MaxPlayers = 3 }, TestGameData.Create(),
+        new(new ServerOptions { MaxPlayers = 3, DevRespawn = true },TestGameData.Create(),
             (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)), loadout,
             lootPoints ?? Array.Empty<LootPoint>());
 
@@ -586,7 +586,8 @@ public class PickupDropTests
             _match.Tick();
             Assert.False(b.Alive, $"death {death}");
             Assert.True(_match.WorldItems.Count <= WorldItems.Capacity);
-            while (!b.Alive) _match.Tick();
+            for (int i = 0; i < 300 && !b.Alive; i++) _match.Tick();
+            Assert.True(b.Alive, $"respawn after death {death}");
         }
 
         Assert.Equal(WorldItems.Capacity, _match.WorldItems.Count);
@@ -597,7 +598,7 @@ public class PickupDropTests
     [Fact]
     public void PickupTick_AllocatesNothing()
     {
-        _match = new Match(new ServerOptions { MaxPlayers = 2 }, TestGameData.Create(), static (_, _, _) => { },
+        _match = new Match(new ServerOptions { MaxPlayers = 2, DevRespawn = true }, TestGameData.Create(), static (_, _, _) => { },
             TestGameData.CombatLoadout, Array.Empty<LootPoint>());
         _match.TryJoin(1, "a");
         _match.TryGetPlayer(1, out var a);
@@ -620,7 +621,7 @@ public class PickupDropTests
     [Fact]
     public void SwapAndDropTicks_AllocateNothing()
     {
-        _match = new Match(new ServerOptions { MaxPlayers = 2 }, TestGameData.Create(), static (_, _, _) => { },
+        _match = new Match(new ServerOptions { MaxPlayers = 2, DevRespawn = true }, TestGameData.Create(), static (_, _, _) => { },
             new StartingLoadout
             {
                 Weapons = new[] { new LoadoutWeapon(TestWeapons.AutoId, 0), new LoadoutWeapon(TestWeapons.SemiId, 0), new LoadoutWeapon(TestWeapons.LightId, 0) },

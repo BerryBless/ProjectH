@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace ProjectH.Server.Game;
 
-// Shared by the data file loaders (weapons.json, items.json, loot.json). Startup only.
+// Shared by the data file loaders (weapons.json, items.json, loot.json, zones.json). Startup only.
 internal static class DataJson
 {
     public static readonly JsonSerializerOptions Options = new()

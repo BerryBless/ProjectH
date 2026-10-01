@@ -77,6 +77,34 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // Phase 5 D5 (spectating): the entity ids of the living remote players, written into buffer; returns how
+        // many. Alive comes from the snapshot flags. No allocation (struct enumerator).
+        public int CollectAlive(ushort[] buffer)
+        {
+            int count = 0;
+            foreach (var pair in _entries)
+            {
+                if (count == buffer.Length) break;
+                if (pair.Value.Alive) buffer[count++] = pair.Key;
+            }
+            return count;
+        }
+
+        // Phase 5: PlayerRespawned for a remote player (match start and round reset are alive -> alive, so the
+        // snapshot flag does not flip): drop its pre-teleport samples so the view snaps instead of sliding.
+        // Alive and the view stay with the snapshot flags. Unknown id: nothing.
+        public void Teleport(ushort entityId, Vector3 to)
+        {
+            if (_entries.TryGetValue(entityId, out Entry entry)) entry.Interpolator.Teleport(to);
+        }
+
+        // Where a remote player's feet are drawn at renderTick (the same interpolation as its view).
+        public bool TryGetFeet(ushort entityId, double renderTick, out Vector3 feet)
+        {
+            feet = default;
+            return _entries.TryGetValue(entityId, out Entry entry) && entry.Interpolator.TrySample(renderTick, out feet, out _);
+        }
+
         public void Clear()
         {
             foreach (var pair in _entries)

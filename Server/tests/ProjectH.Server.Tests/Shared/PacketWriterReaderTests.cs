@@ -76,7 +76,7 @@ public class PacketWriterReaderTests
 
     [Theory]
     [InlineData(0)]
-    [InlineData(19)]   // one above PacketId.PickupResult
+    [InlineData(22)]   // one above PacketId.MatchResult
     [InlineData(255)]
     public void PacketId_OutOfRange_IsRejected(byte raw)
     {
@@ -90,6 +90,8 @@ public class PacketWriterReaderTests
     [InlineData(PacketId.PlayerRespawned)]
     [InlineData(PacketId.ItemCatalog)]
     [InlineData(PacketId.PickupResult)]
+    [InlineData(PacketId.MatchState)]
+    [InlineData(PacketId.MatchResult)]
     public void PacketId_InRange_IsAccepted(PacketId expected)
     {
         var reader = new PacketReader(new[] { (byte)expected });

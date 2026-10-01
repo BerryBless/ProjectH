@@ -155,24 +155,29 @@ namespace ProjectH.Shared.Protocol
 
     // S->C, ReliableOrdered, to everyone. Same channel as PlayerRespawned, so a client always sees a
     // death before the matching respawn.
+    // KillerId 0 = no killer (the zone, Phase 5 D8). Placement (Phase 5 D11) = living participants left + 1
+    // during a match, 0 outside one (dev respawn mode, or a newcomer told it is spectating).
     public struct PlayerDied
     {
         public ushort VictimId;
         public ushort KillerId;
+        public byte Placement;
 
         public static void Write(ref PacketWriter writer, in PlayerDied d)
         {
             writer.WriteByte((byte)PacketId.PlayerDied);
             writer.WriteUInt16(d.VictimId);
             writer.WriteUInt16(d.KillerId);
+            writer.WriteByte(d.Placement);
         }
 
         public static bool TryRead(ref PacketReader reader, out PlayerDied d)
         {
             d = default;
-            if (reader.Remaining < 4) return false;
+            if (reader.Remaining < 5) return false;
             reader.TryReadUInt16(out d.VictimId);
             reader.TryReadUInt16(out d.KillerId);
+            reader.TryReadByte(out d.Placement);
             return true;
         }
     }

@@ -27,7 +27,7 @@ public class ConsumableTests
 
     public ConsumableTests()
     {
-        _match = new Match(new ServerOptions { MaxPlayers = 2 }, TestGameData.Create(),
+        _match = new Match(new ServerOptions { MaxPlayers = 2, DevRespawn = true }, TestGameData.Create(),
             (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)),
             new StartingLoadout
             {
@@ -211,7 +211,7 @@ public class ConsumableTests
     [Fact]
     public void Death_CancelsTheUse()
     {
-        var match = new Match(new ServerOptions { MaxPlayers = 2 }, TestGameData.Create(), static (_, _, _) => { },
+        var match = new Match(new ServerOptions { MaxPlayers = 2, DevRespawn = true }, TestGameData.Create(), static (_, _, _) => { },
             new StartingLoadout { Weapons = new[] { new LoadoutWeapon(TestWeapons.AutoId, 0) }, MediumAmmo = 30, Medkits = 2 },
             Array.Empty<LootPoint>());
         match.TryJoin(1, "shooter");
@@ -236,7 +236,8 @@ public class ConsumableTests
         Assert.False(healer.Alive);
         Assert.Equal(ConsumableType.None, healer.Inventory.Using);
 
-        while (!healer.Alive) match.Tick();
+        for (int i = 0; i < 300 && !healer.Alive; i++) match.Tick();
+        Assert.True(healer.Alive);
         for (int i = 0; i < TestGameData.MedkitUseTicks; i++) match.Tick();
         Assert.Equal(CombatRules.MaxHealth, healer.Health);   // the respawn's health, not a late medkit
         Assert.Equal(ConsumableType.None, healer.Inventory.Using);
@@ -247,7 +248,7 @@ public class ConsumableTests
     [Fact]
     public void UseTicks_AllocateNothing()
     {
-        var match = new Match(new ServerOptions { MaxPlayers = 1 }, TestGameData.Create(), static (_, _, _) => { },
+        var match = new Match(new ServerOptions { MaxPlayers = 1, DevRespawn = true }, TestGameData.Create(), static (_, _, _) => { },
             new StartingLoadout { Medkits = 3 }, Array.Empty<LootPoint>());
         match.TryJoin(1, "a");
         match.TryGetPlayer(1, out var a);

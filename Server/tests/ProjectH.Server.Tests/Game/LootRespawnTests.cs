@@ -23,7 +23,7 @@ public class LootRespawnTests
 
     private void Start(int respawnSeconds, string lootJson = TestGameData.LootJson)
     {
-        _match = new Match(new ServerOptions { MaxPlayers = 2, LootRespawnSeconds = respawnSeconds }, TestGameData.Create(lootJson: lootJson),
+        _match = new Match(new ServerOptions { MaxPlayers = 2, LootRespawnSeconds = respawnSeconds, DevRespawn = true },TestGameData.Create(lootJson: lootJson),
             (peer, data, _) => _sent.Add((peer, (PacketId)data[0])), TestGameData.CombatLoadout,
             new[] { new LootPoint(PointPosition, LootPoints.FloorTable) });
         _match.TryJoin(1, "a");

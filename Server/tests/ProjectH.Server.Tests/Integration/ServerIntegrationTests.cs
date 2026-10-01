@@ -18,6 +18,7 @@ public sealed class ServerIntegrationTests : IDisposable
         {
             Port = 0,                 // OS picks a free port: tests can run in parallel
             MaxPlayers = maxPlayers,
+            MinPlayers = 2,   // Phase 5: Validate needs 2 <= MinPlayers <= MaxPlayers, so a test server holds at least 2
             DisconnectTimeoutMs = 1000,
             StatsIntervalSeconds = 60,
         }, TestGameData.Create(), NullLogger.Instance);
@@ -102,11 +103,12 @@ public sealed class ServerIntegrationTests : IDisposable
     [Fact]
     public void ServerFull_IsRejected()
     {
-        using var server = StartServer(maxPlayers: 1);
+        using var server = StartServer(maxPlayers: 2);
         using var a = Join(server, "a");
+        using var b = Join(server, "b");
         using var c = new HeadlessClient();
         c.Connect(server.LocalPort, "c");
-        Assert.True(Pump.Until(() => c.Disconnected, 3000, c, a));
+        Assert.True(Pump.Until(() => c.Disconnected, 3000, c, a, b));
         Assert.Equal(RejectReason.ServerFull, c.RejectReason);
     }
 
