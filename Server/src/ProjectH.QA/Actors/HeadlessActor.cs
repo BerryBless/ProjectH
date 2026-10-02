@@ -51,6 +51,7 @@ public sealed class HeadlessActor : IQaActor
     private string? _error;
     private long _lastCommandId;
     private bool _inputPaused;
+    private long _rawSent;
     // Building (pump thread): pieces still to send, whether the next one has had its aim tick, the request to send after
     // this tick's input, the per-actor request sequence, and the results seen so far (bounded).
     public const int MaxBuildQueue = 64;
@@ -171,6 +172,20 @@ public sealed class HeadlessActor : IQaActor
             case PauseInputCommand p:
                 _inputPaused = p.Paused;
                 break;
+            case SendRawCommand raw:
+            {
+                BotConnection? c = _connection;
+                if (c == null || _closed || !c.Connected || c.Disconnected)
+                {
+                    _error = "Not connected: raw packets not sent.";
+                    break;
+                }
+                foreach (byte[] packet in raw.Packets)
+                {
+                    if (c.SendRaw(packet)) _rawSent++;
+                }
+                break;
+            }
             case BuildCommand b:
                 if (_builds.Count + b.Pieces.Count > MaxBuildQueue)
                 {
@@ -531,6 +546,7 @@ public sealed class HeadlessActor : IQaActor
                 HeldButtons = _held.ToString(),
                 LastCommandId = _lastCommandId,
                 InputPaused = _inputPaused,
+                RawPacketsSent = _rawSent,
                 BuildFirstSequence = _buildFirst,
                 BuildLastSequence = _buildLast,
                 BuildsQueued = _builds.Count,

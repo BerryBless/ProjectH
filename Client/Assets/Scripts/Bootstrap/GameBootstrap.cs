@@ -21,6 +21,10 @@ namespace ProjectH.Client.Bootstrap
             Object.DontDestroyOnLoad(go);
             go.AddComponent<GameClient>();
             go.AddComponent<UiRoot>();
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // QA-4 D26: only with -qaPort (or PROJECTH_QA_PORT in the Editor). Release builds have no such code.
+            if (Qa.QaLaunchOptions.FromEnvironment().Port > 0) go.AddComponent<Qa.QaCommandReceiver>();
+#endif
         }
     }
 }

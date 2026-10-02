@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "name": "DB Down And Recovery",
+  "description": "Request §77, §128: MySQL (Docker container projecth-mysql) goes down during play. The real policy (Persistence/MatchHistoryWriter): one writer saves each finished match with at most MaxAttempts (3) tries, 1 s then 2 s apart, each on a new connection; when all fail the record is counted failed and lost (no requeue). The game never waits for the DB. So: a match that finishes during the outage ends as db.failed +1, the server keeps running and the next match starts; after the DB is started again the next finished match is saved (db.saved +1) without restarting the server. Skipped when Docker or the container is not available (request §76). Cleanup always starts the container again if this run stopped it.",
+  "tags": ["db", "persistence", "faults", "slow"],
+  "seed": 1281,
+  "timeoutSeconds": 240,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2", "Persistence:Enabled": "true" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "db_up", "phase": "arrange", "action": "waitDbHealthy", "description": "the DB is up before the test (skips the scenario without Docker)" },
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+    { "id": "db_enabled", "assert": "server.metrics.db.enabled", "equals": true },
+    { "id": "saved_before", "action": "save", "path": "server.metrics.db.saved", "saveAs": "saved0" },
+    { "id": "failed_before", "action": "save", "path": "server.metrics.db.failed", "saveAs": "failed0" },
+
+    { "id": "db_stop", "phase": "act", "action": "stopDb" },
+    { "id": "end_match_1", "phase": "arrange", "action": "killPlayer", "actor": "playerA", "description": "finish the match during the outage (the subject is the save, not the fight)" },
+    { "id": "finished_1", "phase": "assert", "action": "waitFor", "condition": "match.state", "equals": "Finished", "timeoutMilliseconds": 5000 },
+    { "id": "queue_during_outage", "action": "save", "path": "server.metrics.dbQueueLength", "saveAs": "queueDuringOutage" },
+    { "id": "save_failed", "action": "waitFor", "condition": "server.metrics.db.failed", "greaterThan": "${failed0}", "timeoutMilliseconds": 40000, "description": "3 attempts, 1 s + 2 s backoff, then given up" },
+    { "id": "not_saved", "assert": "server.metrics.db.saved", "equals": "${saved0}" },
+    { "id": "server_alive", "assert": "server.running", "equals": true },
+    { "id": "no_tick_failures", "assert": "server.metrics.health.tickFailures", "equals": 0 },
+    { "id": "next_match", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 20000, "description": "the game goes on without the DB" },
+
+    { "id": "db_start", "phase": "act", "action": "startDb", "description": "start the container and wait until healthy" },
+    { "id": "end_match_2", "phase": "arrange", "action": "killPlayer", "actor": "playerA" },
+    { "id": "finished_2", "phase": "assert", "action": "waitFor", "condition": "match.state", "equals": "Finished", "timeoutMilliseconds": 5000 },
+    { "id": "saved_after", "action": "waitFor", "condition": "server.metrics.db.saved", "greaterThan": "${saved0}", "timeoutMilliseconds": 40000, "description": "the writer reconnects by itself: a new connection per attempt" },
+    { "id": "nothing_dropped", "assert": "server.metrics.db.dropped", "equals": 0 },
+    { "id": "server_still_alive", "assert": "server.running", "equals": true }
+  ]
+}

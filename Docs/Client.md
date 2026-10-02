@@ -8,7 +8,8 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
 |---|---|
 | `Bootstrap/GameBootstrap` | GameClient와 UiRoot를 한 GameObject에 1개 생성(DontDestroyOnLoad) |
 | `Bootstrap/MapWorld` | Shared `GameMap`의 지형 Mesh 1개(`TerrainMesh`, 81 × 81 꼭짓점, 서버와 같은 삼각형, 앞면이 위)와 MeshCollider, 박스마다 Cube(BoxCollider), 맵 밖 400 m 바닥(y −0.05), 공유 Material 3개(지형·구조물·엄폐물), 그림자 없음. Collider는 카메라 충돌·조준 광선용이고 이동 충돌은 `MovementSimulation`이 한다 |
-| `Bootstrap/LaunchArgs` | 실행 인자(`-host`, `-port`, `-devId`, `-autoConnect`). `-autoConnect`면 `UiRoot.Start`가 타이틀을 거치지 않고 바로 접속한다 |
+| `Bootstrap/LaunchArgs` | 실행 인자(`-host`, `-port`, `-devId`, `-autoConnect`). `-autoConnect`면 `UiRoot.Start`가 타이틀을 거치지 않고 바로 접속한다. QA 인자(`-qaPort`, `-qaShotDir`, `-qaRecord`)는 `Qa/QaLaunchOptions`가 읽는다("QA 자동화") |
+| `Qa/*` | QA-4·QA-5. Editor와 Development Build에만 있다(`#if UNITY_EDITOR \|\| DEVELOPMENT_BUILD`). `QaCommandReceiver`(localhost HTTP), `QaInputRecorder`(입력 녹화), 순수 코드 `QaProtocol`·`QaInputRecordFormat`("QA 자동화") |
 | `Net/NetClient` | LiteNetLib, 메인 스레드 전용(`UnsyncedEvents = false`, `Update`에서 Poll). 전투 패킷 6종(WeaponCatalog, ShotFired, HitConfirmed, DamageTaken, PlayerDied, PlayerRespawned)과 아이템 패킷(ItemCatalog, WorldItems·ItemSpawned → `ItemReceived`, ItemRemoved, InventoryState, PickupResult), 경기 패킷(MatchState, ZoneState, MatchResult), 전적 응답(`StatsReceived`)을 이벤트로 올린다. `RequestStats()`가 `StatsRequest`를 보낸다(Join한 뒤에만). `PlayerSpawned.Name`을 함께 전달하고, 마지막 Join 결과·거절 사유·시작 실패를 끊김 화면용으로 보관한다 |
 | `Net/VectorConversions` | System.Numerics ↔ UnityEngine 벡터 변환 |
 | `Input/InputReader` | Input System 격리. Move, Look, Jump, Sprint, Fire(좌클릭), Aim(우클릭), Reload(R), Slot1–3(1·2·3), Interact(E), Drop(G), UseMedkit(4), UseShieldCell(5), Crouch(C 토글, Ctrl 누르는 동안. Phase 12), Esc(메뉴), F1(디버그 줄). Esc·F1은 `GameClient`가 `UiRoot`에 넘긴다. 누름은 `QueuedButtons`에 모았다가 다음 예측 Step이 가져간다. Crouch는 누른 상태라 매 Step에 실린다. C 토글은 Jump나 Sprint를 누르면 꺼지고, 입력이 막혀 있으면(메뉴, 풀린 커서) C는 토글하지 않는다(`Update(gameInputBlocked)`) |
@@ -249,6 +250,75 @@ stateDiagram-v2
 9. **구조물 파괴:** 무기나 채집 도구로 벽을 친다. 손상되면 어두워지고 붉어진다. 부서지면 연기와 함께 사라진다. 바닥을 받치던 벽들을 부수면 바닥이 같이 무너진다.
 10. **Player 2:** 같은 조각이 보이고 그 위를 걷는다. 멀리(관심 칸 3칸 넘게, 60–80 m) 가면 조각이 사라지고 돌아오면 다시 보인다.
 11. Console에 `error`·`Exception`이 없다. F1의 건설 줄에서 거절 수와 요청/s가 보이고, 이동 줄의 "보정"이 조각 위에서도 평소 0.00 m다.
+
+## QA 자동화 (QA-4, QA-5 녹화)
+
+설계 근거: `Docs/specs/2026-10-02-qa-tool-design.md` D26–D29. QA Tool 쪽 사용법은 `Docs/QA.md` "Unity Client"에 있다. Release 빌드에는 이 코드가 없다(빌드 결과 DLL에 `Qa` 타입이 없는 것을 확인했다). QA에는 Development Build를 쓴다.
+
+| 인자 | 뜻 |
+|---|---|
+| `-qaPort N` | `http://127.0.0.1:N/`에 QA 명령 수신기를 연다(시작이 실패할 때만 `localhost`로 다시 시도). 1–65535가 아니거나 없으면 꺼진다. Port가 이미 쓰이고 있으면 경고 한 줄을 남기고 꺼진다 |
+| `-qaShotDir <dir>` | 스크린샷 폴더. 없으면 `Application.persistentDataPath/qa-shots` |
+| `-qaRecord <file>` | 매 시뮬레이션 Step의 InputCommand를 JSON Lines로 쓴다. 파일을 열 수 없으면 경고 한 줄을 남기고 꺼진다 |
+
+Editor에는 Play마다 다른 명령줄이 없다. 그래서 명령줄에 없는 값은 환경 변수 `PROJECTH_QA_PORT`, `PROJECTH_QA_SHOT_DIR`, `PROJECTH_QA_RECORD`에서 읽는다(Editor 전용). Unity/Hub를 시작하기 전에 설정해야 한다. Multiplayer Play Mode 복제본도 이 값을 물려받는다. Port는 먼저 연 하나만 쓰고, 나머지는 경고를 남기고 끈다.
+
+예: `ProjectH.exe -qaPort 18777 -qaShotDir QA/Reports/<runId> -qaRecord rec.jsonl -autoConnect -port 7777 -devId qa1 -screen-fullscreen 0 -screen-width 800 -screen-height 450`. 로그 줄은 `[QA]`로 시작한다.
+
+명령(`QaCommandReceiver`):
+
+- `GET /qa/status`가 돌려주는 값: `{ok, devPlayerId, connected, joined, screen, statsOpen, debugVisible, alive, health, fps, frame}`.
+  - `devPlayerId`는 첫 접속 전에 null이다.
+  - `screen`은 Title, Connecting, InGame, Menu, Disconnected, Result 중 하나다.
+- `POST /qa/screenshot {"name"}`은 프레임이 끝난 뒤(`WaitForEndOfFrame`) 화면을 찍어 `<dir>/<name>.png`에 쓴다. 파일이 생긴 뒤에 `{ok, path}`로 답한다.
+  - name은 `[A-Za-z0-9_-]{1,64}`만 받는다.
+  - Windows 장치 이름(CON, PRN, AUX, NUL, COM1–9, LPT1–9)은 거절한다.
+- `POST /qa/ui {"command"}`의 명령 다섯 가지는 Esc·메뉴 버튼·F1과 같은 `UiFlow`/`DebugOverlay` 경로를 쓴다. 가짜 입력은 만들지 않는다.
+
+  | 명령 | 동작하는 화면 |
+  |---|---|
+  | `openMenu` | InGame에서만 |
+  | `closeMenu` | Menu에서만(통계 창이 닫혀 있을 때) |
+  | `openStats` | Menu나 Result |
+  | `closeStats` | 통계 창이 열려 있을 때 |
+  | `toggleDebug` | 어느 화면에서나 |
+
+  - 화면은 바로 다시 그린다. 그래서 같은 프레임의 스크린샷에 바뀐 화면이 찍힌다.
+  - 맞지 않는 화면이면 409를 돌려주고 아무것도 바꾸지 않는다.
+  - Gameplay 입력 명령은 없다.
+- POST는 `Content-Type: application/json`이어야 한다. 아니면 415를 돌려준다. 브라우저가 preflight 없이 보내는 text/plain·form POST를 막기 위해서다.
+- 그 밖의 오류 코드:
+  - 400: 잘못된 JSON·이름·명령
+  - 403: loopback이 아님
+  - 404, 405(OPTIONS 포함)
+  - 408: 5초 안에 Body가 오지 않음. 연결도 닫는다
+  - 413: Body가 16 KB를 넘음
+  - 503: 처리 중 32개 초과, 큐가 가득 참, 종료 중
+  - 504: 5초 안에 답하지 못함
+
+스레드 구조:
+
+- Accept 스레드와 thread pool 처리기는 Unity API를 부르지 않는다.
+- 요청은 32칸 큐에 들어가고 메인 스레드 `Update`가 꺼내 답한다.
+- 요청마다 5초 기한 하나가 Body 읽기부터 답까지 덮는다.
+- 종료(`OnApplicationQuit`/`OnDestroy`) 순서:
+  1. 남은 요청에 503을 답한다.
+  2. 그 응답이 나갈 때까지 최대 100 ms 기다린다.
+  3. Listener를 닫는다.
+  4. Accept 스레드를 Join한다.
+
+녹화(`QaInputRecorder`, `QaInputRecordFormat`):
+
+- 파일 형식
+  - BOM 없는 UTF-8, `\n` 줄바꿈이다.
+  - 첫 줄은 header `{"type":"header","version":1,"simHz":30,"devPlayerId":"qa1"}`다. 첫 Step과 함께 쓰므로 한 번도 Spawn하지 않으면 파일이 비어 있다.
+  - 이후 Step마다 `{"t","moveX","moveY","yaw","buttons","aimYaw","aimPitch"}` 한 줄이다.
+- `t` = 파일 안의 Step 번호(0부터) / simHz다. Spawn 전이나 끊긴 동안처럼 예측이 없는 시간은 빠진다.
+- `LateUpdate`에서 `SetAim` 뒤, 패킷을 만들기 직전에 쓴다. 그래서 보낸 입력과 같다.
+- 건설 요청(`SendBuild`)·접속·화면은 녹화에 없다. 입력만 담으므로, 서버 상태가 다르면 재생 결과도 달라질 수 있다.
+- 54,000줄(30 Hz로 30분)에서 멈춘다. 300줄마다, 그리고 종료 때 Flush한다.
+
+순수 코드 `Qa/QaProtocol.cs`와 `Qa/QaInputRecordFormat.cs`에는 UnityEngine이 없다. `#if ... || !UNITY_5_3_OR_NEWER`로 감싸서, Unity Release 빌드에서는 빠지지만 .NET 서버 테스트 프로젝트는 소스 링크로 컴파일할 수 있다.
 
 ## 자동 검사
 

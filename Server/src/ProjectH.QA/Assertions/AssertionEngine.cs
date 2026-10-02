@@ -89,6 +89,9 @@ public static class AssertionEngine
                 return await ResolveServerAsync(rest, ctx, token).ConfigureAwait(false);
             case "network":
             {
+                // QA-3: the actor's proxy (counters of its current connection attempt and the fault settings).
+                if (rest.Length >= 1 && rest[0].Equals("proxy", StringComparison.OrdinalIgnoreCase))
+                    return JsonPath.Get(JsonPath.From(run.Network.Describe(ctx.ActorAlias) ?? new { enabled = false }), rest[1..]);
                 ActorState s = ctx.Actor().State;
                 if (rest.Length != 1) return JsonPath.Get(JsonPath.From(s), rest);
                 return rest[0].ToLowerInvariant() switch

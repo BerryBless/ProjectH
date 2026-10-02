@@ -16,6 +16,8 @@ public sealed class QaRunOptions
     // Test seams: a fake QA server and mock actors (null = the real ones).
     public Func<Uri, IQaServerClient>? ServerClientFactory { get; init; }
     public Func<string, string, IQaActor>? ActorFactory { get; init; }
+    // QA-3 test seam: builds the DockerDbController for a container name (null = the real docker CLI).
+    public Func<string, ProjectH.QA.Faults.DockerDbController>? DockerFactory { get; init; }
     public IRunControl? Control { get; init; }
     // UI (QA-2). Log lines by category (QA, Server, Actor, Network, Assertion); null = console only (CLI).
     public Action<string, string>? LogSink { get; init; }
@@ -26,6 +28,8 @@ public sealed class QaRunOptions
     public int StartAtStep { get; init; }
     public bool DebugRun { get; init; }
     public bool UnsavedText { get; init; }
+    // QA-3: a Skipped run exits 1 instead of 0 (CI that must not pass on a missing Docker).
+    public bool FailOnSkip { get; init; }
 }
 
 // What the UI inspector may touch from its HTTP threads: the QA URL (it builds its own client) and the actors'
@@ -123,7 +127,7 @@ public sealed class QaOrchestrator
         report.ServerMode = attach ? ServerSpec.Attach : ServerSpec.Launch;
         report.UnsavedText = _options.UnsavedText;
         Func<Uri, IQaServerClient> clientFactory = _options.ServerClientFactory ?? (uri => new QaServerClient(uri));
-        ServerProcessManager? process = null;
+        LaunchedServer? launched = null;
         IQaServerClient? client = null;
         ActorManager? actors = null;
         RunContext? run = null;
@@ -159,13 +163,14 @@ public sealed class QaOrchestrator
                         _options.LogSink?.Invoke("Server", line);
                     };
                 }
-                process = new ServerProcessManager(serverLog);
-                report.ServerArguments = ServerProcessManager.BuildArguments(dll, seed, scenario.Server.Options);
-                (gamePort, int qaPort) = await process.StartAsync(dll, seed, scenario.Server.Options, clientFactory, userToken).ConfigureAwait(false);
-                report.ServerPid = process.Pid;
-                qaUrl = new Uri($"http://127.0.0.1:{qaPort}/");
+                launched = new LaunchedServer(dll, seed, scenario.Server.Options, clientFactory, serverLog, Log);
+                report.ServerArguments = launched.Arguments;
+                ProjectH.QA.Faults.ServerStartInfo started = await launched.LaunchAsync(userToken).ConfigureAwait(false);
+                report.ServerPid = started.Pid;
+                gamePort = started.GamePort;
+                qaUrl = launched.QaUrl!;
                 gameHost = "127.0.0.1";
-                client = clientFactory(qaUrl);
+                client = launched.Client!;
                 report.ServerHealth = await HealthAsync(client, userToken).ConfigureAwait(false);
             }
             report.QaUrl = qaUrl.ToString();
@@ -183,8 +188,18 @@ public sealed class QaOrchestrator
                 GameHost = gameHost,
                 GamePort = gamePort,
                 PollIntervalMs = _options.PollMs,
+                Db = new ProjectH.QA.Faults.DbFaultHub(_options.DockerFactory),
             };
-            foreach (ActorSpec a in scenario.Actors) await actors.CreateAsync(a.Id, a.Type, userToken).ConfigureAwait(false);
+            if (launched != null)
+            {
+                run.ServerControl = launched;
+                launched.Run = run;
+            }
+            foreach (ActorSpec a in scenario.Actors)
+            {
+                await actors.CreateAsync(a.Id, a.Type, userToken).ConfigureAwait(false);
+                if (a.Proxy) run.Network.EnableProxy(a.Id);
+            }
             await TryMarkAsync(client, $"QA run {report.RunId} start: {scenario.Name} seed {seed}", report.RunId).ConfigureAwait(false);
             _options.OnLive?.Invoke(new LiveRun(report.RunId, qaUrl, actors));
 
@@ -241,9 +256,13 @@ public sealed class QaOrchestrator
         finally
         {
             _options.OnLive?.Invoke(null);
+            // A restart step may have replaced the server: talk to the current one.
+            if (run != null) client = run.Server;
             // State at the failure (request §103-104), before anything is closed.
-            if (report.Status != RunStatus.Passed && actors != null) report.StateDump = await DumpAsync(client, actors).ConfigureAwait(false);
-            if (client != null)
+            if (report.Status is not (RunStatus.Passed or RunStatus.Skipped) && actors != null) report.StateDump = await DumpAsync(launched == null || launched.Running ? client : null, actors).ConfigureAwait(false);
+            // A scenario may have stopped the launched server (stopServer, killServer): nothing to ask then, and each
+            // refused connection would cost seconds.
+            if (client != null && (launched == null || launched.Running))
             {
                 report.Metrics = await TryAsync(t => client.GetMetricsAsync(null, t)).ConfigureAwait(false);
                 if (run?.Events != null)
@@ -272,18 +291,38 @@ public sealed class QaOrchestrator
                 }
                 await actors.DisposeAsync().ConfigureAwait(false);
             }
-            if (process != null)
+            if (run != null)
             {
-                (bool stopped, string message) = await process.StopAsync(client).ConfigureAwait(false);
-                serverStopFailed = !stopped;
-                report.Cleanup.Add(new CleanupResult("server", stopped, message));
-                report.ServerLogTail = process.Log.Tail(ReportLogLines);
-                process.Dispose();
+                // Request §113: faults are always cleared and every proxy closed; DB containers this run stopped are
+                // started again (own timeouts). Reported apart from the result.
+                try
+                {
+                    bool hadProxies = run.Network.ProxiedAliases.Any();
+                    List<string> problems = await run.Network.CloseAllAsync().ConfigureAwait(false);
+                    if (hadProxies) report.Cleanup.Add(new CleanupResult("network", problems.Count == 0, problems.Count == 0 ? "faults cleared, proxies closed" : string.Join("; ", problems)));
+                }
+                catch (Exception e)
+                {
+                    report.Cleanup.Add(new CleanupResult("network", false, e.Message));
+                }
+                foreach (CleanupResult r in await run.Db.RestoreAllAsync().ConfigureAwait(false)) report.Cleanup.Add(r);
             }
-            (client as IDisposable)?.Dispose();
+            if (launched != null)
+            {
+                (bool stopped, string message) = await launched.StopForCleanupAsync().ConfigureAwait(false);
+                serverStopFailed = !stopped;
+                if (launched.Starts > 1) message += $" ({launched.Starts} starts in this run)";
+                report.Cleanup.Add(new CleanupResult("server", stopped, message));
+                report.ServerLogTail = launched.Log.Tail(ReportLogLines);
+                launched.Dispose();
+            }
+            else
+            {
+                (client as IDisposable)?.Dispose();
+            }
         }
 
-        report.ExitCode = serverStopFailed ? 2 : RunReport.ExitCodeFor(report.Status);
+        report.ExitCode = serverStopFailed ? 2 : RunReport.ExitCodeFor(report.Status, _options.FailOnSkip);
         report.DurationMs = clock.ElapsedMilliseconds;
         PrintSummary(report);
         if (_options.WriteReport)
@@ -387,7 +426,8 @@ public sealed class QaOrchestrator
     public static string LogCategory(string action) => action switch
     {
         "assert" or "waitFor" or "save" or "waitForEvent" => "Assertion",
-        "connect" or "disconnect" or "reconnect" or "connectAll" or "disconnectAll" or "pauseInput" or "resumeInput" => "Network",
+        "connect" or "disconnect" or "reconnect" or "connectAll" or "disconnectAll" or "pauseInput" or "resumeInput"
+            or "networkFault" or "clearNetworkFault" or "blockNetwork" or "unblockNetwork" or "dropConnection" or "sendInvalidPackets" => "Network",
         "moveTo" or "moveVector" or "look" or "aim" or "fire" or "stopFire" or "press" or "release" or "switchWeapon" or "jump"
             or "sprint" or "crouch" or "build" or "spawnActors" => "Actor",
         _ => "QA",
@@ -398,7 +438,8 @@ public sealed class QaOrchestrator
         if (r.ToolError != null) _out.WriteLine($"   {r.ToolError}");
         foreach (CleanupResult c in r.Cleanup.Where(c => !c.Ok)) _out.WriteLine($"   cleanup {c.Name} FAILED: {c.Message}");
         string failed = r.Failure != null ? $"  failed at step {r.Failure.StepIndex + 1:00} ({r.Failure.StepId})" : string.Empty;
-        _out.WriteLine($"== {r.Scenario}: {r.Status.ToString().ToUpperInvariant()}{failed}  seed {r.Seed}  runId {r.RunId}  {r.DurationMs} ms");
+        string skipped = r.Status == RunStatus.Skipped && r.SkipReason != null ? $" ({r.SkipReason})" : string.Empty;
+        _out.WriteLine($"== {r.Scenario}: {r.Status.ToString().ToUpperInvariant()}{skipped}{failed}  seed {r.Seed}  runId {r.RunId}  {r.DurationMs} ms");
     }
 }
 

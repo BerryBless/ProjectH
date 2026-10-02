@@ -1,0 +1,14 @@
+{
+  "name": "faults",
+  "description": "QA-3 fault injection (D13, D14, request §70-78, §119, §127-129): network latency/loss/drop through the actor proxy, lag compensation, invalid packets, server shutdown and restart, DB outage (skipped without Docker).",
+  "scenarios": [
+    "Network/latency_loss_combat.json",
+    "Combat/lag_compensation.json",
+    "Reconnect/network_drop.json",
+    "Network/invalid_packet.json",
+    "Network/input_timeout.json",
+    "ServerProcess/shutdown.json",
+    "ServerProcess/restart.json",
+    "Persistence/db_down.json"
+  ]
+}

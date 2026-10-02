@@ -270,7 +270,11 @@ public static class FlowActions
     {
         string? prefix = ctx.String("prefix");
         IQaActor[] actors = ctx.Run.Actors.All.Where(a => prefix == null || a.Alias.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
-        foreach (IQaActor a in actors) await a.SendAsync(new ConnectCommand(ctx.Run.GameHost, ctx.Run.GamePort, false), token).ConfigureAwait(false);
+        foreach (IQaActor a in actors)
+        {
+            (string host, int port) = await ctx.Run.ConnectTargetAsync(a.Alias).ConfigureAwait(false);
+            await a.SendAsync(new ConnectCommand(host, port, false), token).ConfigureAwait(false);
+        }
         bool joined = await ctx.WaitUntilAsync(() => actors.All(a => a.State.Joined && a.State.HasSnapshot), token).ConfigureAwait(false);
         int count = actors.Count(a => a.State.Joined);
         if (joined) return StepOutcome.Pass($"{count} joined");

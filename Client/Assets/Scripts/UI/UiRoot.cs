@@ -192,6 +192,47 @@ namespace ProjectH.Client.UI
             _flow.LeaveRequested();
         }
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // ---- QA-4 D28: QaCommandReceiver's view of the UI and its commands (main thread) ----
+        public UiScreen QaScreen => _flow.Screen;
+        public bool QaStatsOpen => _flow.StatsOpen;
+        public bool QaDebugVisible => _debug.Visible;
+
+        // The same flow calls as Esc, the menu buttons and F1 (no faked input). False, and nothing changed, when the
+        // command does not apply to the current screen. The screens are redrawn at once, so a screenshot requested in
+        // the same frame shows the result.
+        public bool QaApply(Qa.QaUiCommand command)
+        {
+            bool applied = false;
+            switch (command)
+            {
+                case Qa.QaUiCommand.OpenMenu:
+                    applied = _flow.Screen == UiScreen.InGame && !_flow.StatsOpen;
+                    if (applied) _flow.EscapePressed();
+                    break;
+                case Qa.QaUiCommand.CloseMenu:
+                    // Only the menu: ContinuePressed would also dismiss the result screen.
+                    applied = _flow.Screen == UiScreen.Menu && !_flow.StatsOpen;
+                    if (applied) _flow.ContinuePressed();
+                    break;
+                case Qa.QaUiCommand.OpenStats:
+                    applied = (_flow.Screen == UiScreen.Menu || _flow.Screen == UiScreen.Result) && !_flow.StatsOpen;
+                    if (applied) _flow.OpenStats();
+                    break;
+                case Qa.QaUiCommand.CloseStats:
+                    applied = _flow.StatsOpen;
+                    if (applied) _flow.CloseStats();
+                    break;
+                case Qa.QaUiCommand.ToggleDebug:
+                    applied = true;
+                    _debug.Toggle();
+                    break;
+            }
+            if (_flow.Version != _shownVersion) Apply();
+            return applied;
+        }
+#endif
+
         // A built player closes. In the Editor Application.Quit does nothing (stop Play Mode instead).
         private static void Quit()
         {

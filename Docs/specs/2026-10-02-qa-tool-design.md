@@ -122,3 +122,13 @@ Program (CLI: run / validate / list / ui)
 | D23 | 실행 모드: Run, Run From Step(앞 Step은 Skipped로 기록), Run Until Step(그 Step 뒤 Pause), Single Step, Pause/Resume, Stop, Breakpoint(Step의 `breakpoint` 또는 UI 토글, 파일에 저장하지 않아도 됨), Retry Failed Step(경고 표시: 게임 상태가 이미 바뀌었을 수 있음), Retry Scenario(같은 Seed). Run From Step은 서버를 새로 띄우므로 앞 Step의 Arrange가 없다는 경고를 보인다. | §54-63. | — |
 | D24 | Debug Run 체크박스: Step 전후 서버 상태(`/qa/match`, `/qa/players`) Snapshot을 리포트에 저장. 기본 꺼짐. | §64. | 리포트가 커진다. |
 | D25 | 저장: `QA/Scenarios` 아래 `.json`만, 경로 정규화 후 루트 밖이면 거부. 저장 전 Validation, 오류가 있으면 저장하지 않음(경고는 허용). | §52. Path Traversal 방지. | — |
+
+## QA-4 / QA-5 Client 결정 (Unity, §83-90, §107)
+
+| # | 결정 | 이유 | 틀렸을 때 비용 |
+|---|---|---|---|
+| D26 | `QaCommandReceiver`(Client/Assets/Scripts/Qa/)는 파일 전체를 `#if UNITY_EDITOR \|\| DEVELOPMENT_BUILD`로 감싼다. 실행 인자 `-qaPort N`이 있을 때만 `System.Net.HttpListener`로 `http://127.0.0.1:N/`(Prefix는 localhost와 127.0.0.1 둘 다 시도)를 연다. Release 빌드에는 코드가 없다. | §86·§165. Unity에는 Kestrel이 없다. HttpListener는 Mono/IL2CPP 모두 있다. | Development Build를 따로 만들어야 한다. |
+| D27 | HTTP 스레드는 Unity API를 부르지 않는다. 요청을 bounded 큐(32)에 넣고 메인 스레드 `Update`가 꺼내 처리한 뒤 응답한다(Timeout 5 s). 큐가 가득 차면 503. | Unity API는 메인 스레드 전용. | — |
+| D28 | 명령: `GET /qa/status` → `{ok, devPlayerId, connected, joined, screen(현재 UI 화면 이름), alive, health, fps, frame}`; `POST /qa/screenshot {name}` → `QA/Reports/<runId>/` 같은 지정 폴더(`-qaShotDir` 인자, 없으면 persistentDataPath/qa-shots)에 `<name>.png` 저장, `{ok, path}`. name은 `[A-Za-z0-9_-]{1,64}`만. `POST /qa/ui {command: openMenu\|closeMenu\|openStats\|closeStats\|toggleDebug}`. Gameplay 입력 명령은 없다(§87). | §83-87. 경로 주입 방지. | — |
+| D29 | 입력 녹화(QA-5, §107): `-qaRecord <path>`가 있으면 Client가 매 시뮬레이션 Step의 InputCommand를 JSON Lines로 쓴다(첫 줄 header: `{"type":"header","version":1,"simHz":..,"devPlayerId":..}`, 이후 `{"t":초,"moveX","moveY","yaw","buttons":숫자,"aimYaw","aimPitch"}`). 파일은 비동기 아닌 버퍼 쓰기(BufferedStream), 최대 30분(54,000줄)에서 멈춘다. QA Tool의 `convert-recording`이 이것을 `playInputs` Step이 있는 시나리오 초안으로 바꾼다. | §106-107: Scenario + Input Timeline 재현. 서버 Replay는 만들지 않는다. | 녹화는 입력만 담는다. 서버 상태 차이로 재생 결과가 다를 수 있다(문서화). |
+| D30 | Manual Check(§88-90): Runner가 `manualCheck` Step에서 멈춘다. UI는 PASS/FAIL 버튼과 메모 입력, CLI는 대화형 터미널이면 `p/f` 입력, 비대화형이면 SKIPPED(`--manual fail`이면 FAIL). 결과는 리포트 "Manual Checks"에 기록. | §88-90, D16. | — |

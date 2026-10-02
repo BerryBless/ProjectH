@@ -14,6 +14,7 @@ input, select, textarea { font: inherit; }
 .badge.paused { background: #ef6c00; color: #fff; }
 .badge.Passed, .badge.finished.Passed { background: #2e7d32; color: #fff; }
 .badge.Failed, .badge.Error, .badge.Cancelled { background: #c62828; color: #fff; }
+.badge.Skipped { background: #9e9e9e; color: #fff; }
 main { display: grid; grid-template-columns: 260px 1fr; min-height: 0; }
 #tree { overflow: auto; border-right: 1px solid #ccc; padding: 6px; }
 #tree h4 { margin: 8px 0 2px; font-size: 12px; text-transform: uppercase; color: #555; }

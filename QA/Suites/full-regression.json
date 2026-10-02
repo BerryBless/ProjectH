@@ -1,5 +1,5 @@
 {
   "name": "full-regression",
-  "description": "Request §94: every scenario, including the slow 50-client stress run (about 2.5 min in total).",
-  "scenarios": [ "Smoke", "Movement", "Combat", "Reconnect", "Loot", "Healing", "Shield", "Zone", "Building", "Network", "Stress" ]
+  "description": "Request §94: every scenario, including the slow 50-client stress run and the QA-3 fault scenarios (about 3.5 min). Persistence/db_down is skipped without Docker and its projecth-mysql container. The server process scenarios are in ServerProcess, not Server: a bare 'Server' entry resolves to the repository's Server folder.",
+  "scenarios": [ "Smoke", "Movement", "Combat", "Reconnect", "Loot", "Healing", "Shield", "Zone", "Building", "Network", "Persistence", "ServerProcess", "Stress" ]
 }

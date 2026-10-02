@@ -194,7 +194,7 @@ public sealed class RunSession
                 _runStatus = report.Status.ToString();
                 _exitCode = report.ExitCode;
                 _warnings = report.Warnings.ToArray();
-                _error = report.ToolError;
+                _error = report.ToolError ?? (report.SkipReason != null ? $"Skipped {report.SkipReason}" : null);
                 _reportUrl = report.ReportDirectory != null ? $"/reports/{report.RunId}/report.html" : null;
                 // Steps the runner never reached (a tool error before the first step) stay Pending in the report; show
                 // what the report says for the ones it has.

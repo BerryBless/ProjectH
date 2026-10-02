@@ -84,6 +84,10 @@ namespace ProjectH.Client.Game
         private DropRoute _route;
         private NetClient _net;
         private LocalPlayerPredictor _predictor;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // QA-5 D29: the -qaRecord input timeline (null without it). Created in Awake, disposed in OnDestroy.
+        private Qa.QaInputRecorder _qaRecorder;
+#endif
         private PlayerView _localView;
         private readonly RemotePlayers _remotePlayers = new RemotePlayers();
         private ServerClock _clock;
@@ -179,6 +183,14 @@ namespace ProjectH.Client.Game
                 _predictor.LastCorrection, _hasRoute, _route);
         }
         public string KillerName => _killerName;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // QA-4 D28: read-only values for QaCommandReceiver's /qa/status (main thread). The id is the one the last connect
+        // used (null before the first).
+        public string QaDevPlayerId => _devPlayerId;
+        public bool QaAlive => _predictor != null && !_predictor.IsDead;
+        public int QaHealth => _health;
+#endif
 
         // D7: whole seconds until the current state's timer ends (Starting, Finished), 0 without one.
         public int StateSecondsLeft
@@ -292,6 +304,9 @@ namespace ProjectH.Client.Game
             _harvestEffects = new HarvestEffects(_buildSource);
             _buildHud = new BuildHud();
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            _qaRecorder = Qa.QaInputRecorder.FromLaunch();
+#endif
             _net = new NetClient();
             _build = new BuildController(request => _net.SendBuild(request));
             _net.Connected += OnConnected;
@@ -412,6 +427,10 @@ namespace ProjectH.Client.Game
                 // clock ready, and ClearMatchState nulls both together.
                 _predictor.SetAim(_pendingSteps, aimPoint, _camera.Yaw, _camera.Pitch, (float)_renderTick);
                 shots = StepWeapons(_pendingSteps);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                // QA-5 D29: the steps exactly as sent (aim filled in by SetAim above).
+                _qaRecorder?.Record(_predictor, _pendingSteps, _simHz, _devPlayerId);
+#endif
                 if (_predictor.TryBuildInputPacket(out PlayerInputPacket packet)) _net.SendInput(packet);
                 _pendingSteps = 0;
             }
@@ -634,6 +653,10 @@ namespace ProjectH.Client.Game
             _net.HarvestHitReceived -= OnHarvestHit;
             _net.Dispose();
             ClearMatchState();
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            _qaRecorder?.Dispose();
+            _qaRecorder = null;
+#endif
             _killFeed.Dispose();
             _buildHud.Dispose();
             _harvestEffects.Dispose();

@@ -63,12 +63,14 @@ public sealed partial class ServerProcessManager : IDisposable
     private readonly TaskCompletionSource<(int Game, int Qa)> _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Process? _process;
 
-    public ServerProcessManager(Action<string>? liveLog)
+    // log: a ring shared with an earlier process of the same run (a restart keeps one server log); null = a new one.
+    public ServerProcessManager(Action<string>? liveLog, LogRing? log = null)
     {
         _liveLog = liveLog;
+        Log = log ?? new LogRing();
     }
 
-    public LogRing Log { get; } = new();
+    public LogRing Log { get; }
     public int? Pid => _process?.Id;
     public bool HasExited => _process == null || _process.HasExited;
 
@@ -200,6 +202,74 @@ public sealed partial class ServerProcessManager : IDisposable
         }
         bool gone = await WaitExitAsync(p, TimeSpan.FromSeconds(5)).ConfigureAwait(false);
         return gone ? (true, $"{how}; did not exit in {StopGrace.TotalSeconds:0} s, killed") : (false, $"{how}; kill did not end pid {p.Id}");
+    }
+
+    // Scenario step (request §129): POST /qa/server/stop and measure until the process is gone. The bound is
+    // StopGrace; past it our own child is killed and the result says so (Exited=false: the graceful path failed).
+    public async Task<Faults.ServerExitInfo> ShutdownAsync(IQaServerClient client, TimeSpan grace, CancellationToken token)
+    {
+        Process p = _process ?? throw new QaStepException("The server was not started by the tool.");
+        if (p.HasExited) return new Faults.ServerExitInfo(true, 0, ExitCodeOrNull(p), false, "already exited");
+        var clock = Stopwatch.StartNew();
+        string how = "stop requested";
+        try
+        {
+            await client.StopServerAsync(token).ConfigureAwait(false);
+        }
+        catch (QaApiException e)
+        {
+            // The response may be lost when the server shuts its HTTP side first; the exit decides.
+            how = $"stop request: {e.Message}";
+        }
+        if (await WaitExitAsync(p, grace, token).ConfigureAwait(false))
+            return new Faults.ServerExitInfo(true, clock.ElapsedMilliseconds, ExitCodeOrNull(p), false, how);
+        Faults.ServerExitInfo killed = await KillAsync(token).ConfigureAwait(false);
+        return killed with { Exited = false, ExitMs = clock.ElapsedMilliseconds, Message = $"{how}; no exit within {grace.TotalSeconds:0} s, {killed.Message}" };
+    }
+
+    // Crash test or the end of a failed stop: kills this child's process tree only (never another server).
+    public async Task<Faults.ServerExitInfo> KillAsync(CancellationToken token)
+    {
+        Process p = _process ?? throw new QaStepException("The server was not started by the tool.");
+        if (p.HasExited) return new Faults.ServerExitInfo(true, 0, ExitCodeOrNull(p), false, "already exited");
+        var clock = Stopwatch.StartNew();
+        try
+        {
+            p.Kill(entireProcessTree: true);
+        }
+        catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            if (!p.HasExited) return new Faults.ServerExitInfo(false, clock.ElapsedMilliseconds, null, false, $"kill failed: {e.Message}");
+        }
+        bool gone = await WaitExitAsync(p, TimeSpan.FromSeconds(5), token).ConfigureAwait(false);
+        return new Faults.ServerExitInfo(gone, clock.ElapsedMilliseconds, gone ? ExitCodeOrNull(p) : null, true, gone ? "killed" : $"kill did not end pid {p.Id}");
+    }
+
+    private static async Task<bool> WaitExitAsync(Process p, TimeSpan timeout, CancellationToken token)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+        cts.CancelAfter(timeout);
+        try
+        {
+            await p.WaitForExitAsync(cts.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            return p.HasExited;
+        }
+    }
+
+    private static int? ExitCodeOrNull(Process p)
+    {
+        try
+        {
+            return p.ExitCode;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     public void Dispose()

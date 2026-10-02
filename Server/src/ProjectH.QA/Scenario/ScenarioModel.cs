@@ -38,6 +38,10 @@ public sealed class ServerSpec
 
 public sealed record ActorSpec(string Id, string Type)
 {
+    // QA-3 (D13): the actor connects through its own UdpFaultProxy (`"network": { "proxy": true }`), so network fault
+    // steps can target it. Explicit per actor: a proxy changes nothing until a fault is set, but it is one more hop.
+    public bool Proxy { get; init; }
+
     public const string HeadlessClient = "HeadlessClient";
 }
 

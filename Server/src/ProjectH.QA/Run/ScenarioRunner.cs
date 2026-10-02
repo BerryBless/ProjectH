@@ -43,6 +43,7 @@ public sealed class ScenarioRunner
     {
         RunStatus status = RunStatus.Passed;
         bool stop = false;
+        string? skipReason = null;   // a step skipped the rest of the scenario (StepOutcome.SkipRest)
         if (_options.StartAtStep > 0)
         {
             report.Warnings.Add($"Run From Step {_options.StartAtStep + 1:00}: steps 01-{_options.StartAtStep:00} were not run, so their Arrange setup and saveAs variables are missing.");
@@ -63,6 +64,11 @@ public sealed class ScenarioRunner
             if (stop)
             {
                 result.Status = StepStatus.Skipped;
+                if (skipReason != null)
+                {
+                    result.Message = $"Skipped: {skipReason}";
+                    _onStep(result);
+                }
                 continue;
             }
             if (step.Index < _options.StartAtStep)
@@ -86,7 +92,15 @@ public sealed class ScenarioRunner
                     _options.OnStepStarted?.Invoke(result);
                     if (_options.DebugRun) await SnapshotAsync(run, report, step, "before").ConfigureAwait(false);
                     clock.Restart();
-                    await ExecuteAsync(step, run, result, scenarioToken).ConfigureAwait(false);
+                    bool skipRest = await ExecuteAsync(step, run, result, scenarioToken).ConfigureAwait(false);
+                    if (skipRest)
+                    {
+                        skipReason = result.Message;
+                        report.SkipReason = $"from step {step.Index + 1:00} ({step.Id}): {result.Message}";
+                        string skipWarning = $"Step {step.Index + 1:00} ({step.Id}) skipped the rest of the scenario: {result.Message}";
+                        report.Warnings.Add(skipWarning);
+                        run.Log(skipWarning);
+                    }
                     result.DurationMs = clock.ElapsedMilliseconds;
                     if (_options.DebugRun) await SnapshotAsync(run, report, step, "after").ConfigureAwait(false);
                     // Hold only a real step failure; a scenario timeout or a Stop is not something to retry.
@@ -148,6 +162,9 @@ public sealed class ScenarioRunner
                     status = RunStatus.Error;
                     stop = true;
                     break;
+                case StepStatus.Skipped when skipReason != null:
+                    stop = true;
+                    break;
                 case StepStatus.Failed:
                     if (status == RunStatus.Passed) status = RunStatus.Failed;
                     report.Failure ??= new FailureInfo
@@ -163,6 +180,8 @@ public sealed class ScenarioRunner
                     break;
             }
         }
+        // Every step that ran passed, but the scenario did not really run to its end: SKIPPED, not PASSED.
+        if (status == RunStatus.Passed && report.SkipReason != null) status = RunStatus.Skipped;
         return status;
     }
 
@@ -184,13 +203,14 @@ public sealed class ScenarioRunner
         report.DebugSnapshots.Add(snapshot);
     }
 
-    private async Task ExecuteAsync(StepDefinition step, RunContext run, StepResult result, CancellationToken scenarioToken)
+    // Returns true when the step skipped the rest of the scenario.
+    private async Task<bool> ExecuteAsync(StepDefinition step, RunContext run, StepResult result, CancellationToken scenarioToken)
     {
         if (!_registry.TryGet(step.Action, out IScenarioActionHandler? handler))
         {
             result.Status = StepStatus.Error;
             result.Message = $"Unknown action '{step.Action}'.";
-            return;
+            return false;
         }
         int timeoutMs = handler.Spec.TimeoutFor(step);
         using var stepCts = CancellationTokenSource.CreateLinkedTokenSource(scenarioToken);
@@ -199,6 +219,12 @@ public sealed class ScenarioRunner
         try
         {
             StepOutcome outcome = await handler.ExecuteAsync(context, stepCts.Token).ConfigureAwait(false);
+            if (outcome.Skipped)
+            {
+                result.Status = StepStatus.Skipped;
+                result.Message = outcome.Message;
+                return outcome.SkipRest;
+            }
             result.Status = outcome.Passed ? StepStatus.Passed : StepStatus.Failed;
             result.Message = outcome.Message;
             result.Expected = outcome.Expected;
@@ -240,6 +266,7 @@ public sealed class ScenarioRunner
             result.Status = StepStatus.Error;
             result.Message = $"{e.GetType().Name}: {e.Message}";
         }
+        return false;
     }
 
     public static string Title(StepDefinition step)

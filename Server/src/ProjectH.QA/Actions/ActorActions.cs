@@ -124,7 +124,8 @@ public static class ActorActions
     {
         IQaActor actor = ctx.Actor();
         int before = actor.State.Connections;   // read before sending: the command may apply at once
-        await actor.SendAsync(new ConnectCommand(ctx.Run.GameHost, ctx.Run.GamePort, false), token).ConfigureAwait(false);
+        (string host, int port) = await ctx.Run.ConnectTargetAsync(actor.Alias).ConfigureAwait(false);
+        await actor.SendAsync(new ConnectCommand(host, port, false), token).ConfigureAwait(false);
         return await WaitJoinedAsync(ctx, actor, before, token).ConfigureAwait(false);
     }
 
@@ -173,7 +174,8 @@ public static class ActorActions
             await Task.Delay(ctx.Run.PollIntervalMs, token).ConfigureAwait(false);
         }
         int before = actor.State.Connections;
-        await actor.SendAsync(new ConnectCommand(ctx.Run.GameHost, ctx.Run.GamePort, true), token).ConfigureAwait(false);
+        (string host, int port) = await ctx.Run.ConnectTargetAsync(actor.Alias).ConfigureAwait(false);
+        await actor.SendAsync(new ConnectCommand(host, port, true), token).ConfigureAwait(false);
         return await WaitJoinedAsync(ctx, actor, before, token).ConfigureAwait(false);
     }
 
