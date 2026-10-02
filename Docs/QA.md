@@ -4,7 +4,7 @@ QA Tool은 서버를 띄우고 Headless Client(Actor)를 실제 게임 프로토
 
 - 요청: `Docs/requests/2026-10-02-qa-scenario-orchestrator-request.md`. § 번호는 이 요청서 기준이다.
 - 설계: `Docs/specs/2026-10-02-qa-tool-design.md`. D 번호는 이 설계서의 결정이다.
-- 현재 범위: QA-1(MVP). Web UI(QA-2), Fault Injection(QA-3), Unity 자동화·Manual Check(QA-4), Parameter·Repeat·Baseline(QA-5)은 아직 없다.
+- 현재 범위: QA-1(MVP)과 QA-2(Web UI, 아래 "Web UI"). Fault Injection(QA-3), Unity 자동화·Manual Check(QA-4), Parameter·Repeat·Baseline(QA-5)은 이 문서 기준 아직 없다.
 
 ## Architecture
 
@@ -142,7 +142,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `phase` | arrange / act / assert. 적은 Step부터 다음 phase가 나올 때까지 유지된다 |
 | `timeoutMilliseconds` | Step Timeout. 기본 10 s이고 Action마다 다르다(아래) |
 | `continueOnFailure` | true면 실패해도 다음 Step으로 간다. 시나리오 결과는 실패다 |
-| `breakpoint` | QA-2 UI용. CLI는 로그만 남기고 멈추지 않는다 |
+| `breakpoint` | UI 실행에서 이 Step 앞에서 멈춘다. CLI는 로그만 남기고 멈추지 않는다 |
 | `saveAs` | 결과 값을 변수로 저장한다(Action마다 저장하는 값이 다르다) |
 | `description` | Report와 콘솔에 Step 제목으로 나온다 |
 
@@ -332,13 +332,27 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 
 ```bash
 dotnet run --project Server/src/ProjectH.QA -- run QA/Scenarios/Combat/basic_hit.json   # 파일
-dotnet run --project Server/src/ProjectH.QA -- run Combat                               # QA/Scenarios/Combat 전체
-dotnet run --project Server/src/ProjectH.QA -- run pre-push                             # QA/Suites/pre-push.json
-dotnet run --project Server/src/ProjectH.QA -- run Smoke --seed 7 --verbose
-dotnet run --project Server/src/ProjectH.QA -- run Smoke --attach http://127.0.0.1:7780  # 이미 떠 있는 QA 서버
+dotnet run --project Server/src/ProjectH.QA -- run category:Combat                      # QA/Scenarios/Combat 전체
+dotnet run --project Server/src/ProjectH.QA -- run suite:smoke                          # QA/Suites/smoke.json
+dotnet run --project Server/src/ProjectH.QA -- run suite:pre-push                       # QA/Suites/pre-push.json
+dotnet run --project Server/src/ProjectH.QA -- run pre-push                             # 같은 이름의 카테고리가 없으므로 suite
+dotnet run --project Server/src/ProjectH.QA -- run category:Smoke --seed 7 --verbose
+dotnet run --project Server/src/ProjectH.QA -- run category:Smoke --attach http://127.0.0.1:7780  # 이미 떠 있는 QA 서버
 dotnet run --project Server/src/ProjectH.QA -- validate QA/Scenarios
 dotnet run --project Server/src/ProjectH.QA -- list
 ```
+
+**대상 지정**
+
+| 형식 | 의미 |
+|---|---|
+| `suite:<name>` | `QA/Suites/<name>.json`에 적힌 시나리오들 |
+| `category:<name>` | `QA/Scenarios/<name>/` 아래 모든 시나리오(대소문자 무시) |
+| `.json` 파일, 폴더 경로 | 그대로 찾고, 다음 `QA/Scenarios` 아래, 다음 저장소 루트 아래에서 찾는다 |
+| 접두어 없는 이름 | 같은 이름의 카테고리나 Suite. **둘 다 있으면 Tool 오류(종료 코드 2)이고, 두 선택지를 보여 준다** |
+
+- 예: `smoke`는 카테고리 `Smoke`(1개)와 Suite `smoke`(3개)가 둘 다 있으므로 `suite:smoke`나 `category:Smoke`로 고른다.
+- `run`·`validate`는 첫 줄에 무엇을 골랐는지 출력한다. 예: `suite smoke: 3 scenarios`, `category Smoke: 1 scenario`.
 
 | 옵션 | 의미 |
 |---|---|
@@ -361,6 +375,101 @@ dotnet run --project Server/src/ProjectH.QA -- list
   - 끝나면 `/qa/server/stop` → 최대 10 s 종료 대기 → 그래도 남으면 자기 자식 프로세스만 Kill한다.
 - **Ctrl+C**: 현재 Step을 멈추고 Cleanup(Actor 종료, 서버 정지)을 한 뒤 Report를 쓴다.
 - **콘솔 출력**은 Step마다 한 줄(`01 Connect playerA PASS 643 ms`)이다. 실패하면 Expected / Actual이 붙는다.
+
+## Web UI (QA-2)
+
+```bash
+dotnet run --project Server/src/ProjectH.QA -- ui                 # http://127.0.0.1:5180/
+dotnet run --project Server/src/ProjectH.QA -- ui --port 5190
+dotnet run --project Server/src/ProjectH.QA -- ui --attach http://127.0.0.1:7780   # 이미 떠 있는 QA 서버로 실행
+```
+
+- 구성(D19): 같은 도구 안의 ASP.NET Core Minimal API와 `wwwroot`(HTML/CSS/바닐라 JS, npm 없음)다. 브라우저를 자동으로 열지 않고 URL만 출력한다.
+- `--server-dll`, `--report-dir`, `--poll-ms`, `--repo`는 CLI와 같다.
+- **Ctrl+C**는 실행 중인 시나리오를 먼저 멈추고 Cleanup(Actor, 띄운 서버, Report)을 기다린 뒤(최대 60 s) UI를 닫는다.
+
+**화면 배치**(§47)
+- 왼쪽: `QA/Scenarios` 카테고리 트리와 Suite. Suite 안의 시나리오를 눌러도 열린다.
+- 가운데: 편집기. 탭은 Form / Raw JSON / JSON Preview이고, 버튼은 New / Validate / Save다.
+  - Form은 시나리오 필드(name, description, seed, timeoutSeconds, tags, server·variables·actors는 JSON 칸)와 Step 목록이다.
+  - Step 목록의 한 줄은 `01 Connect playerA`이고, 결과 배지와 시간이 붙는다.
+  - Step을 누르면 선택되고 편집 칸이 열린다. action 선택, 인자 수정·삭제, `+ parameter`로 Action Spec의 인자, 공통 필드, 연산자를 넣는다. 위치 인자는 Marker 이름을 자동완성한다.
+  - ▲▼ 또는 Drag & Drop으로 순서를 바꾸고, ✕로 지운다. `+ Add Step`은 Registry의 모든 Action에서 고르고, 선택한 Step 뒤에 넣는다.
+  - 왼쪽 점은 Breakpoint다. UI 실행에만 쓰고 파일에 저장하지 않는다. 파일의 `"breakpoint": true`도 UI에서는 멈춘다.
+  - Form은 주석이나 끝 쉼표가 없는 JSON에서만 열린다. 그런 파일은 Raw JSON에서 고친다. Form이 저장하는 형식은 저장소 시나리오와 같다(Step 한 줄에 하나).
+- 아래 탭
+
+| 탭 | 내용 |
+|---|---|
+| Live Log | 카테고리 QA / Server / Actor / Network / Assertion 필터(D21) |
+| Actors | 이름·상태·체력 목록. 선택한 Actor는 서버 Player DTO와 Actor 상태를 보인다: PlayerId, 연결, 위치, 속도, 체력, 실드, 무기, 탄약, 인벤토리, 자원, 이동 모드 |
+| Match | 상태, Tick, 플레이어, 생존, Zone, 경과 시간 |
+| Server | CPU, 메모리, GC, tick p50/p95/p99/max, 패킷/s, QA 명령 시간과 큐 카운터 |
+| Reports | 최근 실행 50개의 `report.html` 링크 |
+
+- Server 탭에 bytes/s는 없다. `/qa/metrics`가 내지 않기 때문이다.
+
+**실행**(D20, D23): 한 번에 하나만 실행한다. 편집기의 현재 텍스트를 실행하므로 저장하지 않은 내용도 돌릴 수 있다. 이때 Report에 `unsavedText`가 표시된다. Validation 오류가 있으면 시작하지 않는다.
+
+| 버튼 | 동작 |
+|---|---|
+| Run | 처음부터 실행 |
+| Run From | 선택한 Step부터 실행한다. 서버를 새로 띄우므로 앞 Step은 Skipped이고, 그 Arrange와 saveAs 변수가 없다. 시작 전에 확인 창과 Report 경고가 나온다 |
+| Run Until | 선택한 Step 뒤에서 Pause |
+| Single Step | 대기 중이면 첫 Step 앞에서 멈춘 채로 시작한다. 멈춰 있으면 한 Step만 실행한다 |
+| Pause / Resume | Pause는 다음 Step 경계에서 멈춘다. 실행 중인 Step은 끝까지 간다 |
+| Stop | 바로 취소한 뒤 Cleanup(§57–58) |
+| Retry Failed Step | UI 실행에서 Step이 실패하면 Cleanup하지 않고 그 Step에서 멈춘다. 이 버튼을 누르면 같은 게임에서 그 Step을 다시 실행한다(경고: 실패 뒤 게임 상태가 바뀌었을 수 있다. Report에 시도 횟수와 경고를 남긴다). Resume이나 Stop은 그 실패로 끝내고(Failed, Expected/Actual 유지) Cleanup한다 |
+| Retry Scenario | 마지막 시나리오를 같은 Seed로 처음부터 다시 실행 |
+| Seed | 덮어쓸 Seed. 비우면 시나리오 Seed를 쓴다 |
+| Debug Run | Step 앞뒤로 `/qa/match`·`/qa/players` Snapshot을 Report `debugSnapshots`에 남긴다(D24, 최대 400개) |
+
+**멈춰 있을 때**
+- 시나리오 Timeout은 실행 시간만 센다. Pause, Breakpoint, 실패 보류 중에는 멈춘다.
+- **Pause는 Runner만 멈춘다. 게임 서버는 계속 시뮬레이션한다.** Zone이 줄어들고, Grace가 끝나고, 끝난 라운드는 `ResultSeconds` 뒤에 리셋된다.
+- Actor는 계속 입력을 보낸다. 그래서 InputTimeout에는 걸리지 않는다.
+
+**스트림과 조회 빈도**
+- 진행 상황(state, step, run)과 로그는 SSE `/api/stream` 하나로 받는다(D20).
+- 로그는 다음처럼 제한한다(D21, §143).
+  - 도구 쪽 Ring은 2000줄이다.
+  - SSE는 250 ms마다 최대 50줄을 보낸다(초당 200줄). 밀린 줄은 건너뛰고 그 수를 알린다.
+  - 브라우저는 최근 1000줄만 남긴다.
+- Inspector는 실행 중이거나 멈춰 있을 때만, 보이는 탭 하나를 1초마다 조회한다(D22).
+  - Run 전용 QA 클라이언트를 따로 쓴다.
+  - Actor 목록은 Actor Manager가 게시한 Snapshot에서만 읽는다.
+
+**보안**(로컬 도구, 로그인 없음)
+- 127.0.0.1에만 Bind한다. `ASPNETCORE_URLS`는 무시한다.
+- 모든 요청은 `Host` 헤더가 `127.0.0.1`/`localhost`/`[::1]`과 UI Port여야 한다. DNS Rebinding으로 다른 이름에서 시나리오·리포트를 읽지 못하게 하려는 것이다.
+- POST는 다음을 모두 만족해야 한다. 다른 웹사이트가 브라우저를 통해 도구를 움직이지 못하게 하려는 것이다.
+  - `Content-Type: application/json`이다.
+  - `Origin`이 있으면 같은 Origin이다.
+  - `Sec-Fetch-Site`가 있으면 `same-origin`/`none`이다.
+- CORS 헤더는 보내지 않는다.
+- **파일 접근**
+  - 저장(D25)과 열기는 `QA/Scenarios` 아래 `.json`만 된다. 경로를 정규화한 뒤 루트 밖(`..`, 절대 경로, 드라이브)이면 거부한다.
+  - 저장 전에 Validation하고, 오류가 있으면 저장하지 않는다(경고는 허용).
+  - Report는 runId 형식(`qa-yyyyMMdd-HHmmss-xxxx`)의 `report.html`만 연다.
+- 요청 본문은 4 MB, SSE 동시 연결은 8개로 제한한다.
+
+**API**(브라우저가 쓰는 것. curl로도 쓸 수 있다)
+
+| Method | Path | 내용 |
+|---|---|---|
+| GET | `/api/tree`, `/api/actions`, `/api/markers` | 트리, Action Spec, Marker 이름 |
+| GET | `/api/scenario?path=Combat/basic_hit.json` | 파일 내용 |
+| POST | `/api/validate` `{text}`, `/api/save` `{path, text}` | |
+| GET / POST | `/api/run` | 상태 / 시작 `{path?, text?, mode: run\|from\|until\|single, stepIndex, seed?, debug, breakpoints[]}` |
+| POST | `/api/run/pause`, `resume`, `step`, `stop`, `retry`, `retry-scenario`, `breakpoints` `{indices}` | |
+| GET | `/api/stream` | SSE: `state`, `step`, `run`, `log` |
+| GET | `/api/inspect/actors`, `/api/inspect/actor?alias=`, `/api/inspect/match`, `/api/inspect/server` | 실행 중일 때만 |
+| GET | `/api/reports`, `/reports/<runId>/report.html` | |
+
+```bash
+curl -s -X POST -H "Content-Type: application/json" -d '{"path":"Combat/basic_hit.json"}' http://127.0.0.1:5180/api/run
+curl -s http://127.0.0.1:5180/api/run
+```
 
 ## Reports
 

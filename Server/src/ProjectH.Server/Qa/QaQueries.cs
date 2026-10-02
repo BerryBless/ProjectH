@@ -46,6 +46,7 @@ internal static class QaQueries
         QaControl qa = t.Qa;
         ServerOptions o = t.Loop.Options;
         Match m = t.Match;
+        QaDbStatus? db = qa.Database?.Invoke();
         return new
         {
             ok = true,
@@ -80,6 +81,9 @@ internal static class QaQueries
                 qaAllowRemote = qa.Options.AllowRemote,
             },
             qa = new { rejected = qa.Rejected, timedOut = qa.TimedOut, failed = qa.Failed },
+            db,
+            dbQueueLength = db?.QueueLength ?? 0,
+            parentPid = qa.Options.ParentPid,
         };
     }
 

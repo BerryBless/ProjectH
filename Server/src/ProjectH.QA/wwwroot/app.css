@@ -1,0 +1,69 @@
+* { box-sizing: border-box; }
+body { margin: 0; font: 13px "Segoe UI", Arial, sans-serif; color: #222; display: grid; grid-template-rows: auto 1fr 34vh; height: 100vh; }
+button { font: inherit; padding: 2px 8px; cursor: pointer; }
+button:disabled { cursor: default; opacity: .45; }
+button.danger { color: #b00020; }
+input, select, textarea { font: inherit; }
+.muted { color: #777; }
+.hidden { display: none !important; }
+.sep { flex: 1; }
+#toolbar { display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid #ccc; background: #f6f6f6; flex-wrap: wrap; }
+#toolbar input[type=number] { width: 90px; }
+.badge { padding: 2px 8px; border-radius: 3px; background: #ddd; font-weight: bold; }
+.badge.running { background: #1565c0; color: #fff; }
+.badge.paused { background: #ef6c00; color: #fff; }
+.badge.Passed, .badge.finished.Passed { background: #2e7d32; color: #fff; }
+.badge.Failed, .badge.Error, .badge.Cancelled { background: #c62828; color: #fff; }
+main { display: grid; grid-template-columns: 260px 1fr; min-height: 0; }
+#tree { overflow: auto; border-right: 1px solid #ccc; padding: 6px; }
+#tree h4 { margin: 8px 0 2px; font-size: 12px; text-transform: uppercase; color: #555; }
+#tree .item { padding: 1px 6px; cursor: pointer; border-radius: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#tree .item:hover { background: #eef; }
+#tree .item.current { background: #dde6ff; }
+#tree .suite-items .item { padding-left: 16px; }
+#editor { display: flex; flex-direction: column; min-height: 0; }
+.tabs { display: flex; gap: 2px; align-items: center; padding: 4px 6px; border-bottom: 1px solid #ccc; background: #fafafa; }
+.tabs button.active { background: #fff; border-bottom: 2px solid #1565c0; }
+.tab-body { flex: 1; overflow: auto; padding: 6px; min-height: 0; }
+#messages { padding: 0 6px; }
+#messages .error { color: #c62828; }
+#messages .warning { color: #a15c00; }
+#messages .info { color: #2e7d32; }
+#scenario-fields { display: grid; grid-template-columns: 110px 1fr; gap: 3px 8px; margin-bottom: 8px; }
+#scenario-fields textarea { min-height: 44px; font-family: Consolas, monospace; font-size: 12px; }
+#raw { width: 100%; height: 100%; min-height: 300px; font-family: Consolas, monospace; font-size: 12px; }
+#preview { margin: 0; font-family: Consolas, monospace; font-size: 12px; }
+.step { border: 1px solid #ddd; border-radius: 3px; margin: 2px 0; background: #fff; }
+.step.selected { border-color: #1565c0; }
+.step.dragover { border-top: 3px solid #1565c0; }
+.step .row { display: flex; align-items: center; gap: 6px; padding: 3px 6px; cursor: pointer; }
+.step .bp { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #c62828; flex: none; }
+.step .bp.on { background: #c62828; }
+.step .title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step .num { font-family: Consolas, monospace; color: #555; }
+.step .st { font-size: 11px; padding: 0 6px; border-radius: 3px; background: #eee; min-width: 60px; text-align: center; }
+.st.Running { background: #1565c0; color: #fff; }
+.st.Passed { background: #2e7d32; color: #fff; }
+.st.Failed, .st.Error { background: #c62828; color: #fff; }
+.st.Cancelled, .st.Skipped { background: #bbb; }
+.step .paused-here { color: #ef6c00; font-weight: bold; }
+.step .detail { padding: 2px 26px 4px; font-size: 12px; }
+.step .detail .fail { color: #c62828; white-space: pre-wrap; }
+.step .edit { padding: 4px 26px 6px; border-top: 1px dashed #ddd; display: grid; grid-template-columns: 150px 1fr 24px; gap: 2px 6px; align-items: center; }
+.step .edit .req { font-weight: bold; }
+.add-step { margin-top: 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+#bottom { display: flex; flex-direction: column; border-top: 1px solid #ccc; min-height: 0; }
+#log { font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; }
+#log .line { border-bottom: 1px solid #f3f3f3; }
+#log .cat { display: inline-block; width: 74px; color: #555; }
+#log .Server { color: #555; }
+#log .Assertion .cat { color: #6a1b9a; }
+#log .Network .cat { color: #00695c; }
+#log .Actor .cat { color: #1565c0; }
+#log-filters label { margin-left: 6px; }
+.split { display: grid; grid-template-columns: 280px 1fr; gap: 8px; height: 100%; }
+#actor-list .actor { padding: 1px 4px; cursor: pointer; font-family: Consolas, monospace; }
+#actor-list .actor.selected { background: #dde6ff; }
+pre { margin: 0; font-family: Consolas, monospace; font-size: 12px; }
+table { border-collapse: collapse; }
+td, th { border: 1px solid #ddd; padding: 2px 6px; text-align: left; }

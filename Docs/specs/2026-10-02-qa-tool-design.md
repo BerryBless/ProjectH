@@ -110,3 +110,15 @@ Program (CLI: run / validate / list / ui)
 - 축약형 `{ "assert": "player.health", ... }`도 받는다(= `action: assert, path: ...`).
 - `${name}`은 변수(시나리오 변수 + `saveAs`로 저장한 실행 중 값)로 바꾼다. 없는 변수는 Validation 오류.
 - 위치: `{x,y,z}` 또는 이름(QA Marker `QA/Markers.json`, 맵 POI 이름).
+
+## QA-2 결정 (Web UI, §45-69, §143-144)
+
+| # | 결정 | 이유 | 틀렸을 때 비용 |
+|---|---|---|---|
+| D19 | `ProjectH.QA ui [--port 5180]`: 같은 도구 안의 ASP.NET Core(FrameworkReference, NuGet 아님) Minimal API + `wwwroot` 정적 파일(빌드 출력에 복사). HTML/CSS/바닐라 JS, npm·번들러 없음. 127.0.0.1에만 Bind. | §46: 무거운 Framework 금지. 서버와 같은 생태계. 빌드 단계가 하나 늘지 않는다. | UI가 커지면 JS 파일을 나눈다. |
+| D20 | 실행은 한 번에 하나(UI 세션의 RunSession). 진행 상황·로그는 SSE(`/api/stream`) 한 개로 보낸다. 브라우저 → 서버 명령은 POST. | 단방향 Push면 충분하다. WebSocket보다 단순하다. | 여러 사람이 동시에 쓰면 같은 실행을 본다(개인 로컬 도구). |
+| D21 | Live Log: 도구 쪽 Ring(2000줄) + 카테고리(QA/Server/Actor/Network/Assertion) 필터. SSE는 초당 최대 200줄로 묶어 보내고 넘친 줄 수를 알린다. 브라우저는 최근 1000줄만 DOM에 둔다. | §143 Log Flood. | 넘친 줄은 Ring·리포트에서 본다. |
+| D22 | Inspector: Actor 목록은 이름·연결·체력만 한 줄씩(100명 고려), 선택한 Actor만 상세(서버 QA `/qa/players/{id}` + Actor 상태). Match·Server 패널은 1초(설정 가능) 주기 조회, 실행 중이거나 일시정지일 때만. | §144, §148-149: 조회 빈도 제한. | — |
+| D23 | 실행 모드: Run, Run From Step(앞 Step은 Skipped로 기록), Run Until Step(그 Step 뒤 Pause), Single Step, Pause/Resume, Stop, Breakpoint(Step의 `breakpoint` 또는 UI 토글, 파일에 저장하지 않아도 됨), Retry Failed Step(경고 표시: 게임 상태가 이미 바뀌었을 수 있음), Retry Scenario(같은 Seed). Run From Step은 서버를 새로 띄우므로 앞 Step의 Arrange가 없다는 경고를 보인다. | §54-63. | — |
+| D24 | Debug Run 체크박스: Step 전후 서버 상태(`/qa/match`, `/qa/players`) Snapshot을 리포트에 저장. 기본 꺼짐. | §64. | 리포트가 커진다. |
+| D25 | 저장: `QA/Scenarios` 아래 `.json`만, 경로 정규화 후 루트 밖이면 거부. 저장 전 Validation, 오류가 있으면 저장하지 않음(경고는 허용). | §52. Path Traversal 방지. | — |

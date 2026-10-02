@@ -32,11 +32,15 @@ public sealed class QaOptions
     public bool Events { get; set; } = true;
     // D5: how long an HTTP request waits for the game loop to run its work item (then 504).
     public int CommandTimeoutMs { get; set; } = 2000;
+    // QA-3: the process id of the QA tool that launched this server (0 = none). When that process is gone the server
+    // stops itself, so a tool killed hard never leaves an orphan server holding its ports.
+    public int ParentPid { get; set; }
 
     public string? Validate()
     {
         if (Port < 0 || Port > 65535) return "Qa:Port must be 0-65535.";
         if (CommandTimeoutMs < 100 || CommandTimeoutMs > 60000) return "Qa:CommandTimeoutMs must be 100-60000.";
+        if (ParentPid < 0) return "Qa:ParentPid must be 0 (none) or a process id.";
         return null;
     }
 }
@@ -89,8 +93,22 @@ public static class QaSetup
         string? error = options.Validate();
         if (error != null) throw new InvalidOperationException(error);
         string environmentName = builder.Environment.EnvironmentName;
-        builder.Services.AddSingleton(services => new QaControl(services.GetRequiredService<IOptions<ServerOptions>>().Value, options,
-            services.GetRequiredService<ILoggerFactory>().CreateLogger("ProjectH.Server.Qa"), environmentName));
+        builder.Services.AddSingleton(services =>
+        {
+            var qa = new QaControl(services.GetRequiredService<IOptions<ServerOptions>>().Value, options,
+                services.GetRequiredService<ILoggerFactory>().CreateLogger("ProjectH.Server.Qa"), environmentName);
+            // QA-3: the database writer's totals and queue, for /qa/metrics and /qa/health (any thread: Interlocked and the
+            // channel's own count).
+            bool persistence = services.GetRequiredService<IOptions<Persistence.PersistenceOptions>>().Value.Enabled;
+            var writer = services.GetRequiredService<Persistence.MatchHistoryWriter>();
+            var queue = services.GetRequiredService<Persistence.MatchHistoryQueue>();
+            qa.Database = () =>
+            {
+                Persistence.PersistenceCounts c = writer.Counts;
+                return new QaDbStatus(persistence, c.Saved, c.Failed, c.Discarded, c.Dropped, queue.Count);
+            };
+            return qa;
+        });
         builder.Services.AddHostedService<QaHttpService>();
         return true;
     }

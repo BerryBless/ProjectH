@@ -42,6 +42,8 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger _logger;
     private WebApplication? _app;
+    // QA-3: stops the server when the QA tool that launched it is gone. Disposed with this service.
+    private QaParentWatchdog? _parentWatch;
 
     public QaHttpService(QaControl qa, IHostApplicationLifetime lifetime, ILogger<QaHttpService> logger)
     {
@@ -85,6 +87,8 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
 
         _logger.LogWarning("QA mode is ON: QA Control listens on {Addresses} (environment {Environment}). Never run this on a live server.",
             string.Join(", ", BoundAddresses), _qa.EnvironmentName);
+        if (options.ParentPid > 0)
+            _parentWatch = new QaParentWatchdog(options.ParentPid, TimeSpan.FromSeconds(1), _lifetime.StopApplication, _logger);
         if (options.AllowRemote) _logger.LogWarning("Qa:AllowRemote is on: QA Control accepts connections from other machines");
         // D12: the QA tool waits for this line (after both listeners are bound) and reads the ports from it.
         Console.Out.WriteLine($"QA_READY gamePort={_qa.GamePort} qaPort={port}");
@@ -93,11 +97,14 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        _parentWatch?.Dispose();
         if (_app != null) await _app.StopAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
     {
+        _parentWatch?.Dispose();
+        _parentWatch = null;
         if (_app != null) await _app.DisposeAsync().ConfigureAwait(false);
         _app = null;
     }
@@ -141,8 +148,18 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
         app.MapPost("/qa/command", Command);
         app.MapPost("/qa/server/stop", async ctx =>
         {
-            _logger.LogWarning("QA stop request: stopping the server");
-            await Write(ctx, QaResult.Ok()).ConfigureAwait(false);
+            // QA-3: answered directly (not through the game loop), so a stuck loop can still be stopped. The QA tool times
+            // the shutdown from here to the process exit; this listener stops first, so /qa/health is gone from now on.
+            DateTime requested = DateTime.UtcNow;
+            _logger.LogWarning("QA stop request: stopping the server ({Peers} connections)", _qa.Peers);
+            await Write(ctx, QaResult.Ok(new
+            {
+                requestedAtUtc = requested,
+                activeSessions = _qa.Peers,
+                // The normal shutdown path's limits: the loop thread join, then the ServerShutdown notices, then the database drain.
+                threadJoinTimeoutMs = (int)GameLoop.ThreadJoinTimeout.TotalMilliseconds,
+                shutdownNoticeTimeoutMs = (int)GameLoop.ShutdownNoticeTimeout.TotalMilliseconds,
+            })).ConfigureAwait(false);
             // After the answer is written; the normal shutdown path (clients get ServerShutdown).
             _ = Task.Run(_lifetime.StopApplication);
         });
@@ -152,6 +169,7 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
     {
         GameLoop loop = t.Loop;
         Diagnostics.HealthCounters h = loop.Health;
+        QaDbStatus? db = t.Qa.Database?.Invoke();
         QaTickMetrics ticks = t.Qa.Metrics.Snapshot(windowSeconds, loop.Stats.PacketsInTotal, loop.Stats.PacketsOutTotal);
         return new
         {
@@ -171,6 +189,8 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
             gc = new { gen0 = GC.CollectionCount(0), gen1 = GC.CollectionCount(1), gen2 = GC.CollectionCount(2) },
             activeSessions = loop.PeerCount,
             players = t.Match.PlayerCount,
+            db,
+            dbQueueLength = db?.QueueLength ?? 0,
             health = new
             {
                 connections = h.Connections, joins = h.Joins, resumes = h.Resumes, graceStarts = h.GraceStarts, graceExpiries = h.GraceExpiries,

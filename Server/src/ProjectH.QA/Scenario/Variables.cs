@@ -181,6 +181,9 @@ public static class QaJson
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
+    // Same rules on one line (UI API responses and SSE data).
+    public static readonly JsonSerializerOptions Compact = new(Options) { WriteIndented = false };
+
     public static string Text(JsonElement value) =>
         value.ValueKind == JsonValueKind.String ? value.GetString()! : value.GetRawText();
 

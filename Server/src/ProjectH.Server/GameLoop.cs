@@ -28,8 +28,8 @@ public sealed class GameLoop : IDisposable
     private const int FailingSecondsBeforeReset = 3;
     private const int MaxResetsInWindow = 3;
     private static readonly TimeSpan ResetWindow = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan ThreadJoinTimeout = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan ShutdownNoticeTimeout = TimeSpan.FromSeconds(1);
+    internal static readonly TimeSpan ThreadJoinTimeout = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan ShutdownNoticeTimeout = TimeSpan.FromSeconds(1);
     // Phase 13 final review A4: a joined connection whose reliable queues (channels 0 and 1) hold more than this many
     // packets for CongestedSeconds in a row is closed with Congested: its link cannot take the game's traffic, and the
     // queue (LiteNetLib memory) would only grow.

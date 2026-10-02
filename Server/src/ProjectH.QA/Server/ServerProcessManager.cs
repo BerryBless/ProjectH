@@ -90,6 +90,9 @@ public sealed partial class ServerProcessManager : IDisposable
             ["Server:SpawnSeed"] = seed.ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
         foreach (var pair in overrides) options[pair.Key] = pair.Value;
+        // Backstop for every launch path (CLI and UI): the server's QA watchdog stops it when this process is gone, so a
+        // tool that dies without cleanup (killed, crashed) leaves no server behind. Set after the overrides: not optional.
+        options["Qa:ParentPid"] = Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var args = new List<string> { dllPath, "--qa-mode" };
         foreach (var pair in options) args.Add($"--{pair.Key}={pair.Value}");
         return args;

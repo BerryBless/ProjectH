@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ProjectH QA</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header id="toolbar">
+  <strong>ProjectH QA</strong>
+  <span id="file-label" class="muted">(no scenario)</span>
+  <span class="sep"></span>
+  <button id="btn-run" title="Run the scenario from the first step">Run</button>
+  <button id="btn-run-from" title="Run from the selected step (earlier steps are skipped: their Arrange does not run)">Run From</button>
+  <button id="btn-run-until" title="Run and pause after the selected step">Run Until</button>
+  <button id="btn-step" title="Start paused before the first step, or run one step while paused">Single Step</button>
+  <button id="btn-pause">Pause</button>
+  <button id="btn-resume">Resume</button>
+  <button id="btn-stop" class="danger">Stop</button>
+  <button id="btn-retry" title="Run the failed step again in the same game (its state may have changed)">Retry Failed Step</button>
+  <button id="btn-retry-scenario" title="Run the last scenario again from the start with the same seed">Retry Scenario</button>
+  <label>Seed <input id="seed" type="number" placeholder="scenario"></label>
+  <label title="Save /qa/match and /qa/players before and after every step in the report (D24)"><input id="debug" type="checkbox"> Debug Run</label>
+  <span id="run-status" class="badge">idle</span>
+</header>
+<main>
+  <nav id="tree"></nav>
+  <section id="editor">
+    <div class="tabs" data-group="editor">
+      <button data-tab="form" class="active">Form</button>
+      <button data-tab="raw">Raw JSON</button>
+      <button data-tab="preview">JSON Preview</button>
+      <span class="sep"></span>
+      <button id="btn-new">New</button>
+      <button id="btn-validate">Validate</button>
+      <button id="btn-save">Save</button>
+    </div>
+    <div id="messages"></div>
+    <div class="tab-body" data-group="editor" data-tab="form">
+      <div id="scenario-fields"></div>
+      <div id="steps"></div>
+      <div class="add-step">
+        <select id="add-action"></select>
+        <button id="btn-add-step">+ Add Step</button>
+        <span class="muted">Click a step to select it (Run From / Run Until) and edit it. Drag to reorder. The dot toggles a breakpoint for UI runs (not saved).</span>
+      </div>
+    </div>
+    <div class="tab-body hidden" data-group="editor" data-tab="raw">
+      <textarea id="raw" spellcheck="false"></textarea>
+    </div>
+    <div class="tab-body hidden" data-group="editor" data-tab="preview">
+      <pre id="preview"></pre>
+    </div>
+  </section>
+</main>
+<section id="bottom">
+  <div class="tabs" data-group="bottom">
+    <button data-tab="log" class="active">Live Log</button>
+    <button data-tab="actors">Actors</button>
+    <button data-tab="match">Match</button>
+    <button data-tab="server">Server</button>
+    <button data-tab="reports">Reports</button>
+    <span class="sep"></span>
+    <span id="log-filters"></span>
+    <span id="log-skipped" class="muted"></span>
+  </div>
+  <div class="tab-body" data-group="bottom" data-tab="log"><div id="log"></div></div>
+  <div class="tab-body hidden" data-group="bottom" data-tab="actors">
+    <div class="split"><div id="actor-list"></div><pre id="actor-detail" class="muted">Select an actor.</pre></div>
+  </div>
+  <div class="tab-body hidden" data-group="bottom" data-tab="match"><pre id="match-view" class="muted">No live run.</pre></div>
+  <div class="tab-body hidden" data-group="bottom" data-tab="server"><pre id="server-view" class="muted">No live run.</pre></div>
+  <div class="tab-body hidden" data-group="bottom" data-tab="reports"><div id="reports"></div></div>
+</section>
+<script src="app.js"></script>
+</body>
+</html>
