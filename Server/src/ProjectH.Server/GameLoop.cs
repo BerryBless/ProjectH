@@ -490,7 +490,8 @@ public sealed class GameLoop : IDisposable
             state.JoinRefused = true;
             state.RefusedTick = _loopTick;
         }
-        _logger.LogInformation("Peer {PeerId} ({DevPlayerId}) join: {Result}", peerId, state.DevPlayerId, result);
+        // Server review M1: Debug (joins= and resumed= count them).
+        _logger.LogDebug("Peer {PeerId} ({DevPlayerId}) join: {Result}", peerId, state.DevPlayerId, result);
     }
 
     // Once per tick over at most MaxPlayers peers, no allocation.
@@ -539,12 +540,13 @@ public sealed class GameLoop : IDisposable
             if (!_peers.TryGetValue(peerId, out NetPeer? peer)) continue;
             if (code == DisconnectCode.None)
             {
-                _logger.LogInformation("Closing peer {PeerId} ({DevPlayerId}): its join was refused", peerId, ((PeerState)peer.Tag).DevPlayerId);
+                // Server review M1: Debug, here and below (kicks= counts the timeouts).
+                _logger.LogDebug("Closing peer {PeerId} ({DevPlayerId}): its join was refused", peerId, ((PeerState)peer.Tag).DevPlayerId);
             }
             else
             {
                 _health.AddKick(code);
-                _logger.LogInformation("Disconnecting peer {PeerId} ({DevPlayerId}): {Code}", peerId, ((PeerState)peer.Tag).DevPlayerId, code);
+                _logger.LogDebug("Disconnecting peer {PeerId} ({DevPlayerId}): {Code}", peerId, ((PeerState)peer.Tag).DevPlayerId, code);
             }
             NetworkListener.Close(peer, code);
             RemovePeer(peerId);
@@ -582,7 +584,8 @@ public sealed class GameLoop : IDisposable
         if (_match.Disconnect(peerId, allowGrace: state.CloseCode == DisconnectCode.None))
         {
             _health.AddGraceStart();
-            _logger.LogInformation("Peer {PeerId} ({DevPlayerId}) dropped mid-match; character kept for {Seconds} s",
+            // Server review M1: Debug (graceStarts= counts it).
+            _logger.LogDebug("Peer {PeerId} ({DevPlayerId}) dropped mid-match; character kept for {Seconds} s",
                 peerId, state.DevPlayerId, _options.ReconnectGraceSeconds);
         }
     }
@@ -684,6 +687,7 @@ public sealed class GameLoop : IDisposable
             "badPackets unknownId={BadUnknown} malformed={BadMalformed} beforeJoin={BadBeforeJoin} duplicateJoin={BadDuplicate} " +
             "inputRate={BadRate} wrongDirection={BadDirection} handlerException={BadHandler} buildRate={BadBuildRate} " +
             "tickFailures={TickFailures} loopFailures={LoopFailures} matchResets={Resets} stalls={Stalls} movementAnomalies={MovementAnomalies} " +
+            "networkErrors={NetworkErrors} " +
             "build pieces={BuildPieces} cells={BuildCells} requests={BuildRequests} accepted={BuildAccepted} destroyed={BuildDestroyed} " +
             "collapsed={BuildCollapsed} duplicates={BuildDuplicates} eventPackets={BuildEventPackets} syncPackets={BuildSyncPackets} " +
             "buildRejects noResource={RejectNoResource} outOfRange={RejectRange} blocked={RejectBlocked} unsupported={RejectUnsupported} " +
@@ -702,6 +706,7 @@ public sealed class GameLoop : IDisposable
             h.BadPackets(BadPacketReason.DuplicateJoin), h.BadPackets(BadPacketReason.InputRate), h.BadPackets(BadPacketReason.WrongDirection),
             h.BadPackets(BadPacketReason.HandlerException), h.BadPackets(BadPacketReason.BuildRate),
             h.TickFailures, h.LoopFailures, h.MatchResets, h.Stalls, h.MovementAnomalies,
+            h.NetworkErrors,
             b.Pieces, b.Cells, b.Requests, b.Accepted, b.Destroyed, b.Collapsed, b.Duplicates, b.EventPackets, b.SyncPackets,
             h.BuildRejects(BuildResultCode.NoResource), h.BuildRejects(BuildResultCode.OutOfRange), h.BuildRejects(BuildResultCode.Blocked),
             h.BuildRejects(BuildResultCode.Unsupported), h.BuildRejects(BuildResultCode.Occupied), h.BuildRejects(BuildResultCode.RateLimited),

@@ -37,6 +37,8 @@ public sealed class NetworkListener : INetEventListener
     private readonly ILogger _logger;
     // 1 once a receive-handler exception was logged in the current stats interval (D5: the first one only).
     private int _handlerErrorLogged;
+    // Server review M1: the same for socket errors (OnNetworkError). Interlocked: any LiteNetLib thread may report one.
+    private int _networkErrorLogged;
     // Set once by GameLoop (Stop, or the fatal path of repeated match resets) and never cleared: a stopping server
     // accepts no new connection. Written by the game loop or the host's thread, read on LiteNetLib's thread.
     private volatile bool _stopping;
@@ -71,7 +73,11 @@ public sealed class NetworkListener : INetEventListener
     }
 
     // Called by the game loop at each stats line: the next receive-handler exception is logged again.
-    public void ResetLogLimits() => Volatile.Write(ref _handlerErrorLogged, 0);
+    public void ResetLogLimits()
+    {
+        Volatile.Write(ref _handlerErrorLogged, 0);
+        Volatile.Write(ref _networkErrorLogged, 0);
+    }
 
     // From now on every connection request is refused (as ServerFull: no protocol change, and the client does not
     // retry a reject). A request already accepted is closed by Stop's DisconnectAll like every other connection.
@@ -108,7 +114,8 @@ public sealed class NetworkListener : INetEventListener
         NetPeer peer = request.Accept();
         peer.Tag = new PeerState(connect.DevPlayerId);
         _health.AddConnection();
-        _logger.LogInformation("Peer {PeerId} ({DevPlayerId}) connected from {EndPoint}", peer.Id, connect.DevPlayerId, request.RemoteEndPoint);
+        // Server review M1: Debug, like every per-connection event (the Health line counts them).
+        _logger.LogDebug("Peer {PeerId} ({DevPlayerId}) connected from {EndPoint}", peer.Id, connect.DevPlayerId, request.RemoteEndPoint);
 
         // Connected is announced here, not in OnPeerConnected: with UnsyncedEvents LiteNetLib raises
         // OnPeerConnected synchronously inside Accept(), before Tag is assigned above. Writing after
@@ -143,7 +150,7 @@ public sealed class NetworkListener : INetEventListener
         _health.AddDisconnect(disconnectInfo.Reason == DisconnectReason.Timeout);
         if (peer.Tag is PeerState state)
         {
-            _logger.LogInformation("Peer {PeerId} ({DevPlayerId}) disconnected: {Reason} (server code {Code})",
+            _logger.LogDebug("Peer {PeerId} ({DevPlayerId}) disconnected: {Reason} (server code {Code})",
                 peer.Id, state.DevPlayerId, disconnectInfo.Reason, state.CloseCode);
         }
         // If this message is lost the session is still removed: the game loop also drops
@@ -271,9 +278,13 @@ public sealed class NetworkListener : INetEventListener
         }
     }
 
+    // Server review M1: counted (networkErrors) and logged once per stats interval, so a burst of socket errors cannot
+    // flood the log.
     public void OnNetworkError(IPEndPoint endPoint, SocketError socketError)
     {
-        _logger.LogWarning("Network error {SocketError} from {EndPoint}", socketError, endPoint);
+        _health.AddNetworkError();
+        if (Interlocked.Exchange(ref _networkErrorLogged, 1) == 0)
+            _logger.LogWarning("Network error {SocketError} from {EndPoint} (first of this stats interval)", socketError, endPoint);
     }
 
     public void OnNetworkReceiveUnconnected(IPEndPoint remoteEndPoint, NetPacketReader reader, UnconnectedMessageType messageType)

@@ -45,6 +45,7 @@ public class MonitoringTests
         loop.Health.AddBadPacket(BadPacketReason.WrongDirection);
         loop.StatsQueries.AddLimited();
         loop.StatsQueries.AddLimited();
+        loop.Health.AddNetworkError();
         loop.RunTickGuarded();
 
         loop.LogPeriodic();
@@ -68,6 +69,7 @@ public class MonitoringTests
                      "harvest hits=0 envDestroyed=0", "syncDeferred=0", "buildInboxDrops=0",
                      "db saved=3 failed=1 discarded=2 dropped=4",
                      "stats requests=0 limited=2 busy=0 unavailable=0 undelivered=0",
+                     "networkErrors=1",   // server review M1
                  })
         {
             Assert.Contains(item, line);
@@ -94,6 +96,7 @@ public class MonitoringTests
         health.AddMovementAnomaly();
         health.AddBuildInboxDrop();
         health.AddBuildInboxDrop();
+        health.AddNetworkError();
         health.SetBuild(new BuildCounts(7, 3, 8, 5, 2, 10, 4, 1, 9, 2, 0, 0, 6), code => code == BuildResultCode.Occupied ? 2 : 0);
 
         using var meter = new ServerMeter(health);
@@ -128,6 +131,7 @@ public class MonitoringTests
         Assert.Contains(("projecth.build.destroyed", 6L, "cause=damage"), seen);
         Assert.Contains(("projecth.build.inbox_drops", 2L, ""), seen);
         Assert.Contains(("projecth.harvest.hits", 9L, ""), seen);
+        Assert.Contains(("projecth.network_errors", 1L, ""), seen);   // server review M1
         Assert.Contains(("projecth.stats_queries", 6L, "result=requests"), seen);
         Assert.Contains(("projecth.stats_queries", 2L, "result=limited"), seen);
         Assert.Contains(("projecth.stats_queries", 1L, "result=busy"), seen);
