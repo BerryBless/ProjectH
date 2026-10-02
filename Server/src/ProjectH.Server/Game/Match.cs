@@ -206,6 +206,8 @@ public sealed class Match
     // without a result (a sequence already processed).
     public long BuildResults(BuildResultCode code) => _buildResults[(int)code];
     public long BuildDuplicates { get; private set; }
+    // Phase 13 D18: pieces destroyed (by damage or, Phase 13 D12, collapse) since this match object was made.
+    public long PiecesDestroyed { get; private set; }
     public int BuildPieces => _build.Count;
     public long EnvironmentDestroyed => _harvest.DestroyedTotal;
     // Phase 12 D12: moves faster than their mode allows since this match object was made (should stay 0).
@@ -704,6 +706,14 @@ public sealed class Match
         Vector3 origin = player.State.Position + new Vector3(0f, CombatRules.EyeHeightOf(player.State.Mode), 0f);
         int target = HarvestRules.Trace(origin, direction, _building.HarvestRange, _harvest.DestroyedMask, Blockers, GameMap.Terrain,
             out float distance);
+        // Phase 13 D11 (request §68): a piece in front takes the tool's structure damage and gives no resources.
+        float pieceRange = target >= 0 ? distance : _building.HarvestRange;
+        if (PieceTrace.Trace(origin, direction, pieceRange, _build, out _, out int pieceSlot, out float pieceDistance) &&
+            HitScan.TraceWorld(origin, direction, pieceDistance, Blockers, GameMap.Terrain) >= pieceDistance)
+        {
+            DamagePiece(pieceSlot, _building.HarvestStructureDamage * _building.Material(_build.At(pieceSlot).Material).HarvestToolDamageMultiplier);
+            return;
+        }
         if (target < 0) return;
 
         HarvestHitResult hit = _harvest.Hit(target, origin + direction * distance, direction);
@@ -741,6 +751,9 @@ public sealed class Match
         // Phase 12 D13: crouched or sliding the eye is lower (the client aims from the same height, AimSolver).
         Vector3 origin = shooter.State.Position + new Vector3(0f, CombatRules.EyeHeightOf(shooter.State.Mode), 0f);
         float nearest = HitScan.TraceWorld(origin, direction, weapon.Range, Blockers, GameMap.Terrain);   // a closed door or a tree stops it
+        // Phase 13 D11: a piece in front stops the shot too (no rewind: pieces as they are now, like doors).
+        bool hitPiece = PieceTrace.Trace(origin, direction, nearest, _build, out _, out int pieceSlot, out float pieceDistance);
+        if (hitPiece) nearest = pieceDistance;
         double rewindTick = CombatRules.ClampViewTick(viewTick, ServerTick, _maxRewindTicks);
 
         PlayerEntity? target = null;
@@ -765,6 +778,31 @@ public sealed class Match
         // Phase 5 D2: before (and after) the match a shot still stops at the player it hit (the tracer shows
         // it), but it does no damage and the shooter gets no HitConfirmed.
         if (target != null && _flow.DamageAllowed) ApplyHit(shooter, target, damage);
+        // Phase 13 D11: the piece takes the weapon's damage times its material's structure multiplier.
+        else if (target == null && hitPiece && _flow.DamageAllowed)
+            DamagePiece(pieceSlot, damage * _building.Material(_build.At(pieceSlot).Material).StructureDamageMultiplier);
+    }
+
+    // Phase 13 D11: damage to a piece, standing or under construction (its health is computed from the tick, D10). At 0 it
+    // is destroyed at once; otherwise its health goes out once at the end of the tick, whatever the hits (request §85).
+    private void DamagePiece(int slot, float amount)
+    {
+        ref BuildPiece piece = ref _build.At(slot);
+        int damage = Math.Max(1, (int)MathF.Round(amount));
+        piece.Damage = (ushort)Math.Min(ushort.MaxValue, piece.Damage + damage);
+        if (_build.Health(piece, ServerTick + 1) <= 0) DestroyPiece(slot);
+        else _replication.Damaged(slot);
+    }
+
+    // Phase 13 D11: a piece leaves the world now (moves and shots of the rest of this tick no longer meet it) and every
+    // client hears of it at the end of the tick.
+    private void DestroyPiece(int slot)
+    {
+        ref BuildPiece piece = ref _build.At(slot);
+        uint id = piece.Id;
+        _replication.Destroyed(slot, id, piece.Shape);
+        _build.Remove(id);
+        PiecesDestroyed++;
     }
 
     private void ApplyHit(PlayerEntity shooter, PlayerEntity target, ushort damage)
