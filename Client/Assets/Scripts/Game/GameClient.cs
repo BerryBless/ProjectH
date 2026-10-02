@@ -356,6 +356,7 @@ namespace ProjectH.Client.Game
             _doorViews.Tick(_doors);
             bool riding = _predictor != null && !_predictor.IsDead && _predictor.Mode == MovementMode.Transport && _clock != null;
             _transportView.Tick(riding ? RiderTick() : _renderTick);
+            if (_predictor == null) _buildStore.ClearChanged();   // nothing reads the changes before the spawn: do not let them pile up
             if (_predictor == null) return;
             float now = Time.time;
             bool alive = !_predictor.IsDead;

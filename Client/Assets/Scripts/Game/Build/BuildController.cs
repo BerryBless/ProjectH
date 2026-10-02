@@ -14,6 +14,8 @@ namespace ProjectH.Client.Game
         public BuildPieceShape Shape;
         public BuildMaterialType Material;
         public float SentAt;
+        // Set by an Ok result: kept (waiting look) until the confirmed piece is in the store, so it does not flicker.
+        public uint AcceptedId;
     }
 
     // Phase 13 D16: build mode's local side. Each frame (Update) it picks the candidate (BuildTargeting), judges it as far
@@ -25,11 +27,15 @@ namespace ProjectH.Client.Game
     {
         public const int MaxPending = 8;
         public const float TimeoutSeconds = 1f;
+        // The server's building.maxRequestsPerSecond default (BuildingCatalog.MaxRequestsPerSecond): never send more in a second.
+        public const int MaxRequestsPerSecond = 20;
 
         private readonly Action<BuildRequest> _send;
         private readonly PendingBuild[] _pending = new PendingBuild[MaxPending];
         private int _pendingCount;
         private ushort _sequence;
+        private readonly float[] _sendTimes = new float[MaxRequestsPerSecond];
+        private int _sendTotal;
 
         public BuildController(Action<BuildRequest> send)
         {
@@ -62,7 +68,7 @@ namespace ProjectH.Client.Game
             if (Catalog == null) return value;
             for (int i = 0; i < _pendingCount; i++)
             {
-                if (_pending[i].Material == material) value -= Catalog.ResourceCost[(int)material];
+                if (_pending[i].AcceptedId == 0 && _pending[i].Material == material) value -= Catalog.ResourceCost[(int)material];
             }
             return Math.Max(0, value);
         }
@@ -72,6 +78,7 @@ namespace ProjectH.Client.Game
         public bool Update(float now, bool inBuildMode, bool pressed, bool held, Vector3 feet, Vector3 eye, float yaw, float pitch, BuildStore store)
         {
             Expire(now);
+            DropConfirmed(store);
             BuildPieceShape shape = default;
             HasCandidate = inBuildMode && BuildTargeting.TryPick(Selection.Piece, feet, yaw, pitch, Selection.RotationOffset, out shape);
             if (!HasCandidate)
@@ -82,6 +89,7 @@ namespace ProjectH.Client.Game
             Candidate = shape;
             // A slot already waiting for its answer is not offered again.
             CandidateState = IsPending(shape) ? BuildPreviewState.Invalid : Judge(shape, eye, store);
+            if (held && !RateAllows(now)) return false;   // the rolling-second cap
             if (Catalog != null) Turbo.Interval = Math.Max(0.05f, Catalog.MinBuildIntervalTicks / (float)SimHz);
             if (!Turbo.ShouldSend(now, pressed, held, CandidateState == BuildPreviewState.Valid && _pendingCount < MaxPending, BuildGrid.SlotKey(shape)))
                 return false;
@@ -90,6 +98,8 @@ namespace ProjectH.Client.Game
                 Sequence = ++_sequence, Piece = (byte)shape.Type, Material = (byte)Selection.Material, X = shape.X, Y = shape.Y, Z = shape.Z,
                 Rotation = shape.Rotation,
             };
+            _sendTimes[_sendTotal % MaxRequestsPerSecond] = now;
+            _sendTotal++;
             _pending[_pendingCount++] = new PendingBuild { Sequence = request.Sequence, Shape = shape, Material = Selection.Material, SentAt = now };
             PendingVersion++;
             Sent++;
@@ -119,7 +129,12 @@ namespace ProjectH.Client.Game
             for (int i = 0; i < _pendingCount; i++)
             {
                 if (_pending[i].Sequence != result.Sequence) continue;
-                RemoveAt(i);
+                if (result.Code == BuildResultCode.Ok && result.PieceId != 0)
+                {
+                    _pending[i].AcceptedId = result.PieceId;   // goes when the confirmed piece arrives (or at the timeout)
+                    PendingVersion++;
+                }
+                else RemoveAt(i);
                 return;
             }
         }
@@ -129,10 +144,22 @@ namespace ProjectH.Client.Game
         {
             _sequence = 0;
             _pendingCount = 0;
+            _sendTotal = 0;
             PendingVersion++;
             HasCandidate = false;
             Selection.Reset();
             Resources = default;
+        }
+
+        private bool RateAllows(float now) => _sendTotal < MaxRequestsPerSecond || now - _sendTimes[_sendTotal % MaxRequestsPerSecond] >= 1f;
+
+        private void DropConfirmed(BuildStore store)
+        {
+            if (store == null) return;
+            for (int i = _pendingCount - 1; i >= 0; i--)
+            {
+                if (_pending[i].AcceptedId != 0 && store.TryGet(_pending[i].AcceptedId, out _)) RemoveAt(i);
+            }
         }
 
         private bool IsPending(in BuildPieceShape shape)

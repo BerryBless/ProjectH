@@ -113,5 +113,49 @@ namespace ProjectH.Client.Tests
             Press(c, 5f, Store());
             Assert.AreEqual(1, _sent[_sent.Count - 1].Sequence);
         }
+
+        [Test]
+        public void AnAcceptedPlacement_StaysPending_UntilTheConfirmedPieceArrives()
+        {
+            BuildController c = Controller();
+            BuildStore store = Store();
+            Press(c, 0f, store);
+            c.OnResult(new BuildResult { Sequence = 1, Code = BuildResultCode.Ok, PieceId = 4 });
+            c.Update(0.1f, false, false, false, Feet, Eye, 0f, 0f, store);
+            Assert.AreEqual(1, c.PendingCount);
+            Assert.AreEqual(100, c.ShownResource(BuildMaterialType.Wood));   // the server's number already has the cost
+            store.ApplyPiece(new BuildPieceRecord { Id = 4, Shape = new BuildPieceShape(BuildPieceType.Wall, 10, 0, 13, 0) }, 1);
+            c.Update(0.2f, false, false, false, Feet, Eye, 0f, 0f, store);
+            Assert.AreEqual(0, c.PendingCount);
+        }
+
+        [Test]
+        public void AnAcceptedPlacement_StillGoesAtTheTimeout()
+        {
+            BuildController c = Controller();
+            Press(c, 0f, Store());
+            c.OnResult(new BuildResult { Sequence = 1, Code = BuildResultCode.Ok, PieceId = 4 });
+            c.Update(BuildController.TimeoutSeconds + 0.01f, false, false, false, Feet, Eye, 0f, 0f, Store());
+            Assert.AreEqual(0, c.PendingCount);
+        }
+
+        [Test]
+        public void HoldingTheButton_NeverSendsMoreThanTheCapInASecond()
+        {
+            BuildController c = Controller(wood: 10000);
+            c.Catalog.MinBuildIntervalTicks = 1;
+            BuildStore store = Store();
+            float x = -27.5f;
+            int sent = 0;
+            for (int i = 0; i < 100; i++)
+            {
+                float now = i * 0.01f;   // 100 frames within one second, each a new slot
+                var feet = new NVector3(x + (i % 20) * 5f, 0f, -17.5f);
+                if (c.Update(now, true, true, true, feet, feet + new NVector3(0f, 1.6f, 0f), 0f, 0f, store)) sent++;
+                c.OnResult(new BuildResult { Sequence = (ushort)sent, Code = BuildResultCode.Blocked });
+            }
+            Assert.AreEqual(BuildController.MaxRequestsPerSecond, sent);
+            Assert.IsTrue(c.Update(1.01f, true, true, true, Feet + new NVector3(5f, 0f, 0f), Eye + new NVector3(5f, 0f, 0f), 0f, 0f, store));
+        }
     }
 }

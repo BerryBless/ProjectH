@@ -39,6 +39,8 @@ namespace ProjectH.Client.Game
     public static class BuildTargeting
     {
         public const float LookBand = 35f;
+        // Looking up: ShoulderCamera clamps pitch to [-30, 70], so the up threshold must lie inside that (30 is its limit).
+        public const float UpBand = 20f;
         public const float FeetLift = 1.5f;
 
         public static bool TryPick(BuildPieceType piece, Vector3 feet, float yaw, float pitch, int rotationOffset, out BuildPieceShape shape)
@@ -53,7 +55,7 @@ namespace ProjectH.Client.Game
             int aheadX = x + (look == 1 ? 1 : look == 3 ? -1 : 0);
             int aheadZ = z + (look == 0 ? 1 : look == 2 ? -1 : 0);
             bool down = pitch >= LookBand;
-            bool up = pitch <= -LookBand;
+            bool up = pitch <= -UpBand;
 
             switch (piece)
             {

@@ -86,6 +86,17 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual(Shape(BuildPieceType.Roof, 10, 0, 12, 0), Pick(BuildPieceType.Roof, 0f, -60f));
         }
 
+        // ShoulderCamera clamps pitch to [-30, 70]: looking all the way up must still reach the up-level candidates.
+        [Test]
+        public void TheCamerasHighestLook_ReachesTheUpLevelCandidates()
+        {
+            const float CameraMinPitch = -30f;
+            Assert.AreEqual(Shape(BuildPieceType.Wall, 10, 1, 13, 0), Pick(BuildPieceType.Wall, 0f, CameraMinPitch));
+            Assert.AreEqual(Shape(BuildPieceType.Floor, 10, 1, 12, 0), Pick(BuildPieceType.Floor, 0f, CameraMinPitch));
+            Assert.AreEqual(Shape(BuildPieceType.Ramp, 11, 1, 12, 1), Pick(BuildPieceType.Ramp, 90f, CameraMinPitch));
+            Assert.AreEqual(Shape(BuildPieceType.Wall, 10, 0, 13, 0), Pick(BuildPieceType.Wall, 0f, -10f));   // a gentle look up is still ahead
+        }
+
         [Test]
         public void OffTheGrid_OrNotANumber_HasNoTarget()
         {
