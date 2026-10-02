@@ -93,7 +93,7 @@ public sealed class GameLoop : IDisposable
     // Test seams (D6): run at the start of every tick / after every tick, outside it. Set by tests only.
     private volatile Action? _tickFaultHook;
     private volatile Action? _loopFaultHook;
-    private volatile Action? _removeFaultHook;   // runs in RemovePeer after the peer left _peers
+    private volatile Action? _removeFaultHook;   // runs in DropSession (after the peer left _peers, or was replaced there)
     // Phase 7 D10: process CPU time at the previous stats line, for cpu% (game loop thread only).
     private TimeSpan _cpuAtLastStats = CurrentCpuTime();
     private long _lateTicksSkipped;
@@ -453,10 +453,12 @@ public sealed class GameLoop : IDisposable
                     // still in flight, its session must go now; otherwise the new client's Join gets
                     // AlreadyJoined and it waits forever. Its late Disconnected is then ignored by the
                     // reference check below.
-                    if (_peers.TryGetValue(message.PeerId, out var previous) && !ReferenceEquals(previous, message.Peer))
-                        RemovePeer(message.PeerId);
+                    // Server review L12: the new connection is registered first, so a throw while the old session is
+                    // dropped (it fails this tick) cannot leave the new one outside _peers, where no sweep would find it.
+                    _peers.TryGetValue(message.PeerId, out NetPeer? previous);
                     _peers[message.PeerId] = message.Peer;
                     ((PeerState)message.Peer.Tag).ConnectedTick = _loopTick;
+                    if (previous != null && !ReferenceEquals(previous, message.Peer)) DropSession(message.PeerId, previous);
                     break;
 
                 case ControlKind.JoinRequested:
@@ -606,7 +608,13 @@ public sealed class GameLoop : IDisposable
     // character for the reconnect grace; Match decides whether the player qualifies.
     private void RemovePeer(int peerId)
     {
-        if (!_peers.Remove(peerId, out NetPeer? peer)) return;
+        if (_peers.Remove(peerId, out NetPeer? peer)) DropSession(peerId, peer);
+    }
+
+    // The match side of a removed connection (server review L12: apart from _peers, so a replaced peer's session can be
+    // dropped after the new connection took its id).
+    private void DropSession(int peerId, NetPeer peer)
+    {
         _removeFaultHook?.Invoke();
         var state = (PeerState)peer.Tag;
         if (_match.Disconnect(peerId, allowGrace: state.CloseCode == DisconnectCode.None))

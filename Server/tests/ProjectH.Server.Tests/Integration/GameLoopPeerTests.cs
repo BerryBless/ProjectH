@@ -47,6 +47,40 @@ public sealed class GameLoopPeerTests
         Assert.Equal("new", still.DevPlayerId);
     }
 
+    // Server review L12: when dropping the old session of a reused peer id throws, the new connection is still registered
+    // (it was registered first), so the join timeout closes it instead of leaving it an orphan nothing ever sweeps.
+    [Fact]
+    public void AThrowWhileDroppingTheOldSession_StillRegistersTheNewConnection()
+    {
+        using var host = new PeerHost();
+        NetPeer oldPeer = host.AcceptPeer();
+        NetPeer newPeer = host.AcceptPeer();
+        oldPeer.Tag = new PeerState("old");
+        var newState = new PeerState("new");
+        newPeer.Tag = newState;
+        const int reusedId = 7;
+        var options = new ServerOptions { Port = 0, MaxPlayers = 4, JoinTimeoutSeconds = 1 };
+        using var loop = new GameLoop(options, TestGameData.Create(), NullLogger.Instance);
+        var control = loop.Channels.Control.Writer;
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.Connected, reusedId, oldPeer, "old")));
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.JoinRequested, reusedId, oldPeer, null)));
+        loop.RunTickGuarded();
+
+        int thrown = 0;
+        loop.RemoveFaultHook = () =>
+        {
+            if (thrown++ == 0) throw new InvalidOperationException("test fault");
+        };
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.Connected, reusedId, newPeer, "new")));
+        loop.RunTickGuarded();
+        Assert.Equal(1, loop.Health.TickFailures);
+
+        for (int i = 0; i <= options.JoinTimeoutSeconds * options.SimHz; i++) loop.RunTickGuarded();
+        Assert.Equal(DisconnectCode.JoinTimeout, newState.CloseCode);
+        Assert.Equal(1, loop.Health.Kicks(DisconnectCode.JoinTimeout));
+        Assert.Equal(0, loop.Health.Peers);
+    }
+
     // Phase 13 final review A4: a joined peer whose reliable queues stay over MaxReliableBacklog for CongestedSeconds is
     // closed with Congested (counted); a dip below the limit starts the count over.
     [Fact]
