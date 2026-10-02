@@ -16,7 +16,11 @@ public sealed record UiBatch(int Total, int Done, int Passed, int Failed, int Sk
     public const int MaxRows = 200;
 }
 
-public sealed record UiBatchRow(int Number, int Iteration, int? ParameterSet, string? Parameters, int Seed, string Status, string RunId, string? ReportUrl);
+public sealed record UiBatchRow(int Number, int Iteration, int? ParameterSet, string? Parameters, int Seed, string Status, string RunId, string? ReportUrl)
+{
+    // Stress D40: the run's judged phase (null when it measured nothing); the Batch tab shows it as columns.
+    public StressSummary? Stress { get; init; }
+}
 
 // POST /api/run. Mode: run, from (Run From Step), until (Run Until Step), single (start paused before the first step).
 public sealed class UiRunRequest
@@ -236,6 +240,7 @@ public sealed class RunSession
         _hub.Publish("run", new { phase = "started", scenario = scenario.Name });
         PublishState();
         var summary = new BatchSummary(scenario.Name, file);
+        DateTimeOffset batchStarted = DateTimeOffset.Now;
         try
         {
             foreach (PlannedRun planned in plan)
@@ -267,7 +272,8 @@ public sealed class RunSession
                     {
                         if (_batchRows.Count >= UiBatch.MaxRows) _batchRows.RemoveAt(0);
                         _batchRows.Add(new UiBatchRow(planned.Number, planned.Iteration, planned.ParameterIndex + 1,
-                            planned.ParameterIndex != null ? BatchSummary.Compact(planned.Parameters) : null, report.Seed, report.Status.ToString(), report.RunId, _reportUrl));
+                            planned.ParameterIndex != null ? BatchSummary.Compact(planned.Parameters) : null, report.Seed, report.Status.ToString(), report.RunId, _reportUrl)
+                        { Stress = report.Stress?.Summary });
                         _batch = _batch with
                         {
                             Done = summary.Runs, Passed = summary.Passed, Failed = summary.Failed, Skipped = summary.Skipped, Errors = summary.Errors,
@@ -288,7 +294,21 @@ public sealed class RunSession
             }
             if (summary.Runs > 1 || summary.Stopped)
             {
-                string[] lines = summary.Lines().ToArray();
+                var all = summary.Lines().Concat(summary.StressLines()).ToList();
+                // D40: the comparison files next to the reports (when the UI writes reports at all).
+                if (_host.WriteReports && summary.Runs > 1)
+                {
+                    try
+                    {
+                        string? dir = summary.WriteStressSummary(_host.ReportDir ?? Path.Combine(_host.RepoRoot, "QA", "Reports"), file, batchStarted);
+                        if (dir != null) all.Add($"   batch summary: {Path.Combine(dir, "summary.html")}");
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                    {
+                        all.Add($"   batch summary could not be written: {e.Message}");
+                    }
+                }
+                string[] lines = all.ToArray();
                 foreach (string line in lines) _hub.Log("QA", line);
                 lock (_lock)
                 {
@@ -403,7 +423,35 @@ public sealed class RunSession
         }).ToArray();
     }
 
-    public async Task<object?> ActorAsync(string alias, CancellationToken token)
+    // Stress D39: during a stress run the inspector reads the server at most every StressInspectMs per view (the browser
+    // still polls each second): cached answers under _lock, at most MaxInspectCache entries, cleared with every run.
+    public const int StressInspectMs = 5000;
+    private const int MaxInspectCache = 128;
+    private readonly Dictionary<string, (long At, object? Value)> _inspectCache = new(StringComparer.Ordinal);
+
+    private async Task<T?> ThrottledAsync<T>(string key, Func<Task<T?>> read)
+    {
+        bool stress;
+        lock (_lock)
+        {
+            stress = _live?.Stress == true;
+            if (stress && _inspectCache.TryGetValue(key, out var cached) && Environment.TickCount64 - cached.At < StressInspectMs) return (T?)cached.Value;
+        }
+        T? value = await read().ConfigureAwait(false);
+        if (stress)
+        {
+            lock (_lock)
+            {
+                if (_inspectCache.Count >= MaxInspectCache) _inspectCache.Clear();
+                _inspectCache[key] = (Environment.TickCount64, value);
+            }
+        }
+        return value;
+    }
+
+    public Task<object?> ActorAsync(string alias, CancellationToken token) => ThrottledAsync("actor:" + alias, () => ReadActorAsync(alias, token));
+
+    private async Task<object?> ReadActorAsync(string alias, CancellationToken token)
     {
         LiveRun? live;
         IQaServerClient? client;
@@ -419,13 +467,15 @@ public sealed class RunSession
         return new { alias, actor = actor.State, player };
     }
 
-    public async Task<JsonElement?> MatchAsync(CancellationToken token)
+    public Task<JsonElement?> MatchAsync(CancellationToken token) => ThrottledAsync<JsonElement?>("match", async () =>
     {
         IQaServerClient? client = Inspector();
         return client == null ? null : await client.GetMatchAsync(token).ConfigureAwait(false);
-    }
+    });
 
-    public async Task<object?> ServerAsync(CancellationToken token)
+    public Task<object?> ServerAsync(CancellationToken token) => ThrottledAsync("server", () => ReadServerAsync(token));
+
+    private async Task<object?> ReadServerAsync(CancellationToken token)
     {
         IQaServerClient? client = Inspector();
         if (client == null) return null;
@@ -455,6 +505,7 @@ public sealed class RunSession
             old = _inspector;
             _inspector = created;
             _live = live;
+            _inspectCache.Clear();
             if (live != null) _runId = live.RunId;
         }
         if (!ReferenceEquals(old, created)) (old as IDisposable)?.Dispose();

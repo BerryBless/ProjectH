@@ -41,6 +41,10 @@ public sealed class LaunchedServer : IServerControl, IDisposable
     public RunContext? Run { get; set; }
 
     public bool Running => Process != null && !Process.HasExited;
+    // D41: a scenario step stopped or killed the server on purpose (stopServer, killServer, restartServer): an exited
+    // process is then not a crash. Cleared by the next start.
+    public bool StoppedByScenario { get; private set; }
+    public int? ExitCode => Process?.ExitCode;
 
     public IReadOnlyList<string> Arguments => ServerProcessManager.BuildArguments(_dll, _seed, _overrides);
 
@@ -57,6 +61,7 @@ public sealed class LaunchedServer : IServerControl, IDisposable
         Process = process;
         previous?.Dispose();   // already exited (Running was false)
         (int game, int qa) = await process.StartAsync(_dll, _seed, _overrides, _clientFactory, token).ConfigureAwait(false);
+        StoppedByScenario = false;
         IQaServerClient? previousClient = Client;
         QaUrl = new Uri($"http://127.0.0.1:{qa}/");
         Client = _clientFactory(QaUrl);
@@ -77,12 +82,14 @@ public sealed class LaunchedServer : IServerControl, IDisposable
     public Task<ServerExitInfo> StopAsync(CancellationToken token)
     {
         if (Process == null || Client == null) throw new QaStepException("The server was not started by the tool.");
+        StoppedByScenario = true;
         return Process.ShutdownAsync(Client, ServerProcessManager.StopGrace, token);
     }
 
     public Task<ServerExitInfo> KillAsync(CancellationToken token)
     {
         if (Process == null) throw new QaStepException("The server was not started by the tool.");
+        StoppedByScenario = true;
         return Process.KillAsync(token);
     }
 

@@ -1,0 +1,5 @@
+{
+  "name": "stress-building",
+  "description": "Stress test building workloads (request §20-29, §43). About 6 minutes (estimated). Phase A has real building with turbo and recycling (10 / 25 / 50 players) and the dense final zone with builders; phase B adds the piece count ramp (spawnBuildPiece), mass destruction / collapse and build spam.",
+  "scenarios": [ "Stress/building.json", { "path": "Stress/final_zone.json", "parameterSet": 3 } ]
+}

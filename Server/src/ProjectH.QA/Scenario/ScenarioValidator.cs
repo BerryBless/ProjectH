@@ -19,6 +19,18 @@ public static partial class ScenarioValidator
     [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_\-]*$")]
     private static partial Regex VariableName();
 
+    // --set / a suite entry's variables: only names the scenario already has (a variable or a parameter), so a typo is
+    // an error instead of a silently ignored value.
+    public static IEnumerable<ValidationIssue> CheckOverrides(ScenarioDefinition s, IEnumerable<string> names)
+    {
+        foreach (string name in names)
+        {
+            if (name is "runId" or "seed") yield return new ValidationIssue(true, "--set", $"'{name}' is built in (use --seed for the seed).");
+            else if (!s.Variables.ContainsKey(name) && !(s.Parameters.Count > 0 && s.Parameters.All(p => p.TryGetProperty(name, out _))))
+                yield return new ValidationIssue(true, "--set", $"'{name}' is not a variable of '{s.Name}' (known: {string.Join(", ", s.Variables.Keys.Take(30))}).");
+        }
+    }
+
     public static IReadOnlyList<ValidationIssue> Validate(ScenarioDefinition s, ActionRegistry registry, MarkerStore markers)
     {
         var issues = new List<ValidationIssue>();
@@ -95,10 +107,31 @@ public static partial class ScenarioValidator
             Error("scenario", "baselineWarnPercent must be a positive percentage (default 50).");
         if (s.BaselineValues.Count > ScenarioDefinition.MaxBaselineValues)
             Error("baseline", $"At most {ScenarioDefinition.MaxBaselineValues} baseline values.");
+        // Stress D39: headless clients only; QA events are off unless the scenario turns them on.
+        bool eventsOff = s.Stress && !(s.Server.Options.TryGetValue("Qa:Events", out string? ev) && string.Equals(ev, "true", StringComparison.OrdinalIgnoreCase));
+        if (s.Stress)
+        {
+            foreach (ActorSpec a in s.Actors.Where(a => a.IsUnity)) Error($"actor {a.Id}", "A stress scenario uses headless clients only (no UnityClient actor, D39).");
+        }
+        var groups = new HashSet<string>(StringComparer.Ordinal);
         var stepIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (StepDefinition step in s.Steps)
         {
             string where = $"step {step.Index + 1:00} ({step.Id})";
+            if (s.Stress && step.Action is "captureScreenshot" or "manualCheck" or "uiCommand" or "waitForUnity")
+                Error(where, $"'{step.Action}' is not allowed in a stress scenario (D39: no screenshots, Unity players or manual steps).");
+            if (eventsOff && (step.Action == "waitForEvent" || step.Params.Any(p => p.Key is "path" or "condition" && p.Value.ValueKind == JsonValueKind.String && p.Value.GetString()!.StartsWith("event.", StringComparison.Ordinal))))
+                Warn(where, "QA events are off in a stress scenario (Qa:Events=false): this step sees no events. Set server.options Qa:Events to \"true\" if it needs them.");
+            // Stress D38: group actions name a group an earlier actorGroup made ("all" for stopGroup).
+            if (step.Action == "actorGroup" && step.Params.TryGetValue("groups", out JsonElement defined) && defined.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement g in defined.EnumerateArray())
+                    if (g.ValueKind == JsonValueKind.Object && g.TryGetProperty("name", out JsonElement gn) && gn.ValueKind == JsonValueKind.String) groups.Add(gn.GetString()!);
+            }
+            if (step.Params.TryGetValue("group", out JsonElement used) && used.ValueKind == JsonValueKind.String && !Variables.HasReference(used)
+                && (step.Action.StartsWith("group", StringComparison.Ordinal) || step.Action == "stopGroup")
+                && !groups.Contains(used.GetString()!) && !(step.Action == "stopGroup" && used.GetString() == "all"))
+                Error(where, $"Unknown group '{used.GetString()}' (no earlier actorGroup defines it).");
             if (!stepIds.Add(step.Id)) Error(where, "Duplicate step id.");
             if (step.Phase != null && Array.IndexOf(s_phases, step.Phase.ToLowerInvariant()) < 0)
                 Error(where, $"phase must be one of {string.Join(", ", s_phases)}.");

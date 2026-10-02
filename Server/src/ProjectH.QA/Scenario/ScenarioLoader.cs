@@ -61,6 +61,7 @@ public static class ScenarioLoader
             }
             int? seed = ReadInt(root, "seed", errors);
             double timeout = ReadDouble(root, "timeoutSeconds", errors) ?? ScenarioDefinition.DefaultTimeoutSeconds;
+            bool stress = ReadBool(root, "stress", errors) ?? false;
 
             ServerSpec server = ReadServer(root, errors);
 
@@ -143,6 +144,7 @@ public static class ScenarioLoader
                 Parameters = parameters,
                 BaselineValues = baselineValues,
                 BaselineWarnPercent = warnPercent,
+                Stress = stress,
             };
             return new ScenarioLoadResult(scenario, errors);
         }

@@ -10,7 +10,7 @@ namespace ProjectH.QA;
 // One query per evaluation; waitFor repeats it at the run's poll interval (request §29, §149).
 public static class AssertionEngine
 {
-    public static readonly string[] Roots = { "player", "match", "build", "server", "network", "actor", "event", "var" };
+    public static readonly string[] Roots = { "player", "match", "build", "server", "network", "actor", "event", "var", "group" };
 
     // Paths whose numeric values are protocol enums (the server sends names; numbers are mapped for comparisons).
     private static readonly Dictionary<string, Type> s_enumPaths = new(StringComparer.OrdinalIgnoreCase)
@@ -42,7 +42,7 @@ public static class AssertionEngine
     {
         string root = path.Split('.')[0];
         if (Array.IndexOf(Roots, root) < 0) return $"Unknown path root '{root}' (use {string.Join(", ", Roots)}).";
-        if (root is "event" or "var" && path.Split('.').Length < 2) return $"'{path}' needs a name after '{root}.'.";
+        if (root is "event" or "var" or "group" && path.Split('.').Length < 2) return $"'{path}' needs a name after '{root}.'.";
         return null;
     }
 
@@ -124,6 +124,9 @@ public static class AssertionEngine
                 if (!run.Variables.TryGetValue(rest[0], out JsonElement v)) return null;
                 return JsonPath.Get(v, rest[1..]);
             }
+            case "group":
+                // Stress (D38): group.<name>.size / joined / alive / role / stats.<counter> (tool-side, no server query).
+                return JsonPath.Get(run.Groups.Describe(rest[0]), rest[1..]);
             default:
                 throw new QaStepException(CheckPath(path) ?? $"Unknown path '{path}'.");
         }

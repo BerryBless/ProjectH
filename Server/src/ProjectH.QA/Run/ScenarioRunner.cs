@@ -213,6 +213,7 @@ public sealed class ScenarioRunner
             return false;
         }
         int timeoutMs = handler.Spec.TimeoutFor(step);
+        run.CurrentStepId = step.Id;   // stall and crash records (stress D41)
         using var stepCts = CancellationTokenSource.CreateLinkedTokenSource(scenarioToken);
         stepCts.CancelAfter(timeoutMs + HardGraceMs);
         var context = new StepContext(run, step, timeoutMs);

@@ -102,6 +102,13 @@ public sealed class QaControl
 
     internal void Bind(GameLoop loop) => _loop = loop;
 
+    // Game loop thread (ServerStats' folded totals are written there).
+    internal static QaNetTotals NetTotals(GameLoop loop)
+    {
+        Diagnostics.ServerStats s = loop.Stats;
+        return new QaNetTotals(s.PacketsInTotal, s.PacketsOutTotal, s.BytesInTotal, s.BytesOutTotal);
+    }
+
     // QA-3: set once at construction by QaSetup (null in tests without a writer). Called on any thread.
     public Func<QaDbStatus>? Database { get; set; }
     // QA-3: connections open now (the game loop's gauge; any thread).
@@ -152,7 +159,7 @@ public sealed class QaControl
             // The previous tick's duration (it included the previous OnTick) and that OnTick's own time.
             if (!_first) Metrics.Record(loop.LastTickMs, _lastQaMs);
             _first = false;
-            Metrics.SampleSecond(loop.Stats.PacketsInTotal, loop.Stats.PacketsOutTotal);
+            Metrics.SampleSecond(NetTotals(loop));
             if (Options.Events) Events.Diff(match);
 
             _tick.Loop = loop;

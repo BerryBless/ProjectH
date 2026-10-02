@@ -134,6 +134,13 @@ public sealed class BatchSummary
 
     public sealed record Row(PlannedRun Run, int Seed, RunStatus Status, string RunId, string? Where);
 
+    // Stress D40: one row per run that measured something (bounded like the failures), for the comparison table.
+    public sealed record StressRow(int Number, int? ParameterSet, string? Parameters, int Seed, string Status, string RunId, StressSummary Summary);
+
+    public const int MaxStressRows = 200;
+    private readonly List<StressRow> _stress = new();
+    public IReadOnlyList<StressRow> StressRows => _stress;
+
     private sealed class Counts
     {
         public string Label = string.Empty;
@@ -152,6 +159,9 @@ public sealed class BatchSummary
             default: Failed++; break;
         }
         bool bad = report.Status is RunStatus.Failed or RunStatus.Error or RunStatus.Cancelled;
+        if (report.Stress?.Summary is StressSummary ss && _stress.Count < MaxStressRows)
+            _stress.Add(new StressRow(planned.Number, planned.ParameterIndex + 1, planned.ParameterIndex != null ? Compact(report.Parameters ?? planned.Parameters) : (report.Overrides != null ? Compact(report.Overrides) : null),
+                report.Seed, report.Status.ToString().ToUpperInvariant(), report.RunId, ss));
         if (planned.ParameterIndex is int i)
         {
             if (!_perSet.TryGetValue(i, out Counts? c)) _perSet[i] = c = new Counts { Label = planned.ParameterLabel };
@@ -199,6 +209,74 @@ public sealed class BatchSummary
         int more = _failures.Count - Math.Min(_failures.Count, MaxPrintedFailures) + _failuresDropped;
         if (more > 0) yield return $"   ... {more} more failing runs (see QA/Reports)";
         yield return $"   reproduce: {ReproduceCommand(_failures[0])}";
+    }
+
+    // D40 (request §80, §104): the player-count comparison, one line per run (console).
+    public IEnumerable<string> StressLines()
+    {
+        if (_stress.Count == 0) yield break;
+        yield return "   Stress comparison (judged phase of each run; tick ms, CPU % of all cores, MB, KB/s):";
+        yield return "   " + string.Join(" | ", StressColumns.Select(c => c.Header));
+        foreach (StressRow r in _stress) yield return "   " + string.Join(" | ", StressColumns.Select(c => c.Value(r)));
+    }
+
+    // The table's columns, shared by the console, summary.html and summary.json readers.
+    public static readonly (string Header, Func<StressRow, string> Value)[] StressColumns =
+    {
+        ("Run", r => r.Number.ToString(CultureInfo.InvariantCulture)),
+        ("Parameters", r => r.Parameters ?? "-"),
+        ("Players", r => r.Summary.Players.ToString(CultureInfo.InvariantCulture)),
+        ("Phase", r => r.Summary.Phase),
+        ("Tick P50", r => MeasureMath.F(r.Summary.TickP50Ms)),
+        ("P95", r => MeasureMath.F(r.Summary.TickP95Ms)),
+        ("P99", r => MeasureMath.F(r.Summary.TickP99Ms)),
+        ("Max", r => MeasureMath.F(r.Summary.TickMaxMs) + (r.Summary.TicksExact ? "" : "*")),
+        ("CPU %", r => MeasureMath.F(r.Summary.CpuPercent)),
+        ("Managed MB", r => MeasureMath.F(r.Summary.ManagedMB)),
+        ("WorkingSet MB", r => MeasureMath.F(r.Summary.WorkingSetMB)),
+        ("GC 0/1/2", r => $"{r.Summary.Gen0}/{r.Summary.Gen1}/{r.Summary.Gen2}"),
+        ("Send KB/s", r => MeasureMath.F(r.Summary.SendKBps)),
+        ("Recv KB/s", r => MeasureMath.F(r.Summary.RecvKBps)),
+        ("DB Queue", r => r.Summary.DbQueueMax.ToString(CultureInfo.InvariantCulture)),
+        ("Build", r => r.Summary.BuildPieces.ToString(CultureInfo.InvariantCulture)),
+        ("Stalls", r => r.Summary.Stalls.ToString(CultureInfo.InvariantCulture)),
+        ("R1 P95 ms", r => r.Summary.InputLatencyP95Ms is double l ? MeasureMath.F(l) : "n/a"),
+        ("Result", r => r.Status),
+    };
+
+    // D40: QA/Reports/batch-<id>/summary.json and summary.html (only when some run measured). Returns the folder, or
+    // null when there was nothing to write. I/O problems are the caller's to report (never a run failure).
+    public string? WriteStressSummary(string reportRoot, string scenarioFile, DateTimeOffset started)
+    {
+        if (_stress.Count == 0) return null;
+        string id = $"batch-{started:yyyyMMdd-HHmmss}-{Random.Shared.Next(0x10000):x4}";
+        string dir = Path.Combine(reportRoot, id);
+        Directory.CreateDirectory(dir);
+        var json = new { batchId = id, scenario = _scenario, scenarioFile, started, runs = Runs, passed = Passed, failed = Failed, skipped = Skipped, errors = Errors, rows = _stress };
+        File.WriteAllText(Path.Combine(dir, "summary.json"), JsonSerializer.Serialize(json, QaJson.Options), Encoding.UTF8);
+        var sb = new StringBuilder(8 * 1024);
+        string E(string text) => System.Net.WebUtility.HtmlEncode(text);
+        sb.Append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>").Append(E($"Stress batch {_scenario} {id}")).Append("</title><style>")
+          .Append("body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#222}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:3px 8px;text-align:right;font-size:13px}")
+          .Append("td:nth-child(2),th{text-align:left}.FAILED,.ERROR{background:#c62828;color:#fff}.PASSED{background:#2e7d32;color:#fff}.muted{color:#777}</style></head><body>")
+          .Append("<h1>Stress batch: ").Append(E(_scenario)).Append("</h1><p>").Append(E(scenarioFile)).Append(" &middot; ").Append(E(id)).Append(" &middot; ")
+          .Append(Runs).Append(" runs: ").Append(Passed).Append(" passed, ").Append(Failed).Append(" failed, ").Append(Skipped).Append(" skipped, ").Append(Errors).Append(" errors</p>")
+          .Append("<p class=\"muted\">Each row is the run's judged phase (\"steady\", else the longest). Tick in ms (* = approximate, phase over 120 s); CPU % of all logical processors; KB = 1024 bytes of UDP payload; R1 = input to server acknowledgement as the headless clients saw it. Compare rows of the same machine and build only (§125).</p><table><tr>");
+        foreach (var c in StressColumns) sb.Append("<th>").Append(E(c.Header)).Append("</th>");
+        sb.Append("<th>Report</th></tr>");
+        foreach (StressRow r in _stress)
+        {
+            sb.Append("<tr>");
+            foreach (var c in StressColumns)
+            {
+                string v = c.Value(r);
+                sb.Append(c.Header == "Result" ? $"<td class=\"{E(v)}\">" : "<td>").Append(E(v)).Append("</td>");
+            }
+            sb.Append("<td><a href=\"../").Append(E(r.RunId)).Append("/report.html\">").Append(E(r.RunId)).Append("</a></td></tr>");
+        }
+        sb.Append("</table></body></html>");
+        File.WriteAllText(Path.Combine(dir, "summary.html"), sb.ToString(), Encoding.UTF8);
+        return dir;
     }
 
     public static string Compact(JsonElement? value)

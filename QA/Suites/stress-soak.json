@@ -1,0 +1,5 @@
+{
+  "name": "stress-soak",
+  "description": "Stress test soak (request §59-64): the mixed workload for 5 minutes (soak.json; longer with --set soakSeconds=1800 / 3600 / 14400) and ten matches in a row with the same clients (soak_match_reset.json). About 12 minutes at the defaults (estimated from the single runs). Nightly.",
+  "scenarios": [ "Stress/soak.json", "Stress/soak_match_reset.json" ]
+}

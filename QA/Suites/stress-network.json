@@ -1,0 +1,5 @@
+{
+  "name": "stress-network",
+  "description": "Stress test network workloads (request §33-46). Phase A has the reconnect churn (25 / 50 / 100 players, 20 cycles each, about 9 minutes estimated) and the mixed match's high-ping group; phase B adds lag compensation by ping group, join ramp / spike, disconnect spike, invalid packets and the mixed network faults.",
+  "scenarios": [ "Stress/reconnect_churn.json" ]
+}

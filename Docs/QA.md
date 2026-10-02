@@ -4,7 +4,8 @@ QA Tool은 서버를 띄우고 Headless Client(Actor)를 실제 게임 프로토
 
 - 요청: `Docs/requests/2026-10-02-qa-scenario-orchestrator-request.md`. § 번호는 이 요청서 기준이다.
 - 설계: `Docs/specs/2026-10-02-qa-tool-design.md`. D 번호는 이 설계서의 결정이다.
-- 현재 범위: QA-1(MVP), QA-2(Web UI, 아래 "Web UI"), QA-3(Fault Injection, 아래 "Fault Injection"), QA-4(Unity Client 자동화·Screenshot·Manual Check, 아래 "Unity Client Actor"와 "Manual Check"), QA-5(Parameter·Repeat·Seed Sweep·Baseline·Recording 재생·Load 시나리오, 아래 "QA-5").
+- 현재 범위: QA-1(MVP), QA-2(Web UI, 아래 "Web UI"), QA-3(Fault Injection, 아래 "Fault Injection"), QA-4(Unity Client 자동화·Screenshot·Manual Check, 아래 "Unity Client Actor"와 "Manual Check"), QA-5(Parameter·Repeat·Seed Sweep·Baseline·Recording 재생·Load 시나리오, 아래 "QA-5"), Stress Phase A(측정 구간·Actor Group·Stress 시나리오 8개, 아래 "Stress").
+- Stress 요청: `Docs/requests/2026-10-02-server-stress-test-request.md`. Stress 절의 § 번호는 이 요청서 기준이고, 결정은 설계서 D36–D44다.
 
 ## Architecture
 
@@ -21,7 +22,9 @@ QA Tool (Server/src/ProjectH.QA, .NET 10 콘솔)
         ├ AssertionEngine + Comparison: 경로 → 값 → 연산자
         ├ EventCursor: /qa/events 폴링 (필요할 때만)
         ├ ReportWriter: report.json + report.html
-        └ BaselineHistory: QA/Reports/history/<key>.jsonl + Baseline 비교 (QA-5)
+        ├ BaselineHistory: QA/Reports/history/<key>.jsonl + Baseline 비교 (QA-5)
+        └ Stress: measure(측정 구간), GroupRegistry(Actor Group, Workload), ActorBrain(Actor별 행동, Pump Tick마다),
+                  StressMap/BuildSitePool(전투 위치·건설 Site), InputLatencyHistogram(R1), StressReport(요약·Stall·Crash)
 
 Game Server (ProjectH.Server, QA 모드)
  ├ UDP: 게임 프로토콜 (Actor = 실제 Client와 같은 경로)
@@ -149,9 +152,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `parameters` | 없음 | QA-5 D31: 객체 배열(최대 100). 항목마다 `variables` 위에 합쳐 한 번씩 실행한다. 아래 "QA-5" |
 | `baseline` | 없음 | QA-5 D33: `{ "values": ["저장한 변수", ...] }`(최대 50). 실행 기록에 남기고 비교한다 |
 | `baselineWarnPercent` | 50 | QA-5 D33: Threshold가 없는 지표가 이 비율보다 나빠지면 Warning(실패 아님) |
-| `parameters` | 없음 | QA-5 D31: 객체 배열(최대 100). 항목마다 `variables` 위에 합쳐 한 번씩 실행한다. 아래 "QA-5" |
-| `baseline` | 없음 | QA-5 D33: `{ "values": ["저장한 변수", ...] }`(최대 50). 실행 기록에 남기고 비교한다 |
-| `baselineWarnPercent` | 50 | QA-5 D33: Threshold가 없는 지표가 이 비율보다 나빠지면 Warning(실패 아님) |
+| `stress` | false | Stress D39: true면 Headless Actor만(UnityClient·captureScreenshot·manualCheck는 Validation 오류), 띄우는 서버는 `Qa:Events=false`(`server.options`가 정하면 그 값), 콘솔·UI Live Log는 Step 줄과 경고만. 아래 "Stress" |
 
 **Step 공통 필드**
 
@@ -274,6 +275,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `actor.<ActorState 필드>` | Actor가 받은 것(Client 시점) | `actor.hitsLanded`, `actor.weaponName`, `actor.position.x` |
 | `event.<Type>` | 이번 실행에서 받은 이벤트 수(최근 200개, `actor`가 있으면 그 플레이어만) | |
 | `var.<name…>` | 변수 | `var.shots.hits` |
+| `group.<name>.<…>` | Stress: Actor Group(Tool 쪽, 서버 조회 없음) | `group.combat.hitsLanded`, `group.builders.buildResults.Ok`, `group.churn.stats.reconnectFailures`, `group.all.size` |
 | `network.proxy.<…>` | Actor의 Fault Proxy(QA-3). 지금 연결 시도의 카운터와 설정 | `network.proxy.dropped`, `network.proxy.delayed`, `network.proxy.attempts`, `network.proxy.toServer.latencyMs`, `network.proxy.toClient.blocked`. 손실·중복 설정 경로는 `toServer.packetLossPercent`·`duplicatePercent`다(Step 인자는 `lossPercent`). Proxy가 없으면 `enabled` = false |
 
 - 게임 결과는 `player.*`·`match.*`·`build.*`로 검증한다. 이것은 서버의 권위 있는 상태다(§165). `actor.*`·`network.*`는 Client 쪽 사실(받은 HitConfirmed, RTT 등)이다.
@@ -396,6 +398,8 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `ServerProcess/restart.json` | 78 | 경기 중 `restartServer`(정상 종료 → 같은 인자·Seed로 새 프로세스, 새 Port) → 빈 Match → 두 Actor 재접속(새 플레이어) → 새 경기 Playing → 사격 피해 | ~5 s |
 | `Persistence/db_down.json` | 77, 128 | DB 정상 확인 → `stopDb` → 경기 종료 → 저장 3회 실패 후 `db.failed` +1, saved 그대로, 서버 계속, 다음 경기 시작 → `startDb` → 다음 경기 종료 → `db.saved` +1. Docker나 `projecth-mysql` 컨테이너가 없거나 멈춰 있으면 첫 Step에서 나머지를 SKIPPED로 끝낸다(결과 SKIPPED, 종료 코드 0. `--fail-on-skip`이면 1) | 아래 표 참고 |
 
+Stress Test 시나리오(baseline, movement, combat, building, mixed_match, reconnect_churn, final_zone, soak, soak_match_reset)는 아래 "Stress"에 있다.
+
 **Suite**(`QA/Suites/`)
 
 | Suite | 내용 | 시간 |
@@ -404,7 +408,8 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `pre-push` | §93: connect, move, shoot, pickup, death, reconnect | ~30 s |
 | `full-regression` | 모든 카테고리. Stress, Persistence, ServerProcess, Recorded 포함 | ~6 min |
 | `faults` | QA-3: latency_loss_combat, lag_compensation, network_drop, invalid_packet, input_timeout, shutdown, restart, db_down | ~1 min |
-| `stress` | QA-5 D35: `Stress` 전체(bots_50, load_bots_10, load_bots_50). 같은 이름의 카테고리가 있으므로 `suite:stress`로 부른다 | ~3.2 min |
+| `stress` | QA-5 D35: Load 파일 3개(bots_50, load_bots_10, load_bots_50). 같은 이름의 카테고리가 있으므로 `suite:stress`로 부른다. Stress 시나리오는 아래 `stress-*` | ~3.2 min |
+| `stress-quick` 외 6개 | Stress 시나리오 Suite. 아래 "Stress"의 "Suite" | 4.5 min ~ 1 h 이상 |
 
 **아직 없는 시나리오와 이유**
 
@@ -460,6 +465,7 @@ dotnet run --project Server/src/ProjectH.QA -- convert-recording rec.jsonl --out
 | `--seed-sweep A..B` | QA-5: Seed A..B로 한 번씩(최대 1000개). `--seed`·`--repeat`와 같이 쓸 수 없다 |
 | `--stop-on-fail` | QA-5: 반복·Sweep·파라미터 묶음을 첫 실패에서 멈춘다(Suite도 거기서 멈춘다) |
 | `--parameter-set N` | QA-5: 파라미터 세트 N(1부터)만 실행한다. 요약의 재현 명령이 쓴다 |
+| `--set name=value` | Stress: 시나리오 변수를 덮어쓴다(여러 번 가능). `variables`와 파라미터 세트보다 우선한다. 시나리오에 없는 이름은 오류(종료 코드 2). 값은 숫자·true/false면 그 타입, 아니면 문자열. 예: `--set soakSeconds=1800` |
 
 - **종료 코드**(D18):
   - 0: 모두 PASS(또는 SKIPPED).
@@ -503,10 +509,11 @@ dotnet run --project Server/src/ProjectH.QA -- ui --attach http://127.0.0.1:7780
 | Actors | 이름·상태·체력 목록. 선택한 Actor는 서버 Player DTO와 Actor 상태를 보인다: PlayerId, 연결, 위치, 속도, 체력, 실드, 무기, 탄약, 인벤토리, 자원, 이동 모드 |
 | Match | 상태, Tick, 플레이어, 생존, Zone, 경과 시간 |
 | Server | CPU, 메모리, GC, tick p50/p95/p99/max, 패킷/s, QA 명령 시간과 큐 카운터 |
-| Batch | QA-5: 묶음 실행의 실행별 줄(번호, 반복, 파라미터 세트, Seed, 결과, Report)과 요약 |
+| Batch | QA-5: 묶음 실행의 실행별 줄(번호, 반복, 파라미터 세트, Seed, 결과, Report)과 요약. Stress D40: 측정한 실행이 있으면 Players, Tick P50/P95/P99/Max, CPU, Managed·WS MB, GC, Send/Recv KB/s, DB Queue, Build, Stalls, R1 P95 열이 붙는다 |
 | Reports | 최근 실행 50개의 `report.html` 링크 |
 
-- Server 탭에 bytes/s는 없다. `/qa/metrics`가 내지 않기 때문이다.
+- Server 탭은 Stress D36의 `/qa/metrics` 값(bytes/s, managed·할당·GC pause, alive, build pieces, stalls)도 보인다.
+- Stress 시나리오(`"stress": true`) 실행 중에는 Inspector가 서버를 View마다 5초에 한 번만 조회하고(브라우저는 1초마다 묻지만 그 사이에는 캐시를 돌려준다), Live Log는 Step 줄과 경고만 보인다(D39).
 
 **실행**(D20, D23): 한 번에 하나만 실행한다. 편집기의 현재 텍스트를 실행하므로 저장하지 않은 내용도 돌릴 수 있다. 이때 Report에 `unsavedText`가 표시된다. Validation 오류가 있으면 시작하지 않는다.
 
@@ -583,6 +590,7 @@ curl -s http://127.0.0.1:5180/api/run
 - Cleanup 결과. 결과와 따로 적는다(§114)
 - 변수 최종값, Validation 경고, Manual Check·Screenshot(QA-4 전까지 비어 있음)
 - QA-5: Parameters·Batch 줄(Summary), Baseline 표(아래 "QA-5")
+- Stress: 헤더 바로 아래 Stress Summary, Measure phases 표와 구간별 Sample, Stalls, Crash, Groups(아래 "Stress")
 
 ## Fault Injection
 
@@ -791,6 +799,164 @@ dotnet run --project Server/src/ProjectH.QA -- convert-recording C:/tmp/run1.jso
 - 측정(2026-10-02, 이 PC, Debug): 10명 p95 0.062 ms·p99 0.097 ms·메모리 60 MB(2회째, 1회째 대비 +4 %), 50명 p95 0.151 ms·p99 0.197 ms·61 MB.
 - Suite `suite:stress`(카테고리 `Stress`와 이름이 같아서 접두어가 필요하다).
 
+## Stress
+
+서버 Stress Test다(요청 `Docs/requests/2026-10-02-server-stress-test-request.md`, 설계 D36–D44). 새 Framework를 만들지 않고 QA Tool을 넓혔다: 측정 구간 Action(`measure`) 하나, Actor Group Action 몇 개, 시나리오 최상위 `"stress": true`, Report·Batch의 Stress 표. Phase A는 우선순위 시나리오 8개(§108–116)와 그 도구다. 나머지(§18–49의 Lag Compensation별, Build Count, 파괴, Join Ramp·Spike, Invalid Packet, Network Fault Mixed, DB)는 Phase B다.
+
+**답하려는 질문**(요청서 첫머리): 몇 명까지 안정적인가, 어떤 Gameplay가 가장 비싼가, Tick이 언제 무너지는가, 무엇이 먼저 병목인가, Churn·장시간에서 누적이 있는가. 판정은 측정값으로만 한다(§122: 측정하지 않은 값을 추측하지 않는다).
+
+### 실행
+
+```bash
+dotnet build Server/ProjectH.Server.slnx                       # 서버와 도구를 먼저 빌드
+dotnet run --project Server/src/ProjectH.QA -- run suite:stress-quick                                  # 50명, 5개, 약 4.5분
+dotnet run --project Server/src/ProjectH.QA -- run QA/Scenarios/Stress/baseline.json                   # 10/25/50/75/100명 묶음 + 비교표
+dotnet run --project Server/src/ProjectH.QA -- run QA/Scenarios/Stress/mixed_match.json --parameter-set 2   # 100명 한 번
+dotnet run --project Server/src/ProjectH.QA -- run QA/Scenarios/Stress/combat.json --parameter-set 3 --set steadySeconds=120
+dotnet run --project Server/src/ProjectH.QA -- run QA/Scenarios/Stress/soak.json --set soakSeconds=1800   # 30분 Soak
+```
+
+- 실행은 언제나 순차다. 같은 PC에서 Tool(Actor Pump)과 서버가 함께 돈다. Report의 "QA tool CPU"가 Tool 몫이다.
+- 파라미터 묶음(Player Count)이 끝나면 콘솔에 비교표가 나오고 `QA/Reports/batch-<id>/summary.html`·`summary.json`이 생긴다(D40). Web UI Batch 탭도 같은 열이다.
+- 서버 빌드 구성(Debug/Release)은 Report의 Server command에 나오는 DLL 경로로 안다. 숫자는 같은 PC·같은 구성끼리만 비교한다(§125).
+
+### Stress 모드 (`"stress": true`, D39)
+
+- Headless Actor만 쓴다. UnityClient Actor, `captureScreenshot`, `manualCheck`, `uiCommand`, `waitForUnity`는 Validation 오류다(§2, §122).
+- 띄우는 서버는 `Qa:Events=false`다(QA Tick diff 비용을 빼기 위해, §150). `server.options`에 `Qa:Events`가 있으면 그 값을 쓴다. 이벤트가 꺼진 시나리오의 `waitForEvent`·`event.*`는 Validation 경고다.
+- 콘솔(`--verbose` 포함)과 UI Live Log에는 Step 줄과 경고(warn/fail/error/exception/crit가 든 줄)만 나온다. Report의 서버 로그 Tail은 전부 남는다.
+- UI Inspector는 서버를 View마다 5초에 한 번만 조회한다(§87-88).
+
+### 측정 구간: `measure` (D37, D41, D43)
+
+`{ "action": "measure", "name": "steady", "seconds": 60, "sampleSeconds"?: 5, "saveAs"?: "steady" }`
+
+- 시작에 `/qa/metrics`(누적값: GC, 할당, Stall, DB)를 한 번 읽고, `sampleSeconds`(기본 5 s, 1–120)마다 `/qa/metrics?windowSeconds=<간격>`을 하나씩 읽는다. Actor별 HTTP 조회는 없다.
+- Sample은 최대 720개다. 긴 구간은 간격을 늘린다(4시간·5초 → 20초).
+- 구간이 120 s(서버 Tick Ring) 이하면 끝에 `windowSeconds=<구간>`으로 한 번 더 읽어 그 구간 전체의 Tick p50/p95/p99/max, CPU, 패킷·바이트 평균을 정확히 낸다. 120 s보다 길면 Sample 창들로 근사한다: p50은 Sample p50의 평균, p95/p99/max는 가장 나쁜 Sample 창의 값이다(p95/p99를 실제보다 좋게 보이지 않는다). Report에 `*`와 설명이 붙는다.
+- 구간 결과: Players·Sessions·Alive min–max, Tick 4개, 서버 CPU 평균/최대(모든 논리 프로세서 = 100 %), Working Set·Managed 시작/끝/최대, GC 0/1/2 증가, 할당 MB(MB/s), GC Pause ms, Send/Recv KB/s(UDP payload, KB = 1024 B), 패킷/s, QA ms/Tick, Build Piece 시작–끝, DB Queue 최대·저장·실패 증가, Stall·Tick Failure·Bad Packet 증가, 이 구간에 Group이 보낸 Arrange 명령 수, R1, QA Tool CPU(같은 단위와 Core 수).
+- `name`은 자유다(warmup, steady, cooldown, match_01...). Report 맨 위 **Stress Summary**는 `steady` 구간, 없으면 가장 긴 구간(같은 길이면 마지막)이다(§103).
+- **경고(D42)**: warmup이 아닌 구간의 tickMax가 33 ms(30 Hz Tick 예산)를 넘으면 Warning이다. 실패가 아니다. 이번 시나리오들은 Hard Limit이 없다(§74–75). FAIL은 Crash, Hang(QA API 무응답), 접속 수 감소, Tick Failure, Stall, 시나리오 Assertion 실패다(§81).
+- **Stall(D41)**: Sample에서 서버 `health.stalls`가 늘면 그 시각, 구간, Step, Player 수, 그 Sample, 최근 이벤트(이벤트가 켜져 있을 때만)를 Report "Stalls"에 남기고 Warning을 낸다(최대 50개).
+- **Crash(D41)**: 띄운 서버가 시나리오의 stopServer/killServer 없이 끝나면 Exit Code, 그때의 Step, Actor 수(Joined 수), 마지막 Sample과 구간, 서버 로그 Tail을 Report "Crash"에 남기고 FAIL로 끝낸다. 측정 중이면 그 `measure`가 바로 실패한다.
+- 취소(Ctrl+C, 시나리오 Timeout)되면 그때까지 잰 구간을 "(cut short)"로 남긴다.
+- `saveAs`에는 Sample을 뺀 구간 숫자가 들어간다(`var.steady.tickP95Ms`, `var.steady.playersMin`, `var.steady.stalls`...). Baseline 기록에는 Stress Summary의 Tick p95/p99, CPU, Managed, Working Set, Send KB/s가 Warning 대상으로, 나머지가 정보로 들어간다(§79, D42).
+
+**R1 입력 지연(D43)**: Headless Actor가 입력을 보낸 시각을 Seq별로 연결당 256칸 Ring에 두고, Snapshot의 `AckInputSeq`가 그 입력을 확인하면 지연을 Run 전체 Histogram(1 ms 칸 2000개, Pump Thread가 기록)에 더한다. 구간마다 p50/p95/p99/max와 RTT를 뺀 값을 낸다. 서버가 다음 Tick에 입력을 쓰는 시간, 15 Hz Snapshot 간격, Actor Pump의 약 33 ms Tick 해상도가 모두 들어 있다. 서버 Tick 비용이 아니라 Client가 본 왕복 지표다. 입력이 하나도 확인되지 않은 구간은 "Not Available"이다.
+
+### Actor Group (D38)
+
+Group 행동은 Actor Pump가 Tick마다 실행하는 `ActorBrain`이다. Actor별 Thread도, Actor별 HTTP 조회도 없다. Brain은 Actor의 의도(이동 목표, 조준, 누름, 건설 요청)만 정하고, 실제 입력은 기존 Action과 같은 코드(Steering, 무기 Fire Interval을 지키는 FirePress, Build 모드·조준·요청 순서)가 만든다. 결정은 시나리오 Seed와 Actor 번호에서 나온다(같은 Seed = 같은 선택. 세계의 타이밍은 실행마다 조금 다르다). Group의 Arrange 명령(위치, 무기, 자원)은 동시에 8개까지 QA API로 보내고 503/504는 두 번 다시 보낸다.
+
+| Action | 인자 | 동작 |
+|---|---|---|
+| `actorGroup` | `groups: [{name, percent \| count \| rest, proxy?}]`, `prefix?`, `seed?`(기본 Run Seed) | Headless Actor(이름 순)를 Seed로 섞어 Group에 나눈다. 비율은 최대 잔여 방식으로 반올림(33/33/34 % of 10 = 3/3/4), `rest`는 남은 전부, 어느 Group에도 없는 Actor도 있을 수 있다. `proxy: true` Group은 Fault Proxy를 쓴다(`connectAll` 전에 만든다). saveAs = `{actors, seed, groups{name: 수}, ungrouped}` |
+| `groupMove` | `group`, `pattern`(mixed·clockwise·counterClockwise·radial·random, 기본 mixed), `center?`, `radius?`(60), `sprint?`, `sprintPercent?`, `jumpEverySeconds?` | Waypoint를 계속 걷는다. Actor마다 시작 각도와 원 반지름이 달라 한곳에 모이지 않는다. mixed는 번호 순으로 4가지 패턴(§12). 건물 안 Waypoint는 건너뛰고, 제때 못 가거나 Steering이 포기하면 다음으로 간다 |
+| `groupCombat` | `group`, `pairing`(pairs·groups), `groupSize?`(groups일 때 3), `weapon?`(Vesper AR), `ammo?`(300), `burst?`(3), `pauseMs?`(2000), `reloadEvery?`(5), `hitPercent?`(25), `engageRange?`(40), `strafeSeconds?`(1.5), `arrange?`(true), `rearm?`(true), `center?`, `radius?`(70, 0 초과 120 m 이하), `spacing?`(12, 2–50 m), `pairDistance?`(10, 2–50 m), `shield?`(100) | 멤버를 짝(또는 고리)으로 묶어 서로 쏜다. 한 사람이 모두의 목표가 되지 않는다(§17). Arrange: 맵 데이터로 고른 빈 자리(서로 보이고 설 수 있는 곳)에 마주 보게 놓고 무기·탄약·실드를 준다. 행동: 짝을 조준(자기 Snapshot), 멀거나 안 보이면 걸어간다, 좌우 Strafe, `burst`번 단발(무기 Fire Interval 준수) 후 `pauseMs` 쉼, `reloadEvery`번마다 Reload. `hitPercent`만 가슴을, 나머지는 머리 위 3 m를 조준한다(빗나간 탄도 Hitscan·Lag Compensation을 거친다. 사망률을 장시간 버틸 수 있게 낮춘다) |
+| `groupBuild` | `group`, `pieces?`(wall·floor·ramp·roof), `material?`(wood), `ratePerSecond?`(1, 최대 10), `recycle?`(false), `arrange?`(true), `resources?`(500), `center?`, `weapon?`, `ammo?`, `role?` | 멤버마다 자기 Site(맵의 평평하고 빈 3×2 셀, 서로 겹치지 않음. Run의 Site Pool에서 가장 적게 잡힌 가까운 곳을 받는다. 가지 못해 포기한 Site는 Pool에 돌려준다. 모두 잡혀 있으면 함께 쓰고 그 수를 `group.<name>.buildSites.shared`로 보인다)를 가져 그 남쪽 칸에 서서 짓는다. Site당 13조각: 양옆 Ramp, 바닥, 서·동·북 벽 2층, 지붕, 2층 바닥, 남쪽 벽 2층(서버의 시야 검사를 위해 먼 것부터). `recycle`이면 다 지은 Site를 자기 무기로 실제 사격해 1층 조각을 부수고(위층은 서버 지지 규칙으로 붕괴) 다시 짓는다. 4/s 이상은 role `turbo` |
+| `groupLoot` | `group`, `searchRange?`(40), `dropEvery?`(3) | 아는 아이템으로 걸어가 Interact, 몇 번 주울 때마다 Drop, 다쳤으면 Medkit 사용. 없으면 주변을 걷는다 |
+| `groupRoles` | `group`, `roles: [{role, percent}]`(move·sprint·jump·idle·loot·build·turbo), `switchSeconds?`(20), `center?`, `radius?`, `ratePerSecond?`, `turboRatePerSecond?`, `resources?` | 멤버마다 `switchSeconds`마다 역할을 바꾼다. 역할은 (Seed, 번호, 구간)으로 정해지는 가중 선택이다(§52). 전투는 짝이 필요해서 역할에 없다 |
+| `groupChurn` | `group`, `percent?`(15), `cycleSeconds?`(8), `cycles?`(20), `mode?`(graceful·drop·mixed), `offlineMs?`(500), `reconnectTimeoutMs?`(15000) | Background Workload. 매 Cycle Seed로 고른 비율이 끊기고(mixed는 반은 정상 종료, 반은 끊김 패킷 없이), 서버가 옛 연결을 놓을 때까지 `/qa/players`를 한 번씩 읽어 기다린 뒤 같은 DevPlayerId로 다시 접속한다. 재접속 시간, 실패, 서버 목록의 중복 DevPlayerId를 센다. Proxy Actor는 쓸 수 없다 |
+| `groupNetworkFault` | `group`, `latencyMs?`, `jitterMs?`, `lossPercent?`, `duplicatePercent?`, `direction?` | `proxy: true` Group의 모든 멤버 Proxy에 같은 장애 |
+| `stopGroup` | `group`(이름 또는 `all`) | Workload를 끝내고(최대 10 s, 기본 Step Timeout 20 s) 행동을 지운다(멤버는 서서 입력만 보낸다). saveAs = 통계. 그 Group의 Workload가 stop 전에 오류로 끝났으면 실패다(측정 중 일부를 일하지 않았다는 뜻) |
+
+- **새 행동은 옛 Workload를 대신한다**: 행동 Action(groupMove·Combat·Build·Loot·Roles)은 그 Group의 Re-arm Workload를 먼저 끝내고, 새 groupChurn은 옛 Churn을 끝낸다. Churn은 다른 행동과 같이 돈다.
+- **Churn의 실패**: `/qa/players`는 503/504·자체 Timeout에 두 번 다시 묻는다. 그래도 실패하거나 다른 오류로 Churn이 끝나면, 어느 경로든(정지·오류) 떠나 있던 멤버를 다시 접속시킨 뒤 끝낸다(최대 8 s: 패킷 없이 끊긴 Peer를 서버가 놓는 DisconnectTimeoutMs 기본 5 s보다 길게). 오류로 끝난 Workload는 stopGroup 실패와 Run 경고로 남는다.
+- **Workload와 정리**: Re-arm(전투·Recycle 건설)과 Churn은 Runner 쪽 Background Task다. Actor State만 읽고 Actor 명령과 QA 명령만 보낸다(RunContext는 건드리지 않는다). Run당 Workload 최대 64개, Group 최대 32개. Run이 끝나면 Cleanup이 다른 정리보다 먼저 모든 Workload를 끝낸다(Report Cleanup의 `groups` 줄). Ctrl+C·Timeout에도 같다.
+- **Re-arm(Arrange)**: 부활한 멤버의 무기 칸이 비면 무기·탄약(전투 Group은 자기 자리도)을 다시 주고, 예비 탄약이 60발 아래면 채운다. 이 QA 명령은 실제 게임이라면 줍기로 얻는 것을 대신하는 Arrange이고, 측정 구간마다 "Arrange cmds"로 세며 서버 `qaCommandMs`에 들어간다. 피해·사망 자체는 언제나 실제 사격이다(`damagePlayer` 없음).
+- `group.<name>.size·joined·alive·role·workloads·pressesSent·hitsLanded·damageTaken·buildResults.<Code>·stats.<…>`로 검증한다(stats: arrangeCommands, commandFailures, rearms, deaths, refills, churnCycles, disconnects, reconnects, reconnectFailures, reconnectMsAvg/Max, duplicates, faultsSet, errorCount, errors).
+
+### 시나리오 (`QA/Scenarios/Stress/`, D44)
+
+모두 `"stress": true`, Tag `stress`, `server`. 구간 길이는 변수(`warmupSeconds`, `steadySeconds`, `cooldownSeconds`)이고 `--set`으로 바꾼다. 공통 순서(§98): Spawn → 접속 → (Arrange) → Group 행동 → `mark warmup_start` → warmup → `mark measurement_start` → steady → `mark measurement_end` → 검증(server.running, 기대 Player 수, Stall 0, Tick Failure 0, 행동이 실제로 일어났는지) → `mark cooldown` → stopGroup → 퇴장 → cooldown → 모두 나갔는지.
+
+| 파일 | § | 내용 | 서버 설정 | Players |
+|---|---|---|---|---|
+| `baseline.json` | 10, 109 | 접속만(Keepalive 입력) | DevRespawn, MaxPlayers 100 | 10/25/50/75/100 |
+| `movement.json` | 11–13, 110 | 4가지 이동 패턴, 40 % Sprint, 6 s마다 Jump | DevRespawn | 10/25/50/75/100 |
+| `combat.json` | 14–17, 111 | 모두 짝 전투(Vesper AR, 25 % 명중 Burst) | DevRespawn | 10/25/50/75/100 |
+| `building.json` | 20–23, 112 | 60 % 건설(1/s), 10 % Turbo(6/s), 둘 다 Recycle, 30 % 걷기 | DevRespawn, BuildInfiniteResources(이유는 description: 자원 상한 500 = 나무 50조각 < 60 s 구간) | 10/25/50(맵의 평평한 Site가 약 40개라 75/100은 Site를 나눠 쓰게 된다) |
+| `mixed_match.json` | 50–53, 113 | 전투 30 %, 건설 10 %, Turbo 10 %, 고지연 10 %(양방향 50 ms), Churn 5 %, 나머지는 걷기·달리기·줍기 역할 전환 | DevRespawn, BuildInfiniteResources | 50/100 먼저, 10/25/75 |
+| `reconnect_churn.json` | 36–38, 114 | 경기 중 6 s마다 15 % 끊김(반은 패킷 없이) → Grace 안 재접속 × 20, 모두 걷기. Zone이 사람을 죽이기 전(약 2분)에 끝낸다 | 경기(Grace), StartCountdownSeconds 8, DisconnectTimeoutMs 2000 | 25/50/100 |
+| `final_zone.json` | 54–55, 115 | 반경 25 m에 몰림: 전투 50 %(6 m 짝), 건설 20 %, 나머지 달리기 | DevRespawn, BuildInfiniteResources | 30/40/50 |
+| `soak.json` | 59–64, 116 | mixed 작업을 `soakSeconds`(기본 300) 동안, 10 s Sample. start/soak/end/cooldown 구간 | DevRespawn | 50 (`--set players=`) |
+| `soak_match_reset.json` | 59–64 | 같은 Client로 경기 10번(Start → 30 s → finish → Reset), 경기마다 구간 | 경기, StartCountdownSeconds 3 | 50 |
+
+- mixed_match의 요청 비율은 겹친다(70 % 이동, 40 % Sprint, 30 % 전투, 20 % 줍기, 20 % 건설 중 10 % Turbo). 여기서는 겹치지 않는 Group으로 나누고, 행동이 겹치는 부분을 덮는다: 이동은 걷기·줍기·전투(Strafe·추격)를 합쳐 70 %를 넘고, Sprint는 sprint 역할·줍기·추격이다. 비율은 변수다.
+- DevRespawn 시나리오에는 Zone 피해가 없다(Zone은 경기 흐름에서만 돈다). Zone 피해·대량 탈락은 경기 시나리오(soak_match_reset)와 Phase B의 elimination burst가 맡는다.
+
+### Suite
+
+| Suite | 내용 | 시간 |
+|---|---|---|
+| `stress-quick` | baseline·movement·combat·building·mixed를 50명, steady 30 s | 4 min 22 s(실측, 5개 PASS) |
+| `stress-gameplay` | movement·combat·building 50명, mixed 50·100명, final_zone 40명, steady 60 s | 약 8–9 min(추정: 각 파일을 따로 잰 시간의 합) |
+| `stress-soak` | soak(5분) + soak_match_reset(10경기) | 약 12 min(추정: 따로 잰 5.6 + 6.0 min) |
+| `stress-network` | reconnect_churn 25/50/100(Phase B: Lag별, Join Ramp/Spike, Invalid Packet, Fault Mixed) | 약 9 min(추정: 50명 한 번 2.6 min) |
+| `stress-building` | building 10/25/50, final_zone 50(Phase B: Build Count, 파괴, Spam) | 약 6 min(추정) |
+| `stress-fault` | reconnect_churn 50(Phase B: Disconnect Spike, Input Timeout, DB) | 약 2.6 min(추정: 같은 실행을 따로 잼) |
+| `stress-full` | 모든 Stress 시나리오의 모든 파라미터 세트 | 1시간 이상(추정) |
+
+- Suite 항목은 문자열 경로 말고 `{ "path": "Stress/baseline.json", "parameterSet": 3, "variables": { "steadySeconds": 30 } }`도 된다. 그 세트 하나를 그 변수로 돌린다(CLI의 `--parameter-set`·`--set`이 이긴다). 같은 파일을 다른 옵션으로 여러 번 넣을 수 있다.
+- pre-push에는 넣지 않는다(§97). `stress` Suite와 `full-regression`은 예전 Load 파일 3개만 돈다.
+
+### 측정 (2026-10-02, Phase A)
+
+- 환경: i9-14900K(논리 32), Windows 11, .NET 10, **Debug 빌드**(`bin/Debug/net10.0/ProjectH.Server.dll`), 서버와 QA Tool(Actor Pump)이 같은 PC, 루프백. Git 8638cff + 이 작업(dirty). 다른 Agent가 같은 PC에서 일하고 있었을 수 있다.
+- 모두 steady 60 s(churn 120 s, soak 300 s), Tick 백분위는 구간 전체 창(정확값), soak만 Sample 근사. CPU는 32 논리 프로세서 = 100 %. KB = 1024 B UDP payload.
+- 모두 PASSED, Stall 0, Tick Failure 0, Bad Packet 0, Crash 없음. baseline·movement·building·baseline 100·묶음은 첫 번째 실행, 전투가 들어간 것(combat, mixed, final_zone, soak)과 reconnect_churn은 Burst 조준 수정과 Churn 길이 조정 뒤 다시 잰 값이다(전투가 없는 작업량은 그 수정과 관계없다).
+
+| 시나리오 | Players | Tick p50 | p95 | p99 | max (ms) | 서버 CPU % | Managed 끝/최대 MB | WS 최대 MB | GC 0/1/2 | 할당 MB/s | Send KB/s | Recv KB/s | pkt out/s | R1 p50/p95/p99 ms | Tool CPU % | Report |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| baseline | 50 | 0.121 | 0.185 | 0.236 | 0.578 | 0.154 | 5.9/5.9 | 64.5 | 0/0/0 | 0.002 | 496.1 | 134.8 | 750 | 91/136/138 | 0.114 | qa-20261002-201140-2fc6 |
+| movement | 50 | 0.138 | 0.211 | 0.262 | 0.679 | 0.115 | 5.9/5.9 | 64.9 | 0/0/0 | 0.002 | 496.0 | 134.8 | 762 | 90/107/109 | 0.117 | qa-20261002-201303-d741 |
+| combat | 50 | 0.148 | 0.285 | 0.536 | 2.480 | 0.158 | 8.2/17.9 | 84.0 | 1/0/0 | 0.146 | 558.0 | 134.8 | 3199 | 90/107/108 | 0.140 | qa-20261002-204410-02bb |
+| building | 50 | 0.192 | 0.569 | 0.749 | 4.531 | 0.214 | 15.6/20.9 | 93.8 | 3/1/0 | 0.803 | 650.7 | 134.9 | 6063 | 90/108/136 | 0.161 | qa-20261002-201549-639d |
+| mixed_match | 50 | 0.237 | 0.390 | 0.529 | 2.363 | 0.189 | 9.3/9.3 | 73.2 | 0/0/0 | 0.028 | 572.0 | 134.6 | 3859 | 91/199/233 | 0.229 | qa-20261002-204533-a735 |
+| final_zone | 40 | 0.197 | 0.332 | 0.419 | 0.670 | 0.222 | 8.3/8.3 | 71.3 | 0/0/0 | 0.016 | 376.6 | 107.9 | 2845 | 90/107/108 | 0.139 | qa-20261002-204820-abab |
+| reconnect_churn | 50 | 0.146 | 0.248 | 0.341 | 1.027 | 0.186 | 15.6/15.6 | 74.6 | 0/0/0 | 0.071 | 485.2 | 126.9 | 823 | 90/107/109 | 0.135 | qa-20261002-204943-2fc1 |
+| baseline | 100 | 0.242 | 0.321 | 0.444 | 0.601 | 0.227 | 8.8/8.8 | 66.7 | 0/0/0 | 0.002 | 1984.5 | 269.5 | 3002 | 108/138/140 | 0.239 | qa-20261002-201835-ca6d |
+| combat | 100 | 0.264 | 0.673 | 1.120 | 5.860 | 0.329 | 24.3/28.5 | 99.9 | 6/5/2 | 1.314 | 2234.5 | 269.5 | 12730 | 106/138/139 | 0.278 | qa-20261002-205213-d81f |
+| mixed_match | 100 | 0.451 | 0.786 | 0.995 | 6.796 | 0.392 | 28.7/34.3 | 105.4 | 7/6/2 | 1.511 | 2282.4 | 269.0 | 14195 | 108/199/233 | 0.515 | qa-20261002-204656-31c8 |
+| soak (300 s, 근사) | 50 | 0.196 | 0.485 | 1.201 | 7.403 | 0.174 | 12.8/12.8 | 74.4 | 0/0/0 | 0.020 | 540.7 | 134.7 | - | -/107/- | 0.135 | qa-20261002-205338-9fd4 |
+
+Baseline Player Count 비교(D40 묶음, steady 30 s, `batch-20261002-202122-4170`):
+
+| Players | Tick p50 | p95 | p99 | max | CPU % | Managed MB | Send KB/s | Recv KB/s |
+|---|---|---|---|---|---|---|---|---|
+| 10 | 0.050 | 0.076 | 0.105 | 0.188 | 0.119 | 4.5 | 23.0 | 27.0 |
+| 25 | 0.077 | 0.125 | 0.145 | 0.258 | 0.152 | 4.9 | 128.9 | 67.4 |
+| 50 | 0.120 | 0.183 | 0.231 | 0.282 | 0.163 | 5.8 | 495.8 | 134.8 |
+| 75 | 0.171 | 0.257 | 0.323 | 0.558 | 0.177 | 7.1 | 1100.8 | 202.1 |
+| 100 | 0.240 | 0.323 | 0.454 | 0.773 | 0.240 | 8.4 | 1985.7 | 269.5 |
+
+작업량(같은 실행, warmup부터 끝까지의 Group 합계): combat 50은 입력 누름 3693(사격·Reload·슬롯 키), HitConfirmed 646, 사망 62, Re-arm 57. combat 100은 누름 7543, HitConfirmed 1048, 사망 89. building 50은 배치 1495건 모두 Ok, 조각 수가 짓기·부수기로 140–340 사이를 오간다. mixed 100은 건설 Ok 1078, 전투 Group HitConfirmed 280, Churn 재접속 20. reconnect_churn 50은 20 Cycle, 끊김 160·재접속 160(실패 0, 중복 0), 서버 resumes 160, 재접속 평균 137 ms·최대 364 ms.
+
+**측정으로 확인된 것**
+- **가장 먼저 크게 자라는 것은 송신 대역폭이다.** 놀고 있는 Client만으로 10 → 100명에서 23 → 1986 KB/s(약 86배, 인원의 제곱에 가깝게). 같은 구간에서 Tick p95는 0.08 → 0.32 ms, CPU는 0.12 → 0.24 %다. LoadTest Phase 8의 100봇 2075 KB/s와 같은 크기다.
+- **가장 비싼 Gameplay는 건설(50명)과 100명 전투·혼합이다.** 50명에서 building의 p95 0.57 ms·max 4.5 ms·할당 0.8 MB/s·GC 3/1/0이 가장 높다. 100명에서는 combat과 mixed가 할당 1.3–1.5 MB/s, GC 6–7/5–6/2(60 s에 Gen2 2번, 합계 Pause 20–24 ms), p99 1.0–1.1 ms, max 5.9–6.8 ms다. 같은 작업량의 50명 combat은 할당 0.15 MB/s·Gen2 0이다. 할당이 어디서 나오는지는 이번에 재지 않았다(Profiling은 다음 단계).
+- **Tick 예산(33 ms)에 가까운 구간은 없다.** 가장 큰 단일 Tick은 7.7 ms(soak_match_reset match_01, soak 7.4 ms), 가장 높은 p99는 1.2 ms(soak, 근사)다. D42 경고(tickMax > 33 ms)는 한 번도 나지 않았다.
+- **Churn**: 50명이 경기 중 20 Cycle 동안 매번 15 %가 끊겨도(반은 패킷 없이) 모두 같은 캐릭터로 돌아왔고(resumes = 재접속 수), 중복·잔류 Player가 없었다. 첫 시도(180 s)는 Zone이 마지막 30 s에 50명 중 43명을 죽여, 죽은 사람이 관전자로 다시 들어왔다(resume 226/240, join 14). 그래서 시나리오를 Zone 피해 전에 끝나게 줄였다.
+- **경기 반복(soak_match_reset, 10경기)**: 경기당 Tick p95 0.30–0.41 ms로 일정하다. Working Set은 63.8 → 91.4 MB(첫 시도 63.9 → 86.1 MB)로 올랐고 Managed는 GC 뒤 6.9 MB(4경기 시작), 9.0 MB(10경기 시작)였다(처음 6.1 MB). GC는 경기 사이(측정 구간 밖)에 일어나 구간 GC 수는 0이다. 10경기(약 6분)로는 누적인지 아닌지 판단할 수 없다. 더 긴 Soak가 필요하다.
+- **soak 300 s**: Managed가 6.7 → 12.8 MB로 거의 직선으로 늘었지만 그 사이 GC가 한 번도 일어나지 않았다(할당 0.02 MB/s). GC 뒤 기준선이 오르는지는 5분으로는 볼 수 없다(`--set soakSeconds=1800` 이상).
+- **R1**: 혼잡 없는 루프백에서 p50 약 90 ms, p95 107–138 ms. 서버의 다음 Tick, 15 Hz Snapshot 간격, Pump Tick 해상도(약 33 ms)가 들어 있다. mixed의 p95 199 ms는 양방향 50 ms 지연 Group 때문이다. 이 값은 같은 조건 비교용이고 절대 지연이 아니다.
+- **QA Tool 자신**: CPU 0.11–0.52 %(Core 0.04–0.17개). 서버와 비슷한 크기라 같은 PC 측정을 크게 흔들지 않는다.
+- **LoadTest와 비교(§125)**: LoadTest Phase 8의 50봇(Release, 봇 Brain) p95 0.11 ms, 이번 baseline 50(Debug, 정지) p95 0.185 ms, combat 50 p95 0.285 ms. 빌드 구성과 작업량이 달라서 Regression으로 판단하지 않는다.
+- **Crash 경로 확인**: 측정 중인 실행(10명)의 서버를 자기 PID로 강제 종료했더니 `measure`가 바로 실패하고(Exit Code -1, "the server process exited"), Report에 Crash(Step, Actor 수, 마지막 Sample, 로그 63줄)가 남았다.
+
+**알려진 제한**
+- 서버와 Actor가 같은 PC·루프백이다. 실제 네트워크의 지연·손실·대역폭은 mixed의 고지연 Group(Fault Proxy) 말고는 없다.
+- DevRespawn 시나리오에는 Zone 피해가 없다. 경기 시나리오(reconnect_churn, soak_match_reset)는 Zone을 끌 수 없어서 길이를 Zone 피해 전으로 제한했다.
+- 전투 사망 뒤 Re-arm은 QA 명령(Arrange)이다. 구간별로 세고(`Arrange cmds`, 50명 combat 60 s에 약 170개) 서버 `qaCommandMs`(Tick당 0.004–0.005 ms)에 들어간다.
+- 건설 Site는 맵에 약 40개다. building은 50명(Turbo 포함 35명 건설)까지만 파라미터로 둔다.
+- 120 s보다 긴 구간의 Tick 백분위는 Sample 근사다(p95/p99는 실제보다 좋게 나오지 않는다).
+- GC 수는 구간 안의 것만 센다. 구간 사이(경기 Reset 등)의 GC는 Managed 시작값 변화로만 보인다.
+- R1은 Client 쪽 왕복 지표이고 Pump Tick(약 33 ms) 해상도다.
+- Brain의 선택은 Seed로 정해지지만 세계의 타이밍(Steering, 사망 시점)은 실행마다 조금 다르다.
+- 서버 GC를 강제로 일으킬 수 없다(QA API에 없고, 넣으면 측정이 바뀐다). "GC 뒤 기준선"은 자연 GC 시점에만 보인다.
+
+**Phase B 후보**(요청 §18–49, 이번에 만들지 않음): `lag_compensation`(Ping Group 0/50/100/200), `build_count`(spawnBuildPiece로 1,000–20,000), `build_destruction`(Foundation 파괴 → 대량 붕괴), `loot`, `zone`, `elimination_burst`, `join_ramp`·`join_spike`, `disconnect_spike`, `input_timeout`, `invalid_packets`(90 정상 + 10 악성), `build_spam`, `network_fault_mixed`(60/15/10/10/5 %), `db_persistence`·`db_down`, Hotspot vs Distributed 비교(§56-58), `groupInvalidPackets`·`groupBuildSpam` Action, 100명 할당·GC의 출처 Profiling.
+
 ## Adding New Actions
 
 1. **Handler를 쓴다.** 비슷한 파일에 `DelegateAction(new ActionSpec { ... }, RunAsync)`를 추가한다.
@@ -798,6 +964,7 @@ dotnet run --project Server/src/ProjectH.QA -- convert-recording C:/tmp/run1.jso
    - `Actions/ActorActions.cs`: Actor 입력
    - `Actions/ServerCommandActions.cs`: 서버 명령
    - `Actions/FaultActions.cs`: 장애 주입(QA-3)
+   - `Actions/StressActions.cs`: 측정 구간(`measure`)과 Actor Group(Stress). Group 행동은 `Stress/Brains.cs`의 `ActorBrain`이다(Pump Thread에서 Tick마다 의도를 정한다)
 2. **`ActionSpec`을 채운다.** Validator와 QA-2 Editor가 이것을 읽는다.
 
 | 필드 | 의미 |

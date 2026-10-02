@@ -50,13 +50,17 @@ public sealed class ServerStats
 
     public void AddInputDrop() => Interlocked.Increment(ref _inputDrops);
 
-    // QA-1: packets since the start. TakeDelta folds each delta into these (game loop thread only), so the packet path pays
+    // QA-1: packets (and, for the stress runs, bytes) since the start. TakeDelta folds each delta into these (game loop thread only), so the packet path pays
     // nothing extra; the totals are the folded part plus the counter not yet taken. Read on the game loop thread only.
     private long _takenPacketsIn;
     private long _takenPacketsOut;
+    private long _takenBytesIn;
+    private long _takenBytesOut;
 
     public long PacketsInTotal => _takenPacketsIn + Interlocked.Read(ref _packetsIn);
     public long PacketsOutTotal => _takenPacketsOut + Interlocked.Read(ref _packetsOut);
+    public long BytesInTotal => _takenBytesIn + Interlocked.Read(ref _bytesIn);
+    public long BytesOutTotal => _takenBytesOut + Interlocked.Read(ref _bytesOut);
 
     public StatsCounters TakeDelta()
     {
@@ -69,6 +73,8 @@ public sealed class ServerStats
             Interlocked.Exchange(ref _inputDrops, 0));
         _takenPacketsIn += delta.PacketsIn;
         _takenPacketsOut += delta.PacketsOut;
+        _takenBytesIn += delta.BytesIn;
+        _takenBytesOut += delta.BytesOut;
         return delta;
     }
 }

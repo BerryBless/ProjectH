@@ -35,6 +35,23 @@ public static partial class BaselineHistory
         ("workingSetMB", new[] { "server.memoryMB", "server.workingSetMB", "server.metrics.workingSetMB" }),
     };
 
+    // Stress D42 (request §75, §79): the judged phase's numbers. Warn = compared like a metric without a threshold
+    // (Warning when worse by more than baselineWarnPercent, never a failure); the others are shown for information.
+    public static readonly (string Name, bool Warn, Func<StressSummary, double?> Value)[] StressMetrics =
+    {
+        ("tickP50Ms", false, s => s.TickP50Ms),
+        ("tickP95Ms", true, s => s.TickP95Ms),
+        ("tickP99Ms", true, s => s.TickP99Ms),
+        ("tickMaxMs", false, s => s.TickMaxMs),
+        ("cpuPercent", true, s => s.CpuPercent),
+        ("managedMB", true, s => s.ManagedMB),
+        ("workingSetMB", true, s => s.WorkingSetMB),
+        ("sendKBps", true, s => s.SendKBps),
+        ("recvKBps", false, s => s.RecvKBps),
+        ("allocatedMBPerSec", false, s => s.AllocatedMBPerSec),
+        ("inputLatencyP95Ms", false, s => s.InputLatencyP95Ms),
+    };
+
     [GeneratedRegex(@"[^A-Za-z0-9_\-]")]
     private static partial Regex Unsafe();
 
@@ -100,6 +117,14 @@ public static partial class BaselineHistory
             foreach ((string name, _) in ServerMetrics)
             {
                 if (JsonPath.Child(m, name) is JsonElement v && Comparison.TryNumber(v, out double d) && double.IsFinite(d)) entry.Metrics[name] = d;
+            }
+        }
+        if (report.Stress?.Summary is StressSummary stress)
+        {
+            entry.StressPhase = stress.Phase;
+            foreach ((string name, _, Func<StressSummary, double?> value) in StressMetrics)
+            {
+                if (value(stress) is double d && double.IsFinite(d)) entry.Stress[name] = Math.Round(d, 4);
             }
         }
         foreach (string name in scenario.BaselineValues)
@@ -232,6 +257,12 @@ public static partial class BaselineHistory
             bool hasThreshold = paths.Any(thresholds.Contains);
             AddRow(report, "server." + name, before, now, hasThreshold ? "assert in scenario" : $"warn > +{scenario.BaselineWarnPercent:0.#}%", !hasThreshold);
         }
+        foreach ((string name, bool warn, _) in StressMetrics)
+        {
+            double? before = previous.Stress.TryGetValue(name, out double b) ? b : null;
+            double? now = current.Stress.TryGetValue(name, out double c) ? c : null;
+            AddRow(report, $"stress.{name} ({current.StressPhase ?? previous.StressPhase})", before, now, warn ? $"warn > +{scenario.BaselineWarnPercent:0.#}%" : "info only", warn);
+        }
         foreach (string name in scenario.BaselineValues)
         {
             double? before = Number(previous.Values, name);
@@ -290,6 +321,9 @@ public sealed class HistoryEntry
     public long DurationMs { get; set; }
     public Dictionary<string, double> Metrics { get; set; } = new();
     public Dictionary<string, JsonElement> Values { get; set; } = new();
+    // Stress: the judged phase's name and numbers (BaselineHistory.StressMetrics); empty for other runs.
+    public string? StressPhase { get; set; }
+    public Dictionary<string, double> Stress { get; set; } = new();
 }
 
 public sealed record BaselineRow(string Name, double? Previous, double? Current, double? ChangePercent, string Threshold, bool Warning);

@@ -73,6 +73,8 @@ public sealed partial class ServerProcessManager : IDisposable
     public LogRing Log { get; }
     public int? Pid => _process?.Id;
     public bool HasExited => _process == null || _process.HasExited;
+    // D41: the exit code once the process has exited (null while it runs or when it cannot be read).
+    public int? ExitCode => _process != null && _process.HasExited ? ExitCodeOrNull(_process) : null;
 
     [GeneratedRegex(@"QA_READY gamePort=(\d+) qaPort=(\d+)")]
     private static partial Regex ReadyLine();
