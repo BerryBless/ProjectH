@@ -30,6 +30,11 @@ public sealed class QaRunOptions
     public bool UnsavedText { get; init; }
     // QA-3: a Skipped run exits 1 instead of 0 (CI that must not pass on a missing Docker).
     public bool FailOnSkip { get; init; }
+    // QA-4: the default Unity Development player (--unity-exe) and a fake receiver per port (tests).
+    public string? UnityExe { get; init; }
+    public Func<int, HttpMessageHandler?>? UnityHandlerFactory { get; init; }
+    // D30, when no Control is given (CLI): asks on the terminal; null = nobody to ask (manual checks are SKIPPED).
+    public Func<StepDefinition, string, CancellationToken, Task<ManualCheckAnswer>>? ManualPrompt { get; init; }
 }
 
 // What the UI inspector may touch from its HTTP threads: the QA URL (it builds its own client) and the actors'
@@ -107,6 +112,9 @@ public sealed class QaOrchestrator
             Started = DateTimeOffset.Now,
         };
         foreach (ValidationIssue w in warnings) report.Warnings.Add(w.ToString());
+        // The report folder is known from the start: Unity screenshots and player logs are written into it during the run.
+        string reportDir = Path.Combine(_options.ReportDir ?? Path.Combine(_options.RepoRoot, "QA", "Reports"), report.RunId);
+        IRunControl control = _options.Control ?? new RunGate(honorBreakpoints: false) { Prompt = _options.ManualPrompt };
         _out.WriteLine($"== {scenario.Name}  runId {report.RunId}  seed {seed}");
 
         (report.GitCommit, report.GitDirty, report.GitError) = await GitInfo.ReadAsync(_options.RepoRoot).ConfigureAwait(false);
@@ -181,9 +189,21 @@ public sealed class QaOrchestrator
             var events = new EventCursor(client);
             if (attach) await events.SkipExistingAsync(userToken).ConfigureAwait(false);
 
-            actors = new ActorManager(seed, ActorLog, _options.ActorFactory);
+            actors = new ActorManager(seed, ActorLog, _options.ActorFactory)
+            {
+                Unity = new UnitySettings
+                {
+                    RepoRoot = _options.RepoRoot,
+                    DefaultExe = _options.UnityExe,
+                    ShotDir = Path.Combine(reportDir, "screenshots"),
+                    LogDir = reportDir,
+                    HandlerFactory = _options.UnityHandlerFactory,
+                },
+            };
             run = new RunContext(report.RunId, seed, client, actors, _markers, scenario.Variables, Log)
             {
+                Control = control,
+                ReportDirectory = reportDir,
                 Events = events,
                 GameHost = gameHost,
                 GamePort = gamePort,
@@ -197,7 +217,7 @@ public sealed class QaOrchestrator
             }
             foreach (ActorSpec a in scenario.Actors)
             {
-                await actors.CreateAsync(a.Id, a.Type, userToken).ConfigureAwait(false);
+                await actors.CreateAsync(a.Id, a.Type, userToken, a.Unity).ConfigureAwait(false);
                 if (a.Proxy) run.Network.EnableProxy(a.Id);
             }
             await TryMarkAsync(client, $"QA run {report.RunId} start: {scenario.Name} seed {seed}", report.RunId).ConfigureAwait(false);
@@ -205,7 +225,6 @@ public sealed class QaOrchestrator
 
             using var scenarioCts = CancellationTokenSource.CreateLinkedTokenSource(userToken);
             var deadline = new PausableDeadline(scenarioCts, TimeSpan.FromSeconds(scenario.TimeoutSeconds));
-            IRunControl control = _options.Control ?? new RunGate(honorBreakpoints: false);
             // Chained: the UI session listens too (it set its own handler before the run).
             Action<bool>? listener = control.PausedChanged;
             control.PausedChanged = paused =>
@@ -276,10 +295,14 @@ public sealed class QaOrchestrator
             if (run != null)
             {
                 foreach (var pair in run.Variables) report.Variables[pair.Key] = pair.Value;
+                report.Screenshots.AddRange(run.Screenshots);
+                foreach (ManualCheckRecord m in run.ManualChecks) report.ManualChecks.Add(JsonPath.From(m));
             }
 
             if (actors != null)
             {
+                // QA-4: launched Unity players first (they are connected to the server that is stopped below).
+                foreach (CleanupResult unityLine in await actors.StopUnityAsync().ConfigureAwait(false)) report.Cleanup.Add(unityLine);
                 try
                 {
                     bool stopped = await actors.StopAsync().ConfigureAwait(false);
@@ -329,7 +352,7 @@ public sealed class QaOrchestrator
         {
             try
             {
-                string dir = Path.Combine(_options.ReportDir ?? Path.Combine(_options.RepoRoot, "QA", "Reports"), report.RunId);
+                string dir = reportDir;
                 report.ReportDirectory = dir;
                 ReportWriter.Write(report, dir);
                 _out.WriteLine($"   report: {Path.Combine(dir, "report.html")}");

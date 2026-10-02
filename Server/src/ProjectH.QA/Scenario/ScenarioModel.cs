@@ -42,8 +42,18 @@ public sealed record ActorSpec(string Id, string Type)
     // steps can target it. Explicit per actor: a proxy changes nothing until a fault is set, but it is one more hop.
     public bool Proxy { get; init; }
 
+    // QA-4: a UnityClient actor's player (`"unity": { "exe": "...", "attachPort": 18777, "width": 800, "height": 450 }`).
+    public UnitySpec? Unity { get; init; }
+
     public const string HeadlessClient = "HeadlessClient";
+    public const string UnityClient = "UnityClient";
+
+    public bool IsUnity => string.Equals(Type, UnityClient, StringComparison.OrdinalIgnoreCase);
 }
+
+// Exe: a Development player to launch (relative to the repo root; default --unity-exe). AttachPort: a Unity Editor or
+// player already running with that QA port (PROJECTH_QA_PORT / -qaPort); nothing is launched or killed then.
+public sealed record UnitySpec(string? Exe, int? AttachPort, int? Width, int? Height);
 
 // One step. Common fields are typed; everything else is an action parameter (Params, as written, `${var}` not yet
 // substituted: substitution happens per execution, so the DTO stays the file's content).
@@ -58,6 +68,9 @@ public sealed class StepDefinition
     public string Id { get; init; } = string.Empty;
     public string Action { get; init; } = string.Empty;
     public string? Actor { get; init; }
+    // The declared type of Actor (null: not declared in "actors", e.g. spawned). Lets an action pick a default timeout
+    // per actor type (a Unity player takes far longer to start than a headless client).
+    public string? ActorType { get; init; }
     // As written in the file (null when absent).
     public string? Phase { get; init; }
     // The phase in force: an explicit phase lasts until the next step that names one (Arrange/Act/Assert sections).

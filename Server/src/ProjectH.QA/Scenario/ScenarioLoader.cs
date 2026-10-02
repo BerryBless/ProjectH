@@ -93,8 +93,9 @@ public static class ScenarioLoader
                             if (string.IsNullOrEmpty(id)) errors.Add($"actors[{i}]: 'id' is required.");
                             int actorErrorsBefore = actorErrors.Count;
                             bool proxy = ReadActorNetwork(a, actorErrors);
+                            UnitySpec? unity = ReadActorUnity(a, actorErrors);
                             foreach (string e in actorErrors.Skip(actorErrorsBefore)) errors.Add($"actors[{i}]: {e}");
-                            if (!string.IsNullOrEmpty(id)) actors.Add(new ActorSpec(id, type) { Proxy = proxy });
+                            if (!string.IsNullOrEmpty(id)) actors.Add(new ActorSpec(id, type) { Proxy = proxy, Unity = unity });
                         }
                         i++;
                     }
@@ -117,7 +118,7 @@ public static class ScenarioLoader
                         errors.Add($"Too many steps (max {MaxSteps}).");
                         break;
                     }
-                    StepDefinition? step = ReadStep(s, index, ref phase, errors);
+                    StepDefinition? step = ReadStep(s, index, ref phase, errors, actors);
                     if (step != null) steps.Add(step);
                     index++;
                 }
@@ -171,7 +172,23 @@ public static class ScenarioLoader
         };
     }
 
-    private static StepDefinition? ReadStep(JsonElement s, int index, ref string? phase, List<string> errors)
+    // `"unity": { "exe"?, "attachPort"?, "width"?, "height"? }` (QA-4). Unknown fields are errors.
+    private static UnitySpec? ReadActorUnity(JsonElement actor, List<string> errors)
+    {
+        if (!actor.TryGetProperty("unity", out JsonElement u) || u.ValueKind == JsonValueKind.Null) return null;
+        if (u.ValueKind != JsonValueKind.Object)
+        {
+            errors.Add("'unity' must be an object like { \"exe\": \"...\" } or { \"attachPort\": 18777 }.");
+            return null;
+        }
+        foreach (JsonProperty p in u.EnumerateObject())
+        {
+            if (p.Name is not ("exe" or "attachPort" or "width" or "height")) errors.Add($"Unknown 'unity' field '{p.Name}' (known: exe, attachPort, width, height).");
+        }
+        return new UnitySpec(ReadString(u, "exe", errors), ReadInt(u, "attachPort", errors), ReadInt(u, "width", errors), ReadInt(u, "height", errors));
+    }
+
+    private static StepDefinition? ReadStep(JsonElement s, int index, ref string? phase, List<string> errors, List<ActorSpec> actors)
     {
         string where = $"steps[{index}]";
         if (s.ValueKind != JsonValueKind.Object)
@@ -214,12 +231,14 @@ public static class ScenarioLoader
         foreach (string e in stepErrors) errors.Add($"{where} ({id}): {e}");
         if (string.IsNullOrEmpty(action)) return null;
 
+        string? actorId = ReadString(s, "actor", errors);
         return new StepDefinition
         {
             Index = index,
             Id = id,
             Action = action,
-            Actor = ReadString(s, "actor", errors),
+            Actor = actorId,
+            ActorType = actors.FirstOrDefault(a => a.Id == actorId)?.Type,
             Phase = declared,
             EffectivePhase = phase,
             TimeoutMilliseconds = ReadInt(s, "timeoutMilliseconds", errors),

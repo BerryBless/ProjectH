@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Numerics;
 using ProjectH.Shared.Protocol;
 using ProjectH.Shared.Simulation;
@@ -77,6 +78,9 @@ public sealed record ActorState
     public int BuildsQueued { get; init; }
     public IReadOnlyList<BuildResultInfo> BuildResults { get; init; } = Array.Empty<BuildResultInfo>();
     public const int MaxBuildResults = 64;
+    // QA-4 UnityClient actors: the player's latest GET /qa/status body (null for headless actors). Assertions read it as
+    // actor.unity.<field> (screen, joined, statsOpen, debugVisible, fps...).
+    public JsonElement? Unity { get; init; }
     // The newest command applied (ActorCommand.Id).
     public long LastCommandId { get; init; }
     // Last exception of this actor's pump work (the pump keeps running).

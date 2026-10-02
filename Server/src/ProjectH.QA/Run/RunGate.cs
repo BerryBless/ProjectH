@@ -15,13 +15,16 @@ public interface IRunControl
     // A step failed (not continueOnFailure). The UI holds the live run here so the user can inspect it and retry.
     Task<FailureDecision> OnStepFailedAsync(StepDefinition step, CancellationToken token);
 
-    // QA-4 hook (D16, manual checks): true PASS, false FAIL, null not answered (SKIPPED). Not used by any action yet.
-    Task<bool?> ManualCheckAsync(StepDefinition step, string description, CancellationToken token);
+    // D30 manual check (request §88-90): a person answers PASS / FAIL (Passed true/false) or nobody can (null: SKIPPED).
+    Task<ManualCheckAnswer> ManualCheckAsync(StepDefinition step, string description, CancellationToken token);
 
     // Called on the run flow, outside any lock, when the runner starts (true) or stops (false) waiting here. The
     // orchestrator suspends the scenario timeout meanwhile: a paused run must not time out.
     Action<bool>? PausedChanged { get; set; }
 }
+
+// By: "ui", "cli" or "auto" (nobody was asked).
+public sealed record ManualCheckAnswer(bool? Passed, string? Note, string By);
 
 // Pause gate.
 // Lock rules (deadlock review):
@@ -41,10 +44,39 @@ public sealed class RunGate : IRunControl
     private int _waitingAt = -1;
     private TaskCompletionSource? _released;
 
-    public RunGate(bool honorBreakpoints, bool holdOnFailure = false)
+    private bool _manualWaiting;
+    private string? _manualDescription;
+    private ManualCheckAnswer? _manualAnswer;
+
+    // holdManual: the UI answers manual checks (AnswerManual); otherwise Prompt (CLI) or nobody.
+    public RunGate(bool honorBreakpoints, bool holdOnFailure = false, bool holdManual = false)
     {
         HonorBreakpoints = honorBreakpoints;
         HoldOnFailure = holdOnFailure;
+        HoldManual = holdManual;
+    }
+
+    public bool HoldManual { get; }
+
+    // CLI: asks on the terminal (null: nobody to ask, the check is SKIPPED).
+    public Func<StepDefinition, string, CancellationToken, Task<ManualCheckAnswer>>? Prompt { get; set; }
+
+    // The manual check the run waits for (UI), or null.
+    public string? ManualWaiting
+    {
+        get { lock (_gate) return _manualWaiting ? _manualDescription : null; }
+    }
+
+    // The UI's answer. False when no manual check is waiting.
+    public bool AnswerManual(bool passed, string? note)
+    {
+        lock (_gate)
+        {
+            if (!_manualWaiting) return false;
+            _manualAnswer = new ManualCheckAnswer(passed, note, "ui");
+            Release();
+            return true;
+        }
     }
 
     public bool HonorBreakpoints { get; }
@@ -205,8 +237,57 @@ public sealed class RunGate : IRunControl
         }
     }
 
-    public Task<bool?> ManualCheckAsync(StepDefinition step, string description, CancellationToken token) =>
-        Task.FromResult<bool?>(null);
+    // Waiting for a person counts as paused: the scenario timeout stops meanwhile (PausedChanged).
+    public async Task<ManualCheckAnswer> ManualCheckAsync(StepDefinition step, string description, CancellationToken token)
+    {
+        if (!HoldManual)
+        {
+            if (Prompt == null) return new ManualCheckAnswer(null, "Nobody to ask (non-interactive run).", "auto");
+            PausedChanged?.Invoke(true);
+            try
+            {
+                return await Prompt(step, description, token).ConfigureAwait(false);
+            }
+            finally
+            {
+                PausedChanged?.Invoke(false);
+            }
+        }
+        lock (_gate)
+        {
+            _manualWaiting = true;
+            _manualDescription = description;
+            _manualAnswer = null;
+            _waitingAt = step.Index;
+        }
+        PausedChanged?.Invoke(true);
+        try
+        {
+            while (true)
+            {
+                Task wait;
+                lock (_gate)
+                {
+                    if (_manualAnswer != null) return _manualAnswer;
+                    _released ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    wait = _released.Task;
+                }
+                // Resume or Step release the gate too; only an answer ends the wait.
+                await wait.WaitAsync(token).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _manualWaiting = false;
+                _manualDescription = null;
+                _manualAnswer = null;
+                _waitingAt = -1;
+            }
+            PausedChanged?.Invoke(false);
+        }
+    }
 
     private void Release()
     {

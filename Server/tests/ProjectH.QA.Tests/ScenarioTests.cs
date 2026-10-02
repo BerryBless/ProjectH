@@ -130,11 +130,11 @@ public class ScenarioValidatorTests
     public void DuplicateStepIdsAndBadAliases()
     {
         var issues = Validate("""[ { "id": "x", "action": "wait", "milliseconds": 1 }, { "id": "x", "action": "wait", "milliseconds": 1 } ]""",
-            actors: """[ { "id": "averyveryveryveryverylongalias01" }, { "id": "bad\u0007" }, { "id": "u", "type": "UnityClient" } ]""");
+            actors: """[ { "id": "averyveryveryveryverylongalias01" }, { "id": "bad\u0007" }, { "id": "u", "type": "SteamDeckClient" } ]""");
         HasError(issues, "Duplicate step id");
         HasError(issues, "too long");
         HasError(issues, "not a valid player name");
-        HasError(issues, "not supported yet");
+        HasError(issues, "is not supported");
     }
 
     [Fact]

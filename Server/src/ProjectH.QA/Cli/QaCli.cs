@@ -23,6 +23,8 @@ public static class QaCli
         "  --poll-ms N         server polling interval for waitFor/waitForEvent, 20-5000 (default 100)\n" +
         "  --verbose           step details and the server's log on the console\n" +
         "  --fail-on-skip      a SKIPPED scenario (e.g. no Docker for a DB fault) exits 1 instead of 0\n" +
+        "  --unity-exe PATH    QA-4: the Unity Development player for UnityClient actors (ProjectH.exe)\n" +
+        "  --manual MODE       QA-4 manual checks: ask (default: ask on a terminal, SKIPPED otherwise), skip, fail (FAIL when nobody can answer)\n" +
         "  --repo DIR          repository root (default: found from the current directory)\n" +
         "  --port N            ui only: the UI's port on 127.0.0.1, 0-65535 (default 5180; 0 = any free port)";
 
@@ -38,6 +40,8 @@ public static class QaCli
         public bool Verbose { get; set; }
         public bool FailOnSkip { get; set; }
         public string? Repo { get; set; }
+        public string? UnityExe { get; set; }
+        public string Manual { get; set; } = "ask";
         public int Port { get; set; } = UiHostOptions.DefaultPort;
     }
 
@@ -104,6 +108,13 @@ public static class QaCli
                     if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int port) || port < 0 || port > 65535) { error = "--port must be 0-65535."; return false; }
                     parsed.Port = port;
                     break;
+                case "--unity-exe":
+                    parsed.UnityExe = Path.GetFullPath(value);
+                    break;
+                case "--manual":
+                    if (value is not ("ask" or "skip" or "fail")) { error = "--manual must be ask, skip or fail."; return false; }
+                    parsed.Manual = value;
+                    break;
                 case "--repo":
                     parsed.Repo = Path.GetFullPath(value);
                     break;
@@ -121,7 +132,8 @@ public static class QaCli
     }
 
     public static async Task<int> RunAsync(string[] args, TextWriter output, CancellationToken token,
-        Func<Uri, IQaServerClient>? serverFactory = null, Func<string, string, IQaActor>? actorFactory = null)
+        Func<Uri, IQaServerClient>? serverFactory = null, Func<string, string, IQaActor>? actorFactory = null,
+        TextReader? input = null, bool? interactive = null, Func<int, HttpMessageHandler?>? unityHandlerFactory = null)
     {
         if (!TryParse(args, out Parsed p, out string? error))
         {
@@ -213,6 +225,9 @@ public static class QaCli
                 ServerClientFactory = serverFactory,
                 ActorFactory = actorFactory,
                 FailOnSkip = p.FailOnSkip,
+                UnityExe = p.UnityExe,
+                UnityHandlerFactory = unityHandlerFactory,
+                ManualPrompt = ManualPrompt(p.Manual, input ?? Console.In, interactive ?? !Console.IsInputRedirected, output),
             };
             RunReport report = await new QaOrchestrator(options, registry, markers, output).RunAsync(load.Scenario!, issues, token).ConfigureAwait(false);
             exit = Math.Max(exit, report.ExitCode);
@@ -233,6 +248,42 @@ public static class QaCli
         return exit;
     }
 
+    // D30 on the console: on a terminal ask p(ass) / f(ail) / s(kip) and a note; without one, SKIPPED (or FAIL with
+    // --manual fail). Console reads ignore cancellation, so each read runs on its own task and the wait for it ends on
+    // Ctrl+C / Stop (the abandoned read finishes with the next Enter or with the process).
+    public static Func<StepDefinition, string, CancellationToken, Task<ManualCheckAnswer>>? ManualPrompt(string mode, TextReader input, bool interactive, TextWriter output)
+    {
+        if (mode == "skip") return null;
+        if (!interactive)
+        {
+            if (mode == "fail") return (_, _, _) => Task.FromResult(new ManualCheckAnswer(false, "Nobody to answer (non-interactive, --manual fail).", "auto"));
+            return null;
+        }
+        return async (step, description, token) =>
+        {
+            output.WriteLine($"   MANUAL CHECK {step.Index + 1:00} ({step.Id}): {description}");
+            while (true)
+            {
+                output.Write("   p = PASS, f = FAIL, s = skip > ");
+                string? line = await ReadLine(input, token).ConfigureAwait(false);
+                if (line == null) return new ManualCheckAnswer(null, "Input closed.", "cli");
+                string answer = line.Trim().ToLowerInvariant();
+                if (answer is not ("p" or "f" or "s")) continue;
+                if (answer == "s") return new ManualCheckAnswer(null, "Skipped at the terminal.", "cli");
+                output.Write("   note (optional) > ");
+                string? note = await ReadLine(input, token).ConfigureAwait(false);
+                return new ManualCheckAnswer(answer == "p", string.IsNullOrWhiteSpace(note) ? null : note.Trim(), "cli");
+            }
+        };
+    }
+
+    private static async Task<string?> ReadLine(TextReader input, CancellationToken token)
+    {
+        string? line = await Task.Run(input.ReadLine, CancellationToken.None).WaitAsync(token).ConfigureAwait(false);
+        token.ThrowIfCancellationRequested();
+        return line;
+    }
+
     // D19: serve the UI until Ctrl+C. Shutdown order: stop the active run and wait for its cleanup (actors, launched
     // server, report), then stop the web host.
     private static async Task<int> RunUiAsync(Parsed p, string root, TextWriter output, CancellationToken token,
@@ -247,6 +298,7 @@ public static class QaCli
                 Port = p.Port,
                 AttachUrl = p.Attach,
                 ServerDll = p.ServerDll,
+                UnityExe = p.UnityExe,
                 ReportDir = p.ReportDir,
                 PollMs = p.PollMs,
                 ServerClientFactory = serverFactory,

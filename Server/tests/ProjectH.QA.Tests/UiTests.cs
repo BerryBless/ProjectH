@@ -238,6 +238,28 @@ public sealed class UiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ManualCheckWaitsForTheAnswerInTheUi()
+    {
+        string text = Scenario("""
+        [ { "id": "ime", "action": "manualCheck", "description": "Korean IME composes in the name field" },
+          { "id": "after", "action": "wait", "milliseconds": 1 } ]
+        """);
+        Assert.Equal(HttpStatusCode.Conflict, (await Post("/api/run/manual", new { passed = true })).StatusCode);
+        await Post("/api/run", new { text });
+        JsonElement waiting = await WaitState(s => s.TryGetProperty("manualCheck", out JsonElement m) && m.ValueKind == JsonValueKind.String);
+        Assert.Equal("Korean IME composes in the name field", waiting.GetProperty("manualCheck").GetString());
+        Assert.Equal("paused", Status(waiting));
+        Assert.Equal(HttpStatusCode.BadRequest, (await Post("/api/run/manual", new { passed = "yes" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Post("/api/run/manual", new { passed = false, note = "composition box missing" })).StatusCode);
+        // A FAIL is a failed step like any other in a UI run: held (Retry asks again), Resume finishes.
+        await WaitState(s => s.GetProperty("failedWaiting").GetBoolean());
+        await Post("/api/run/resume", new { });
+        JsonElement done = await WaitState(s => Status(s) == "finished");
+        Assert.Equal("Failed", done.GetProperty("runStatus").GetString());
+        Assert.Contains("composition box missing", done.GetProperty("steps")[0].GetProperty("actual").GetString());
+    }
+
+    [Fact]
     public async Task PausedRunDoesNotTimeOut()
     {
         string text = Scenario("""[ { "action": "wait", "milliseconds": 1 }, { "action": "wait", "milliseconds": 1 } ]""", "\"timeoutSeconds\": 0.5,");
@@ -278,6 +300,14 @@ public sealed class UiTests : IAsyncLifetime
         Assert.Contains("\"scenario\":\"listed\"", list);
         Assert.Contains("\"status\":\"Passed\"", list);
         Assert.Equal(HttpStatusCode.OK, (await _http.GetAsync("/reports/qa-20261002-000000-abcd/report.html")).StatusCode);
+        Directory.CreateDirectory(Path.Combine(dir, "screenshots"));
+        File.WriteAllBytes(Path.Combine(dir, "screenshots", "004_viewer_hud.png"), new byte[] { 0x89, 0x50 });
+        HttpResponseMessage shot = await _http.GetAsync("/reports/qa-20261002-000000-abcd/screenshots/004_viewer_hud.png");
+        Assert.Equal(HttpStatusCode.OK, shot.StatusCode);
+        Assert.Equal("image/png", shot.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(HttpStatusCode.NotFound, (await _http.GetAsync("/reports/qa-20261002-000000-abcd/screenshots/report.json")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await _http.GetAsync("/reports/qa-20261002-000000-abcd/screenshots/..%2Freport.json")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await _http.GetAsync("/reports/bad-id/screenshots/004_viewer_hud.png")).StatusCode);
     }
 
     [Fact]

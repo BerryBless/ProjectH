@@ -4,7 +4,7 @@ QA Tool은 서버를 띄우고 Headless Client(Actor)를 실제 게임 프로토
 
 - 요청: `Docs/requests/2026-10-02-qa-scenario-orchestrator-request.md`. § 번호는 이 요청서 기준이다.
 - 설계: `Docs/specs/2026-10-02-qa-tool-design.md`. D 번호는 이 설계서의 결정이다.
-- 현재 범위: QA-1(MVP), QA-2(Web UI, 아래 "Web UI"), QA-3(Fault Injection, 아래 "Fault Injection"). Unity 자동화·Manual Check(QA-4), Parameter·Repeat·Baseline(QA-5)은 이 문서 기준 아직 없다.
+- 현재 범위: QA-1(MVP), QA-2(Web UI, 아래 "Web UI"), QA-3(Fault Injection, 아래 "Fault Injection"), QA-4(Unity Client 자동화·Screenshot·Manual Check, 아래 "Unity Client Actor"와 "Manual Check"). Parameter·Repeat·Baseline(QA-5)은 이 문서 기준 아직 없다.
 
 ## Architecture
 
@@ -268,7 +268,56 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 - **최대 100명**(Snapshot 한도). 서버 `Server:MaxPlayers`(기본 16)도 함께 올려야 한다.
 - 실행이 끝나면 Pump가 모든 연결을 정상 종료한다.
 - `MockActor`(테스트 프로젝트)는 Runner 단위 테스트용이다(§138).
+- **UnityClient**(`UnityActor`, QA-4)는 실제 Unity Development Player다. 아래 "Unity Client Actor"를 본다.
 - **`"network": { "proxy": true }`**(QA-3): 그 Actor는 자기 UDP Fault Proxy를 거쳐 접속한다(`{ "id": "playerB", "network": { "proxy": true } }`). Network Fault Step(`networkFault` 등)은 이 Actor에만 쓸 수 있다(Validation 오류). 장애를 걸기 전에는 지연·손실이 없다. 다른 키나 bool이 아닌 값은 Validation 오류다.
+
+## Unity Client Actor (QA-4)
+
+`{ "id": "viewer", "type": "UnityClient", "unity": { "exe"?, "attachPort"?, "width"?, "height"? } }`
+
+- **실행(launch)**: `connect`가 Development Player를 띄운다.
+  - Player 경로는 `unity.exe`(저장소 루트 기준), 없으면 CLI `--unity-exe`다.
+  - 인자: `-host 127.0.0.1 -port <gamePort> -devId qa-<alias> -autoConnect -qaPort <빈 Port> -qaShotDir QA/Reports/<runId>/screenshots -logFile QA/Reports/<runId>/unity-<alias>.log -screen-fullscreen 0 -screen-width 800 -screen-height 450`
+  - `-batchmode`는 쓰지 않는다. Screenshot에 렌더링이 필요하기 때문이다.
+  - 준비 조건은 Player의 `GET /qa/status`가 응답하는 것이다(최대 60 s). 고정 대기는 없다.
+  - 그 뒤 일반 `connect`처럼 join까지 기다린다. Unity Actor의 `connect` 기본 Timeout은 90 s다.
+  - Player의 stdout은 버린다. 로그는 `-logFile`에 남는다.
+- **Player가 없을 때**: Player가 지정되지 않았거나 파일이 없으면 `connect`가 나머지 Step을 **SKIPPED**로 만든다. 실행 결과는 Skipped, 종료 코드는 0이고 `--fail-on-skip`이면 1이다. Unity 빌드가 없는 CI는 실패하지 않는다.
+- **연결(attach)**: `unity.attachPort`는 `PROJECTH_QA_PORT`(Editor)나 `-qaPort`로 이미 떠 있는 Player에 붙는다.
+  - 아무것도 띄우거나 닫지 않는다.
+  - 그 Player는 스스로 이번 실행의 서버에 접속해 있어야 한다. 보통 `server.mode: attach`와 같이 쓴다.
+- **상태**: Player의 `/qa/status`를 250 ms마다 읽는다(별도 스레드 없는 async Loop).
+  - `actor.unity.<필드>`(screen, joined, connected, statsOpen, debugVisible, alive, health, fps, frame)와 `network.connected`·`actor.status`가 이것을 따른다.
+  - 게임 판정은 여전히 서버 상태다(`player.*`).
+  - screen 값: Title, Connecting, InGame, Menu, Disconnected, Result.
+- **입력 없음**(§87): 이동·사격·건설·입력 정지 같은 Gameplay Action은 Unity Actor에 쓰면 Validation 오류다. 그런 동작은 Headless Actor로 한다. Unity Actor에는 UI 명령과 Screenshot만 보낸다.
+- **종료**: Cleanup에서 띄운 Player의 창을 닫고, 3 s 안에 안 끝나면 그 자식 프로세스 트리만 Kill한다. Report Cleanup에 `unity <alias>` 줄이 남는다.
+  - **QA Tool이 강제 종료되어도 Player는 남지 않는다(Windows).** 띄운 Player는 Kill-on-close Job Object에 들어가 있다. 도구 프로세스가 어떻게 끝나든 Windows가 Job 핸들을 닫으면서 Player를 끝낸다. 서버는 Job에 넣지 않는다(서버는 `Qa:ParentPid` 감시로 스스로 정상 종료한다).
+  - Job에 넣지 못하면 로그에 경고를 남기고 계속한다. Windows가 아닌 환경도 같다. 그때는 정상 종료(Ctrl+C, UI Stop·종료)의 Cleanup만 Player를 닫는다.
+- **Action**
+
+| Action | 인자 | 동작 |
+|---|---|---|
+| `captureScreenshot` | actor, `name`(`[A-Za-z0-9_-]{1,64}`) | `screenshots/<Step 번호>_<alias>_<name>.png`(64자 이내).<br>Step 번호가 있어서, 영문이 아닌 Alias가 같은 문자로 바뀌거나 잘려도 파일이 겹치지 않는다. 다시 실행한 Step은 `_2`가 붙는다.<br>Report에는 썸네일과 링크로 나온다(상대 경로). UI에서 연 Report도 `/reports/<runId>/screenshots/<file>.png`로 이미지를 보인다. 실행당 최대 200장 |
+| `uiCommand` | actor, `command`(openMenu, closeMenu, openStats, closeStats, toggleDebug) | 지금 화면에 맞지 않으면(409) 실패한다. 화면 이름이 메시지에 나온다 |
+| `waitForUnity` | actor, `condition`(status 필드, 예: `joined`, `screen`, `unity.statsOpen`), 연산자 하나, `timeoutMilliseconds` | Player 상태를 직접 읽으며 기다린다 |
+
+- **확인한 것**(2026-10-02, Development Build): `Smoke/unity_client.json`과 `UI/kill_feed.json`이 PASS했고 Player와 서버가 남지 않았다.
+  - Player 시작부터 join까지 5~13 s 걸렸다.
+  - **PC 화면이 잠겨 있으면(LogonUI) PNG는 생기지만 전부 회색이다.** 실제 화면은 잠기지 않은 데스크톱에서 확인한다.
+  - 자동 이미지 판정은 하지 않는다(§85).
+
+## Manual Check (QA-4, D30)
+
+`{ "id": "ime_compose", "action": "manualCheck", "description": "확인할 내용" }`. 확인할 내용은 Step의 `description` 필드에 쓴다. `actor`는 선택이다.
+
+- **Web UI**: 실행이 멈추고 PASS / FAIL 버튼과 메모 칸이 나온다. 기다리는 동안 시나리오 Timeout은 멈춘다. FAIL은 다른 실패 Step처럼 보류되고(Retry가 다시 묻는다), Resume이나 Stop은 실패로 끝낸다.
+- **CLI, 대화형 터미널**: `p`(PASS) / `f`(FAIL) / `s`(건너뜀)와 메모를 입력한다.
+- **CLI, 비대화형(CI, 입력 리디렉션)**: 그 Step만 **SKIPPED**이고 실행은 계속된다.
+  - `--manual fail`이면 FAIL이다.
+  - `--manual skip`이면 대화형이어도 묻지 않는다.
+- Report "Manual checks" 표에 Step, 내용, 결과(PASS/FAIL/SKIPPED), 누가(ui/cli/auto), 메모가 남는다.
+- 예: `QA/Scenarios/Manual/ime_name.json`(한글 IME 이름 입력, §88). 태그는 `manual`이다.
 
 ## QA Markers
 
@@ -310,6 +359,9 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `Building/turbo_build.json` | 132 | 벽 3개를 연속 요청 → 3개 모두 Ok, 조각 수 3, 나무 정확히 30 감소 → 같은 줄을 다시 요청하면 Occupied이고 비용 없음 | ~3.5 s |
 | `Building/support_collapse.json` | 131 | 벽 하나 위 바닥 3개 → 벽 파괴 → 바닥 3개 붕괴(collapsed 3) | ~3 s |
 | `Network/input_timeout.json` | 75 | pauseInput → 연결은 유지된 채 7 s 뒤 서버가 InputTimeout으로 닫음 → Grace 없이 PlayerLeft | ~10 s |
+| `Smoke/unity_client.json` | 83–87 | Unity Player(`--unity-exe`)가 join → HUD·Menu·Stats Screenshot, UI 명령 | ~8 s |
+| `UI/kill_feed.json` | 84 | Headless B가 A를 실제 사격으로 제거하는 동안 Unity Player가 보고, Kill Feed Screenshot | ~18 s |
+| `Manual/ime_name.json` | 88–90 | 한글 IME 이름 입력 Manual Check 2개(CI에서는 SKIPPED) | 사람 |
 | `Stress/bots_50.json` | 133–134 | 50 Client가 60 s 경기 → tick p95 < 5 ms(느슨한 기준, 사용자가 조정). 측정값 0.15 ms | ~62 s |
 | `Network/latency_loss_combat.json` | 73 | B가 Proxy로 양방향 200 ms 지연 + 10% 손실(RTT 측정 ≈330 ms) → 정지한 A를 4발 사격 → 4발 모두 명중(서버 피해). B는 끊기지 않고 재접속도 없음(connections 1, graceStarts 0). 장애를 지우면 RTT가 돌아온다 | ~11 s |
 | `Combat/lag_compensation.json` | 119 | B RTT ≈150 ms(양방향 75 ms). A가 B 시야를 가로질러 달리고(≈5 m/s) B가 자기 Client가 본 A 위치를 쏜다 → 5발 중 5발 명중(4발 이상 기준). 대조: RTT ≈650–800 ms(되감기 창 0.4 s 밖)에서는 같은 사격이 1/5만 맞는다(2발 이하 기준) | ~15 s |
@@ -371,6 +423,8 @@ dotnet run --project Server/src/ProjectH.QA -- list
 | `--poll-ms N` | waitFor·waitForEvent의 서버 폴링 간격, 20–5000(기본 100) |
 | `--verbose` | Step 상세와 서버 로그를 콘솔에 낸다 |
 | `--repo DIR` | 저장소 루트. 기본은 현재 폴더에서 위로 찾는다 |
+| `--unity-exe PATH` | UnityClient Actor의 기본 Development Player(`ProjectH.exe`, QA-4) |
+| `--manual ask\|skip\|fail` | Manual Check: ask(기본: 터미널이면 묻고 아니면 SKIPPED), skip(묻지 않음), fail(답할 사람이 없으면 FAIL) |
 | `--fail-on-skip` | SKIPPED 시나리오를 종료 코드 1로 친다(기본은 0). Docker가 꼭 있어야 하는 CI에서 쓴다 |
 
 - **종료 코드**(D18):

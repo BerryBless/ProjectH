@@ -1,0 +1,5 @@
+{
+  "name": "unity",
+  "description": "QA-4: scenarios with a real Unity Development player. Run with --unity-exe <ProjectH.exe> on an unlocked desktop (a locked screen gives gray screenshots).",
+  "scenarios": [ "Smoke/unity_client.json", "UI/kill_feed.json" ]
+}
