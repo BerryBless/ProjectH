@@ -264,6 +264,7 @@ namespace ProjectH.Client.Net
                 case DisconnectCode.JoinTimeout: return "Join timed out";
                 case DisconnectCode.InputTimeout: return "Disconnected: no input for too long";
                 case DisconnectCode.ServerError: return "Server error: the match was reset";
+                case DisconnectCode.Congested: return "Disconnected: the connection was too slow";
                 default: return "Disconnected";
             }
         }

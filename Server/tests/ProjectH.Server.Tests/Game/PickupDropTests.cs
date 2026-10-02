@@ -271,6 +271,7 @@ public class PickupDropTests
 
         _match.RemoveItemAt(IndexOf(medkits));
         ushort cells = Put(ItemKind.Consumable, (byte)ConsumableType.ShieldCell, 9, new Vector3(1f, 0f, 0f));
+        Press(a, InputButtons.None);   // final review A5: released between presses
         Press(a, InputButtons.Interact);
         Assert.Equal(TestGameData.ShieldCellMaxStack, a.Inventory.ShieldCells);
         Assert.Equal(3, _match.WorldItems[IndexOf(cells)].Data.Amount);
@@ -310,6 +311,25 @@ public class PickupDropTests
         Press(a, InputButtons.Drop);
         Assert.Equal(0, _match.WorldItems.Count);
         Assert.DoesNotContain(_sent, s => s.Id == PacketId.ItemSpawned || s.Id == PacketId.InventoryState);
+    }
+
+    // Phase 13 final review A5: G held over several inputs drops once, even when a weapon is back in hand meanwhile.
+    [Fact]
+    public void HeldG_DropsOnce()
+    {
+        var a = Join(1, Vector3.Zero);
+        HeldWeapon weapon = a.Inventory.Slots[0];
+        Assert.False(weapon.IsEmpty);
+        Press(a, InputButtons.Drop);
+        Assert.Equal(1, _match.WorldItems.Count);
+        a.Inventory.Slots[0] = weapon;   // in hand again (as a pickup would)
+        Press(a, InputButtons.Drop);
+        Press(a, InputButtons.Drop);
+        Assert.Equal(1, _match.WorldItems.Count);
+        Assert.False(a.Inventory.Slots[0].IsEmpty);
+        Press(a, InputButtons.None);
+        Press(a, InputButtons.Drop);
+        Assert.Equal(2, _match.WorldItems.Count);
     }
 
     // Placement fallback: 1 m in front is behind (or inside) a wall, so the weapon lands at the feet. The
@@ -626,8 +646,11 @@ public class PickupDropTests
         long allocated = 0;
         for (uint i = 1; i <= 4; i++)   // 1-3 warm up; 4 is measured
         {
+            packet.Set(0, new InputCommand { Seq = 2 * i - 1 });   // final review A5: released between presses
+            _match.EnqueueInput(1, packet);
+            _match.Tick();
             _match.SpawnItem(new LootRoll(ItemKind.Ammo, (byte)AmmoType.Light, 0, 1), a.State.Position, -1);
-            packet.Set(0, new InputCommand { Seq = i, Buttons = InputButtons.Interact });
+            packet.Set(0, new InputCommand { Seq = 2 * i, Buttons = InputButtons.Interact });
             _match.EnqueueInput(1, packet);
             long start = GC.GetAllocatedBytesForCurrentThread();
             _match.Tick();

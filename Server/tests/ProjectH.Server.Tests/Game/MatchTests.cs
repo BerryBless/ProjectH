@@ -82,10 +82,14 @@ public class MatchTests
         Assert.Equal(DeliveryMethod.ReliableOrdered, toPeer[1].Method);
         Assert.Equal(PacketId.ItemCatalog, toPeer[2].Id);
         Assert.Equal(DeliveryMethod.ReliableOrdered, toPeer[2].Method);
-        Assert.Equal(PacketId.BuildCatalog, toPeer[3].Id);   // Phase 13 D4: the third catalog
-        Assert.Equal(PacketId.WorldItems, toPeer[4].Id);   // 17 loot points: one chunk
-        Assert.Equal(PacketId.InventoryState, toPeer[5].Id);
-        Assert.Equal(PacketId.PlayerSpawned, toPeer[6].Id);
+        Assert.Equal(PacketId.WorldItems, toPeer[3].Id);   // 17 loot points: one chunk
+        Assert.Equal(PacketId.InventoryState, toPeer[4].Id);
+        Assert.Equal(PacketId.PlayerSpawned, toPeer[5].Id);
+        // Phase 13 D4, final review A3: the building catalog goes on the building channel, right before the reset sync
+        // (this match sends both channels through one delegate).
+        int catalog = toPeer.FindIndex(s => s.Id == PacketId.BuildCatalog);
+        Assert.True(catalog > 5);
+        Assert.Equal(PacketId.BuildSync, toPeer[catalog + 1].Id);
 
         var reader = new PacketReader(toPeer[1].Data);
         reader.TryReadPacketId(out _);

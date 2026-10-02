@@ -59,13 +59,13 @@ public class MonitoringTests
                      "peers=0", "players=0", "graced=0", "match=WaitingForPlayers#1",
                      "connections=", "joins=", "resumed=", "graceStarts=", "graceExpiries=0", "disconnects timeout=", "other=",
                      "rejects full=1", "badRequest=0", "version=0",
-                     "kicks kicked=0", "joinTimeout=0", "inputTimeout=1", "serverError=0",
+                     "kicks kicked=0", "joinTimeout=0", "inputTimeout=1", "serverError=0", "congested=0",   // Phase 13 final review A4
                      "badPackets unknownId=0", "malformed=", "beforeJoin=", "duplicateJoin=", "inputRate=", "wrongDirection=1", "handlerException=",
                      "tickFailures=0", "loopFailures=0", "matchResets=0", "stalls=0", "movementAnomalies=0",
                      "buildRate=0",   // Phase 13 D8
                      "build pieces=0 cells=0 requests=0 accepted=0 destroyed=0 collapsed=0 duplicates=0", // Phase 13 D18
                      "buildRejects noResource=0 outOfRange=0 blocked=0 unsupported=0 occupied=0 rateLimited=0 invalidState=0 invalidRequest=0 budgetFull=0",
-                     "harvest hits=0 envDestroyed=0", "buildInboxDrops=0",
+                     "harvest hits=0 envDestroyed=0", "syncDeferred=0", "buildInboxDrops=0",
                      "db saved=3 failed=1 discarded=2 dropped=4",
                      "stats requests=0 limited=2 busy=0 unavailable=0 undelivered=0",
                  })
@@ -135,7 +135,8 @@ public class MonitoringTests
         Assert.Contains(("projecth.stats_queries", 4L, "result=undelivered"), seen);
         // B7: a shutdown is not a kick, so it has no series.
         Assert.DoesNotContain(seen, s => s.Name == "projecth.kicks" && s.Tags.Contains(nameof(DisconnectCode.ServerShutdown)));
-        Assert.Equal(4, seen.Count(s => s.Name == "projecth.kicks"));
+        Assert.Equal(5, seen.Count(s => s.Name == "projecth.kicks"));   // Phase 13 final review A4: Congested
+        Assert.Contains(("projecth.kicks", 0L, "code=Congested"), seen);
     }
 
     [Fact]

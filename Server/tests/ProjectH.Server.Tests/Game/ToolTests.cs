@@ -23,6 +23,7 @@ public class ToolTests
         Assert.Equal(ToolKind.Weapon, p.Inventory.Tool);
         _h.Press(p, InputButtons.ToolBuild);
         Assert.Equal(ToolKind.Build, p.Inventory.Tool);
+        _h.Press(p, InputButtons.None);   // final review A5: released between presses
         _h.Press(p, InputButtons.ToolBuild);
         Assert.Equal(ToolKind.Weapon, p.Inventory.Tool);
 
@@ -30,6 +31,7 @@ public class ToolTests
         Assert.Equal(ToolKind.Harvest, p.Inventory.Tool);
         _h.Press(p, InputButtons.ToolBuild);
         Assert.Equal(ToolKind.Build, p.Inventory.Tool);
+        _h.Press(p, InputButtons.None);   // final review A5: released between presses
         _h.Press(p, InputButtons.ToolBuild);
         Assert.Equal(ToolKind.Harvest, p.Inventory.Tool);
     }

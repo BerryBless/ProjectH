@@ -211,6 +211,19 @@ public class DoorTests
         Assert.True(_match.Doors.IsOpen(0));   // b is in the way
 
         b.State.Position = Ground(-54f, 53f);  // inside the house
+        Press(a, InputButtons.None);   // final review A5: released between presses
+        Press(a, InputButtons.Interact);
+        Assert.False(_match.Doors.IsOpen(0));
+    }
+
+    // Phase 13 final review A5: E held over several inputs (a modified client) toggles once; a new press toggles again.
+    [Fact]
+    public void HeldE_TogglesTheDoorOnce()
+    {
+        PlayerEntity a = Join(1, SouthOfDoor0);
+        for (int i = 0; i < 4; i++) Press(a, InputButtons.Interact);
+        Assert.True(_match.Doors.IsOpen(0));
+        Press(a, InputButtons.None);
         Press(a, InputButtons.Interact);
         Assert.False(_match.Doors.IsOpen(0));
     }
@@ -223,6 +236,7 @@ public class DoorTests
         Assert.True(_match.Doors.IsOpen(0));
         Assert.DoesNotContain(_sent, s => s.Peer == 1 && s.Id == PacketId.PickupResult);
 
+        Press(a, InputButtons.None, yaw: 180f);   // final review A5: released between presses
         Press(a, InputButtons.Interact, yaw: 180f);   // facing away: no door, so a pickup (nothing here)
         Assert.True(_match.Doors.IsOpen(0));
         Assert.Single(_sent, s => s.Peer == 1 && s.Id == PacketId.PickupResult);

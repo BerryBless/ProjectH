@@ -77,6 +77,7 @@ namespace ProjectH.Client.UI
                 case DisconnectCode.JoinTimeout: return "경기 참가가 늦어 연결이 끊겼습니다.";
                 case DisconnectCode.InputTimeout: return "입력이 오래 없어 연결이 끊겼습니다.";
                 case DisconnectCode.ServerError: return "서버 오류로 경기가 초기화되었습니다.";
+                case DisconnectCode.Congested: return "연결이 너무 느려 끊겼습니다.";
                 default: return "서버가 연결을 끊었습니다.";
             }
         }

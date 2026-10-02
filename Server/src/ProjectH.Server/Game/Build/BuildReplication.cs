@@ -89,10 +89,11 @@ public sealed class BuildReplication
         Window(cell, radius) | (current & Window(cell, radius + keepMargin));
 
     // D14: the next BuildSync packet for one client, from the current pieces (a piece destroyed meanwhile is simply not
-    // in it): the pending cells in index order, each cell's build columns in order, each column in id order, resuming
-    // after (cell, column, afterId). A finished cell leaves pending. Returns the length, or 0 when nothing is left; the
-    // packet holds at most BuildSyncPacket.MaxRecords pieces.
-    public int NextSyncPacket(Span<byte> buffer, ref ulong pending, ref int cell, ref int column, ref uint afterId)
+    // in it): the pending cells nearest first (Chebyshev distance to center, the client's own interest cell; ties by
+    // index), each cell's build columns in order, each column in id order, resuming after (cell, column, afterId). A cell
+    // started is finished before the next is picked. A finished cell leaves pending. Returns the length, or 0 when nothing
+    // is left; the packet holds at most BuildSyncPacket.MaxRecords pieces.
+    public int NextSyncPacket(Span<byte> buffer, ref ulong pending, ref int cell, ref int column, ref uint afterId, int center)
     {
         var writer = new PacketWriter(buffer);
         BuildSyncPacket.WriteHeader(ref writer, Version, reset: false, count: 0);
@@ -108,7 +109,7 @@ public sealed class BuildReplication
                     cell = -1;
                     break;
                 }
-                cell = BitOperations.TrailingZeroCount(pending);
+                cell = NearestPending(pending, center);
                 column = 0;
                 afterId = 0;
             }
@@ -142,6 +143,24 @@ public sealed class BuildReplication
         if (count == 0) return 0;
         buffer[BuildSyncPacket.HeaderSize - 1] = (byte)count;
         return writer.Length;
+    }
+
+    // The pending cell nearest to center (Chebyshev, in interest cells), the lowest index among equals. At most 64 cells.
+    public int NearestPending(ulong pending, int center)
+    {
+        int cx = center % _interestPerSide;
+        int cz = center / _interestPerSide;
+        int best = -1;
+        int bestDistance = int.MaxValue;
+        for (ulong rest = pending; rest != 0; rest &= rest - 1)
+        {
+            int c = BitOperations.TrailingZeroCount(rest);
+            int distance = Math.Max(Math.Abs(c % _interestPerSide - cx), Math.Abs(c / _interestPerSide - cz));
+            if (distance >= bestDistance) continue;
+            best = c;
+            bestDistance = distance;
+        }
+        return best;
     }
 
     public static BuildPieceRecord Record(in BuildPiece piece) => new()

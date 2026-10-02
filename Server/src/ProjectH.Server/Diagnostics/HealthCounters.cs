@@ -19,10 +19,12 @@ public enum BadPacketReason
     Count,
 }
 
-// Phase 13 D18: the match's building and harvesting numbers (since the match object was made; a match reset starts them
-// over). Requests counts every request processed or dropped as a duplicate.
+// Phase 13 D18: the match's building and harvesting numbers (since the match object was made; HealthCounters carries them
+// over a match reset, final review B12). Requests counts every request processed or dropped as a duplicate. SyncDeferred
+// (final review A4): ticks a client's sync waited for its backed-up building channel.
 public readonly record struct BuildCounts(int Pieces, int Cells, long Requests, long Accepted, long Rejected, long Destroyed, long Collapsed,
-    long Duplicates, long HarvestHits, long EnvironmentDestroyed, long EventPackets, long SyncPackets, long DamageDestroyed = 0);
+    long Duplicates, long HarvestHits, long EnvironmentDestroyed, long EventPackets, long SyncPackets, long DamageDestroyed = 0,
+    long SyncDeferred = 0);
 
 // Phase 10 D9: totals since the server started, for the Health line and the "ProjectH.Server" Meter. Written from
 // LiteNetLib's threads and the game loop, read by the game loop (Health line) and by the Meter's observers on
@@ -31,7 +33,7 @@ public readonly record struct BuildCounts(int Pieces, int Cells, long Requests, 
 public sealed class HealthCounters
 {
     private const int RejectSlots = (int)RejectReason.BadRequest + 1;
-    private const int CodeSlots = (int)DisconnectCode.ServerError + 1;
+    private const int CodeSlots = (int)DisconnectCode.Congested + 1;
 
     private readonly long[] _rejects = new long[RejectSlots];
     private readonly long[] _kicks = new long[CodeSlots];
@@ -62,6 +64,10 @@ public sealed class HealthCounters
     private long _buildEventPackets;
     private long _buildSyncPackets;
     private long _buildDamageDestroyed;
+    private long _buildSyncDeferred;
+    // Final review B12 (game loop only): the totals of the matches a reset threw away, added to the current match's.
+    private BuildCounts _buildBase;
+    private readonly long[] _buildRejectBase = new long[(int)BuildResultCode.BudgetFull + 1];
     private long _buildInboxDrops;
     private readonly long[] _buildRejects = new long[(int)BuildResultCode.BudgetFull + 1];
     // Gauges, written by the game loop once per tick.
@@ -100,28 +106,41 @@ public sealed class HealthCounters
         Volatile.Write(ref _matchState, (int)state);
     }
 
+    // The current match's numbers, written as totals since the start: the carried base plus these (the gauges Pieces and
+    // Cells as they are).
     public void SetBuild(in BuildCounts c, Func<BuildResultCode, long> rejects)
     {
+        BuildCounts b = _buildBase;
         Volatile.Write(ref _buildPieces, c.Pieces);
         Volatile.Write(ref _buildCells, c.Cells);
-        Volatile.Write(ref _buildRequests, c.Requests);
-        Volatile.Write(ref _buildAccepted, c.Accepted);
-        Volatile.Write(ref _buildRejected, c.Rejected);
-        Volatile.Write(ref _buildDestroyed, c.Destroyed);
-        Volatile.Write(ref _buildCollapsed, c.Collapsed);
-        Volatile.Write(ref _buildDuplicates, c.Duplicates);
-        Volatile.Write(ref _harvestHits, c.HarvestHits);
-        Volatile.Write(ref _environmentDestroyed, c.EnvironmentDestroyed);
-        Volatile.Write(ref _buildEventPackets, c.EventPackets);
-        Volatile.Write(ref _buildSyncPackets, c.SyncPackets);
-        Volatile.Write(ref _buildDamageDestroyed, c.DamageDestroyed);
-        for (int i = 1; i < _buildRejects.Length; i++) Volatile.Write(ref _buildRejects[i], rejects((BuildResultCode)i));
+        Volatile.Write(ref _buildRequests, b.Requests + c.Requests);
+        Volatile.Write(ref _buildAccepted, b.Accepted + c.Accepted);
+        Volatile.Write(ref _buildRejected, b.Rejected + c.Rejected);
+        Volatile.Write(ref _buildDestroyed, b.Destroyed + c.Destroyed);
+        Volatile.Write(ref _buildCollapsed, b.Collapsed + c.Collapsed);
+        Volatile.Write(ref _buildDuplicates, b.Duplicates + c.Duplicates);
+        Volatile.Write(ref _harvestHits, b.HarvestHits + c.HarvestHits);
+        Volatile.Write(ref _environmentDestroyed, b.EnvironmentDestroyed + c.EnvironmentDestroyed);
+        Volatile.Write(ref _buildEventPackets, b.EventPackets + c.EventPackets);
+        Volatile.Write(ref _buildSyncPackets, b.SyncPackets + c.SyncPackets);
+        Volatile.Write(ref _buildDamageDestroyed, b.DamageDestroyed + c.DamageDestroyed);
+        Volatile.Write(ref _buildSyncDeferred, b.SyncDeferred + c.SyncDeferred);
+        for (int i = 1; i < _buildRejects.Length; i++) Volatile.Write(ref _buildRejects[i], _buildRejectBase[i] + rejects((BuildResultCode)i));
+    }
+
+    // Final review B12: a match reset replaces the match (whose numbers start at 0): what was written last becomes the
+    // base, so the totals (and the Meter's counters) never go back. Game loop only, before the new match's first SetBuild.
+    public void CarryBuildTotals()
+    {
+        _buildBase = Build with { Pieces = 0, Cells = 0 };
+        for (int i = 1; i < _buildRejects.Length; i++) _buildRejectBase[i] = Volatile.Read(ref _buildRejects[i]);
     }
 
     public BuildCounts Build => new((int)Volatile.Read(ref _buildPieces), (int)Volatile.Read(ref _buildCells), Volatile.Read(ref _buildRequests),
         Volatile.Read(ref _buildAccepted), Volatile.Read(ref _buildRejected), Volatile.Read(ref _buildDestroyed), Volatile.Read(ref _buildCollapsed),
         Volatile.Read(ref _buildDuplicates), Volatile.Read(ref _harvestHits), Volatile.Read(ref _environmentDestroyed),
-        Volatile.Read(ref _buildEventPackets), Volatile.Read(ref _buildSyncPackets), Volatile.Read(ref _buildDamageDestroyed));
+        Volatile.Read(ref _buildEventPackets), Volatile.Read(ref _buildSyncPackets), Volatile.Read(ref _buildDamageDestroyed),
+        Volatile.Read(ref _buildSyncDeferred));
 
     // Build requests the inbound channel dropped (full, DropOldest); written by LiteNetLib threads.
     public void AddBuildInboxDrop() => Interlocked.Increment(ref _buildInboxDrops);

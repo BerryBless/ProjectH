@@ -84,7 +84,10 @@ public sealed class Match
     private readonly BuildReplication _replication;
     // Phase 13 D12: which pieces hold each other up (lattice edges), and the former neighbours of a destroyed piece.
     private readonly BuildSupport _support;
-    private readonly int[] _supportStarts = new int[BuildSupport.MaxNeighbours];
+    // Final review A4: how many reliable packets wait in a peer's building-channel queue (GameLoop asks LiteNetLib; null =
+    // never backed up, tests). Above MaxBuildBacklog its sync waits; events, interest and results still go.
+    private readonly Func<int, int>? _buildBacklog;
+    public const int MaxBuildBacklog = 32;
     private readonly long[] _buildResults = new long[(int)BuildResultCode.BudgetFull + 1];
     private readonly bool _infiniteResources;
     private readonly BuildCatalogData _buildCatalogWire;
@@ -111,10 +114,12 @@ public sealed class Match
     // Test seams: loadout null = StartingLoadout.Empty (the production start, D1); lootPoints null = the
     // map's LootPoints.All; dropPoints null = the map's DropPoints.All (Phase 6 D9).
     // Phase 13 D13: sendBuild sends on the building channel (LiteNetLib channel 1); null = everything through send (tests).
+    // buildBacklog: final review A4, a peer's queued reliable packets on the building channel (null = none).
     public Match(ServerOptions options, GameData data, SendPacket send, StartingLoadout? loadout = null, LootPoint[]? lootPoints = null,
         Vector3[]? dropPoints = null, Action<MatchRecord>? matchSink = null, Action<string>? graceExpired = null,
-        Action? movementAnomaly = null, SendPacket? sendBuild = null)
+        Action? movementAnomaly = null, SendPacket? sendBuild = null, Func<int, int>? buildBacklog = null)
     {
+        _buildBacklog = buildBacklog;
         _matchSink = matchSink;
         _graceExpired = graceExpired;
         _movementAnomaly = movementAnomaly;
@@ -228,6 +233,8 @@ public sealed class Match
     // D13, D14: BuildEvents and BuildSync packets sent (all recipients) since this match object was made.
     public long BuildEventPackets { get; private set; }
     public long BuildSyncPackets { get; private set; }
+    // Final review A4: ticks a client's sync waited because its building channel was backed up (all recipients).
+    public long SyncsDeferred { get; private set; }
 
     // D18: the building and harvesting numbers for the Health line and the Meter (GameLoop copies them every tick).
     public BuildCounts BuildCounts()
@@ -236,7 +243,7 @@ public sealed class Match
         for (int i = 1; i < _buildResults.Length; i++) rejected += _buildResults[i];
         return new BuildCounts(_build.Count, _build.Grid.OccupiedColumns, rejected + _buildResults[0] + BuildDuplicates, _buildResults[0],
             rejected, PiecesDestroyed, PiecesCollapsed, BuildDuplicates, HarvestHits, EnvironmentDestroyed, BuildEventPackets, BuildSyncPackets,
-            PiecesDestroyed - PiecesCollapsed);
+            PiecesDestroyed - PiecesCollapsed, SyncsDeferred);
     }
     internal BuildSupport Support => _support;
     public int BuildPieces => _build.Count;
@@ -304,6 +311,7 @@ public sealed class Match
         SendDoors(peerId);   // Phase 12 D9
         SendHarvestStates(peerId);   // Phase 13 D6
         SendResources(player);       // Phase 13 D15
+        SendBuildCatalog(peerId);    // Phase 13 D4, final review A3: first on the building channel
         StartBuildSync(player);      // Phase 13 D14
         // Phase 12 D16: a newcomer during an air-drop match sees the transport too.
         if (_hasRoute) SendRoute(peerId);
@@ -421,6 +429,7 @@ public sealed class Match
 
         foreach (var player in _players)
         {
+            InputButtons previous = player.LastInput.Buttons;   // final review A5: the last real input's buttons
             bool sent = TakeInput(player, out InputCommand input);
             // D9: a dead player's input is still taken and acked (LastProcessedSeq) but moves and fires nothing.
             // A player killed earlier in this loop is already dead here.
@@ -435,12 +444,14 @@ public sealed class Match
             // Only an input the client really sent can act: the missed-input repeat copies the last input's
             // buttons and must never invent a switch, reload or shot. Phase 12 D12: and only in a mode that allows
             // actions (after this tick's move).
-            if (sent && ActionsAllowed(player.State.Mode)) ProcessActions(player, input, now);
+            if (sent && ActionsAllowed(player.State.Mode)) ProcessActions(player, input, previous, now);
             // Gated, the fire button's held state still follows the input: landing with Fire held must not fire a
             // semi-automatic weapon without a new press (the client's WeaponState does the same).
             else if (sent) player.FireHeld = (input.Buttons & InputButtons.Fire) != 0;
             ConsumableRules.Complete(player, _items, now);   // step 9: every tick, input or not
         }
+        // Final review A2: one support search for every piece destroyed this tick.
+        CollapseUnsupported();
 
         // Phase 5 step 5: one participant (or none) left ends the match (D9). Deaths of this tick, from the zone
         // and from shots, already have their placements.
@@ -629,10 +640,18 @@ public sealed class Match
         _replication.Clear();
         foreach (var p in _players)
         {
-            if (p.IsGraced) continue;
+            if (p.IsGraced || (p.SyncPending == 0 && p.SyncCell < 0)) continue;
+            // Final review A4: a client whose building channel is backed up gets no sync this tick (the rest still goes).
+            if (_buildBacklog != null && _buildBacklog(p.PeerId) > MaxBuildBacklog)
+            {
+                SyncsDeferred++;
+                continue;
+            }
+            // Final review A1: the cells nearest to the player first, so its own surroundings arrive before far ones.
+            int center = _replication.InterestCellAt(p.State.Position);
             for (int i = 0; i < BuildReplication.MaxSyncPacketsPerTick; i++)
             {
-                int length = _replication.NextSyncPacket(_sendBuffer, ref p.SyncPending, ref p.SyncCell, ref p.SyncColumn, ref p.SyncAfterId);
+                int length = _replication.NextSyncPacket(_sendBuffer, ref p.SyncPending, ref p.SyncCell, ref p.SyncColumn, ref p.SyncAfterId, center);
                 if (length == 0) break;
                 _sendBuild(p.PeerId, _sendBuffer.AsSpan(0, length), DeliveryMethod.ReliableOrdered);
                 BuildSyncPackets++;
@@ -656,6 +675,16 @@ public sealed class Match
         var writer = new PacketWriter(_sendBuffer);
         BuildInterestPacket.Write(ref writer, desired);
         _sendBuild(p.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
+    // Phase 13 D4: what the client needs of the building numbers. Final review A3: on the building channel, right before
+    // the join's (or resume's) reset sync, so the channel's first packet is the catalog and no BuildInterest or piece is
+    // ever read with a default interest cell size (the channels are independent of each other).
+    private void SendBuildCatalog(int peerId)
+    {
+        var writer = new PacketWriter(_sendBuffer);
+        BuildCatalogPacket.Write(ref writer, _buildCatalogWire);
+        _sendBuild(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
     // D14: a join or a resume: the client drops whatever it has (a reset sync), and the window and its pieces follow at
@@ -756,21 +785,25 @@ public sealed class Match
     // reload -> fire -> start use. (Movement came first; finishing a use comes after, every tick.)
     // Phase 13 D5: Fire acts by the tool in hand: a shot (Weapon), a swing (Harvest), nothing (Build: placing is a
     // BuildRequest). Reload is the weapon's only.
-    private void ProcessActions(PlayerEntity player, in InputCommand input, uint now)
+    // Final review A5: the press keys (EdgeButtons) act only on the input that pressed them: held over several inputs (a
+    // modified client) they act once, like the client, which sends each press in one input only. previous: the buttons of
+    // the last real input before this one.
+    private void ProcessActions(PlayerEntity player, in InputCommand input, InputButtons previous, uint now)
     {
-        ConsumableRules.CancelIfInterrupted(player, input.Buttons);
-        HarvestRules.SelectTool(player, input.Buttons);
-        WeaponRules.SelectSlot(player, input.Buttons);
-        if ((input.Buttons & InputButtons.Drop) != 0) DropCurrentWeapon(player);
+        InputButtons buttons = PressedOnly(input.Buttons, previous);
+        ConsumableRules.CancelIfInterrupted(player, buttons);
+        HarvestRules.SelectTool(player, buttons);
+        WeaponRules.SelectSlot(player, buttons);
+        if ((buttons & InputButtons.Drop) != 0) DropCurrentWeapon(player);
         // Phase 12 D9: E acts on a door in front first, an item otherwise.
-        if ((input.Buttons & InputButtons.Interact) != 0 && !ToggleDoor(player)) Pickup(player);
+        if ((buttons & InputButtons.Interact) != 0 && !ToggleDoor(player)) Pickup(player);
 
         bool aimValid = CombatRules.TryAimDirection(input.AimYaw, input.AimPitch, out Vector3 direction);
-        bool fire = (input.Buttons & InputButtons.Fire) != 0;
+        bool fire = (buttons & InputButtons.Fire) != 0;
         switch (player.Inventory.Tool)
         {
             case ToolKind.Weapon:
-                if (WeaponRules.Apply(player, input.Buttons, aimValid, now))
+                if (WeaponRules.Apply(player, buttons, aimValid, now))
                     FireShot(player, direction, input.ViewTick);
                 break;
             case ToolKind.Harvest:
@@ -782,8 +815,16 @@ public sealed class Match
                 break;
         }
 
-        ConsumableRules.TryStart(player, _items, input.Buttons, now);
+        ConsumableRules.TryStart(player, _items, buttons, now);
     }
+
+    // Final review A5: the keys that act once per press. Fire (held: automatic fire, harvest swings), the heals, Jump,
+    // Sprint and Crouch keep their held meaning.
+    internal const InputButtons EdgeButtons = InputButtons.Interact | InputButtons.Drop | InputButtons.ToolHarvest | InputButtons.ToolBuild |
+                                              InputButtons.Slot1 | InputButtons.Slot2 | InputButtons.Slot3 | InputButtons.Reload;
+
+    // The buttons of this input with the press keys that were already down in the previous one taken away.
+    internal static InputButtons PressedOnly(InputButtons buttons, InputButtons previous) => buttons & ~(previous & EdgeButtons);
 
     // Phase 13 D7: a harvest swing (held Fire swings at the cooldown) while damage is allowed (the dev sandbox or the
     // match). The server finds the target along the aim from the eye; a harvestable takes the damage, gives the swinger
@@ -886,12 +927,20 @@ public sealed class Match
 
     // Phase 13 D11: a piece leaves the world now (moves and shots of the rest of this tick no longer meet it) and every
     // client hears of it at the end of the tick. D12: then whatever it held up and nothing else holds collapses in this
-    // same tick, in the same BuildEvents (request §80).
+    // same tick, in the same BuildEvents (request §80). Final review A2: the collapse search runs once at the end of the
+    // tick for every destroy of the tick (CollapseUnsupported), so many destroys share one search; until then the pieces
+    // that will fall still stand (they collide and stop shots for the rest of this tick).
     private void DestroyPiece(int slot)
     {
-        int starts = _support.Neighbours(slot, _supportStarts);
+        _support.QueueNeighbours(slot);   // before RemovePiece, which takes the piece's edges away
         RemovePiece(slot);
-        ReadOnlySpan<int> fallen = _support.Unsupported(new ReadOnlySpan<int>(_supportStarts, 0, starts), _build);
+    }
+
+    // End of the tick (after every action, before the events go out): what this tick's destroys left unsupported falls.
+    private void CollapseUnsupported()
+    {
+        if (_support.QueuedStarts == 0) return;
+        ReadOnlySpan<int> fallen = _support.UnsupportedQueued(_build);
         for (int i = 0; i < fallen.Length; i++)
         {
             RemovePiece(fallen[i]);
@@ -899,10 +948,21 @@ public sealed class Match
         }
     }
 
-    // Test seam: a piece destroyed as if its health reached 0 (support and events included).
+    // Test seam: a piece destroyed as if its health reached 0 (support and events included), collapse at once.
     internal void DestroyPiece(uint id)
     {
         if (_build.TryGetSlot(id, out int slot)) DestroyPiece(slot);
+        CollapseUnsupported();
+    }
+
+    // Test seam: several pieces destroyed within one tick, the collapse searched once afterwards (as Tick does).
+    internal void DestroyPieces(ReadOnlySpan<uint> ids)
+    {
+        foreach (uint id in ids)
+        {
+            if (_build.TryGetSlot(id, out int slot)) DestroyPiece(slot);
+        }
+        CollapseUnsupported();
     }
 
     private void RemovePiece(int slot)
@@ -1582,11 +1642,6 @@ public sealed class Match
         writer = new PacketWriter(_sendBuffer);
         ItemCatalogPacket.Write(ref writer, _items.Wire);
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
-
-        // Phase 13 D4: what the client needs of the building numbers.
-        writer = new PacketWriter(_sendBuffer);
-        BuildCatalogPacket.Write(ref writer, _buildCatalogWire);
-        _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
     // D14: the owner's inventory, only at the end of a tick in which it changed (shots do not count).
@@ -1763,6 +1818,7 @@ public sealed class Match
         SendDoors(peerId);
         SendHarvestStates(peerId);   // Phase 13 D6
         SendResources(player);       // Phase 13 D15
+        SendBuildCatalog(peerId);    // Phase 13 D4, final review A3
         StartBuildSync(player);      // Phase 13 D14: the client's old pieces are not trusted
         // The match ended while it was away: FinishMatch sent its result to no connection, so it gets it now.
         if (_flow.State == MatchFlowState.Finished && player.Participant) SendMatchResult(player);

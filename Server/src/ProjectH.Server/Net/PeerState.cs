@@ -9,8 +9,8 @@ namespace ProjectH.Server.Net;
 //     only on LiteNetLib's receive path, so
 //     they need no synchronization: LiteNetLib runs one receive thread per socket and the server binds IPv4 only, so
 //     all of a peer's packets arrive on that single thread.
-//   - ConnectedTick, Joined, LastInputTick, JoinRefused and RefusedTick (Phase 10 D3, D4) belong to the game loop
-//     thread only. Joined is the one exception for reading: it is volatile and LiteNetLib's receive path reads it to
+//   - ConnectedTick, Joined, LastInputTick, JoinRefused, RefusedTick (Phase 10 D3, D4) and CongestedSinceTick (Phase 13
+//     final review A4) belong to the game loop thread only. Joined is the one exception for reading: it is volatile and LiteNetLib's receive path reads it to
 //     take statistics requests only from a joined player (Phase 11 B4). Only the game loop writes it.
 // CloseCode is the one field both threads write; it is first-writer-wins through Interlocked.
 public sealed class PeerState
@@ -39,6 +39,9 @@ public sealed class PeerState
     // the ReliableOrdered JoinMatchResponse that says why goes out before the close.
     public bool JoinRefused;
     public long RefusedTick;
+    // Phase 13 final review A4: the loop tick the peer's reliable queues went over GameLoop.MaxReliableBacklog (-1 = not
+    // over now). Closed with Congested once it stays over for GameLoop.CongestedSeconds.
+    public long CongestedSinceTick = -1;
 
     // Phase 10 D1, D2: the code the server closed this connection with (None = the server did not close it). Set
     // before peer.Disconnect is called, so the game loop always sees it when the Disconnected message arrives (with

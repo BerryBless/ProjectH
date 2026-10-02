@@ -12,6 +12,7 @@ namespace ProjectH.Shared.Protocol
         JoinTimeout = 3,    // connected but never sent a JoinMatchRequest
         InputTimeout = 4,   // joined but sent no PlayerInput for too long
         ServerError = 5,    // the match was reset after repeated tick failures (D6)
+        Congested = 6,      // Phase 13 final review A4: its reliable queue stayed too long for too long (a link too slow)
     }
 
     // Pure helpers shared by the Unity client and the bots. No LiteNetLib types here: each caller maps its own
@@ -45,14 +46,14 @@ namespace ProjectH.Shared.Protocol
         {
             if (data.Length == 0) return DisconnectCode.None;
             byte value = data[0];
-            return value <= (byte)DisconnectCode.ServerError ? (DisconnectCode)value : DisconnectCode.None;
+            return value <= (byte)DisconnectCode.Congested ? (DisconnectCode)value : DisconnectCode.None;
         }
 
         // D10: may the client connect again on its own?
         //   remoteClose: the server closed the connection (LiteNetLib RemoteConnectionClose); code is what it sent.
         //   networkLoss: the connection was lost or could not be made (Timeout, ConnectionFailed, Host/NetworkUnreachable).
-        // Only ServerError among the server's codes is worth a retry: a shutdown, a kick or a timeout would happen
-        // again. A local Disconnect() or a rejected connect is neither flag, so it never retries.
+        // Only ServerError among the server's codes is worth a retry: a shutdown, a kick, a timeout or a congested link
+        // would happen again. A local Disconnect() or a rejected connect is neither flag, so it never retries.
         // The caller decides when a cycle may start at all: a first, manual connect that fails is not retried.
         public static bool ShouldReconnect(bool remoteClose, DisconnectCode code, bool networkLoss)
         {

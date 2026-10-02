@@ -57,6 +57,8 @@ public sealed class ServerMeter : IDisposable
             new Measurement<long>(h.Build.DamageDestroyed, Tag("cause", "damage")),
             new Measurement<long>(h.Build.Collapsed, Tag("cause", "collapse")),
         });
+        _meter.CreateObservableCounter("projecth.build.sync_deferred", () => h.Build.SyncDeferred,
+            description: "Ticks a client's building sync waited for its backed-up building channel");
         _meter.CreateObservableCounter("projecth.build.inbox_drops", () => h.BuildInboxDrops, description: "Build requests dropped by the full inbound channel");
         _meter.CreateObservableCounter("projecth.harvest.hits", () => h.Build.HarvestHits);
         _meter.CreateObservableCounter("projecth.harvest.destroyed", () => h.Build.EnvironmentDestroyed);
@@ -76,6 +78,7 @@ public sealed class ServerMeter : IDisposable
         Kick(h, DisconnectCode.JoinTimeout),
         Kick(h, DisconnectCode.InputTimeout),
         Kick(h, DisconnectCode.ServerError),
+        Kick(h, DisconnectCode.Congested),
     };
 
     private static Measurement<long> Kick(HealthCounters h, DisconnectCode code) => new(h.Kicks(code), Tag("code", code.ToString()));

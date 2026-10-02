@@ -224,4 +224,109 @@ public class SupportTests
         Assert.False(h.Match.Support.HasNeighbour(S(BuildPieceType.Floor, C, 1, C)));
         Assert.Equal(0, h.Match.BuildPieces);
     }
+
+    // ---- Final review A2: one support search per tick ----
+
+    // A grounded stack of eight walls on cell (16, 16)'s west edge holding a level 8 deck of floors over cells x 16..31,
+    // z 0..31 (512 floors, far above the terrain). Returns the walls (bottom first) and the floors.
+    private static (List<uint> Walls, List<uint> Floors) Deck(Match match)
+    {
+        var walls = new List<uint>();
+        var floors = new List<uint>();
+        for (int level = 0; level < 8; level++) walls.Add(SandboxHarness.AddPiece(match, S(BuildPieceType.Wall, 16, level, 16, 1)));
+        for (int z = 0; z < 32; z++)
+            for (int x = 16; x < 32; x++) floors.Add(SandboxHarness.AddPiece(match, S(BuildPieceType.Floor, x, 8, z)));
+        return (walls, floors);
+    }
+
+    // 50 floors far from the walls, never side by side (the deck stays in one piece).
+    private static List<uint> FarHoles(List<uint> floors)
+    {
+        var holes = new List<uint>();
+        for (int z = 1; z < 32 && holes.Count < 50; z += 2)
+            for (int x = 24; x < 32 && holes.Count < 50; x += 2) holes.Add(floors[z * 16 + (x - 16)]);
+        return holes;
+    }
+
+    private static List<uint> Standing(Match match)
+    {
+        var ids = new List<uint>();
+        PieceGrid grid = match.Build.Grid;
+        for (int z = 0; z < BuildGrid.CellsZ; z++)
+            for (int x = 0; x < BuildGrid.CellsX; x++)
+                for (int slot = grid.First(x, z); slot >= 0; slot = grid.Next(slot)) ids.Add(grid.IdAt(slot));
+        ids.Sort();
+        return ids;
+    }
+
+    [Fact]
+    public void ManyDestroysInOneTick_LeaveTheSameAsOneAtATime()
+    {
+        var one = new SandboxHarness();
+        var batch = new SandboxHarness();
+        var (walls, floors) = Deck(one.Match);
+        var (walls2, floors2) = Deck(batch.Match);
+        Assert.Equal(floors, floors2);   // same ids in both
+        Assert.All(floors, id =>
+        {
+            one.Match.Build.TryGetSlot(id, out int slot);
+            Assert.False(one.Match.Build.At(slot).Grounded);
+        });
+        // Holes that leave the deck standing, then the fourth wall of the stack (everything above it falls), then a hole
+        // in what already fell.
+        var destroy = FarHoles(floors);
+        destroy.Add(walls[3]);
+        destroy.Add(floors[0]);
+        foreach (uint id in destroy) one.Match.DestroyPiece(id);
+        batch.Match.DestroyPieces(destroy.ToArray());
+        Assert.Equal(Standing(one.Match), Standing(batch.Match));
+        Assert.Equal(new[] { walls[0], walls[1], walls[2] }, Standing(batch.Match));
+        Assert.Equal(one.Match.PiecesCollapsed, batch.Match.PiecesCollapsed + 1);   // one at a time, floors[0] had fallen before its destroy
+        Assert.Equal(one.Match.PiecesDestroyed, batch.Match.PiecesDestroyed);
+    }
+
+    [Fact]
+    public void ManyDestroysThatCollapseNothing_ShareOneSearch()
+    {
+        var one = new SandboxHarness();
+        var batch = new SandboxHarness();
+        var (_, floors) = Deck(one.Match);
+        Deck(batch.Match);
+        List<uint> holes = FarHoles(floors);
+        int separately = 0;
+        foreach (uint id in holes)
+        {
+            one.Match.DestroyPiece(id);
+            separately += one.Match.Support.LastVisited;
+        }
+        var clock = Stopwatch.StartNew();
+        batch.Match.DestroyPieces(holes.ToArray());
+        clock.Stop();
+        int together = batch.Match.Support.LastVisited;
+        Assert.Equal(Standing(one.Match), Standing(batch.Match));
+        Assert.Equal(0, batch.Match.PiecesCollapsed);
+        // One search reaches the walls through the deck once; every later start stops at a floor it already reached.
+        Assert.True(together <= floors.Count + 8, $"{together} nodes visited together");
+        Assert.True(separately > 10 * together, $"{separately} nodes one at a time, {together} together");
+        if (Environment.GetEnvironmentVariable(BuildStressFactAttribute.Variable) == "1")
+            Assert.True(clock.ElapsedMilliseconds < 5, $"{clock.ElapsedMilliseconds} ms");
+    }
+
+    // The batch runs at the end of the tick: pieces destroyed by shots during the tick collapse what they held in the same
+    // tick's events.
+    [Fact]
+    public void ADestroyInsideATick_CollapsesBeforeTheEventsGoOut()
+    {
+        PlayerEntity p = _h.Join(1, new Vector3(-6f, 0f, -6f));
+        uint wall = _h.AddPiece(S(BuildPieceType.Wall, C, 0, C));
+        uint floor = _h.AddPiece(S(BuildPieceType.Floor, C, 1, C));
+        _h.Clear();
+        _h.Match.Build.TryGetSlot(wall, out int slot);
+        _h.Match.Build.At(slot).Damage = ushort.MaxValue - 1;   // one more hit destroys it
+        _h.Act(p, InputButtons.Fire, BuildGrid.CenterOf(S(BuildPieceType.Wall, C, 0, C)));
+        Assert.False(_h.Match.Build.Contains(wall));
+        Assert.False(_h.Match.Build.Contains(floor));
+        Assert.Equal(new[] { wall, floor }.OrderBy(i => i), DestroyedThisTick().OrderBy(i => i));
+        Assert.Equal(0, _h.Match.Support.QueuedStarts);
+    }
 }

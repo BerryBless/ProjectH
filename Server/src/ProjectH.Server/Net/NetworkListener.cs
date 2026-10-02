@@ -26,6 +26,7 @@ public sealed class NetworkListener : INetEventListener
         new[] { (byte)DisconnectCode.JoinTimeout },
         new[] { (byte)DisconnectCode.InputTimeout },
         new[] { (byte)DisconnectCode.ServerError },
+        new[] { (byte)DisconnectCode.Congested },
     };
 
     private readonly ServerOptions _options;

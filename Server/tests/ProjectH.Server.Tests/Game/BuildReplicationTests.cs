@@ -245,9 +245,10 @@ public class BuildReplicationTests
         Assert.Contains(near, m.Pieces.Keys);
         Assert.DoesNotContain(far, m.Pieces.Keys);
         AssertMirrorMatches(1);
-        // Every building packet went on the building channel; the catalog on channel 0.
-        Assert.DoesNotContain(_sent, s => !s.BuildChannel && (PacketId)s.Data[0] is PacketId.BuildSync or PacketId.BuildEvents or PacketId.BuildInterest);
-        Assert.Contains(_sent, s => !s.BuildChannel && (PacketId)s.Data[0] == PacketId.BuildCatalog);
+        // Every building packet went on the building channel, the catalog first (final review A3).
+        Assert.DoesNotContain(_sent, s => !s.BuildChannel && (PacketId)s.Data[0] is PacketId.BuildSync or PacketId.BuildEvents or PacketId.BuildInterest
+            or PacketId.BuildCatalog);
+        Assert.Equal(PacketId.BuildCatalog, (PacketId)_sent.First(s => s.Peer == 1 && s.BuildChannel).Data[0]);
     }
 
     [Fact]
@@ -417,5 +418,106 @@ public class BuildReplicationTests
         var c = _match.BuildCounts();
         Assert.Equal(3, c.Pieces);
         Assert.Equal(2, c.Cells);
+    }
+
+    // ---- Final review A1: nearest cells first ----
+
+    // Over 4 x 74 pieces in two cells of lower index than the player's own (interest cells 18 and 19, build cells x 8..15,
+    // z 8..11): sent lowest index first they would fill the whole first tick. The player's cell comes first.
+    [Fact]
+    public void TheSync_SendsThePlayersOwnCellFirst()
+    {
+        for (int level = 0; level < 10; level++)
+            for (int z = 8; z < 12; z++)
+                for (int x = 8; x < 16; x++) Add(x, level, z);
+        uint own = Add(16, 0, 16);
+        Join(1, new Vector3(2f, 0f, 2f));
+        Assert.Equal(36, _match.Replication.InterestCellAt(new Vector3(2f, 0f, 2f)));
+        _match.Tick();
+        Assert.Equal(1 + BuildReplication.MaxSyncPacketsPerTick, _sent.Count(s => s.Peer == 1 && (PacketId)s.Data[0] == PacketId.BuildSync));
+        Assert.Contains(own, MirrorOf(1).Pieces.Keys);
+        for (int i = 0; i < 5; i++) _match.Tick();
+        AssertMirrorMatches(1);
+    }
+
+    [Fact]
+    public void NearestPending_IsTheClosestCell_TheLowestIndexAmongEquals()
+    {
+        BuildReplication r = _match.Replication;
+        Assert.Equal(36, r.NearestPending(ulong.MaxValue, 36));
+        Assert.Equal(27, r.NearestPending((1UL << 0) | (1UL << 27) | (1UL << 45), 36));   // 27 and 45 both 1 away
+        Assert.Equal(0, r.NearestPending(1UL << 0, 63));
+        Assert.Equal(-1, r.NearestPending(0, 36));
+    }
+
+    // ---- Final review A4: a backed-up building channel pauses the sync, nothing else ----
+
+    [Fact]
+    public void ABackedUpBuildChannel_PausesTheSync_ButEventsAndTheWindowStillGo()
+    {
+        var sent = new List<(int Peer, byte[] Data)>();
+        int backlog = Match.MaxBuildBacklog + 1;
+        var match = new Match(new ServerOptions { MaxPlayers = 8, DevRespawn = true }, TestGameData.Create(), (_, _, _) => { },
+            TestGameData.CombatLoadout, sendBuild: (peer, data, _) => sent.Add((peer, data.ToArray())), buildBacklog: _ => backlog);
+        for (int x = 12; x < 20; x++) SandboxHarness.AddPiece(match, new BuildPieceShape(BuildPieceType.Floor, x, 0, 16, 0));
+        Assert.Equal(JoinResult.Ok, match.TryJoin(1, "p1"));
+        match.TryGetPlayer(1, out PlayerEntity p);
+        p.State.Position = new Vector3(2f, 0f, 2f);
+        match.Tick();
+        int Count(PacketId id) => sent.Count(s => (PacketId)s.Data[0] == id);
+        Assert.Equal(1, Count(PacketId.BuildSync));       // the reset only
+        Assert.Equal(1, Count(PacketId.BuildInterest));   // the window goes
+        uint placed = SandboxHarness.AddPiece(match, new BuildPieceShape(BuildPieceType.Wall, 16, 1, 16, 0));
+        match.Replication.Placed(BuildReplication.Record(match.Build.At(match.Build.Grid.SlotOf(placed))));
+        match.Tick();
+        Assert.Equal(1, Count(PacketId.BuildEvents));     // events go
+        Assert.Equal(1, Count(PacketId.BuildSync));
+        Assert.Equal(2, match.SyncsDeferred);
+        backlog = Match.MaxBuildBacklog;                  // not above the limit: the sync goes on
+        match.Tick();
+        Assert.Equal(2, Count(PacketId.BuildSync));
+        Assert.Equal(2, match.BuildCounts().SyncDeferred);
+    }
+
+    // ---- Final review C: windows that change during a sync ----
+
+    [Fact]
+    public void LeavingACellMidSync_AndComingBack_EndsWithTheSamePieces()
+    {
+        int added = 0;
+        for (int level = 0; level < 5 && added < 600; level++)
+            for (int z = 12; z < 24 && added < 600; z++)
+                for (int x = 12; x < 24 && added < 600; x++, added++) Add(x, level, z);
+        PlayerEntity p = Join(1, new Vector3(2f, 0f, 2f));
+        _match.Tick();
+        Assert.True(p.SyncPending != 0 || p.SyncCell >= 0);   // still syncing
+        p.State.Position = new Vector3(-70f, GameMap.Terrain.Height(-70f, -70f), -70f);   // cell (0, 0)
+        _match.Tick();
+        AssertMirrorMatches(1);
+        p.State.Position = new Vector3(2f, 0f, 2f);
+        for (int i = 0; i < 8; i++) _match.Tick();
+        Assert.Equal(0UL, p.SyncPending);
+        AssertMirrorMatches(1);
+        Assert.Equal(600, MirrorOf(1).Pieces.Count);
+    }
+
+    [Fact]
+    public void ADeadPlayerComingBackToLife_ShrinksItsWindow_AndDropsTheFarPieces()
+    {
+        uint far = Add(1, 0, 1);
+        uint near = Add(16, 0, 16);
+        PlayerEntity p = Join(1, new Vector3(2f, 0f, 2f));
+        p.Alive = false;
+        p.RespawnAtTick = uint.MaxValue;
+        _match.Tick();
+        Assert.Equal(ulong.MaxValue, MirrorOf(1).Cells);
+        Assert.Contains(far, MirrorOf(1).Pieces.Keys);
+        p.Alive = true;
+        _match.Tick();
+        Mirror m = MirrorOf(1);
+        Assert.NotEqual(ulong.MaxValue, m.Cells);
+        Assert.DoesNotContain(far, m.Pieces.Keys);
+        Assert.Contains(near, m.Pieces.Keys);
+        AssertMirrorMatches(1);
     }
 }

@@ -35,6 +35,11 @@ public sealed class BuildSupport
     private int[] _queue;
     private int[] _collapse;
     private int _stamp;
+    // This tick's search starts (former neighbours of the pieces destroyed so far), each slot once (_queued), for the one
+    // search at the end of the tick. At most every slot.
+    private int[] _starts;
+    private bool[] _queued;
+    private int _startCount;
 
     public BuildSupport(int capacity)
     {
@@ -47,6 +52,8 @@ public sealed class BuildSupport
         _visited = new int[slots];
         _queue = new int[slots];
         _collapse = new int[slots];
+        _starts = new int[slots];
+        _queued = new bool[slots];
     }
 
     // Every per-slot array reaches past slot (doubling, up to the piece limit).
@@ -61,6 +68,8 @@ public sealed class BuildSupport
         Array.Resize(ref _visited, size);
         Array.Resize(ref _queue, size);
         Array.Resize(ref _collapse, size);
+        Array.Resize(ref _starts, size);
+        Array.Resize(ref _queued, size);
     }
 
     // The lattice edges of a piece (4 or 6), as keys: (lower point index) | (higher point index << 16).
@@ -209,6 +218,39 @@ public sealed class BuildSupport
     {
         _heads.Clear();
         Array.Clear(_edgeCount);
+        for (int i = 0; i < _startCount; i++) _queued[_starts[i]] = false;
+        _startCount = 0;
+    }
+
+    // Search starts waiting for the end of the tick.
+    public int QueuedStarts => _startCount;
+    // Nodes the last Unsupported call took from its queue (tests: the work is bounded by the components, not the map).
+    public int LastVisited { get; private set; }
+
+    // Final review A2: before a piece is removed, its neighbours become search starts for the end of the tick, so every
+    // destroy of a tick shares one search (Unsupported's "reached by an earlier search" stop). Each slot is queued once.
+    public void QueueNeighbours(int slot)
+    {
+        Span<int> around = stackalloc int[MaxNeighbours];
+        int n = Neighbours(slot, around);
+        for (int i = 0; i < n; i++)
+        {
+            int start = around[i];
+            if (_queued[start]) continue;
+            _queued[start] = true;
+            _starts[_startCount++] = start;
+        }
+    }
+
+    // End of the tick: the pieces the queued starts no longer hold up (see Unsupported); the queue is empty afterwards.
+    // The result is the same as searching after every destroy: removing all of them first and then searching every
+    // former neighbour's component finds exactly the components that no longer reach a grounded piece.
+    public ReadOnlySpan<int> UnsupportedQueued(BuildWorld world)
+    {
+        for (int i = 0; i < _startCount; i++) _queued[_starts[i]] = false;
+        int count = _startCount;
+        _startCount = 0;
+        return Unsupported(new ReadOnlySpan<int>(_starts, 0, count), world);
     }
 
     // The slots sharing an edge with this one (each once), into result; returns how many.
@@ -242,6 +284,7 @@ public sealed class BuildSupport
             _stamp = 0;
         }
         int callBase = _stamp + 1;
+        int visited = 0;
         Span<int> around = stackalloc int[MaxNeighbours];
         for (int s = 0; s < starts.Length; s++)
         {
@@ -256,6 +299,7 @@ public sealed class BuildSupport
             while (head < tail && !supported)
             {
                 int slot = _queue[head++];
+                visited++;
                 if (world.At(slot).Grounded)
                 {
                     supported = true;
@@ -280,6 +324,7 @@ public sealed class BuildSupport
             if (supported) continue;
             for (int i = 0; i < tail; i++) _collapse[collapse++] = _queue[i];
         }
+        LastVisited = visited;
         return new ReadOnlySpan<int>(_collapse, 0, collapse);
     }
 }

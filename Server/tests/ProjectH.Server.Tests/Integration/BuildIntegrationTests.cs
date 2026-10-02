@@ -30,8 +30,9 @@ public sealed class BuildIntegrationTests
         Assert.True(Pump.Until(() => client.BuildResults.Count == 1, 3000, client), "result");
         Assert.Equal(BuildResultCode.InvalidState, client.BuildResults[0].Code);
         Assert.True(Pump.Until(() => client.BuildPackets.Any(p => p.Id == PacketId.BuildInterest), 3000, client), "interest");
-        Assert.All(client.BuildPackets.Where(p => p.Id != PacketId.BuildCatalog), p => Assert.Equal(ProtocolConstants.BuildChannel, p.Channel));
-        Assert.Contains(client.BuildPackets, p => p.Id == PacketId.BuildCatalog && p.Channel == ProtocolConstants.ReliableChannel);
+        // Final review A3: the catalog too, as the channel's first packet.
+        Assert.All(client.BuildPackets, p => Assert.Equal(ProtocolConstants.BuildChannel, p.Channel));
+        Assert.Equal(PacketId.BuildCatalog, client.BuildPackets[0].Id);
         Assert.Contains(client.BuildPackets, p => p.Id == PacketId.BuildSync);   // the join's reset
     }
 
