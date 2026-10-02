@@ -29,6 +29,21 @@ public readonly struct ControlMessage
     public string? DevPlayerId { get; }
 }
 
+// Phase 13 D8: one parsed build request.
+public readonly struct BuildMessage
+{
+    public BuildMessage(int peerId, NetPeer peer, in BuildRequest request)
+    {
+        PeerId = peerId;
+        Peer = peer;
+        Request = request;
+    }
+
+    public int PeerId { get; }
+    public NetPeer Peer { get; }
+    public BuildRequest Request { get; }
+}
+
 public readonly struct InputMessage
 {
     public InputMessage(int peerId, NetPeer peer, in PlayerInputPacket packet)

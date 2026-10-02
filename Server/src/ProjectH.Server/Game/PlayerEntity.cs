@@ -1,3 +1,4 @@
+using ProjectH.Server.Game.Build;
 using ProjectH.Server.Game.Combat;
 using ProjectH.Server.Game.Items;
 using ProjectH.Shared.Simulation;
@@ -61,6 +62,12 @@ public sealed class PlayerEntity
     public bool FireHeld;
     // Phase 13 D7: the tick the harvest tool can swing again (held Fire swings at the cooldown).
     public uint NextSwingTick;
+    // Phase 13 D8: build requests waiting for the game loop (BuildRequestQueue.Capacity at most), the newest sequence
+    // processed (older or equal ones are dropped: a replay or a duplicate), and the tick it may place again.
+    public readonly BuildRequestQueue BuildQueue = new();
+    public ushort LastBuildSequence;
+    public bool HasBuildSequence;
+    public uint NextBuildTick;
 
     // Feet position at the end of each recent tick, for rewinding this player as a target (D6).
     public readonly PositionHistory History = new();

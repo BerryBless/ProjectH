@@ -76,6 +76,11 @@ public sealed class Match
     private int _blockerCount = -1;
     private byte _blockerDoors;
     private ulong _blockerHarvest;
+    // Phase 13 D10, D13: the pieces of this match and this tick's building events.
+    private readonly BuildWorld _build;
+    private readonly BuildReplication _replication;
+    private readonly long[] _buildResults = new long[(int)BuildResultCode.BudgetFull + 1];
+    private readonly BuildCatalogData _buildCatalogWire;
     // Participants who left during the current match, recorded when they left (they are no longer in _players).
     // At most MaxPlayers entries; cleared when a match starts.
     private readonly List<PlayerRecord> _leftParticipants = new();
@@ -120,6 +125,9 @@ public sealed class Match
         _items = data.Items;
         _building = data.Building;
         _harvest = new HarvestWorld(_building);
+        _build = new BuildWorld(_building);
+        _replication = new BuildReplication(_build, _building, options.MaxPlayers);
+        _buildCatalogWire = BuildCatalogWire(_building);
         _loadout = loadout ?? StartingLoadout.Empty;
         string? loadoutError = _loadout.Validate(data);
         if (loadoutError != null) throw new ArgumentException("Invalid starting loadout: " + loadoutError, nameof(loadout));
@@ -191,6 +199,14 @@ public sealed class Match
     internal BuildingCatalog Building => _building;
     // Phase 13 D18: harvest swings that hit a harvestable since this match object was made.
     public long HarvestHits { get; private set; }
+    // Phase 13 test seams: the pieces and this tick's events.
+    internal BuildWorld Build => _build;
+    internal BuildReplication Replication => _replication;
+    // Phase 13 D18: build requests by result since this match object was made (Ok = accepted), and the ones dropped
+    // without a result (a sequence already processed).
+    public long BuildResults(BuildResultCode code) => _buildResults[(int)code];
+    public long BuildDuplicates { get; private set; }
+    public int BuildPieces => _build.Count;
     public long EnvironmentDestroyed => _harvest.DestroyedTotal;
     // Phase 12 D12: moves faster than their mode allows since this match object was made (should stay 0).
     public long MovementAnomalies { get; private set; }
@@ -316,6 +332,14 @@ public sealed class Match
         for (int i = 0; i < packet.Count; i++) player.Inputs.Add(packet.Get(i));
     }
 
+    // Phase 13 D8: a build request from the network (GameLoop.DrainBuild). It waits in the player's queue for the next
+    // tick; a full queue refuses it at once (RateLimited), so a flood costs one small answer each and no memory.
+    public void EnqueueBuild(int peerId, in BuildRequest request)
+    {
+        if (!_playersByPeer.TryGetValue(peerId, out var player)) return;
+        if (!player.BuildQueue.TryAdd(request)) SendBuildResult(player, request.Sequence, BuildResultCode.RateLimited, 0);
+    }
+
     public void Tick()
     {
         // now = the last completed tick; this call simulates tick now + 1. Weapon timers
@@ -351,6 +375,10 @@ public sealed class Match
         }
         RefillLootPoints(now);
 
+        // Phase 13 D8: build requests before the moves and shots, so a wall placed this tick already blocks them (the
+        // fastest defence, request §117). Placement uses each player's last input (its aim) and position.
+        ProcessBuildRequests(now);
+
         foreach (var player in _players)
         {
             bool sent = TakeInput(player, out InputCommand input);
@@ -384,6 +412,7 @@ public sealed class Match
         SendDoorChanges();
         SendHarvestChanges();
         SendResourceChanges();
+        SendBuildEvents();
         // After every move of this tick, so all players are recorded at the same moment. A snapshot with
         // ServerTick N shows exactly the positions recorded at N, which is what ViewTick refers to.
         foreach (var player in _players) player.History.Record(ServerTick, player.State.Position, player.State.Mode);
@@ -407,8 +436,12 @@ public sealed class Match
             if (door >= 0) _doors.Set(door, true);
         }
 
+        // Phase 13: a move that starts inside a building piece (one just built over or under the player, which a ramp lifts
+        // by up to 3 m at once) is the piece's push, not the simulation's: it is not an anomaly. Map boxes, doors and
+        // harvestables still count. Checked only past the limit.
         float limit = MathF.Max(MovementLimits.MaxSpeed(before), MovementLimits.MaxSpeed(player.State.Mode)) * _tickSeconds * MovementLimits.Slack;
-        if (Vector3.DistanceSquared(from, player.State.Position) > limit * limit)
+        if (Vector3.DistanceSquared(from, player.State.Position) > limit * limit &&
+            !MovementSimulation.Penetrates(from, MovementSimulation.CollisionHeight(before), _collision, piecesOnly: true))
         {
             MovementAnomalies++;
             _movementAnomaly?.Invoke();
@@ -418,11 +451,143 @@ public sealed class Match
         return !(step.LandingSpeed > 0f && _flow.DamageAllowed && ApplyFallDamage(player, step.LandingSpeed));
     }
 
-    // Phase 13 D3: the colliders a step at these feet may touch: map boxes, closed doors, standing harvestables.
+    // Phase 13 D3: the colliders a step at these feet may touch: map boxes, closed doors, standing harvestables and the
+    // pieces around.
     private CollisionWorld GatherAround(Vector3 feet)
     {
-        _collision.Gather(feet, _doors.OpenMask, _harvest.DestroyedMask, null);
+        _collision.Gather(feet, _doors.OpenMask, _harvest.DestroyedMask, _build.Grid);
         return _collision;
+    }
+
+    // Phase 13 D8, D9: each player's waiting requests, oldest first. One placement per player per MinBuildInterval: once a
+    // piece is placed the rest wait for a later tick (not refused); a refused request does not use the interval. A
+    // sequence that is not newer than the last one processed is dropped (a replay or a duplicate, request §149).
+    private void ProcessBuildRequests(uint now)
+    {
+        foreach (var player in _players)
+        {
+            while (player.BuildQueue.Count > 0 && now >= player.NextBuildTick)
+            {
+                player.BuildQueue.TryTake(out BuildRequest request);
+                if (player.HasBuildSequence && !BuildRequest.IsNewer(request.Sequence, player.LastBuildSequence))
+                {
+                    BuildDuplicates++;
+                    continue;
+                }
+                player.LastBuildSequence = request.Sequence;
+                player.HasBuildSequence = true;
+                BuildResultCode code = TryBuild(player, request, now + 1, out uint id);
+                _buildResults[(int)code]++;
+                SendBuildResult(player, request.Sequence, code, id);
+                if (code != BuildResultCode.Ok) continue;
+                player.NextBuildTick = now + _building.MinBuildIntervalTicks;
+                break;
+            }
+        }
+    }
+
+    // D9 (request §45): every check in order; the first that fails is the answer, and nothing changes then. On success the
+    // resources go first, then the piece is made and announced (request §51). tick: the tick being simulated (the piece's
+    // CreatedTick).
+    private BuildResultCode TryBuild(PlayerEntity player, in BuildRequest request, uint tick, out uint id)
+    {
+        id = 0;
+        if (!player.Alive || _flow.State == MatchFlowState.Finished || _flow.State == MatchFlowState.Closing) return BuildResultCode.InvalidState;
+        if (player.Inventory.Tool != ToolKind.Build || !ActionsAllowed(player.State.Mode)) return BuildResultCode.InvalidState;
+        if (request.Material > (byte)BuildMaterialType.Metal ||
+            !BuildGrid.TryNormalize((BuildPieceType)request.Piece, request.X, request.Y, request.Z, request.Rotation, out BuildPieceShape shape))
+            return BuildResultCode.InvalidRequest;
+        var material = (BuildMaterialType)request.Material;
+        if (_build.Count >= _building.MaxPiecesPerMatch || _build.OwnerCount(player.EntityId) >= _building.MaxPiecesPerPlayer)
+            return BuildResultCode.BudgetFull;
+        if (BuildRules.Occupied(_build, shape)) return BuildResultCode.Occupied;
+
+        Vector3 eye = player.State.Position + new Vector3(0f, CombatRules.EyeHeightOf(player.State.Mode), 0f);
+        if (!CombatRules.TryAimDirection(player.LastInput.AimYaw, player.LastInput.AimPitch, out Vector3 aim) ||
+            !BuildRules.InReach(eye, aim, shape, _building.BuildRange, _building.ViewAngleDegrees))
+            return BuildResultCode.OutOfRange;
+        if (BuildRules.Buried(shape, GameMap.Terrain) || BuildRules.BehindAWall(eye, shape, _doors.World, GameMap.Terrain) || CutsTheMap(shape) ||
+            CutsAPlayer(shape))
+            return BuildResultCode.Blocked;
+
+        int cost = _building.Material(material).ResourceCost;
+        int have = player.Inventory.Resource(material);
+        if (have < cost) return BuildResultCode.NoResource;
+
+        player.Inventory.SetResource(material, have - cost);
+        id = _build.Add(shape, material, player.EntityId, tick, grounded: false);
+        if (id == 0) return BuildResultCode.BudgetFull;   // unreachable: the budget was checked
+        _build.TryGetSlot(id, out int slot);
+        _replication.Placed(Record(_build.At(slot)));
+        return BuildResultCode.Ok;
+    }
+
+    // D9: a map box, any door (open or closed: a door must be able to close) or a standing harvestable overlapped too much.
+    private bool CutsTheMap(in BuildPieceShape shape)
+    {
+        foreach (Box box in GameMap.Boxes)
+        {
+            if (BuildRules.OverlapsTooMuch(shape, box)) return true;
+        }
+        foreach (Box door in GameMap.Doors)
+        {
+            if (BuildRules.OverlapsTooMuch(shape, door)) return true;
+        }
+        ReadOnlySpan<Harvestable> all = GameMap.Harvestables;
+        for (int i = 0; i < all.Length; i++)
+        {
+            if (!_harvest.IsDestroyed(i) && BuildRules.OverlapsTooMuch(shape, all[i].Bounds)) return true;
+        }
+        return false;
+    }
+
+    // D9: a wall or floor through a living character's body centre.
+    private bool CutsAPlayer(in BuildPieceShape shape)
+    {
+        foreach (var p in _players)
+        {
+            if (p.Alive && BuildRules.HoldsBodyCentre(shape, p.State.Position, MovementSimulation.CollisionHeight(p.State.Mode))) return true;
+        }
+        return false;
+    }
+
+    private static BuildPieceRecord Record(in BuildPiece piece) => new()
+    {
+        Id = piece.Id, Shape = piece.Shape, Material = piece.Material, Owner = piece.Owner, CreatedTick = piece.CreatedTick, Damage = piece.Damage,
+    };
+
+    private void SendBuildResult(PlayerEntity player, ushort sequence, BuildResultCode code, uint id)
+    {
+        var writer = new PacketWriter(_sendBuffer);
+        BuildResult.Write(ref writer, new BuildResult { Sequence = sequence, Code = code, PieceId = id });
+        _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
+    // D13: this tick's building events to everyone, in as few packets as fit.
+    private void SendBuildEvents()
+    {
+        _replication.Collect();
+        if (!_replication.HasEvents) return;
+        var cursor = new BuildReplication.Cursor();
+        int length;
+        while ((length = _replication.NextPacket(_sendBuffer, ref cursor, ulong.MaxValue)) > 0)
+            Broadcast(_sendBuffer.AsSpan(0, length), DeliveryMethod.ReliableOrdered);
+        _replication.Clear();
+    }
+
+    // D10 (request §70, §132): every piece goes at a round reset and a match start; clients clear theirs (a reset sync).
+    private void ClearBuilds()
+    {
+        _build.Clear();
+        _replication.Reset();
+        foreach (var p in _players)
+        {
+            p.BuildQueue.Clear();
+            p.NextBuildTick = 0;
+        }
+        var writer = new PacketWriter(_sendBuffer);
+        BuildSyncPacket.WriteHeader(ref writer, _replication.Version, reset: true, count: 0);
+        Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
     // Phase 13 D6: the map boxes, the closed doors and the standing harvestables, for shots, swings and drops.
@@ -790,7 +955,7 @@ public sealed class Match
             // It is placed like a G-drop (in front of the player), not on the loot point: the point rolls a new
             // item there after its respawn delay and the two would overlap.
             Vector3 dropOffset = ItemRules.Offset(player.State.Yaw, ItemRules.DropDistance);
-            Vector3 dropAt = ItemRules.DropPosition(player.State.Position, dropOffset, Blockers, GameMap.Terrain);
+            Vector3 dropAt = ItemRules.DropPosition(player.State.Position, dropOffset, GatherAround(player.State.Position).Boxes, GameMap.Terrain);
             if (SpawnItem(new LootRoll(ItemKind.Weapon, old.Weapon!.Id, old.Rarity, (ushort)old.MagAmmo), dropAt, -1) == 0)
             {
                 // Impossible: RemoveItemAt above just freed a record, so the store is below Capacity and
@@ -819,7 +984,7 @@ public sealed class Match
         Vector3 offset = ItemRules.Offset(player.State.Yaw, ItemRules.DropDistance);
         // Conservation: the weapon leaves the hand only once it lies in the world. SpawnItem touches the
         // world list only, so the ref into the inventory stays valid.
-        if (SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, Blockers, GameMap.Terrain), -1) == 0) return;
+        if (SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, GatherAround(player.State.Position).Boxes, GameMap.Terrain), -1) == 0) return;
 
         inventory.DroppedFireLockTick = Math.Max(inventory.DroppedFireLockTick, held.NextFireTick);
         held = default;
@@ -874,7 +1039,7 @@ public sealed class Match
     private bool DropAround(PlayerEntity player, int n, int count, in LootRoll roll)
     {
         Vector3 offset = ItemRules.Offset(player.State.Yaw + 360f * n / count, ItemRules.DeathDropRadius);
-        return SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, Blockers, GameMap.Terrain), -1) != 0;
+        return SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, GatherAround(player.State.Position).Boxes, GameMap.Terrain), -1) != 0;
     }
 
     // End of tick (D11): the match state when any of its fields changed (state, timer, alive and player counts,
@@ -1087,6 +1252,8 @@ public sealed class Match
         _doors.CloseAll();
         // Phase 13 D6 (request §24): every harvestable stands again (the change goes out at the end of this tick).
         _harvest.Reset();
+        // Phase 13 D10: no piece of the lobby survives into the match.
+        ClearBuilds();
         _matchStartedUtc = DateTime.UtcNow;
         _loot.Restart(unchecked(_lootSeed + _flow.Round));
         for (int point = 0; point < _loot.Count; point++) SpawnItem(_loot.Roll(point), _loot.Position(point), point);
@@ -1104,8 +1271,9 @@ public sealed class Match
         while (_graced.Count > 0) ExpireGraced(_graced[0]);
         ClearWorldItems();
         _hasRoute = false;
-        // Phase 13 D6: the lobby gets the whole map back.
+        // Phase 13 D6, D10: the lobby gets the whole map back, without the match's pieces.
         _harvest.Reset();
+        ClearBuilds();
         foreach (var player in _players)
         {
             Respawn(player);
@@ -1231,6 +1399,11 @@ public sealed class Match
 
         writer = new PacketWriter(_sendBuffer);
         ItemCatalogPacket.Write(ref writer, _items.Wire);
+        _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+
+        // Phase 13 D4: what the client needs of the building numbers.
+        writer = new PacketWriter(_sendBuffer);
+        BuildCatalogPacket.Write(ref writer, _buildCatalogWire);
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
@@ -1389,6 +1562,9 @@ public sealed class Match
         player.LastInput = new InputCommand { Yaw = player.State.Yaw };
         player.MissedTicks = 0;
         player.FireHeld = false;
+        // Phase 13 D8: the new client numbers its build requests from 1.
+        player.BuildQueue.Clear();
+        player.HasBuildSequence = false;
 
         SendJoinResponse(peerId, JoinResult.Resumed, player.EntityId);
         SendCatalogs(peerId);
@@ -1407,6 +1583,32 @@ public sealed class Match
         SendResources(player);       // Phase 13 D15
         // The match ended while it was away: FinishMatch sent its result to no connection, so it gets it now.
         if (_flow.State == MatchFlowState.Finished && player.Participant) SendMatchResult(player);
+    }
+
+    // Phase 13 D4: the BuildCatalog packet's content, built once.
+    private static BuildCatalogData BuildCatalogWire(BuildingCatalog c)
+    {
+        var data = new BuildCatalogData
+        {
+            MaxResource = (ushort)c.MaxResource,
+            BuildRange = c.BuildRange,
+            ViewAngleDegrees = c.ViewAngleDegrees,
+            HarvestRange = c.HarvestRange,
+            HarvestCooldownTicks = c.HarvestCooldownTicks,
+            MinBuildIntervalTicks = c.MinBuildIntervalTicks,
+            InterestCellSize = c.InterestCellSize,
+            InterestRadius = (byte)c.InterestRadius,
+            InterestKeepMargin = (byte)c.InterestKeepMargin,
+        };
+        for (int m = 0; m < 3; m++)
+        {
+            BuildMaterialConfig material = c.Material((BuildMaterialType)m);
+            data.ResourceCost[m] = (ushort)material.ResourceCost;
+            data.MaxHealth[m] = (ushort)material.MaxHealth;
+            data.InitialHealth[m] = (ushort)material.InitialHealth;
+            data.ConstructionTicks[m] = material.ConstructionTicks;
+        }
+        return data;
     }
 
     // Entity ids are ushort and 0 means "none". With at most 50 players a free id is always found.

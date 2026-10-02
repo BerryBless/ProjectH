@@ -381,6 +381,7 @@ public sealed class GameLoop : IDisposable
         Interlocked.Increment(ref _loopTick);   // read by tests from another thread (LoopTicks)
         DrainControl();
         DrainInput();
+        DrainBuild();
         SweepPeers();
         SendStatsReplies();
         _match.Tick();
@@ -431,6 +432,18 @@ public sealed class GameLoop : IDisposable
                 ((PeerState)peer.Tag).LastInputTick = _loopTick;
                 _match.EnqueueInput(message.PeerId, message.Packet);
             }
+        }
+    }
+
+    // Phase 13 D8: build requests, bounded per tick like inputs (the channel holds at most this many).
+    private void DrainBuild()
+    {
+        var reader = _channels.Build.Reader;
+        int budget = _options.MaxPlayers * Game.Build.BuildRequestQueue.Capacity;
+        while (budget-- > 0 && reader.TryRead(out BuildMessage message))
+        {
+            if (_peers.TryGetValue(message.PeerId, out var peer) && ReferenceEquals(peer, message.Peer))
+                _match.EnqueueBuild(message.PeerId, message.Request);
         }
     }
 

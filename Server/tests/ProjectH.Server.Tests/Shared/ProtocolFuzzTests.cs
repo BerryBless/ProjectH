@@ -47,6 +47,10 @@ public class ProtocolFuzzTests
         if (r.TryReadPacketId(out PacketId id) && id == PacketId.PlayerInput && PlayerInputPacket.TryRead(ref r, out _)) ok++;
         r = new PacketReader(data);
         if (PlayerInputPacket.TryRead(ref r, out _)) ok++;
+        r = new PacketReader(data);
+        if (r.TryReadPacketId(out PacketId buildId) && buildId == PacketId.BuildRequest && BuildRequest.TryRead(ref r, out _)) ok++;   // Phase 13
+        r = new PacketReader(data);
+        if (BuildRequest.TryRead(ref r, out _)) ok++;
         DisconnectCodes.Read(data);   // must not throw; not counted (any first byte 1-5 "parses")
         return ok;
     }
@@ -115,6 +119,28 @@ public class ProtocolFuzzTests
         if (HarvestHit.TryRead(ref r, out _)) ok++;
         r = new PacketReader(data);
         if (HarvestStatesPacket.TryRead(ref r, out _)) ok++;
+        r = new PacketReader(data);
+        if (BuildResult.TryRead(ref r, out _)) ok++;
+        r = new PacketReader(data);
+        if (BuildCatalogPacket.TryRead(ref r, out _)) ok++;
+        r = new PacketReader(data);
+        if (BuildInterestPacket.TryRead(ref r, out _)) ok++;
+        r = new PacketReader(data);
+        if (BuildEventsPacket.TryReadHeader(ref r, out _, out int placed, out int health, out int destroyed))
+        {
+            ok++;
+            for (int i = 0; i < placed && BuildPieceRecord.TryReadPlaced(ref r, out _); i++) ok++;
+            for (int i = 0; i < health && BuildEventsPacket.TryReadHealth(ref r, out _, out _); i++) ok++;
+            for (int i = 0; i < destroyed && BuildEventsPacket.TryReadDestroyed(ref r, out _); i++) ok++;
+        }
+        r = new PacketReader(data);
+        if (BuildSyncPacket.TryReadHeader(ref r, out _, out _, out int synced))
+        {
+            ok++;
+            for (int i = 0; i < synced && BuildPieceRecord.TryReadSync(ref r, out _); i++) ok++;
+        }
+        r = new PacketReader(data);
+        if (BuildPieceRecord.TryReadSync(ref r, out _)) ok++;
         return ok;
     }
 }

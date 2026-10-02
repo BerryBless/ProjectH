@@ -220,6 +220,19 @@ public sealed class NetworkListener : INetEventListener
                     OnBadPacket(peer, BadPacketReason.Malformed);
                 break;
 
+            case PacketId.BuildRequest:
+                // Phase 13 D8: only from a joined connection (like input). The game loop queues it per player.
+                if (peer.Tag is not PeerState buildState || !buildState.JoinRequested)
+                {
+                    OnBadPacket(peer, BadPacketReason.InputBeforeJoin);
+                    break;
+                }
+                if (BuildRequest.TryRead(ref packet, out var build))
+                    _channels.Build.Writer.TryWrite(new BuildMessage(peer.Id, peer, build));
+                else
+                    OnBadPacket(peer, BadPacketReason.Malformed);
+                break;
+
             case PacketId.StatsRequest:
                 // Phase 11 D8: the request has no body. It is taken only from a connection whose join succeeded
                 // (PeerState.Joined, published by the game loop for Ok and Resumed only, so a refused or still pending

@@ -82,9 +82,10 @@ public class MatchTests
         Assert.Equal(DeliveryMethod.ReliableOrdered, toPeer[1].Method);
         Assert.Equal(PacketId.ItemCatalog, toPeer[2].Id);
         Assert.Equal(DeliveryMethod.ReliableOrdered, toPeer[2].Method);
-        Assert.Equal(PacketId.WorldItems, toPeer[3].Id);   // 17 loot points: one chunk
-        Assert.Equal(PacketId.InventoryState, toPeer[4].Id);
-        Assert.Equal(PacketId.PlayerSpawned, toPeer[5].Id);
+        Assert.Equal(PacketId.BuildCatalog, toPeer[3].Id);   // Phase 13 D4: the third catalog
+        Assert.Equal(PacketId.WorldItems, toPeer[4].Id);   // 17 loot points: one chunk
+        Assert.Equal(PacketId.InventoryState, toPeer[5].Id);
+        Assert.Equal(PacketId.PlayerSpawned, toPeer[6].Id);
 
         var reader = new PacketReader(toPeer[1].Data);
         reader.TryReadPacketId(out _);
