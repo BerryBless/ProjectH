@@ -41,6 +41,8 @@ namespace ProjectH.Shared.Simulation
 
         public int Capacity { get; }
         public int Count => _slotOfId.Count;
+        // Columns (build cells) holding at least one piece: the spatial index's size (Phase 13 D18).
+        public int OccupiedColumns { get; private set; }
         // Changes on every add and remove (client views redraw only then).
         public int Version { get; private set; }
         // Slots handed out so far (every slot index is below it): the size other per-slot arrays need.
@@ -82,6 +84,7 @@ namespace ProjectH.Shared.Simulation
 
             // Keep the column in id order: walk back from the tail past larger ids (an append in the usual case).
             int column = shape.X + shape.Z * BuildGrid.CellsX;
+            if (_heads[column] < 0) OccupiedColumns++;
             int after = _tails[column];
             while (after >= 0 && _ids[after] > id) after = _prev[after];
             int before = after >= 0 ? _next[after] : _heads[column];
@@ -107,6 +110,7 @@ namespace ProjectH.Shared.Simulation
             else _heads[column] = next;
             if (next >= 0) _prev[next] = prev;
             else _tails[column] = prev;
+            if (_heads[column] < 0) OccupiedColumns--;
             _free[_freeCount++] = slot;
             Version++;
             return true;
@@ -115,6 +119,7 @@ namespace ProjectH.Shared.Simulation
         public void Clear()
         {
             _slotOfId.Clear();
+            OccupiedColumns = 0;
             for (int i = 0; i < ColumnCount; i++)
             {
                 _heads[i] = -1;

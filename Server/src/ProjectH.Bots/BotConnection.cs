@@ -22,7 +22,8 @@ public sealed class BotConnection : IDisposable
     // it fails within its slot instead of after LiteNetLib's default 5.5 s. Each attempt is a new BotConnection.
     public BotConnection(bool reconnect = false)
     {
-        _net = new NetManager(_listener) { UnsyncedEvents = false, AutoRecycle = true };
+        // Phase 13 D13: the same channels as the server (channel 1: building).
+        _net = new NetManager(_listener) { UnsyncedEvents = false, AutoRecycle = true, ChannelsCount = ProtocolConstants.ChannelCount };
         if (reconnect)
         {
             _net.ReconnectDelay = DisconnectCodes.ReconnectRequestIntervalMs;

@@ -43,6 +43,7 @@ namespace ProjectH.Client.Net
                 DisconnectTimeout = 5000,   // default PingInterval (1000 ms) stays below a quarter of this
                 IPv6Enabled = false,
                 MtuOverride = ProtocolConstants.Mtu,   // same value as the server so both sides agree on datagram size
+                ChannelsCount = ProtocolConstants.ChannelCount,   // Phase 13 D13: channel 1 is the building stream
             };
             _defaultReconnectDelay = _net.ReconnectDelay;
             _defaultMaxConnectAttempts = _net.MaxConnectAttempts;

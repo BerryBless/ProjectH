@@ -49,6 +49,8 @@ public sealed class GameLoop : IDisposable
     private readonly StatsQueryQueue _statsQueries;
     private readonly byte[] _statsReplyBuffer = new byte[StatsResponse.MaxSize];
     private Match _match;
+    // Phase 13 D18: the current match's refusals by reason, for HealthCounters (one delegate, made once).
+    private readonly Func<ProjectH.Shared.Protocol.BuildResultCode, long> _buildRejects;
     // Removed on Disconnected messages and by the stale-peer sweep; never outlives the connection.
     private readonly Dictionary<int, NetPeer> _peers = new();
     private readonly List<int> _stalePeers = new();
@@ -115,7 +117,7 @@ public sealed class GameLoop : IDisposable
         _inputTimeoutTicks = (long)options.InputTimeoutSeconds * options.SimHz;
         _statsQueries = statsQueries ?? new StatsQueryQueue();
         _health.StatsQueries = () => _statsQueries.Counts;
-        _listener = new NetworkListener(options, _channels, _stats, _health, _statsQueries, logger);
+        _listener = new NetworkListener(options, _channels, _stats, _health, _statsQueries, logger, data.Building.MaxRequestsPerSecond);
         _net = new NetManager(_listener, null)
         {
             UnsyncedEvents = true,
@@ -127,15 +129,18 @@ public sealed class GameLoop : IDisposable
             PingInterval = Math.Min(1000, options.DisconnectTimeoutMs / 4),
             // Snapshots are sent Sequenced (never fragmented) and can be MaxPacketSize bytes.
             MtuOverride = ProtocolConstants.Mtu,
+            // Phase 13 D13: channel 0 as before, channel 1 the building stream.
+            ChannelsCount = ProtocolConstants.ChannelCount,
             UnconnectedMessagesEnabled = false,
             IPv6Enabled = false,
         };
         _listener.Manager = _net;
         _match = NewMatch();
+        _buildRejects = code => _match.BuildResults(code);
     }
 
     private Match NewMatch() => new(_options, _data, SendToPeer, _loadout, dropPoints: _dropPoints, matchSink: _matchSink,
-        graceExpired: OnGraceExpired, movementAnomaly: _health.AddMovementAnomaly);
+        graceExpired: OnGraceExpired, movementAnomaly: _health.AddMovementAnomaly, sendBuild: SendToPeerBuild);
 
     // D2, D9: a graced player left without resuming (at most MaxPlayers per round, so logging each is cheap).
     private void OnGraceExpired(string devPlayerId)
@@ -386,6 +391,7 @@ public sealed class GameLoop : IDisposable
         SendStatsReplies();
         _match.Tick();
         _health.SetGauges(_peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State);
+        _health.SetBuild(_match.BuildCounts(), _buildRejects);
     }
 
     private void DrainControl()
@@ -566,6 +572,14 @@ public sealed class GameLoop : IDisposable
         _stats.AddOut(data.Length);
     }
 
+    // Phase 13 D13: the building stream on its own channel.
+    private void SendToPeerBuild(int peerId, ReadOnlySpan<byte> data, DeliveryMethod method)
+    {
+        if (!_peers.TryGetValue(peerId, out var peer)) return;
+        peer.Send(data, ProtocolConstants.BuildChannel, method);
+        _stats.AddOut(data.Length);
+    }
+
     // Every StatsIntervalSeconds: the Stats line (performance of the interval), then the Health line (state and totals
     // since the start, D9). Internal so tests can read both lines.
     internal void LogPeriodic()
@@ -616,6 +630,7 @@ public sealed class GameLoop : IDisposable
     private void LogHealth()
     {
         HealthCounters h = _health;
+        BuildCounts b = h.Build;
         PersistenceCounts db = h.Persistence?.Invoke() ?? default;
         StatsQueryCounts sq = h.StatsQueries?.Invoke() ?? default;
         _logger.LogInformation(
@@ -625,8 +640,13 @@ public sealed class GameLoop : IDisposable
             "rejects full={RejectFull} badRequest={RejectBad} version={RejectVersion} " +
             "kicks kicked={KickBad} joinTimeout={KickJoin} inputTimeout={KickInput} serverError={KickError} " +
             "badPackets unknownId={BadUnknown} malformed={BadMalformed} beforeJoin={BadBeforeJoin} duplicateJoin={BadDuplicate} " +
-            "inputRate={BadRate} wrongDirection={BadDirection} handlerException={BadHandler} " +
+            "inputRate={BadRate} wrongDirection={BadDirection} handlerException={BadHandler} buildRate={BadBuildRate} " +
             "tickFailures={TickFailures} loopFailures={LoopFailures} matchResets={Resets} stalls={Stalls} movementAnomalies={MovementAnomalies} " +
+            "build pieces={BuildPieces} cells={BuildCells} requests={BuildRequests} accepted={BuildAccepted} destroyed={BuildDestroyed} " +
+            "collapsed={BuildCollapsed} duplicates={BuildDuplicates} eventPackets={BuildEventPackets} syncPackets={BuildSyncPackets} " +
+            "buildRejects noResource={RejectNoResource} outOfRange={RejectRange} blocked={RejectBlocked} unsupported={RejectUnsupported} " +
+            "occupied={RejectOccupied} rateLimited={RejectRate} invalidState={RejectState} invalidRequest={RejectRequest} budgetFull={RejectBudget} " +
+            "harvest hits={HarvestHits} destroyed={HarvestDestroyed} " +
             "db saved={DbSaved} failed={DbFailed} discarded={DbDiscarded} dropped={DbDropped} " +
             "stats requests={StatsRequests} limited={StatsLimited} busy={StatsBusy} unavailable={StatsUnavailable} undelivered={StatsUndelivered}",
             _peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State, _match.Flow.Round,
@@ -636,8 +656,13 @@ public sealed class GameLoop : IDisposable
             h.Kicks(DisconnectCode.Kicked), h.Kicks(DisconnectCode.JoinTimeout), h.Kicks(DisconnectCode.InputTimeout), h.Kicks(DisconnectCode.ServerError),
             h.BadPackets(BadPacketReason.UnknownId), h.BadPackets(BadPacketReason.Malformed), h.BadPackets(BadPacketReason.InputBeforeJoin),
             h.BadPackets(BadPacketReason.DuplicateJoin), h.BadPackets(BadPacketReason.InputRate), h.BadPackets(BadPacketReason.WrongDirection),
-            h.BadPackets(BadPacketReason.HandlerException),
+            h.BadPackets(BadPacketReason.HandlerException), h.BadPackets(BadPacketReason.BuildRate),
             h.TickFailures, h.LoopFailures, h.MatchResets, h.Stalls, h.MovementAnomalies,
+            b.Pieces, b.Cells, b.Requests, b.Accepted, b.Destroyed, b.Collapsed, b.Duplicates, b.EventPackets, b.SyncPackets,
+            h.BuildRejects(BuildResultCode.NoResource), h.BuildRejects(BuildResultCode.OutOfRange), h.BuildRejects(BuildResultCode.Blocked),
+            h.BuildRejects(BuildResultCode.Unsupported), h.BuildRejects(BuildResultCode.Occupied), h.BuildRejects(BuildResultCode.RateLimited),
+            h.BuildRejects(BuildResultCode.InvalidState), h.BuildRejects(BuildResultCode.InvalidRequest), h.BuildRejects(BuildResultCode.BudgetFull),
+            b.HarvestHits, b.EnvironmentDestroyed,
             db.Saved, db.Failed, db.Discarded, db.Dropped,
             sq.Requests, sq.Limited, sq.Busy, sq.Unavailable, sq.Undelivered);
     }

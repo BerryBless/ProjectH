@@ -64,6 +64,20 @@ public sealed class PeerState
         return ++_inputPacketsInWindow <= maxPerSecond;
     }
 
+    private long _buildWindowStartMs;
+    private int _buildRequestsInWindow;
+
+    // Phase 13 D8: the same fixed 1-second window for build requests (LiteNetLib's receive path only).
+    public bool TryCountBuildRequest(long nowMs, int maxPerSecond)
+    {
+        if (nowMs - _buildWindowStartMs >= 1000)
+        {
+            _buildWindowStartMs = nowMs;
+            _buildRequestsInWindow = 0;
+        }
+        return ++_buildRequestsInWindow <= maxPerSecond;
+    }
+
     private bool _statsRequested;
     private long _lastStatsRequestMs;
 

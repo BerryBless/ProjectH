@@ -15,8 +15,14 @@ public enum BadPacketReason
     InputRate,        // above ServerOptions.MaxInputPacketsPerSecond
     WrongDirection,   // a server-to-client packet id
     HandlerException, // the receive handler threw (a server bug, counted against the peer)
+    BuildRate,        // Phase 13 D8: above the building catalog's maxRequestsPerSecond
     Count,
 }
+
+// Phase 13 D18: the match's building and harvesting numbers (since the match object was made; a match reset starts them
+// over). Requests counts every request processed or dropped as a duplicate.
+public readonly record struct BuildCounts(int Pieces, int Cells, long Requests, long Accepted, long Rejected, long Destroyed, long Collapsed,
+    long Duplicates, long HarvestHits, long EnvironmentDestroyed, long EventPackets, long SyncPackets);
 
 // Phase 10 D9: totals since the server started, for the Health line and the "ProjectH.Server" Meter. Written from
 // LiteNetLib's threads and the game loop, read by the game loop (Health line) and by the Meter's observers on
@@ -42,6 +48,20 @@ public sealed class HealthCounters
     private long _matchResets;
     private long _stalls;
     private long _movementAnomalies;
+    // Phase 13 D18: written by the game loop after every tick (BuildCounts); the fields are read one by one.
+    private long _buildPieces;
+    private long _buildCells;
+    private long _buildRequests;
+    private long _buildAccepted;
+    private long _buildRejected;
+    private long _buildDestroyed;
+    private long _buildCollapsed;
+    private long _buildDuplicates;
+    private long _harvestHits;
+    private long _environmentDestroyed;
+    private long _buildEventPackets;
+    private long _buildSyncPackets;
+    private readonly long[] _buildRejects = new long[(int)BuildResultCode.BudgetFull + 1];
     // Gauges, written by the game loop once per tick.
     private int _peers;
     private int _players;
@@ -77,6 +97,30 @@ public sealed class HealthCounters
         Volatile.Write(ref _graced, graced);
         Volatile.Write(ref _matchState, (int)state);
     }
+
+    public void SetBuild(in BuildCounts c, Func<BuildResultCode, long> rejects)
+    {
+        Volatile.Write(ref _buildPieces, c.Pieces);
+        Volatile.Write(ref _buildCells, c.Cells);
+        Volatile.Write(ref _buildRequests, c.Requests);
+        Volatile.Write(ref _buildAccepted, c.Accepted);
+        Volatile.Write(ref _buildRejected, c.Rejected);
+        Volatile.Write(ref _buildDestroyed, c.Destroyed);
+        Volatile.Write(ref _buildCollapsed, c.Collapsed);
+        Volatile.Write(ref _buildDuplicates, c.Duplicates);
+        Volatile.Write(ref _harvestHits, c.HarvestHits);
+        Volatile.Write(ref _environmentDestroyed, c.EnvironmentDestroyed);
+        Volatile.Write(ref _buildEventPackets, c.EventPackets);
+        Volatile.Write(ref _buildSyncPackets, c.SyncPackets);
+        for (int i = 1; i < _buildRejects.Length; i++) Volatile.Write(ref _buildRejects[i], rejects((BuildResultCode)i));
+    }
+
+    public BuildCounts Build => new((int)Volatile.Read(ref _buildPieces), (int)Volatile.Read(ref _buildCells), Volatile.Read(ref _buildRequests),
+        Volatile.Read(ref _buildAccepted), Volatile.Read(ref _buildRejected), Volatile.Read(ref _buildDestroyed), Volatile.Read(ref _buildCollapsed),
+        Volatile.Read(ref _buildDuplicates), Volatile.Read(ref _harvestHits), Volatile.Read(ref _environmentDestroyed),
+        Volatile.Read(ref _buildEventPackets), Volatile.Read(ref _buildSyncPackets));
+
+    public long BuildRejects(BuildResultCode code) => Volatile.Read(ref _buildRejects[(int)code]);
 
     public long Rejects(RejectReason reason) => Interlocked.Read(ref _rejects[(int)reason]);
     public long Kicks(DisconnectCode code) => Interlocked.Read(ref _kicks[(int)code]);

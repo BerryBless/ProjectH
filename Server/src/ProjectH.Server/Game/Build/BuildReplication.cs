@@ -1,4 +1,5 @@
 using System;
+using System.Numerics;
 using ProjectH.Shared.Protocol;
 using ProjectH.Shared.Simulation;
 
@@ -55,6 +56,98 @@ public sealed class BuildReplication
     public bool HasEvents => _placedCount > 0 || _healthCount > 0 || _destroyedCount > 0;
     // The interest grid: InterestPerSide x InterestPerSide cells of CellsPerInterest x CellsPerInterest build cells.
     public int InterestPerSide => _interestPerSide;
+    // D14: sync packets a client gets per tick at most (about 4.8 kB): a big window arrives over a few ticks instead of in
+    // one burst queued behind LiteNetLib's reliable window.
+    public const int MaxSyncPacketsPerTick = 4;
+
+    // Every interest cell (a dead player or a spectator watches the whole map, D14).
+    public ulong AllCells => _interestPerSide * _interestPerSide >= 64 ? ulong.MaxValue : (1UL << (_interestPerSide * _interestPerSide)) - 1;
+
+    // The interest cell a world position lies in (clamped to the map).
+    public int InterestCellAt(Vector3 position)
+    {
+        int bx = Math.Clamp(BuildGrid.CellX(position.X), 0, BuildGrid.CellsX - 1);
+        int bz = Math.Clamp(BuildGrid.CellZ(position.Z), 0, BuildGrid.CellsZ - 1);
+        return InterestCell(bx, bz);
+    }
+
+    // The cells within radius (Chebyshev) of a cell.
+    public ulong Window(int cell, int radius)
+    {
+        int cx = cell % _interestPerSide;
+        int cz = cell / _interestPerSide;
+        ulong mask = 0;
+        for (int z = Math.Max(0, cz - radius); z <= Math.Min(_interestPerSide - 1, cz + radius); z++)
+            for (int x = Math.Max(0, cx - radius); x <= Math.Min(_interestPerSide - 1, cx + radius); x++)
+                mask |= 1UL << (x + _interestPerSide * z);
+        return mask;
+    }
+
+    // D14: the window a living player's client keeps: the cells within radius of its cell, plus those it already keeps
+    // that are still within radius + keepMargin (so walking along a cell border does not drop and resend pieces).
+    public ulong WindowFor(int cell, ulong current, int radius, int keepMargin) =>
+        Window(cell, radius) | (current & Window(cell, radius + keepMargin));
+
+    // D14: the next BuildSync packet for one client, from the current pieces (a piece destroyed meanwhile is simply not
+    // in it): the pending cells in index order, each cell's build columns in order, each column in id order, resuming
+    // after (cell, column, afterId). A finished cell leaves pending. Returns the length, or 0 when nothing is left; the
+    // packet holds at most BuildSyncPacket.MaxRecords pieces.
+    public int NextSyncPacket(Span<byte> buffer, ref ulong pending, ref int cell, ref int column, ref uint afterId)
+    {
+        var writer = new PacketWriter(buffer);
+        BuildSyncPacket.WriteHeader(ref writer, Version, reset: false, count: 0);
+        int count = 0;
+        int columns = _cellsPerInterest * _cellsPerInterest;
+        PieceGrid grid = _world.Grid;
+        while (count < BuildSyncPacket.MaxRecords && (pending != 0 || cell >= 0))
+        {
+            if (cell < 0 || (pending & (1UL << cell)) == 0)
+            {
+                if (pending == 0)
+                {
+                    cell = -1;
+                    break;
+                }
+                cell = BitOperations.TrailingZeroCount(pending);
+                column = 0;
+                afterId = 0;
+            }
+            int baseX = cell % _interestPerSide * _cellsPerInterest;
+            int baseZ = cell / _interestPerSide * _cellsPerInterest;
+            bool full = false;
+            for (; column < columns; column++)
+            {
+                int x = baseX + column % _cellsPerInterest;
+                int z = baseZ + column / _cellsPerInterest;
+                for (int slot = grid.First(x, z); slot >= 0; slot = grid.Next(slot))
+                {
+                    uint id = grid.IdAt(slot);
+                    if (id <= afterId) continue;
+                    if (count == BuildSyncPacket.MaxRecords)
+                    {
+                        full = true;
+                        break;
+                    }
+                    BuildPieceRecord.WriteSync(ref writer, Record(_world.At(slot)));
+                    afterId = id;
+                    count++;
+                }
+                if (full) break;
+                afterId = 0;
+            }
+            if (full) break;
+            pending &= ~(1UL << cell);
+            cell = -1;
+        }
+        if (count == 0) return 0;
+        buffer[BuildSyncPacket.HeaderSize - 1] = (byte)count;
+        return writer.Length;
+    }
+
+    public static BuildPieceRecord Record(in BuildPiece piece) => new()
+    {
+        Id = piece.Id, Shape = piece.Shape, Material = piece.Material, Owner = piece.Owner, CreatedTick = piece.CreatedTick, Damage = piece.Damage,
+    };
 
     // D14: the interest cell (bit index in a 64-bit window) of a build cell.
     public int InterestCell(int buildX, int buildZ) => buildX / _cellsPerInterest + _interestPerSide * (buildZ / _cellsPerInterest);

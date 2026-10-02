@@ -62,6 +62,10 @@ public class MonitoringTests
                      "kicks kicked=0", "joinTimeout=0", "inputTimeout=1", "serverError=0",
                      "badPackets unknownId=0", "malformed=", "beforeJoin=", "duplicateJoin=", "inputRate=", "wrongDirection=1", "handlerException=",
                      "tickFailures=0", "loopFailures=0", "matchResets=0", "stalls=0", "movementAnomalies=0",
+                     "buildRate=0",   // Phase 13 D8
+                     "build pieces=0 cells=0 requests=0 accepted=0 destroyed=0 collapsed=0 duplicates=0", // Phase 13 D18
+                     "buildRejects noResource=0 outOfRange=0 blocked=0 unsupported=0 occupied=0 rateLimited=0 invalidState=0 invalidRequest=0 budgetFull=0",
+                     "harvest hits=0 destroyed=0",
                      "db saved=3 failed=1 discarded=2 dropped=4",
                      "stats requests=0 limited=2 busy=0 unavailable=0 undelivered=0",
                  })
@@ -88,6 +92,7 @@ public class MonitoringTests
         health.SetGauges(peers: 3, players: 2, graced: 1, MatchFlowState.Playing);
         health.AddGraceExpiry();
         health.AddMovementAnomaly();
+        health.SetBuild(new BuildCounts(7, 3, 8, 5, 2, 10, 4, 1, 9, 2, 0, 0), code => code == BuildResultCode.Occupied ? 2 : 0);
 
         using var meter = new ServerMeter(health);
         var seen = new List<(string Name, long Value, string Tags)>();
@@ -113,6 +118,12 @@ public class MonitoringTests
         Assert.Contains(("projecth.match_state", (long)MatchFlowState.Playing, ""), seen);
         Assert.Contains(("projecth.grace_expiries", 1L, ""), seen);
         Assert.Contains(("projecth.movement_anomalies", 1L, ""), seen);   // Phase 12 D12
+        Assert.Contains(("projecth.build.pieces", 7L, ""), seen);         // Phase 13 D18
+        Assert.Contains(("projecth.build.cells", 3L, ""), seen);
+        Assert.Contains(("projecth.build.requests", 5L, "result=Ok"), seen);
+        Assert.Contains(("projecth.build.requests", 2L, "result=Occupied"), seen);
+        Assert.Contains(("projecth.build.destroyed", 4L, "cause=collapse"), seen);
+        Assert.Contains(("projecth.harvest.hits", 9L, ""), seen);
         Assert.Contains(("projecth.stats_queries", 6L, "result=requests"), seen);
         Assert.Contains(("projecth.stats_queries", 2L, "result=limited"), seen);
         Assert.Contains(("projecth.stats_queries", 1L, "result=busy"), seen);

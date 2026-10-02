@@ -68,6 +68,23 @@ public sealed class PlayerEntity
     public ushort LastBuildSequence;
     public bool HasBuildSequence;
     public uint NextBuildTick;
+    // Phase 13 D14: the interest cells this player's client keeps (the last BuildInterest), the ones still to sync, and
+    // where the sync of the current one stands (its build column, the last piece id sent there). 0 cells = not yet told.
+    public ulong InterestCells;
+    public ulong SyncPending;
+    public int SyncCell = -1;
+    public int SyncColumn;
+    public uint SyncAfterId;
+
+    // A join, a resume or a round reset: the client starts from nothing and the window is sent again.
+    public void ResetInterest()
+    {
+        InterestCells = 0;
+        SyncPending = 0;
+        SyncCell = -1;
+        SyncColumn = 0;
+        SyncAfterId = 0;
+    }
 
     // Feet position at the end of each recent tick, for rewinding this player as a target (D6).
     public readonly PositionHistory History = new();

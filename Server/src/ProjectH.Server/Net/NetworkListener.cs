@@ -40,9 +40,13 @@ public sealed class NetworkListener : INetEventListener
     // accepts no new connection. Written by the game loop or the host's thread, read on LiteNetLib's thread.
     private volatile bool _stopping;
 
+    // Phase 13 D8: build requests a peer may send per second (building.json); more are invalid packets.
+    private readonly int _maxBuildRequestsPerSecond;
+
     public NetworkListener(ServerOptions options, InboundChannels channels, ServerStats stats, HealthCounters health,
-        StatsQueryQueue statsQueries, ILogger logger)
+        StatsQueryQueue statsQueries, ILogger logger, int maxBuildRequestsPerSecond = 20)
     {
+        _maxBuildRequestsPerSecond = maxBuildRequestsPerSecond;
         _options = options;
         _channels = channels;
         _stats = stats;
@@ -225,6 +229,11 @@ public sealed class NetworkListener : INetEventListener
                 if (peer.Tag is not PeerState buildState || !buildState.JoinRequested)
                 {
                     OnBadPacket(peer, BadPacketReason.InputBeforeJoin);
+                    break;
+                }
+                if (!buildState.TryCountBuildRequest(Environment.TickCount64, _maxBuildRequestsPerSecond))
+                {
+                    OnBadPacket(peer, BadPacketReason.BuildRate);
                     break;
                 }
                 if (BuildRequest.TryRead(ref packet, out var build))

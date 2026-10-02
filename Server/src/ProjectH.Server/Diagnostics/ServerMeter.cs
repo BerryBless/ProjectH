@@ -48,6 +48,17 @@ public sealed class ServerMeter : IDisposable
         _meter.CreateObservableCounter("projecth.stalls", () => h.Stalls);
         _meter.CreateObservableCounter("projecth.movement_anomalies", () => h.MovementAnomalies,
             description: "Moves faster than their movement mode allows (a simulation bug; should stay 0)");
+        // Phase 13 D18: building and harvesting (since the match object was made).
+        _meter.CreateObservableGauge("projecth.build.pieces", () => h.Build.Pieces, description: "Building pieces standing (game.build.count)");
+        _meter.CreateObservableGauge("projecth.build.cells", () => h.Build.Cells, description: "Build cells holding a piece (the spatial index)");
+        _meter.CreateObservableCounter("projecth.build.requests", () => BuildRequests(h));
+        _meter.CreateObservableCounter("projecth.build.destroyed", () => new[]
+        {
+            new Measurement<long>(h.Build.Destroyed - h.Build.Collapsed, Tag("cause", "damage")),
+            new Measurement<long>(h.Build.Collapsed, Tag("cause", "collapse")),
+        });
+        _meter.CreateObservableCounter("projecth.harvest.hits", () => h.Build.HarvestHits);
+        _meter.CreateObservableCounter("projecth.harvest.destroyed", () => h.Build.EnvironmentDestroyed);
         _meter.CreateObservableCounter("projecth.db_records", () => DbRecords(h));
         _meter.CreateObservableCounter("projecth.stats_queries", () => StatsQueries(h));
     }
@@ -73,6 +84,17 @@ public sealed class ServerMeter : IDisposable
         var result = new Measurement<long>[(int)BadPacketReason.Count];
         for (int reason = 0; reason < result.Length; reason++)
             result[reason] = new Measurement<long>(h.BadPackets((BadPacketReason)reason), Tag("reason", ((BadPacketReason)reason).ToString()));
+        return result;
+    }
+
+    // Accepted, each refusal reason, and duplicates.
+    private static Measurement<long>[] BuildRequests(HealthCounters h)
+    {
+        var result = new Measurement<long>[(int)BuildResultCode.BudgetFull + 2];
+        result[0] = new Measurement<long>(h.Build.Accepted, Tag("result", "Ok"));
+        for (int code = 1; code <= (int)BuildResultCode.BudgetFull; code++)
+            result[code] = new Measurement<long>(h.BuildRejects((BuildResultCode)code), Tag("result", ((BuildResultCode)code).ToString()));
+        result[^1] = new Measurement<long>(h.Build.Duplicates, Tag("result", "Duplicate"));
         return result;
     }
 

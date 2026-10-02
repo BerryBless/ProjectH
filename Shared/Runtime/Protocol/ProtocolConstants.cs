@@ -65,6 +65,13 @@ namespace ProjectH.Shared.Protocol
 
         public const int MaxInputsPerPacket = 3;
 
+        // Phase 13 D13: LiteNetLib channels. Everything before Phase 13 uses channel 0; the building stream (BuildRequest,
+        // BuildResult, BuildEvents, BuildSync, BuildInterest) has channel 1 to itself, so a burst of building never queues
+        // ahead of a death or a hit on channel 0's ReliableOrdered window. Server, client and bots set ChannelCount.
+        public const byte ReliableChannel = 0;
+        public const byte BuildChannel = 1;
+        public const int ChannelCount = 2;
+
         // LiteNetLib does not fragment Unreliable/Sequenced packets, so one snapshot packet must fit one datagram (a snapshot is up to MaxSnapshotParts packets).
         public const int MaxPacketSize = 1200;
 

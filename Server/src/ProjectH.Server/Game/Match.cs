@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using LiteNetLib;
+using ProjectH.Server.Diagnostics;
 using ProjectH.Server.Game.Build;
 using ProjectH.Server.Game.Combat;
 using ProjectH.Server.Game.Flow;
@@ -35,6 +36,8 @@ public sealed class Match
     private readonly uint _graceTicks;
     private readonly byte[] _sendBuffer = new byte[ProtocolConstants.MaxPacketSize];
     private readonly SendPacket _send;
+    // Phase 13 D13: the building stream's own channel.
+    private readonly SendPacket _sendBuild;
     private readonly WeaponCatalog _weapons;
     private readonly ItemCatalog _items;
     private readonly WorldItems _worldItems = new();
@@ -106,9 +109,10 @@ public sealed class Match
 
     // Test seams: loadout null = StartingLoadout.Empty (the production start, D1); lootPoints null = the
     // map's LootPoints.All; dropPoints null = the map's DropPoints.All (Phase 6 D9).
+    // Phase 13 D13: sendBuild sends on the building channel (LiteNetLib channel 1); null = everything through send (tests).
     public Match(ServerOptions options, GameData data, SendPacket send, StartingLoadout? loadout = null, LootPoint[]? lootPoints = null,
         Vector3[]? dropPoints = null, Action<MatchRecord>? matchSink = null, Action<string>? graceExpired = null,
-        Action? movementAnomaly = null)
+        Action? movementAnomaly = null, SendPacket? sendBuild = null)
     {
         _matchSink = matchSink;
         _graceExpired = graceExpired;
@@ -119,6 +123,11 @@ public sealed class Match
         _send = (peerId, data, method) =>
         {
             if (peerId != PlayerEntity.NoPeer) raw(peerId, data, method);
+        };
+        SendPacket rawBuild = sendBuild ?? raw;
+        _sendBuild = (peerId, data, method) =>
+        {
+            if (peerId != PlayerEntity.NoPeer) rawBuild(peerId, data, method);
         };
         _graceTicks = (uint)options.ReconnectGraceSeconds * (uint)options.SimHz;
         ArgumentNullException.ThrowIfNull(data);
@@ -214,6 +223,18 @@ public sealed class Match
     // those the ones that collapsed.
     public long PiecesDestroyed { get; private set; }
     public long PiecesCollapsed { get; private set; }
+    // D13, D14: BuildEvents and BuildSync packets sent (all recipients) since this match object was made.
+    public long BuildEventPackets { get; private set; }
+    public long BuildSyncPackets { get; private set; }
+
+    // D18: the building and harvesting numbers for the Health line and the Meter (GameLoop copies them every tick).
+    public BuildCounts BuildCounts()
+    {
+        long rejected = 0;
+        for (int i = 1; i < _buildResults.Length; i++) rejected += _buildResults[i];
+        return new BuildCounts(_build.Count, _build.Grid.OccupiedColumns, rejected + _buildResults[0] + BuildDuplicates, _buildResults[0],
+            rejected, PiecesDestroyed, PiecesCollapsed, BuildDuplicates, HarvestHits, EnvironmentDestroyed, BuildEventPackets, BuildSyncPackets);
+    }
     internal BuildSupport Support => _support;
     public int BuildPieces => _build.Count;
     public long EnvironmentDestroyed => _harvest.DestroyedTotal;
@@ -280,6 +301,7 @@ public sealed class Match
         SendDoors(peerId);   // Phase 12 D9
         SendHarvestStates(peerId);   // Phase 13 D6
         SendResources(player);       // Phase 13 D15
+        StartBuildSync(player);      // Phase 13 D14
         // Phase 12 D16: a newcomer during an air-drop match sees the transport too.
         if (_hasRoute) SendRoute(peerId);
         // Reliable, after its own spawn: the newcomer's client knows it is dead (spectating) before any input.
@@ -565,28 +587,76 @@ public sealed class Match
         return false;
     }
 
-    private static BuildPieceRecord Record(in BuildPiece piece) => new()
-    {
-        Id = piece.Id, Shape = piece.Shape, Material = piece.Material, Owner = piece.Owner, CreatedTick = piece.CreatedTick, Damage = piece.Damage,
-    };
+    private static BuildPieceRecord Record(in BuildPiece piece) => BuildReplication.Record(piece);
 
     private void SendBuildResult(PlayerEntity player, ushort sequence, BuildResultCode code, uint id)
     {
         var writer = new PacketWriter(_sendBuffer);
         BuildResult.Write(ref writer, new BuildResult { Sequence = sequence, Code = code, PieceId = id });
-        _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+        _sendBuild(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
-    // D13: this tick's building events to everyone, in as few packets as fit.
+    // D13, D14, end of the tick, per client: its interest window first (BuildInterest when it changed), then this tick's
+    // events in its window, then up to MaxSyncPacketsPerTick sync packets for the cells it entered. All on the building
+    // channel, in this order.
     private void SendBuildEvents()
     {
         _replication.Collect();
-        if (!_replication.HasEvents) return;
-        var cursor = new BuildReplication.Cursor();
-        int length;
-        while ((length = _replication.NextPacket(_sendBuffer, ref cursor, ulong.MaxValue)) > 0)
-            Broadcast(_sendBuffer.AsSpan(0, length), DeliveryMethod.ReliableOrdered);
+        foreach (var p in _players) UpdateInterest(p);
+        if (_replication.HasEvents)
+        {
+            foreach (var p in _players)
+            {
+                if (p.IsGraced) continue;
+                var cursor = new BuildReplication.Cursor();
+                int length;
+                while ((length = _replication.NextPacket(_sendBuffer, ref cursor, p.InterestCells)) > 0)
+                {
+                    _sendBuild(p.PeerId, _sendBuffer.AsSpan(0, length), DeliveryMethod.ReliableOrdered);
+                    BuildEventPackets++;
+                }
+            }
+        }
         _replication.Clear();
+        foreach (var p in _players)
+        {
+            if (p.IsGraced) continue;
+            for (int i = 0; i < BuildReplication.MaxSyncPacketsPerTick; i++)
+            {
+                int length = _replication.NextSyncPacket(_sendBuffer, ref p.SyncPending, ref p.SyncCell, ref p.SyncColumn, ref p.SyncAfterId);
+                if (length == 0) break;
+                _sendBuild(p.PeerId, _sendBuffer.AsSpan(0, length), DeliveryMethod.ReliableOrdered);
+                BuildSyncPackets++;
+            }
+        }
+    }
+
+    // D14: a living player keeps the cells around it (radius, plus the keep margin for cells it has); a dead player or a
+    // spectator the whole map. Cells it enters go to its sync queue; cells it leaves stop being sent and its client drops
+    // their pieces (BuildInterest).
+    private void UpdateInterest(PlayerEntity p)
+    {
+        if (p.IsGraced) return;
+        ulong desired = !p.Alive ? _replication.AllCells
+            : _replication.WindowFor(_replication.InterestCellAt(p.State.Position), p.InterestCells, _building.InterestRadius, _building.InterestKeepMargin);
+        if (desired == p.InterestCells) return;
+        ulong entered = desired & ~p.InterestCells;
+        p.InterestCells = desired;
+        p.SyncPending = (p.SyncPending | entered) & desired;
+        if (p.SyncCell >= 0 && (desired & (1UL << p.SyncCell)) == 0) p.SyncCell = -1;
+        var writer = new PacketWriter(_sendBuffer);
+        BuildInterestPacket.Write(ref writer, desired);
+        _sendBuild(p.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
+    // D14: a join or a resume: the client drops whatever it has (a reset sync), and the window and its pieces follow at
+    // the end of the tick.
+    private void StartBuildSync(PlayerEntity player)
+    {
+        player.ResetInterest();
+        var writer = new PacketWriter(_sendBuffer);
+        BuildSyncPacket.WriteHeader(ref writer, _replication.Version, reset: true, count: 0);
+        _sendBuild(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
     // D10 (request §70, §132): every piece goes at a round reset and a match start; clients clear theirs (a reset sync).
@@ -599,10 +669,8 @@ public sealed class Match
         {
             p.BuildQueue.Clear();
             p.NextBuildTick = 0;
+            StartBuildSync(p);
         }
-        var writer = new PacketWriter(_sendBuffer);
-        BuildSyncPacket.WriteHeader(ref writer, _replication.Version, reset: true, count: 0);
-        Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
     // Phase 13 D6: the map boxes, the closed doors and the standing harvestables, for shots, swings and drops.
@@ -1652,6 +1720,7 @@ public sealed class Match
         SendDoors(peerId);
         SendHarvestStates(peerId);   // Phase 13 D6
         SendResources(player);       // Phase 13 D15
+        StartBuildSync(player);      // Phase 13 D14: the client's old pieces are not trusted
         // The match ended while it was away: FinishMatch sent its result to no connection, so it gets it now.
         if (_flow.State == MatchFlowState.Finished && player.Participant) SendMatchResult(player);
     }
