@@ -12,7 +12,10 @@ namespace ProjectH.Shared.Protocol
         // 9: Phase 11 game UI (StatsRequest/StatsResponse, the player's name in PlayerSpawned).
         // 10: Phase 12 deployment and traversal (movement modes in the snapshot flags, a 14-byte self block, the Crouch
         //     button, TransportRoute, DoorStates, the mode in PlayerRespawned, the cause in PlayerDied; movement changed).
-        public const ushort ProtocolVersion = 10;
+        // 11: Phase 13 harvesting and building (the tool in the snapshot flags and the self block, two tool buttons, the
+        //     build and harvest packets, the Material world item, LiteNetLib channel 1; movement collides with pieces,
+        //     harvestables and slopes).
+        public const ushort ProtocolVersion = 11;
 
         public const int MaxDevPlayerIdBytes = 32;
 

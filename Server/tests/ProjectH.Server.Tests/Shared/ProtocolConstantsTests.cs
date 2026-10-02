@@ -21,9 +21,9 @@ public class ProtocolConstantsTests
     }
 
     [Fact]
-    public void ProtocolVersion_IsTen()
+    public void ProtocolVersion_IsEleven()
     {
-        // Phase 12 changed the snapshot, two packets and the movement itself; v9 clients must be rejected at connect.
-        Assert.Equal((ushort)10, ProtocolConstants.ProtocolVersion);
+        // Phase 13 added the tool bits, the build and harvest packets and piece collision; v10 clients must be rejected.
+        Assert.Equal((ushort)11, ProtocolConstants.ProtocolVersion);
     }
 }

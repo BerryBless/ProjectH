@@ -31,5 +31,15 @@ namespace ProjectH.Shared.Protocol
         // Phase 12 D11: deployment and doors.
         TransportRoute = 24,
         DoorStates = 25,
+        // Phase 13 D19: building and harvesting. BuildRequest is the only one a client sends.
+        BuildCatalog = 26,
+        BuildRequest = 27,
+        BuildResult = 28,
+        BuildEvents = 29,
+        BuildSync = 30,
+        BuildInterest = 31,
+        ResourcesState = 32,
+        HarvestHit = 33,
+        HarvestStates = 34,
     }
 }

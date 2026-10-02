@@ -38,6 +38,10 @@ namespace ProjectH.Client.Game
         // Phase 12 D14: the drop transport and the doors on screen.
         private TransportView _transportView;
         private DoorViews _doorViews;
+        // Phase 13 D6: the harvestables on screen and which the server says are destroyed (the prediction collides with
+        // the standing ones).
+        private HarvestableViews _harvestables;
+        private ulong _destroyedHarvestables;
         // Phase 11 D9: entity id -> name from PlayerSpawned. At most one entry per player in the match: removed on
         // despawn, cleared with the match state (disconnect).
         private readonly Dictionary<ushort, string> _names = new Dictionary<ushort, string>();
@@ -263,6 +267,7 @@ namespace ProjectH.Client.Game
             _killFeed = new KillFeed();
             _transportView = new TransportView();
             _doorViews = new DoorViews();
+            _harvestables = new HarvestableViews();
 
             _net = new NetClient();
             _net.Connected += OnConnected;
@@ -288,6 +293,7 @@ namespace ProjectH.Client.Game
             _net.StatsReceived += OnStats;
             _net.TransportRouteReceived += OnTransportRoute;
             _net.DoorStatesReceived += OnDoorStates;
+            _net.HarvestStatesReceived += OnHarvestStates;
         }
 
         private void Update()
@@ -515,9 +521,11 @@ namespace ProjectH.Client.Game
             _net.StatsReceived -= OnStats;
             _net.TransportRouteReceived -= OnTransportRoute;
             _net.DoorStatesReceived -= OnDoorStates;
+            _net.HarvestStatesReceived -= OnHarvestStates;
             _net.Dispose();
             ClearMatchState();
             _killFeed.Dispose();
+            _harvestables.Dispose();
             _doorViews.Dispose();
             _transportView.Dispose();
             _zoneView.Dispose();
@@ -710,6 +718,7 @@ namespace ProjectH.Client.Game
                 if (_predictor != null) return;
                 // Phase 12: the spawn carries no mode; a resumed player in the air gets it from the next snapshot.
                 _predictor = new LocalPlayerPredictor(_simHz, new MoveState { Position = spawned.Position, Yaw = spawned.Yaw }, _doors);
+                _predictor.DestroyedHarvestables = _destroyedHarvestables;
                 if (_hasRoute) _predictor.SetRoute(_route);
                 // A key pressed while waiting for the spawn must not act on the first step, and it starts standing.
                 _input.QueuedButtons = InputButtons.None;
@@ -882,6 +891,14 @@ namespace ProjectH.Client.Game
             _doors.ApplyServer(openMask);
         }
 
+        // Phase 13 D6: a destroyed harvestable leaves the screen and the predicted collision at once.
+        private void OnHarvestStates(ulong destroyed)
+        {
+            _destroyedHarvestables = destroyed;
+            _harvestables.Apply(destroyed);
+            if (_predictor != null) _predictor.DestroyedHarvestables = destroyed;
+        }
+
         private void OnStats(StatsResponse response)
         {
             _stats = response;
@@ -951,6 +968,8 @@ namespace ProjectH.Client.Game
             _statsSentAt = -1f;
             _statsAnsweredAt = -1f;
             _doors.Reset();
+            _destroyedHarvestables = 0;
+            _harvestables.Apply(0);
             _hasRoute = false;
             _transportView.Clear();
             _spectator.End();

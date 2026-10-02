@@ -59,6 +59,8 @@ public sealed class PlayerEntity
     public uint ReloadEndTick;
     // Fire bit of the previous input the client sent: a semi-automatic weapon fires on the press only.
     public bool FireHeld;
+    // Phase 13 D7: the tick the harvest tool can swing again (held Fire swings at the cooldown).
+    public uint NextSwingTick;
 
     // Feet position at the end of each recent tick, for rewinding this player as a target (D6).
     public readonly PositionHistory History = new();

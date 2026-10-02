@@ -78,6 +78,8 @@ namespace ProjectH.Client.Net
         // Phase 12 D5, D9: the drop transport route, and which doors are open.
         public event Action<DropRoute> TransportRouteReceived;
         public event Action<byte> DoorStatesReceived;
+        // Phase 13 D6: which harvestables are destroyed.
+        public event Action<ulong> HarvestStatesReceived;
 
         public ClientState State { get; private set; } = ClientState.Disconnected;
         public string LastError { get; private set; }
@@ -355,6 +357,10 @@ namespace ProjectH.Client.Net
 
                 case PacketId.DoorStates:
                     if (DoorStatesPacket.TryRead(ref packet, out byte doors)) DoorStatesReceived?.Invoke(doors);
+                    break;
+
+                case PacketId.HarvestStates:
+                    if (HarvestStatesPacket.TryRead(ref packet, out ulong destroyed)) HarvestStatesReceived?.Invoke(destroyed);
                     break;
             }
         }

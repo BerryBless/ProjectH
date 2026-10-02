@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using LiteNetLib;
+using ProjectH.Server.Game.Build;
 using ProjectH.Server.Game.Combat;
 using ProjectH.Server.Game.Flow;
+using ProjectH.Server.Game.Harvest;
 using ProjectH.Server.Game.Items;
 using ProjectH.Server.Game.Zone;
 using ProjectH.Server.Persistence;
@@ -64,6 +66,16 @@ public sealed class Match
     private byte _sentDoors;
     // Phase 13 D3: the colliders around the player being moved, gathered before each Step (one buffer for everyone).
     private readonly CollisionWorld _collision = new();
+    // Phase 13 D4, D6, D7: the building numbers, the harvestables' state and what every client was last told of it.
+    private readonly BuildingCatalog _building;
+    private readonly HarvestWorld _harvest;
+    private ulong _sentHarvest;
+    // What shots, swings and item drops stop at: the map boxes, the closed doors and the standing harvestables. Rebuilt
+    // only when a door or a harvestable changed since the last use (Blockers).
+    private readonly Box[] _blockers = new Box[GameMap.Boxes.Length + GameMap.DoorCount + GameMap.MaxHarvestables];
+    private int _blockerCount = -1;
+    private byte _blockerDoors;
+    private ulong _blockerHarvest;
     // Participants who left during the current match, recorded when they left (they are no longer in _players).
     // At most MaxPlayers entries; cleared when a match starts.
     private readonly List<PlayerRecord> _leftParticipants = new();
@@ -106,6 +118,8 @@ public sealed class Match
             throw new ArgumentException($"Game data was built for SimHz {data.SimHz}, the match runs at {options.SimHz}.", nameof(data));
         _weapons = data.Weapons;
         _items = data.Items;
+        _building = data.Building;
+        _harvest = new HarvestWorld(_building);
         _loadout = loadout ?? StartingLoadout.Empty;
         string? loadoutError = _loadout.Validate(data);
         if (loadoutError != null) throw new ArgumentException("Invalid starting loadout: " + loadoutError, nameof(loadout));
@@ -172,6 +186,12 @@ public sealed class Match
     internal bool HasRoute => _hasRoute;
     internal DropRoute Route => _route;
     internal DoorSet Doors => _doors;
+    // Phase 13 test seams: the harvestables' state and the building numbers.
+    internal HarvestWorld Harvest => _harvest;
+    internal BuildingCatalog Building => _building;
+    // Phase 13 D18: harvest swings that hit a harvestable since this match object was made.
+    public long HarvestHits { get; private set; }
+    public long EnvironmentDestroyed => _harvest.DestroyedTotal;
     // Phase 12 D12: moves faster than their mode allows since this match object was made (should stay 0).
     public long MovementAnomalies { get; private set; }
     // Phase 9: finished matches whose record could not be built or handed to the sink (it threw). Shown in the stats line.
@@ -233,6 +253,8 @@ public sealed class Match
             SendZoneState(peerId, _zone.ToWire());
         }
         SendDoors(peerId);   // Phase 12 D9
+        SendHarvestStates(peerId);   // Phase 13 D6
+        SendResources(player);       // Phase 13 D15
         // Phase 12 D16: a newcomer during an air-drop match sees the transport too.
         if (_hasRoute) SendRoute(peerId);
         // Reliable, after its own spawn: the newcomer's client knows it is dead (spectating) before any input.
@@ -360,6 +382,8 @@ public sealed class Match
         SendInventoryChanges();
         SendMatchChanges();
         SendDoorChanges();
+        SendHarvestChanges();
+        SendResourceChanges();
         // After every move of this tick, so all players are recorded at the same moment. A snapshot with
         // ServerTick N shows exactly the positions recorded at N, which is what ViewTick refers to.
         foreach (var player in _players) player.History.Record(ServerTick, player.State.Position, player.State.Mode);
@@ -394,11 +418,34 @@ public sealed class Match
         return !(step.LandingSpeed > 0f && _flow.DamageAllowed && ApplyFallDamage(player, step.LandingSpeed));
     }
 
-    // Phase 13 D3: the colliders a step at these feet may touch: map boxes, closed doors.
+    // Phase 13 D3: the colliders a step at these feet may touch: map boxes, closed doors, standing harvestables.
     private CollisionWorld GatherAround(Vector3 feet)
     {
-        _collision.Gather(feet, _doors.OpenMask, 0UL, null);
+        _collision.Gather(feet, _doors.OpenMask, _harvest.DestroyedMask, null);
         return _collision;
+    }
+
+    // Phase 13 D6: the map boxes, the closed doors and the standing harvestables, for shots, swings and drops.
+    private ReadOnlySpan<Box> Blockers
+    {
+        get
+        {
+            if (_blockerCount < 0 || _blockerDoors != _doors.OpenMask || _blockerHarvest != _harvest.DestroyedMask)
+            {
+                ReadOnlySpan<Box> world = _doors.World;
+                world.CopyTo(_blockers);
+                int count = world.Length;
+                ReadOnlySpan<Harvestable> all = GameMap.Harvestables;
+                for (int i = 0; i < all.Length; i++)
+                {
+                    if (!_harvest.IsDestroyed(i)) _blockers[count++] = all[i].Bounds;
+                }
+                _blockerCount = count;
+                _blockerDoors = _doors.OpenMask;
+                _blockerHarvest = _harvest.DestroyedMask;
+            }
+            return new ReadOnlySpan<Box>(_blockers, 0, _blockerCount);
+        }
     }
 
     // Phase 12 D12: riding, falling, gliding and vaulting allow no shot, reload, pickup, interaction, heal, slot switch
@@ -448,21 +495,73 @@ public sealed class Match
         return false;
     }
 
-    // One real input of a living player, in the spec §2 order: cancel use -> slot -> drop -> pickup ->
+    // One real input of a living player, in the spec §2 order: cancel use -> tool -> slot -> drop -> pickup ->
     // reload -> fire -> start use. (Movement came first; finishing a use comes after, every tick.)
+    // Phase 13 D5: Fire acts by the tool in hand: a shot (Weapon), a swing (Harvest), nothing (Build: placing is a
+    // BuildRequest). Reload is the weapon's only.
     private void ProcessActions(PlayerEntity player, in InputCommand input, uint now)
     {
         ConsumableRules.CancelIfInterrupted(player, input.Buttons);
+        HarvestRules.SelectTool(player, input.Buttons);
         WeaponRules.SelectSlot(player, input.Buttons);
         if ((input.Buttons & InputButtons.Drop) != 0) DropCurrentWeapon(player);
         // Phase 12 D9: E acts on a door in front first, an item otherwise.
         if ((input.Buttons & InputButtons.Interact) != 0 && !ToggleDoor(player)) Pickup(player);
 
         bool aimValid = CombatRules.TryAimDirection(input.AimYaw, input.AimPitch, out Vector3 direction);
-        if (WeaponRules.Apply(player, input.Buttons, aimValid, now))
-            FireShot(player, direction, input.ViewTick);
+        bool fire = (input.Buttons & InputButtons.Fire) != 0;
+        switch (player.Inventory.Tool)
+        {
+            case ToolKind.Weapon:
+                if (WeaponRules.Apply(player, input.Buttons, aimValid, now))
+                    FireShot(player, direction, input.ViewTick);
+                break;
+            case ToolKind.Harvest:
+                player.FireHeld = fire;
+                if (fire && aimValid) Swing(player, direction, now);
+                break;
+            default:
+                player.FireHeld = fire;
+                break;
+        }
 
         ConsumableRules.TryStart(player, _items, input.Buttons, now);
+    }
+
+    // Phase 13 D7: a harvest swing (held Fire swings at the cooldown) while damage is allowed (the dev sandbox or the
+    // match). The server finds the target along the aim from the eye; a harvestable takes the damage, gives the swinger
+    // its material up to the cap, and the swinger hears what happened (HarvestHit). A destroyed one leaves the world at
+    // once (shots, moves) and everyone hears it at the end of the tick (HarvestStates).
+    private void Swing(PlayerEntity player, Vector3 direction, uint now)
+    {
+        if (!_flow.DamageAllowed || now < player.NextSwingTick) return;
+        player.NextSwingTick = now + _building.HarvestCooldownTicks;
+        Vector3 origin = player.State.Position + new Vector3(0f, CombatRules.EyeHeightOf(player.State.Mode), 0f);
+        int target = HarvestRules.Trace(origin, direction, _building.HarvestRange, _harvest.DestroyedMask, Blockers, GameMap.Terrain,
+            out float distance);
+        if (target < 0) return;
+
+        HarvestHitResult hit = _harvest.Hit(target, origin + direction * distance, direction);
+        HarvestHits++;
+        BuildMaterialType material = GameMap.Harvestables[target].Material;
+        int have = player.Inventory.Resource(material);
+        int gained = Math.Clamp(Math.Min(hit.Resources, _building.MaxResource - have), 0, byte.MaxValue);
+        if (gained > 0) player.Inventory.SetResource(material, have + gained);
+
+        byte flags = 0;
+        if (hit.WeakPointHit) flags |= HarvestHit.WeakPointHitFlag;
+        if (hit.Destroyed) flags |= HarvestHit.DestroyedFlag;
+        if (_harvest.HasWeakPoint(target)) flags |= HarvestHit.HasWeakPointFlag;
+        var writer = new PacketWriter(_sendBuffer);
+        HarvestHit.Write(ref writer, new HarvestHit
+        {
+            TargetId = (byte)target,
+            Health = (ushort)Math.Clamp(hit.HealthLeft, 0, ushort.MaxValue),
+            WeakPoint = _harvest.WeakPoint(target),
+            Gained = (byte)gained,
+            Flags = flags,
+        });
+        _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
     // D7: from the eye along the aim, the nearest map surface (box, terrain or floor plane) or living player stops the shot. The
@@ -476,7 +575,7 @@ public sealed class Match
         ushort damage = CombatRules.ScaledDamage(weapon.Damage, _items.DamageMultiplier(held.Rarity));
         // Phase 12 D13: crouched or sliding the eye is lower (the client aims from the same height, AimSolver).
         Vector3 origin = shooter.State.Position + new Vector3(0f, CombatRules.EyeHeightOf(shooter.State.Mode), 0f);
-        float nearest = HitScan.TraceWorld(origin, direction, weapon.Range, _doors.World, GameMap.Terrain);   // a closed door stops it
+        float nearest = HitScan.TraceWorld(origin, direction, weapon.Range, Blockers, GameMap.Terrain);   // a closed door or a tree stops it
         double rewindTick = CombatRules.ClampViewTick(viewTick, ServerTick, _maxRewindTicks);
 
         PlayerEntity? target = null;
@@ -691,7 +790,7 @@ public sealed class Match
             // It is placed like a G-drop (in front of the player), not on the loot point: the point rolls a new
             // item there after its respawn delay and the two would overlap.
             Vector3 dropOffset = ItemRules.Offset(player.State.Yaw, ItemRules.DropDistance);
-            Vector3 dropAt = ItemRules.DropPosition(player.State.Position, dropOffset, _doors.World, GameMap.Terrain);
+            Vector3 dropAt = ItemRules.DropPosition(player.State.Position, dropOffset, Blockers, GameMap.Terrain);
             if (SpawnItem(new LootRoll(ItemKind.Weapon, old.Weapon!.Id, old.Rarity, (ushort)old.MagAmmo), dropAt, -1) == 0)
             {
                 // Impossible: RemoveItemAt above just freed a record, so the store is below Capacity and
@@ -720,7 +819,7 @@ public sealed class Match
         Vector3 offset = ItemRules.Offset(player.State.Yaw, ItemRules.DropDistance);
         // Conservation: the weapon leaves the hand only once it lies in the world. SpawnItem touches the
         // world list only, so the ref into the inventory stays valid.
-        if (SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, _doors.World, GameMap.Terrain), -1) == 0) return;
+        if (SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, Blockers, GameMap.Terrain), -1) == 0) return;
 
         inventory.DroppedFireLockTick = Math.Max(inventory.DroppedFireLockTick, held.NextFireTick);
         held = default;
@@ -775,7 +874,7 @@ public sealed class Match
     private bool DropAround(PlayerEntity player, int n, int count, in LootRoll roll)
     {
         Vector3 offset = ItemRules.Offset(player.State.Yaw + 360f * n / count, ItemRules.DeathDropRadius);
-        return SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, _doors.World, GameMap.Terrain), -1) != 0;
+        return SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, Blockers, GameMap.Terrain), -1) != 0;
     }
 
     // End of tick (D11): the match state when any of its fields changed (state, timer, alive and player counts,
@@ -811,6 +910,39 @@ public sealed class Match
         var writer = new PacketWriter(_sendBuffer);
         DoorStatesPacket.Write(ref writer, _doors.OpenMask);
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
+    // Phase 13 D6: at the end of a tick in which a harvestable was destroyed (or all stood up again at a reset), the
+    // destroyed set to everyone: one small packet however many changed.
+    private void SendHarvestChanges()
+    {
+        if (_harvest.DestroyedMask == _sentHarvest) return;
+        _sentHarvest = _harvest.DestroyedMask;
+        foreach (var p in _players) SendHarvestStates(p.PeerId);
+    }
+
+    private void SendHarvestStates(int peerId)
+    {
+        var writer = new PacketWriter(_sendBuffer);
+        HarvestStatesPacket.Write(ref writer, _harvest.DestroyedMask);
+        _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+    }
+
+    // Phase 13 D15: each owner's resources, only at the end of a tick in which they changed.
+    private void SendResourceChanges()
+    {
+        foreach (var p in _players)
+        {
+            if (p.Inventory.ResourcesChanged) SendResources(p);
+        }
+    }
+
+    private void SendResources(PlayerEntity player)
+    {
+        player.Inventory.ResourcesChanged = false;
+        var writer = new PacketWriter(_sendBuffer);
+        ResourcesState.Write(ref writer, player.Inventory.ResourcesToWire());
+        _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
     private void SendMatchState(int peerId, in MatchState state)
@@ -953,6 +1085,8 @@ public sealed class Match
         // Phase 12 D9: every door closed (everyone is aboard or on a drop point, clear of every box); the change goes out
         // at the end of this tick.
         _doors.CloseAll();
+        // Phase 13 D6 (request §24): every harvestable stands again (the change goes out at the end of this tick).
+        _harvest.Reset();
         _matchStartedUtc = DateTime.UtcNow;
         _loot.Restart(unchecked(_lootSeed + _flow.Round));
         for (int point = 0; point < _loot.Count; point++) SpawnItem(_loot.Roll(point), _loot.Position(point), point);
@@ -970,6 +1104,8 @@ public sealed class Match
         while (_graced.Count > 0) ExpireGraced(_graced[0]);
         ClearWorldItems();
         _hasRoute = false;
+        // Phase 13 D6: the lobby gets the whole map back.
+        _harvest.Reset();
         foreach (var player in _players)
         {
             Respawn(player);
@@ -1033,8 +1169,8 @@ public sealed class Match
                     Position = p.State.Position,
                     VelocityY = p.State.VelocityY,
                     Yaw = p.State.Yaw,
-                    // Phase 12 D11: alive, the mode, sprinting and exhausted in the one flag byte.
-                    Flags = SnapshotEntity.MakeFlags(p.Alive, p.State.Mode, p.Sprinting, p.State.Exhausted),
+                    // Phase 12 D11: alive, the mode, sprinting and exhausted in the one flag byte. Phase 13 D5: and the tool.
+                    Flags = SnapshotEntity.MakeFlags(p.Alive, p.State.Mode, p.Sprinting, p.State.Exhausted, p.Inventory.Tool),
                 });
             }
             // Cannot overflow: 27 + 13 * 90 = 1197 bytes, and ServerOptions.Validate caps MaxPlayers at MaxSnapshotEntities.
@@ -1062,6 +1198,7 @@ public sealed class Match
             Health = (byte)Math.Clamp(p.Health, 0, byte.MaxValue),
             Shield = (byte)Math.Clamp(p.Shield, 0, byte.MaxValue),
             WeaponSlot = (byte)p.Inventory.CurrentSlot,
+            Tool = p.Inventory.Tool,                      // Phase 13 D5
             Ammo = (byte)p.Inventory.Current.MagAmmo,   // 0 for an empty slot
             ReloadRemainingTicks = reloadRemaining,
             // Phase 12 D11: what the owner's prediction needs beyond the entity.
@@ -1266,6 +1403,8 @@ public sealed class Match
         // Phase 12 D16: the route, so a rider (or a jumper) predicts from it; the mode comes with the next snapshot.
         if (_hasRoute) SendRoute(peerId);
         SendDoors(peerId);
+        SendHarvestStates(peerId);   // Phase 13 D6
+        SendResources(player);       // Phase 13 D15
         // The match ended while it was away: FinishMatch sent its result to no connection, so it gets it now.
         if (_flow.State == MatchFlowState.Finished && player.Participant) SendMatchResult(player);
     }

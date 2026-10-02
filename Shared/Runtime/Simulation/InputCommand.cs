@@ -19,6 +19,8 @@ namespace ProjectH.Shared.Simulation
         UseMedkit = 512,      // 4
         UseShieldCell = 1024, // 5
         Crouch = 2048,        // Phase 12 D7: held. C toggles it on the client, Ctrl holds it.
+        ToolHarvest = 4096,   // Phase 13 D5: F, pressed: the harvest tool
+        ToolBuild = 8192,     // Phase 13 D5: Q, pressed: build mode, or back to the tool before it
     }
 
     // One fixed-tick input. Seq increases by one per client simulation step and is how the
