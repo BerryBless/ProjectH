@@ -47,6 +47,15 @@ namespace ProjectH.Client.Game
         private readonly ToolState _tools = new ToolState();
         private readonly BuildStore _buildStore = new BuildStore();
         private BuildController _build;
+        // Phase 13 D16: building and harvesting on screen.
+        private PieceMeshes _pieceMeshes;
+        private BuildPieceViews _pieceViews;
+        private BuildPreview _buildPreview;
+        private HarvestEffects _harvestEffects;
+        private BuildHud _buildHud;
+        private readonly BuildAudio _buildAudio = new BuildAudio();
+        private Material _buildSource;
+        private float _nextSwingAt;
         // Phase 11 D9: entity id -> name from PlayerSpawned. At most one entry per player in the match: removed on
         // despawn, cleared with the match state (disconnect).
         private readonly Dictionary<ushort, string> _names = new Dictionary<ushort, string>();
@@ -273,6 +282,15 @@ namespace ProjectH.Client.Game
             _transportView = new TransportView();
             _doorViews = new DoorViews();
             _harvestables = new HarvestableViews();
+            // Phase 13 D16: one Lit base for the pieces and effects (LitMaterial: never a primitive's default material).
+            var probe = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            _buildSource = LitMaterial.Source(probe.GetComponent<Renderer>().sharedMaterial);
+            Destroy(probe);
+            _pieceMeshes = new PieceMeshes();
+            _pieceViews = new BuildPieceViews(_pieceMeshes, _buildSource);
+            _buildPreview = new BuildPreview(_pieceMeshes, _buildSource);
+            _harvestEffects = new HarvestEffects(_buildSource);
+            _buildHud = new BuildHud();
 
             _net = new NetClient();
             _build = new BuildController(request => _net.SendBuild(request));
@@ -308,6 +326,7 @@ namespace ProjectH.Client.Game
             _net.BuildDestroyedReceived += OnBuildDestroyed;
             _net.BuildResetReceived += OnBuildReset;
             _net.BuildInterestReceived += OnBuildInterest;
+            _net.HarvestHitReceived += OnHarvestHit;
         }
 
         private void Update()
@@ -400,7 +419,7 @@ namespace ProjectH.Client.Game
             if (alive && shots > 0) _fireEffects.FireLocal(shots, aimPoint, _predictor.RenderPosition, _camera.Yaw, now);
             _fireEffects.Tick(now);
             UpdateBuild(alive, LocalPlayerPredictor.ActionsAllowed(_predictor.Mode), now);
-            _buildStore.ClearChanged();   // Task 9's views read the changes first
+            UpdateBuildPresentation(alive, now);
 
             _hud.SetVitals(_health, _shield);
             // Phase 12 D14: the energy bar (hidden when full and not sprinting) and the hint line.
@@ -446,6 +465,41 @@ namespace ProjectH.Client.Game
             var eye = feet.ToNumerics() + new System.Numerics.Vector3(0f, AimSolver.EyeHeightOf(_predictor.Mode), 0f);
             bool pressed = inBuildMode && _input.FirePressed && !_fireBlockedUntilRelease;
             _build.Update(now, inBuildMode, pressed, inBuildMode && _fireHeld, feet.ToNumerics(), eye, _camera.Yaw, _camera.Pitch, _buildStore);
+        }
+
+        // Phase 13 D16: the confirmed pieces (only those that changed, and those still being built), the ghosts, the swing
+        // and harvest effects, and the HUD. The store's change list is taken here, every frame.
+        private void UpdateBuildPresentation(bool alive, float now)
+        {
+            _pieceViews.Apply(_buildStore, _build.Catalog, EstimatedServerTick());
+            _buildStore.ClearChanged();
+            _buildPreview.Update(_build);
+            bool onFoot = LocalPlayerPredictor.ActionsAllowed(_predictor.Mode);
+            if (alive && onFoot && _tools.Current == ToolKind.Harvest && _fireHeld && !_blockedThisFrame && now >= _nextSwingAt)
+            {
+                float interval = _build.Catalog != null && _simHz > 0 ? _build.Catalog.HarvestCooldownTicks / (float)_simHz : 0.5f;
+                _nextSwingAt = now + Mathf.Max(0.1f, interval);
+                _harvestEffects.Swing(_predictor.RenderPosition, _camera.Yaw, now);
+                _buildAudio.Play(BuildSound.Swing, _predictor.RenderPosition);
+            }
+            _harvestEffects.Tick(now);
+            _buildHud.SetVisible(alive);
+            _buildHud.SetResources(_build.ShownResource(BuildMaterialType.Wood), _build.ShownResource(BuildMaterialType.Stone),
+                _build.ShownResource(BuildMaterialType.Metal));
+            _buildHud.SetMode(alive && _tools.Current == ToolKind.Build, _build.Selection.Piece, _build.Selection.Material);
+            _buildHud.Tick(now);
+        }
+
+        // The server tick now, estimated as the match HUD does (render tick plus the interpolation delay); 0 before a clock.
+        private double EstimatedServerTick() =>
+            _clock != null && _clock.IsReady && _simHz > 0 ? _renderTick + _interpolationDelaySeconds * _simHz : 0;
+
+        // Phase 13 D16: the F1 build line (UiRoot owns the overlay). Request §190: Development Builds (and the Editor) only.
+        public void TickBuildDebug(DebugOverlay overlay, float now)
+        {
+            if (!Debug.isDebugBuild) return;
+            overlay.TickBuild(now, _tools.Current, _build.Selection.Piece, _build.Selection.Material, _buildStore.Count, _pieceViews.Count,
+                _buildStore.Ignored, _build.Sent, _build.Refused, _build.LastRefusal);
         }
 
         // Phase 12 D14: aboard (inside the jump window) "jump", in freefall "glider", next to a door "open"/"close".
@@ -577,9 +631,15 @@ namespace ProjectH.Client.Game
             _net.BuildDestroyedReceived -= OnBuildDestroyed;
             _net.BuildResetReceived -= OnBuildReset;
             _net.BuildInterestReceived -= OnBuildInterest;
+            _net.HarvestHitReceived -= OnHarvestHit;
             _net.Dispose();
             ClearMatchState();
             _killFeed.Dispose();
+            _buildHud.Dispose();
+            _harvestEffects.Dispose();
+            _buildPreview.Dispose();
+            _pieceViews.Dispose();
+            _pieceMeshes.Dispose();
             _harvestables.Dispose();
             _doorViews.Dispose();
             _transportView.Dispose();
@@ -974,14 +1034,42 @@ namespace ProjectH.Client.Game
 
         private void OnResources(ResourcesState resources) => _build.Resources = resources;
 
-        private void OnBuildResult(BuildResult result) => _build.OnResult(result);
+        private void OnBuildResult(BuildResult result)
+        {
+            _build.OnResult(result);
+            Vector3 at = _predictor != null ? _predictor.RenderPosition : Vector3.zero;
+            if (result.Code == BuildResultCode.Ok)
+            {
+                _buildAudio.Play(BuildSound.Placed, at);
+                return;
+            }
+            _buildHud.ShowNotice(UiText.BuildRefusal(result.Code), Time.time);
+            _buildAudio.Play(BuildSound.Refused, at);
+        }
+
+        // Phase 13 D7: our own harvest hit: the weak point marker, a fall's puff, the sounds.
+        private void OnHarvestHit(HarvestHit hit)
+        {
+            _harvestEffects.OnHit(hit, Time.time);
+            Vector3 at = hit.WeakPoint.ToUnity();
+            _buildAudio.Play(hit.Destroyed ? BuildSound.HarvestDestroyed : hit.WeakPointHit ? BuildSound.WeakPointHit : BuildSound.HarvestHit, at);
+        }
 
         // Phase 13 D13, D14: the building stream, applied by id (BuildStore).
         private void OnBuildPiece(BuildPieceRecord piece, uint version) => _buildStore.ApplyPiece(piece, version);
 
         private void OnBuildHealth(uint id, ushort damage, uint version) => _buildStore.ApplyHealth(id, damage, version);
 
-        private void OnBuildDestroyed(uint id, uint version) => _buildStore.ApplyDestroyed(id, version);
+        private void OnBuildDestroyed(uint id, uint version)
+        {
+            // Destroyed (not just out of the window): a puff where it was drawn.
+            if (_pieceViews.TryGetCenter(id, out Vector3 center))
+            {
+                _harvestEffects.Puff(center, BuildGrid.CellSize * 0.6f, Time.time);
+                _buildAudio.Play(BuildSound.PieceDestroyed, center);
+            }
+            _buildStore.ApplyDestroyed(id, version);
+        }
 
         private void OnBuildReset(uint version) => _buildStore.Reset();
 
@@ -992,6 +1080,7 @@ namespace ProjectH.Client.Game
         {
             _destroyedHarvestables = destroyed;
             _harvestables.Apply(destroyed);
+            _harvestEffects.OnStates(destroyed);
             if (_predictor != null) _predictor.DestroyedHarvestables = destroyed;
         }
 
@@ -1068,8 +1157,13 @@ namespace ProjectH.Client.Game
             _harvestables.Apply(0);
             _buildStore.Reset();
             _buildStore.ClearChanged();
+            _pieceViews.Clear();
+            _buildPreview.HideAll();
+            _harvestEffects.HideAll();
+            _buildHud.SetVisible(false);
             _build.Reset();
             _tools.Reset();
+            _nextSwingAt = 0f;
             _hasRoute = false;
             _transportView.Clear();
             _spectator.End();
