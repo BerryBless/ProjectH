@@ -8,10 +8,11 @@ namespace ProjectH.Server.Net;
 // over the rate is refused before Accept, so connect/disconnect churn from one address cannot fill the shared Control
 // channel and get other players' connects and joins closed with ServerError.
 //
-// Size: a fixed table of Slots entries, made once, indexed by a hash of the address; it never grows. Two addresses in
-// one slot overwrite each other (the newer one starts with a full bucket), so a collision can only let a request
-// through, never refuse an address it should not. Nothing is removed: a slot is reused by the next address that hashes
-// to it.
+// Size: a fixed table of Slots entries, made once, indexed by a hash of the address; it never grows. Nothing is
+// removed. Addresses that hash to one slot share its bucket: only an empty slot starts with a full burst, so
+// alternating two colliding addresses gets no more than one bucket (review round 1; an earlier version gave a new
+// address a full bucket, which alternating addresses could use to get past the limit). The trade-off: a normal address
+// that collides with a busy one shares its bucket and may be refused; with 1024 slots that is rare.
 // Thread: NetworkListener.OnConnectionRequest only, which LiteNetLib runs on its single receive thread (the server binds
 // IPv4 only; see PeerState). So the table needs no synchronization.
 public sealed class ConnectRateLimiter
@@ -24,7 +25,6 @@ public sealed class ConnectRateLimiter
     private struct Slot
     {
         public bool Used;
-        public uint Key;
         public long Tokens;   // thousandths of a request
         public long LastMs;
     }
@@ -52,12 +52,10 @@ public sealed class ConnectRateLimiter
     public bool TryAcquire(IPAddress address, long nowMs)
     {
         if (!Enabled) return true;
-        uint key = KeyOf(address);
-        ref Slot slot = ref _slots[IndexOf(key)];
-        if (!slot.Used || slot.Key != key)
+        ref Slot slot = ref _slots[IndexOf(KeyOf(address))];
+        if (!slot.Used)
         {
             slot.Used = true;
-            slot.Key = key;
             slot.Tokens = _capacity;
         }
         else

@@ -40,9 +40,10 @@ public class ConnectRateTests
         Assert.False(limiter.TryAcquire(A, 0));
     }
 
-    // Two IPs in one slot: the newer one takes the slot with a full bucket. The table never grows.
+    // Two IPs in one slot: the newer one takes the slot over with the tokens left in it (review round 1), so alternating
+    // two colliding addresses gets no more than one burst. The table never grows.
     [Fact]
-    public void ACollision_OverwritesTheSlot()
+    public void ACollision_TakesTheSlotOver_WithTheTokensLeft()
     {
         IPAddress other = A;
         for (int last = 2; last < 255 * 255; last++)
@@ -59,8 +60,16 @@ public class ConnectRateTests
         Assert.True(limiter.TryAcquire(A, 0));
         Assert.True(limiter.TryAcquire(A, 0));
         Assert.False(limiter.TryAcquire(A, 0));
-        Assert.True(limiter.TryAcquire(other, 0));
-        Assert.True(limiter.TryAcquire(A, 0));   // A's state was overwritten: it starts full again
+        Assert.False(limiter.TryAcquire(other, 0));   // the slot is empty: no fresh bucket for the other address
+        Assert.False(limiter.TryAcquire(A, 0));
+
+        int taken = 0;
+        for (int i = 0; i < 100; i++)
+        {
+            if (limiter.TryAcquire(i % 2 == 0 ? A : other, 2000 + i)) taken++;   // 2 s: 2 tokens back
+        }
+        Assert.Equal(2, taken);
+        Assert.True(limiter.TryAcquire(other, 3100));  // the refill still goes on, at the rate
     }
 
     [Theory]
