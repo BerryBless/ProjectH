@@ -53,6 +53,10 @@ public sealed class ServerOptions
     public int ConnectBurstPerIp { get; set; } = 20;
     public int ConnectsPerIpPerSecond { get; set; } = 5;
 
+    // Server review M8: a game loop stalled this long is taken as hung for good: the server stops taking connections and
+    // stops with exit code 1, so a supervisor restarts it instead of it holding its port as a zombie. 0 = off.
+    public int FatalStallSeconds { get; set; } = 30;
+
     // Each connection produces at most Connected + JoinRequested + Disconnected.
     public int ControlChannelCapacity => MaxPlayers * 3;
     public int InputChannelCapacity => MaxPlayers * InputBufferPerPlayer;
@@ -98,6 +102,8 @@ public sealed class ServerOptions
             return "InputTimeoutSeconds * 1000 must be at least DisconnectTimeoutMs + 2000 (or 0 = off), so a network loss keeps its reconnect grace.";
         if (ConnectBurstPerIp < 0 || ConnectBurstPerIp > 10000) return "ConnectBurstPerIp must be 0 (off) or 1-10000.";
         if (ConnectsPerIpPerSecond < 0 || ConnectsPerIpPerSecond > 1000) return "ConnectsPerIpPerSecond must be 0 (off) or 1-1000.";
+        if (FatalStallSeconds != 0 && (FatalStallSeconds < 5 || FatalStallSeconds > 3600))
+            return "FatalStallSeconds must be 0 (off) or 5-3600.";
         return null;
     }
 }

@@ -156,4 +156,18 @@ public class ServerOptionsTests
         string? error = new ServerOptions { ConnectBurstPerIp = burst, ConnectsPerIpPerSecond = perSecond }.Validate();
         Assert.Equal(valid, error == null);
     }
+
+    // Server review M8: 0 = off, otherwise 5-3600 (well above the watchdog's 2 s stall threshold).
+    [Theory]
+    [InlineData(30, true)]
+    [InlineData(0, true)]
+    [InlineData(5, true)]
+    [InlineData(3600, true)]
+    [InlineData(4, false)]
+    [InlineData(-1, false)]
+    [InlineData(3601, false)]
+    public void Validate_FatalStallSeconds(int seconds, bool valid)
+    {
+        Assert.Equal(valid, new ServerOptions { FatalStallSeconds = seconds }.Validate() == null);
+    }
 }

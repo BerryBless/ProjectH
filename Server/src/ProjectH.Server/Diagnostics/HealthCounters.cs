@@ -56,6 +56,8 @@ public sealed class HealthCounters
     private long _connectRateRejects;
     // Server review M7: players whose own tick threw; each was taken out of the match and its connection closed.
     private long _playerFailures;
+    // Server review M8: stalls that lasted FatalStallSeconds and stopped the server (at most 1 per process).
+    private long _stallExits;
     // Phase 13 D18: written by the game loop after every tick (BuildCounts); the fields are read one by one.
     private long _buildPieces;
     private long _buildCells;
@@ -106,6 +108,7 @@ public sealed class HealthCounters
     public void AddNetworkError() => Interlocked.Increment(ref _networkErrors);
     public void AddConnectRateReject() => Interlocked.Increment(ref _connectRateRejects);
     public void AddPlayerFailure() => Interlocked.Increment(ref _playerFailures);
+    public void AddStallExit() => Interlocked.Increment(ref _stallExits);
 
     public void SetGauges(int peers, int players, int graced, MatchFlowState state)
     {
@@ -175,6 +178,7 @@ public sealed class HealthCounters
     public long NetworkErrors => Interlocked.Read(ref _networkErrors);
     public long ConnectRateRejects => Interlocked.Read(ref _connectRateRejects);
     public long PlayerFailures => Interlocked.Read(ref _playerFailures);
+    public long StallExits => Interlocked.Read(ref _stallExits);
     public int Peers => Volatile.Read(ref _peers);
     public int Players => Volatile.Read(ref _players);
     public int Graced => Volatile.Read(ref _graced);

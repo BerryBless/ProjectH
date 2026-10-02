@@ -53,6 +53,8 @@ public sealed class ServerMeter : IDisposable
         _meter.CreateObservableCounter("projecth.network_errors", () => h.NetworkErrors, description: "Socket errors LiteNetLib reported");
         // Server review M7.
         _meter.CreateObservableCounter("projecth.player_failures", () => h.PlayerFailures, description: "Players whose own tick threw; each left the match and was closed with ServerError");
+        // Server review M8.
+        _meter.CreateObservableCounter("projecth.stall_exits", () => h.StallExits, description: "Stalls that lasted FatalStallSeconds and stopped the server");
         // Phase 13 D18: building and harvesting (since the match object was made).
         _meter.CreateObservableGauge("projecth.build.pieces", () => h.Build.Pieces, description: "Building pieces standing (game.build.count)");
         _meter.CreateObservableGauge("projecth.build.cells", () => h.Build.Cells, description: "Build cells holding a piece (the spatial index)");

@@ -46,6 +46,7 @@ public class MonitoringTests
         loop.StatsQueries.AddLimited();
         loop.StatsQueries.AddLimited();
         loop.Health.AddNetworkError();
+        loop.Health.AddStallExit();
         loop.Health.AddPlayerFailure();
         loop.Health.AddConnectRateReject();
         loop.Health.AddConnectRateReject();
@@ -73,6 +74,7 @@ public class MonitoringTests
                      "db saved=3 failed=1 discarded=2 dropped=4",
                      "stats requests=0 limited=2 busy=0 unavailable=0 undelivered=0",
                      "networkErrors=1",   // server review M1
+                     "stallExits=1",   // server review M8
                      "playerFailures=1",   // server review M7
                  })
         {
@@ -101,6 +103,7 @@ public class MonitoringTests
         health.AddBuildInboxDrop();
         health.AddBuildInboxDrop();
         health.AddNetworkError();
+        health.AddStallExit();
         health.AddPlayerFailure();
         health.AddConnectRateReject();
         health.SetBuild(new BuildCounts(7, 3, 8, 5, 2, 10, 4, 1, 9, 2, 0, 0, 6), code => code == BuildResultCode.Occupied ? 2 : 0);
@@ -138,6 +141,7 @@ public class MonitoringTests
         Assert.Contains(("projecth.build.inbox_drops", 2L, ""), seen);
         Assert.Contains(("projecth.harvest.hits", 9L, ""), seen);
         Assert.Contains(("projecth.network_errors", 1L, ""), seen);   // server review M1
+        Assert.Contains(("projecth.stall_exits", 1L, ""), seen);   // server review M8
         Assert.Contains(("projecth.player_failures", 1L, ""), seen);   // server review M7
         Assert.Contains(("projecth.rejects", 1L, "reason=ConnectRate"), seen);   // server review M2
         Assert.Contains(("projecth.stats_queries", 6L, "result=requests"), seen);
@@ -226,6 +230,64 @@ public class MonitoringTests
         Assert.Equal(1, health.Stalls);
         Assert.Single(log.Entries);
         watchdog.Dispose();
+    }
+
+    // Server review M8: a stall that lasts FatalStallSeconds stops the server once (the callback: stop taking connections,
+    // exit code 1), counted as a stall exit; 0 turns that off.
+    [Fact]
+    public void AStallPastTheFatalLimit_StopsTheServerOnce()
+    {
+        var time = new ManualTime();
+        var log = new ListLogger();
+        var health = new HealthCounters();
+        long lastTick = time.GetTimestamp();
+        int fatal = 0;
+        using var watchdog = new StallWatchdog(() => lastTick, time, health, log, fatalAfter: TimeSpan.FromSeconds(30), onFatalStall: () => fatal++);
+
+        for (int second = 1; second <= 30; second++)
+        {
+            time.Advance(TimeSpan.FromSeconds(1));
+            watchdog.Check();
+        }
+        Assert.Equal(0, fatal);                      // exactly 30 s: not past the limit yet
+        Assert.Equal(1, health.Stalls);
+
+        time.Advance(TimeSpan.FromSeconds(1));
+        watchdog.Check();
+        Assert.Equal(1, fatal);
+        Assert.Equal(1, health.StallExits);
+        Assert.Single(log.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("stopping the server"));
+
+        for (int i = 0; i < 5; i++)
+        {
+            time.Advance(TimeSpan.FromSeconds(1));
+            watchdog.Check();
+        }
+        lastTick = time.GetTimestamp();              // even a recovery and a second long stall do not stop it again
+        watchdog.Check();
+        time.Advance(TimeSpan.FromSeconds(60));
+        watchdog.Check();
+        Assert.Equal(1, fatal);
+        Assert.Equal(1, health.StallExits);
+        Assert.Equal(2, health.Stalls);
+    }
+
+    [Fact]
+    public void FatalStallZero_NeverStopsTheServer()
+    {
+        var time = new ManualTime();
+        var health = new HealthCounters();
+        long lastTick = time.GetTimestamp();
+        int fatal = 0;
+        using var watchdog = new StallWatchdog(() => lastTick, time, health, new ListLogger(), fatalAfter: TimeSpan.Zero, onFatalStall: () => fatal++);
+        for (int i = 0; i < 300; i++)
+        {
+            time.Advance(TimeSpan.FromSeconds(1));
+            watchdog.Check();
+        }
+        Assert.Equal(0, fatal);
+        Assert.Equal(0, health.StallExits);
+        Assert.Equal(1, health.Stalls);
     }
 
     [Fact]
