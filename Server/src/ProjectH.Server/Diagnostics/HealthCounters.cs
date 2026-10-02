@@ -12,7 +12,7 @@ public enum BadPacketReason
     Malformed,        // a known id whose body does not parse
     InputBeforeJoin,
     DuplicateJoin,
-    InputRate,        // above ServerOptions.MaxInputPacketsPerSecond
+    InputRate,        // above ServerOptions.MaxInputPacketsPerSecond (dropped, never kicks: server review M5)
     WrongDirection,   // a server-to-client packet id
     HandlerException, // the receive handler threw (a server bug, counted against the peer)
     BuildRate,        // Phase 13 D8: above the building catalog's maxRequestsPerSecond
@@ -50,6 +50,17 @@ public sealed class HealthCounters
     private long _matchResets;
     private long _stalls;
     private long _movementAnomalies;
+    // Server review M1: socket errors LiteNetLib reported (OnNetworkError; logged once per stats interval).
+    private long _networkErrors;
+    // Server review M2: connection requests refused by the per-IP rate (sent as ServerFull, counted apart from it).
+    private long _connectRateRejects;
+    // Server review M7: players whose own tick threw; each was taken out of the match and its connection closed.
+    private long _playerFailures;
+    // Server review M8: stalls that lasted FatalStallSeconds and stopped the server (at most 1 per process).
+    private long _stallExits;
+    // Server review L9: exceptions caught at an entry point other code calls us through (LiteNetLib's connection request,
+    // disconnect and socket-error callbacks, the stall watchdog's timer).
+    private long _callbackErrors;
     // Phase 13 D18: written by the game loop after every tick (BuildCounts); the fields are read one by one.
     private long _buildPieces;
     private long _buildCells;
@@ -97,6 +108,11 @@ public sealed class HealthCounters
     public void AddStall() => Interlocked.Increment(ref _stalls);
     // Phase 12 D12: a move faster than its mode allows (Match's self-check; should stay 0).
     public void AddMovementAnomaly() => Interlocked.Increment(ref _movementAnomalies);
+    public void AddNetworkError() => Interlocked.Increment(ref _networkErrors);
+    public void AddConnectRateReject() => Interlocked.Increment(ref _connectRateRejects);
+    public void AddPlayerFailure() => Interlocked.Increment(ref _playerFailures);
+    public void AddStallExit() => Interlocked.Increment(ref _stallExits);
+    public void AddCallbackError() => Interlocked.Increment(ref _callbackErrors);
 
     public void SetGauges(int peers, int players, int graced, MatchFlowState state)
     {
@@ -163,6 +179,11 @@ public sealed class HealthCounters
     public long MatchResets => Interlocked.Read(ref _matchResets);
     public long Stalls => Interlocked.Read(ref _stalls);
     public long MovementAnomalies => Interlocked.Read(ref _movementAnomalies);
+    public long NetworkErrors => Interlocked.Read(ref _networkErrors);
+    public long ConnectRateRejects => Interlocked.Read(ref _connectRateRejects);
+    public long PlayerFailures => Interlocked.Read(ref _playerFailures);
+    public long StallExits => Interlocked.Read(ref _stallExits);
+    public long CallbackErrors => Interlocked.Read(ref _callbackErrors);
     public int Peers => Volatile.Read(ref _peers);
     public int Players => Volatile.Read(ref _players);
     public int Graced => Volatile.Read(ref _graced);

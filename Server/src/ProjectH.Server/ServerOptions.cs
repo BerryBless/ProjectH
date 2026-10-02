@@ -46,13 +46,33 @@ public sealed class ServerOptions
     public int JoinTimeoutSeconds { get; set; } = 5;
     public int InputTimeoutSeconds { get; set; } = 10;
 
-    // Each connection produces at most Connected + JoinRequested + Disconnected.
-    public int ControlChannelCapacity => MaxPlayers * 3;
+    // Server review M2: connection requests one remote IP may make, as a token bucket: ConnectBurstPerIp at once, then
+    // ConnectsPerIpPerSecond. More are refused as ServerFull before Accept (counted as connectRate), so connect/disconnect
+    // churn cannot fill the shared Control channel. 0 = off. A load test with many bots on one machine raises the burst
+    // (--Server:ConnectBurstPerIp=200).
+    public int ConnectBurstPerIp { get; set; } = 20;
+    public int ConnectsPerIpPerSecond { get; set; } = 5;
+
+    // Server review M8: a game loop stalled this long is taken as hung for good: the server stops taking connections and
+    // stops with exit code 1, so a supervisor restarts it instead of it holding its port as a zombie. 0 = off.
+    public int FatalStallSeconds { get; set; } = 30;
+
+    // Each connection produces at most Connected + JoinRequested + Disconnected. Review rounds 1 and 2: room for every
+    // player plus one address's whole connect burst and the tokens that come back within one drain (one tick: the
+    // ceiling of ConnectsPerIpPerSecond / SimHz), since each of those connections may connect, join and leave before the
+    // next drain. So that churn cannot fill the channel and get another player's message refused (closed with
+    // ServerError). With the per-IP limit off it is 3 per player, as before (churn is then not bounded per address).
+    public int ControlChannelCapacity => 3 * (MaxPlayers + (ConnectRateEnabled
+        ? ConnectBurstPerIp + (ConnectsPerIpPerSecond + SimHz - 1) / SimHz
+        : 0));
+    public bool ConnectRateEnabled => ConnectBurstPerIp > 0 && ConnectsPerIpPerSecond > 0;
     public int InputChannelCapacity => MaxPlayers * InputBufferPerPlayer;
     public byte SnapshotHz => (byte)(SimHz / SnapshotEveryTicks);
     // The client sends at most one input packet per simulation step; 2x leaves room for bursts
-    // after network jitter. Anything above is flooding and counts as bad packets.
+    // after network jitter. Server review M5, L5: a token bucket of InputBurst (one second of input) refilled at
+    // MaxInputPacketsPerSecond; anything above is dropped and counted (inputRate), never kicked.
     public int MaxInputPacketsPerSecond => SimHz * 2;
+    public int InputBurst => SimHz;
 
     public string? Validate()
     {
@@ -87,6 +107,10 @@ public sealed class ServerOptions
         // 3 s the smallest usable value.
         if (InputTimeoutSeconds != 0 && (long)InputTimeoutSeconds * 1000 < (long)DisconnectTimeoutMs + 2000)
             return "InputTimeoutSeconds * 1000 must be at least DisconnectTimeoutMs + 2000 (or 0 = off), so a network loss keeps its reconnect grace.";
+        if (ConnectBurstPerIp < 0 || ConnectBurstPerIp > 10000) return "ConnectBurstPerIp must be 0 (off) or 1-10000.";
+        if (ConnectsPerIpPerSecond < 0 || ConnectsPerIpPerSecond > 1000) return "ConnectsPerIpPerSecond must be 0 (off) or 1-1000.";
+        if (FatalStallSeconds != 0 && (FatalStallSeconds < 5 || FatalStallSeconds > 3600))
+            return "FatalStallSeconds must be 0 (off) or 5-3600.";
         return null;
     }
 }

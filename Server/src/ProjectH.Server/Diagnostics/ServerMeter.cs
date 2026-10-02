@@ -39,6 +39,8 @@ public sealed class ServerMeter : IDisposable
             new Measurement<long>(h.Rejects(RejectReason.ServerFull), Tag("reason", nameof(RejectReason.ServerFull))),
             new Measurement<long>(h.Rejects(RejectReason.BadRequest), Tag("reason", nameof(RejectReason.BadRequest))),
             new Measurement<long>(h.Rejects(RejectReason.VersionMismatch), Tag("reason", nameof(RejectReason.VersionMismatch))),
+            // Server review M2: sent as ServerFull, counted apart (no RejectReason value: that enum is the protocol's).
+            new Measurement<long>(h.ConnectRateRejects, Tag("reason", "ConnectRate")),
         });
         _meter.CreateObservableCounter("projecth.kicks", () => ByCode(h));
         _meter.CreateObservableCounter("projecth.bad_packets", () => ByReason(h));
@@ -48,6 +50,13 @@ public sealed class ServerMeter : IDisposable
         _meter.CreateObservableCounter("projecth.stalls", () => h.Stalls);
         _meter.CreateObservableCounter("projecth.movement_anomalies", () => h.MovementAnomalies,
             description: "Moves faster than their movement mode allows (a simulation bug; should stay 0)");
+        _meter.CreateObservableCounter("projecth.network_errors", () => h.NetworkErrors, description: "Socket errors LiteNetLib reported");
+        // Server review M7.
+        _meter.CreateObservableCounter("projecth.player_failures", () => h.PlayerFailures, description: "Players whose own tick threw; each left the match and was closed with ServerError");
+        // Server review M8.
+        _meter.CreateObservableCounter("projecth.stall_exits", () => h.StallExits, description: "Stalls that lasted FatalStallSeconds and stopped the server");
+        // Server review L9.
+        _meter.CreateObservableCounter("projecth.callback_errors", () => h.CallbackErrors, description: "Exceptions caught in LiteNetLib callbacks and the stall watchdog (server bugs; should stay 0)");
         // Phase 13 D18: building and harvesting (since the match object was made).
         _meter.CreateObservableGauge("projecth.build.pieces", () => h.Build.Pieces, description: "Building pieces standing (game.build.count)");
         _meter.CreateObservableGauge("projecth.build.cells", () => h.Build.Cells, description: "Build cells holding a piece (the spatial index)");

@@ -47,6 +47,40 @@ public sealed class GameLoopPeerTests
         Assert.Equal("new", still.DevPlayerId);
     }
 
+    // Server review L12: when dropping the old session of a reused peer id throws, the new connection is still registered
+    // (it was registered first), so the join timeout closes it instead of leaving it an orphan nothing ever sweeps.
+    [Fact]
+    public void AThrowWhileDroppingTheOldSession_StillRegistersTheNewConnection()
+    {
+        using var host = new PeerHost();
+        NetPeer oldPeer = host.AcceptPeer();
+        NetPeer newPeer = host.AcceptPeer();
+        oldPeer.Tag = new PeerState("old");
+        var newState = new PeerState("new");
+        newPeer.Tag = newState;
+        const int reusedId = 7;
+        var options = new ServerOptions { Port = 0, MaxPlayers = 4, JoinTimeoutSeconds = 1 };
+        using var loop = new GameLoop(options, TestGameData.Create(), NullLogger.Instance);
+        var control = loop.Channels.Control.Writer;
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.Connected, reusedId, oldPeer, "old")));
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.JoinRequested, reusedId, oldPeer, null)));
+        loop.RunTickGuarded();
+
+        int thrown = 0;
+        loop.RemoveFaultHook = () =>
+        {
+            if (thrown++ == 0) throw new InvalidOperationException("test fault");
+        };
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.Connected, reusedId, newPeer, "new")));
+        loop.RunTickGuarded();
+        Assert.Equal(1, loop.Health.TickFailures);
+
+        for (int i = 0; i <= options.JoinTimeoutSeconds * options.SimHz; i++) loop.RunTickGuarded();
+        Assert.Equal(DisconnectCode.JoinTimeout, newState.CloseCode);
+        Assert.Equal(1, loop.Health.Kicks(DisconnectCode.JoinTimeout));
+        Assert.Equal(0, loop.Health.Peers);
+    }
+
     // Phase 13 final review A4: a joined peer whose reliable queues stay over MaxReliableBacklog for CongestedSeconds is
     // closed with Congested (counted); a dip below the limit starts the count over.
     [Fact]
@@ -77,6 +111,56 @@ public sealed class GameLoopPeerTests
         Assert.False(loop.Match.TryGetPlayer(3, out _));
         Assert.Equal(DisconnectCode.Congested, state.CloseCode);
         Assert.Equal(1, loop.Health.Kicks(DisconnectCode.Congested));
+    }
+
+    // Server review M7: a player whose own tick throws is closed with ServerError and counted; the match is not reset and
+    // the other player's ticks go on.
+    [Fact]
+    public void APlayerWhoseTickThrows_IsClosedWithServerError_WithoutAMatchReset()
+    {
+        using var host = new PeerHost();
+        NetPeer badPeer = host.AcceptPeer();
+        NetPeer goodPeer = host.AcceptPeer();
+        var bad = new PeerState("bad");
+        var good = new PeerState("good");
+        badPeer.Tag = bad;
+        goodPeer.Tag = good;
+        using var loop = new GameLoop(new ServerOptions { Port = 0, MaxPlayers = 4, InputTimeoutSeconds = 0 }, TestGameData.Create(), NullLogger.Instance);
+        var control = loop.Channels.Control.Writer;
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.Connected, 1, badPeer, "bad")));
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.JoinRequested, 1, badPeer, null)));
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.Connected, 2, goodPeer, "good")));
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.JoinRequested, 2, goodPeer, null)));
+        loop.RunTickGuarded();
+        Assert.True(loop.Match.TryGetPlayer(1, out var player));
+
+        loop.Match.FaultEntityId = player.EntityId;
+        uint tick = loop.Match.ServerTick;
+        for (int i = 0; i < 10; i++) loop.RunTickGuarded();
+
+        Assert.Equal(DisconnectCode.ServerError, bad.CloseCode);
+        Assert.Equal(DisconnectCode.None, good.CloseCode);
+        Assert.False(loop.Match.TryGetPlayer(1, out _));
+        Assert.True(loop.Match.TryGetPlayer(2, out _));
+        Assert.Equal(tick + 10, loop.Match.ServerTick);
+        Assert.Equal(1, loop.Health.PlayerFailures);
+        Assert.Equal(1, loop.Health.Kicks(DisconnectCode.ServerError));
+        Assert.Equal(0, loop.Health.TickFailures);
+        Assert.Equal(0, loop.Health.MatchResets);
+        Assert.Equal(1, loop.Health.Peers);
+    }
+
+    // Server review L9: a throwing disconnect callback is counted and does not escape into LiteNetLib's thread.
+    [Fact]
+    public void AThrowingDisconnectCallback_IsCounted_AndDoesNotThrow()
+    {
+        using var host = new PeerHost();
+        NetPeer peer = host.AcceptPeer();
+        peer.Tag = new PeerState("p");
+        using var loop = new GameLoop(new ServerOptions { Port = 0, MaxPlayers = 4 }, TestGameData.Create(), NullLogger.Instance);
+        loop.Listener.CallbackFaultHook = _ => throw new InvalidOperationException("test fault");
+        loop.Listener.OnPeerDisconnected(peer, default);
+        Assert.Equal(1, loop.Health.CallbackErrors);
     }
 
     [Fact]

@@ -132,7 +132,8 @@ public sealed class HardeningIntegrationTests
             health.BadPackets(BadPacketReason.UnknownId) == 1 &&
             health.BadPackets(BadPacketReason.Malformed) == 1, 3000, c), "reasons");
 
-        // Above SimHz * 2 = 60 inputs in one second: the rest count as InputRate (below the kick threshold of 20).
+        // More than the bucket of SimHz = 30 at once: the rest are dropped and count as InputRate (never a kick, server
+        // review M5).
         for (int i = 0; i < 70; i++) c.SendMove(0f, 0f, 0f);
         Assert.True(Pump.Until(() => health.BadPackets(BadPacketReason.InputRate) >= 5, 3000, c), "rate");
         Assert.False(c.Disconnected);

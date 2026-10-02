@@ -18,6 +18,8 @@ public sealed class GameServerService : IHostedService, System.IDisposable
     private readonly ILogger _logger;
     private readonly ServerMeter _meter;
     private StallWatchdog? _watchdog;
+    private readonly IHostApplicationLifetime _lifetime;
+    private readonly TimeSpan _fatalStall;   // server review M8 (Zero = off)
 
     public GameServerService(IOptions<ServerOptions> options, ILogger<GameLoop> logger, MatchHistoryQueue matchHistory,
         MatchHistoryWriter writer, StatsQueryQueue statsQueries, IHostApplicationLifetime lifetime)
@@ -29,12 +31,10 @@ public sealed class GameServerService : IHostedService, System.IDisposable
         // Phase 9: finished matches go to the bounded queue; MatchHistoryWriter saves them off the game loop.
         // Phase 10 D6: when match resets keep failing, the server stops with exit code 1 so a supervisor or a person
         // notices. StopApplication runs on the thread pool: the game loop thread must not wait on the host.
+        _lifetime = lifetime;
+        _fatalStall = TimeSpan.FromSeconds(options.Value.FatalStallSeconds);
         _loop = new GameLoop(options.Value, data, logger, matchSink: record => matchHistory.TryEnqueue(record),
-            onFatal: () =>
-            {
-                Environment.ExitCode = 1;
-                _ = Task.Run(lifetime.StopApplication);
-            },
+            onFatal: StopWithError,
             // Phase 11 D8: statistics requests go to StatsQueryService through this queue; the loop sends the answers.
             statsQueries: statsQueries);
         // Phase 10 D9: the writer's totals go into the Health line and the Meter.
@@ -45,9 +45,25 @@ public sealed class GameServerService : IHostedService, System.IDisposable
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _loop.Start();
-        _watchdog = new StallWatchdog(() => _loop.LastTickTimestamp, _loop.Time, _loop.Health, _logger);
+        // Server review M8: a stall past FatalStallSeconds refuses new connections and stops the process with exit code 1
+        // (the loop is hung; GameLoop.Stop leaves its thread behind after the join limit).
+        _watchdog = new StallWatchdog(() => _loop.LastTickTimestamp, _loop.Time, _loop.Health, _logger, fatalAfter: _fatalStall,
+            onFatalStall: () =>
+            {
+                _loop.Listener.BeginStopping();
+                StopWithError();
+            });
         _watchdog.Start();
         return Task.CompletedTask;
+    }
+
+    // Phase 10 D6, server review M8: the fatal path of failing resets and of a hung loop. Exit code 1 tells a supervisor or
+    // a person; StopApplication runs on the thread pool, so neither the game loop thread nor the watchdog's timer waits on
+    // the host. Any thread; calling it twice only asks the host to stop twice.
+    private void StopWithError()
+    {
+        Environment.ExitCode = 1;
+        _ = Task.Run(_lifetime.StopApplication);
     }
 
     // Phase 10 D7: GameLoop.Stop blocks (thread join up to 5 s, shutdown notices up to 1 s), so it runs on the thread

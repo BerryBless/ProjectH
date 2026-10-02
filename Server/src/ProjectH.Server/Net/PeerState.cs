@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using ProjectH.Shared.Protocol;
 
@@ -5,7 +6,8 @@ namespace ProjectH.Server.Net;
 
 // Stored in NetPeer.Tag at accept time. Three groups of fields, each with one owner:
 //   - DevPlayerId is immutable and may be read by any thread.
-//   - BadPackets, Kicked, JoinRequested, the input rate window and the statistics request time (Phase 11) are touched
+//   - BadPackets, Kicked, JoinRequested, the input token bucket (server review M5), the build request window and the
+//     statistics request time (Phase 11) are touched
 //     only on LiteNetLib's receive path, so
 //     they need no synchronization: LiteNetLib runs one receive thread per socket and the server binds IPv4 only, so
 //     all of a peer's packets arrive on that single thread.
@@ -53,18 +55,32 @@ public sealed class PeerState
     public bool TrySetCloseCode(DisconnectCode code) =>
         Interlocked.CompareExchange(ref _closeCode, (int)code, (int)DisconnectCode.None) == (int)DisconnectCode.None;
 
-    private long _inputWindowStartMs;
-    private int _inputPacketsInWindow;
+    // Server review M5, L5: a token bucket in thousandths of a packet (integers: maxPerSecond per second is maxPerSecond
+    // units per millisecond). Full at the first packet, whatever the clock reads.
+    private bool _inputBucketStarted;
+    private long _inputTokens;
+    private long _lastInputMs;
 
-    // Fixed 1-second window. Returns false once the peer exceeds maxPerSecond in the current window.
-    public bool TryCountInputPacket(long nowMs, int maxPerSecond)
+    // Server review M5, L5: up to burst packets at once, then maxPerSecond. Returns false for a packet over the rate (the
+    // caller drops it). Unlike the fixed one-second window before it, the bucket never lets 2 x maxPerSecond through
+    // back to back across a window edge.
+    public bool TryCountInputPacket(long nowMs, int maxPerSecond, int burst)
     {
-        if (nowMs - _inputWindowStartMs >= 1000)
+        long capacity = burst * 1000L;
+        if (!_inputBucketStarted)
         {
-            _inputWindowStartMs = nowMs;
-            _inputPacketsInWindow = 0;
+            _inputBucketStarted = true;
+            _inputTokens = capacity;
         }
-        return ++_inputPacketsInWindow <= maxPerSecond;
+        else
+        {
+            long elapsed = Math.Clamp(nowMs - _lastInputMs, 0, capacity);   // capped, so the multiply cannot overflow
+            _inputTokens = Math.Min(capacity, _inputTokens + elapsed * maxPerSecond);
+        }
+        _lastInputMs = nowMs;
+        if (_inputTokens < 1000) return false;
+        _inputTokens -= 1000;
+        return true;
     }
 
     private long _buildWindowStartMs;

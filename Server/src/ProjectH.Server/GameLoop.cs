@@ -84,6 +84,27 @@ public sealed class GameLoop : IDisposable
     // The sink error a reset took from the match it threw away, until the next stats line logs it (D6).
     private Exception? _carriedSinkError;
     private long _loopFailuresSinceStats;
+    private long _playerFailuresSinceStats;   // server review M7: the first player failure of an interval is logged
+    // Review round 1 (game loop thread only): the loop ticks of the latest MaxPlayers player failures, a ring made once.
+    // MaxPlayers of them within PlayerFailureWindowSeconds are taken as a fault in the match, not in one player (every
+    // player failing every tick, reconnecting and failing again): the match is reset like after failing ticks (D6).
+    // Emptied by every reset.
+    private const int PlayerFailureWindowSeconds = 10;
+    private readonly long _playerFailureWindowTicks;
+    private readonly long[] _playerFailureTicks;
+    private int _playerFailureCount;
+    private int _playerFailureNext;
+    private bool _resetForPlayerFailures;
+    // Review round 2 (game loop thread only): the loop ticks of the latest ticks in which every player failed, a ring of
+    // AllFailedTicksBeforeReset made once. A player's own bad state goes with it, so a fresh player (a rejoin, a newcomer)
+    // failing again and again with everyone else is a fault in the match, even when too few clients are connected to
+    // reach MaxPlayers failures (one client failing at every reconnect fails about 9 times in 10 s). 5 such ticks within
+    // the window: enough rejoins that a single unlucky player state is ruled out, still well inside the window at a
+    // normal reconnect pace. Emptied by every reset.
+    private const int AllFailedTicksBeforeReset = 5;
+    private readonly long[] _allFailedTicks = new long[AllFailedTicksBeforeReset];
+    private int _allFailedCount;
+    private int _allFailedNext;
     private bool _spawnEncodeFailureLogged;   // Phase 11: the first PlayerSpawned encode failure was logged
     private readonly Action? _onFatal;
     private readonly TimeProvider _time;
@@ -92,7 +113,7 @@ public sealed class GameLoop : IDisposable
     // Test seams (D6): run at the start of every tick / after every tick, outside it. Set by tests only.
     private volatile Action? _tickFaultHook;
     private volatile Action? _loopFaultHook;
-    private volatile Action? _removeFaultHook;   // runs in RemovePeer after the peer left _peers
+    private volatile Action? _removeFaultHook;   // runs in DropSession (after the peer left _peers, or was replaced there)
     // Phase 7 D10: process CPU time at the previous stats line, for cpu% (game loop thread only).
     private TimeSpan _cpuAtLastStats = CurrentCpuTime();
     private long _lateTicksSkipped;
@@ -121,11 +142,14 @@ public sealed class GameLoop : IDisposable
         _onFatal = onFatal;
         _time = time ?? TimeProvider.System;
         _failuresBeforeReset = options.SimHz * FailingSecondsBeforeReset;
+        _playerFailureWindowTicks = (long)PlayerFailureWindowSeconds * options.SimHz;
+        _playerFailureTicks = new long[options.MaxPlayers];
         _channels = new InboundChannels(options, _stats, _health.AddBuildInboxDrop);
         _joinTimeoutTicks = (long)options.JoinTimeoutSeconds * options.SimHz;
         _inputTimeoutTicks = (long)options.InputTimeoutSeconds * options.SimHz;
         _congestedTicks = (long)CongestedSeconds * options.SimHz;
         _buildBacklog = BuildBacklog;
+        _playerFailed = OnPlayerFailed;
         _statsQueries = statsQueries ?? new StatsQueryQueue();
         _health.StatsQueries = () => _statsQueries.Counts;
         _listener = new NetworkListener(options, _channels, _stats, _health, _statsQueries, logger, data.Building.MaxRequestsPerSecond);
@@ -150,8 +174,50 @@ public sealed class GameLoop : IDisposable
         _buildRejects = code => _match.BuildResults(code);
     }
 
+    // Server review M7: made once (NewMatch runs again on every reset).
+    private readonly Action<int, Exception> _playerFailed;
+
     private Match NewMatch() => new(_options, _data, SendToPeer, _loadout, dropPoints: _dropPoints, matchSink: _matchSink,
-        graceExpired: OnGraceExpired, movementAnomaly: _health.AddMovementAnomaly, sendBuild: SendToPeerBuild, buildBacklog: _buildBacklog);
+        graceExpired: OnGraceExpired, movementAnomaly: _health.AddMovementAnomaly, sendBuild: SendToPeerBuild, buildBacklog: _buildBacklog,
+        playerFailed: _playerFailed);
+
+    // Server review M7: Match took a player whose own tick threw out of the match. Its connection is closed with ServerError
+    // (the client may reconnect and join as a new player) and forgotten here at once, without calling back into Match (it
+    // is mid-tick). A graced player (NoPeer) has no connection. Counted every time, logged once per interval.
+    // Review round 1: also recorded in the failure window; RunTickGuarded resets the match after this tick when it is full.
+    private void OnPlayerFailed(int peerId, Exception error)
+    {
+        _health.AddPlayerFailure();
+        if (RecordPlayerFailure()) _resetForPlayerFailures = true;
+        if (++_playerFailuresSinceStats == 1)
+        {
+            try
+            {
+                _logger.LogError(error, "A player's tick failed; peer {PeerId} left the match and is closed with ServerError (first of this interval)", peerId);
+            }
+            catch
+            {
+                // The failure is counted; a throwing logger must not stop the close below.
+            }
+        }
+        if (peerId == PlayerEntity.NoPeer || !_peers.Remove(peerId, out NetPeer? peer)) return;
+        _health.AddKick(DisconnectCode.ServerError);
+        NetworkListener.Close(peer, DisconnectCode.ServerError);
+    }
+
+    // Review round 1: true when this failure makes MaxPlayers of them within the window. The ring holds the latest
+    // MaxPlayers failure ticks; once full, the entry after the newest is the oldest.
+    private bool RecordPlayerFailure() =>
+        RecordInWindow(_playerFailureTicks, ref _playerFailureCount, ref _playerFailureNext);
+
+    // Writes the current loop tick into the ring; true when the ring is full and its oldest entry is within the window.
+    private bool RecordInWindow(long[] ring, ref int count, ref int next)
+    {
+        ring[next] = _loopTick;
+        next = (next + 1) % ring.Length;
+        if (count < ring.Length) count++;
+        return count == ring.Length && _loopTick - ring[next] < _playerFailureWindowTicks;
+    }
 
     // D2, D9: a graced player left without resuming (at most MaxPlayers per round, so logging each is cheap).
     private void OnGraceExpired(string devPlayerId)
@@ -294,6 +360,9 @@ public sealed class GameLoop : IDisposable
             _tickFaultHook?.Invoke();
             RunTick();
             _consecutiveTickFailures = 0;
+            // Review round 1: the tick went through, but its players kept failing (see _playerFailureTicks). After the
+            // tick, so Match is not replaced while it runs. A reset that throws (only its logger can) fails this tick.
+            if (_resetForPlayerFailures) ResetMatch(PlayerFailuresCause);
         }
         catch (Exception ex)
         {
@@ -316,7 +385,7 @@ public sealed class GameLoop : IDisposable
             {
                 try
                 {
-                    ResetMatch();
+                    ResetMatch(TickFailuresCause);
                 }
                 catch
                 {
@@ -334,9 +403,15 @@ public sealed class GameLoop : IDisposable
     // Phase 10 D6: the match state is most likely broken half-way, so it is thrown away (no record) and every client
     // is closed with ServerError; their clients reconnect into the new match. Three resets within ResetWindow mean the
     // fault is in the code, not in one match: the server stops (onFatal) instead of failing forever.
-    private void ResetMatch()
+    private const string TickFailuresCause = "ticks failed in a row";
+    private const string PlayerFailuresCause = "players' ticks failed (MaxPlayers failures, or 5 ticks with every player failing, within 10 s)";
+
+    private void ResetMatch(string cause)
     {
         _consecutiveTickFailures = 0;
+        _resetForPlayerFailures = false;
+        _playerFailureCount = 0;
+        _allFailedCount = 0;
         _stalePeers.Clear();
         _timedOut.Clear();
 
@@ -375,8 +450,8 @@ public sealed class GameLoop : IDisposable
         _carriedSinkError ??= _match.TakeSinkError();
         try
         {
-            _logger.LogError("{Count} ticks failed in a row: resetting the match (round {Round}) and closing {Peers} connections with ServerError",
-                _failuresBeforeReset, _match.Flow.Round, _peers.Count);
+            _logger.LogError("{Cause}: resetting the match (round {Round}) and closing {Peers} connections with ServerError",
+                cause, _match.Flow.Round, _peers.Count);
             foreach (NetPeer peer in _peers.Values)
             {
                 try
@@ -408,13 +483,15 @@ public sealed class GameLoop : IDisposable
         SweepPeers();
         SendStatsReplies();
         _match.Tick();
+        // Review round 2: a tick in which every player failed (see _allFailedTicks).
+        if (_match.EveryPlayerFailed && RecordInWindow(_allFailedTicks, ref _allFailedCount, ref _allFailedNext)) _resetForPlayerFailures = true;
         _health.SetGauges(_peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State);
         _health.SetBuild(_match.BuildCounts(), _buildRejects);
     }
 
     private void DrainControl()
     {
-        // Bounded by the channel capacity (MaxPlayers * 3), so draining fully is safe.
+        // Bounded by the channel capacity (ServerOptions.ControlChannelCapacity), so draining fully is safe.
         var reader = _channels.Control.Reader;
         while (reader.TryRead(out ControlMessage message))
         {
@@ -425,10 +502,12 @@ public sealed class GameLoop : IDisposable
                     // still in flight, its session must go now; otherwise the new client's Join gets
                     // AlreadyJoined and it waits forever. Its late Disconnected is then ignored by the
                     // reference check below.
-                    if (_peers.TryGetValue(message.PeerId, out var previous) && !ReferenceEquals(previous, message.Peer))
-                        RemovePeer(message.PeerId);
+                    // Server review L12: the new connection is registered first, so a throw while the old session is
+                    // dropped (it fails this tick) cannot leave the new one outside _peers, where no sweep would find it.
+                    _peers.TryGetValue(message.PeerId, out NetPeer? previous);
                     _peers[message.PeerId] = message.Peer;
                     ((PeerState)message.Peer.Tag).ConnectedTick = _loopTick;
+                    if (previous != null && !ReferenceEquals(previous, message.Peer)) DropSession(message.PeerId, previous);
                     break;
 
                 case ControlKind.JoinRequested:
@@ -490,7 +569,8 @@ public sealed class GameLoop : IDisposable
             state.JoinRefused = true;
             state.RefusedTick = _loopTick;
         }
-        _logger.LogInformation("Peer {PeerId} ({DevPlayerId}) join: {Result}", peerId, state.DevPlayerId, result);
+        // Server review M1: Debug (joins= and resumed= count them).
+        _logger.LogDebug("Peer {PeerId} ({DevPlayerId}) join: {Result}", peerId, state.DevPlayerId, result);
     }
 
     // Once per tick over at most MaxPlayers peers, no allocation.
@@ -539,12 +619,13 @@ public sealed class GameLoop : IDisposable
             if (!_peers.TryGetValue(peerId, out NetPeer? peer)) continue;
             if (code == DisconnectCode.None)
             {
-                _logger.LogInformation("Closing peer {PeerId} ({DevPlayerId}): its join was refused", peerId, ((PeerState)peer.Tag).DevPlayerId);
+                // Server review M1: Debug, here and below (kicks= counts the timeouts).
+                _logger.LogDebug("Closing peer {PeerId} ({DevPlayerId}): its join was refused", peerId, ((PeerState)peer.Tag).DevPlayerId);
             }
             else
             {
                 _health.AddKick(code);
-                _logger.LogInformation("Disconnecting peer {PeerId} ({DevPlayerId}): {Code}", peerId, ((PeerState)peer.Tag).DevPlayerId, code);
+                _logger.LogDebug("Disconnecting peer {PeerId} ({DevPlayerId}): {Code}", peerId, ((PeerState)peer.Tag).DevPlayerId, code);
             }
             NetworkListener.Close(peer, code);
             RemovePeer(peerId);
@@ -576,13 +657,20 @@ public sealed class GameLoop : IDisposable
     // character for the reconnect grace; Match decides whether the player qualifies.
     private void RemovePeer(int peerId)
     {
-        if (!_peers.Remove(peerId, out NetPeer? peer)) return;
+        if (_peers.Remove(peerId, out NetPeer? peer)) DropSession(peerId, peer);
+    }
+
+    // The match side of a removed connection (server review L12: apart from _peers, so a replaced peer's session can be
+    // dropped after the new connection took its id).
+    private void DropSession(int peerId, NetPeer peer)
+    {
         _removeFaultHook?.Invoke();
         var state = (PeerState)peer.Tag;
         if (_match.Disconnect(peerId, allowGrace: state.CloseCode == DisconnectCode.None))
         {
             _health.AddGraceStart();
-            _logger.LogInformation("Peer {PeerId} ({DevPlayerId}) dropped mid-match; character kept for {Seconds} s",
+            // Server review M1: Debug (graceStarts= counts it).
+            _logger.LogDebug("Peer {PeerId} ({DevPlayerId}) dropped mid-match; character kept for {Seconds} s",
                 peerId, state.DevPlayerId, _options.ReconnectGraceSeconds);
         }
     }
@@ -665,6 +753,7 @@ public sealed class GameLoop : IDisposable
             _match.MatchSinkFailures);
         _exceptionsSinceStats = 0;
         _loopFailuresSinceStats = 0;
+        _playerFailuresSinceStats = 0;
         _listener.ResetLogLimits();
     }
 
@@ -679,11 +768,12 @@ public sealed class GameLoop : IDisposable
             "Health peers={Peers} players={Players} graced={Graced} match={State}#{Round} " +
             "connections={Connections} joins={Joins} resumed={Resumed} graceStarts={GraceStarts} graceExpiries={GraceExpiries} " +
             "disconnects timeout={DisconnectTimeouts} other={DisconnectOthers} " +
-            "rejects full={RejectFull} badRequest={RejectBad} version={RejectVersion} " +
+            "rejects full={RejectFull} badRequest={RejectBad} version={RejectVersion} connectRate={RejectConnectRate} " +
             "kicks kicked={KickBad} joinTimeout={KickJoin} inputTimeout={KickInput} serverError={KickError} congested={KickCongested} " +
             "badPackets unknownId={BadUnknown} malformed={BadMalformed} beforeJoin={BadBeforeJoin} duplicateJoin={BadDuplicate} " +
             "inputRate={BadRate} wrongDirection={BadDirection} handlerException={BadHandler} buildRate={BadBuildRate} " +
             "tickFailures={TickFailures} loopFailures={LoopFailures} matchResets={Resets} stalls={Stalls} movementAnomalies={MovementAnomalies} " +
+            "networkErrors={NetworkErrors} playerFailures={PlayerFailures} stallExits={StallExits} callbackErrors={CallbackErrors} " +
             "build pieces={BuildPieces} cells={BuildCells} requests={BuildRequests} accepted={BuildAccepted} destroyed={BuildDestroyed} " +
             "collapsed={BuildCollapsed} duplicates={BuildDuplicates} eventPackets={BuildEventPackets} syncPackets={BuildSyncPackets} " +
             "buildRejects noResource={RejectNoResource} outOfRange={RejectRange} blocked={RejectBlocked} unsupported={RejectUnsupported} " +
@@ -695,13 +785,14 @@ public sealed class GameLoop : IDisposable
             _peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State, _match.Flow.Round,
             h.Connections, h.Joins, h.Resumes, h.GraceStarts, h.GraceExpiries,
             h.DisconnectTimeouts, h.DisconnectOthers,
-            h.Rejects(RejectReason.ServerFull), h.Rejects(RejectReason.BadRequest), h.Rejects(RejectReason.VersionMismatch),
+            h.Rejects(RejectReason.ServerFull), h.Rejects(RejectReason.BadRequest), h.Rejects(RejectReason.VersionMismatch), h.ConnectRateRejects,
             h.Kicks(DisconnectCode.Kicked), h.Kicks(DisconnectCode.JoinTimeout), h.Kicks(DisconnectCode.InputTimeout), h.Kicks(DisconnectCode.ServerError),
             h.Kicks(DisconnectCode.Congested),
             h.BadPackets(BadPacketReason.UnknownId), h.BadPackets(BadPacketReason.Malformed), h.BadPackets(BadPacketReason.InputBeforeJoin),
             h.BadPackets(BadPacketReason.DuplicateJoin), h.BadPackets(BadPacketReason.InputRate), h.BadPackets(BadPacketReason.WrongDirection),
             h.BadPackets(BadPacketReason.HandlerException), h.BadPackets(BadPacketReason.BuildRate),
             h.TickFailures, h.LoopFailures, h.MatchResets, h.Stalls, h.MovementAnomalies,
+            h.NetworkErrors, h.PlayerFailures, h.StallExits, h.CallbackErrors,
             b.Pieces, b.Cells, b.Requests, b.Accepted, b.Destroyed, b.Collapsed, b.Duplicates, b.EventPackets, b.SyncPackets,
             h.BuildRejects(BuildResultCode.NoResource), h.BuildRejects(BuildResultCode.OutOfRange), h.BuildRejects(BuildResultCode.Blocked),
             h.BuildRejects(BuildResultCode.Unsupported), h.BuildRejects(BuildResultCode.Occupied), h.BuildRejects(BuildResultCode.RateLimited),

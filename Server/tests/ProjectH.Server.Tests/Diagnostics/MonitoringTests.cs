@@ -45,6 +45,12 @@ public class MonitoringTests
         loop.Health.AddBadPacket(BadPacketReason.WrongDirection);
         loop.StatsQueries.AddLimited();
         loop.StatsQueries.AddLimited();
+        loop.Health.AddNetworkError();
+        loop.Health.AddCallbackError();
+        loop.Health.AddStallExit();
+        loop.Health.AddPlayerFailure();
+        loop.Health.AddConnectRateReject();
+        loop.Health.AddConnectRateReject();
         loop.RunTickGuarded();
 
         loop.LogPeriodic();
@@ -58,7 +64,7 @@ public class MonitoringTests
                  {
                      "peers=0", "players=0", "graced=0", "match=WaitingForPlayers#1",
                      "connections=", "joins=", "resumed=", "graceStarts=", "graceExpiries=0", "disconnects timeout=", "other=",
-                     "rejects full=1", "badRequest=0", "version=0",
+                     "rejects full=1", "badRequest=0", "version=0 connectRate=2",   // server review M2
                      "kicks kicked=0", "joinTimeout=0", "inputTimeout=1", "serverError=0", "congested=0",   // Phase 13 final review A4
                      "badPackets unknownId=0", "malformed=", "beforeJoin=", "duplicateJoin=", "inputRate=", "wrongDirection=1", "handlerException=",
                      "tickFailures=0", "loopFailures=0", "matchResets=0", "stalls=0", "movementAnomalies=0",
@@ -68,6 +74,10 @@ public class MonitoringTests
                      "harvest hits=0 envDestroyed=0", "syncDeferred=0", "buildInboxDrops=0",
                      "db saved=3 failed=1 discarded=2 dropped=4",
                      "stats requests=0 limited=2 busy=0 unavailable=0 undelivered=0",
+                     "networkErrors=1",   // server review M1
+                     "callbackErrors=1",   // server review L9
+                     "stallExits=1",   // server review M8
+                     "playerFailures=1",   // server review M7
                  })
         {
             Assert.Contains(item, line);
@@ -94,6 +104,11 @@ public class MonitoringTests
         health.AddMovementAnomaly();
         health.AddBuildInboxDrop();
         health.AddBuildInboxDrop();
+        health.AddNetworkError();
+        health.AddCallbackError();
+        health.AddStallExit();
+        health.AddPlayerFailure();
+        health.AddConnectRateReject();
         health.SetBuild(new BuildCounts(7, 3, 8, 5, 2, 10, 4, 1, 9, 2, 0, 0, 6), code => code == BuildResultCode.Occupied ? 2 : 0);
 
         using var meter = new ServerMeter(health);
@@ -128,6 +143,11 @@ public class MonitoringTests
         Assert.Contains(("projecth.build.destroyed", 6L, "cause=damage"), seen);
         Assert.Contains(("projecth.build.inbox_drops", 2L, ""), seen);
         Assert.Contains(("projecth.harvest.hits", 9L, ""), seen);
+        Assert.Contains(("projecth.network_errors", 1L, ""), seen);   // server review M1
+        Assert.Contains(("projecth.callback_errors", 1L, ""), seen);   // server review L9
+        Assert.Contains(("projecth.stall_exits", 1L, ""), seen);   // server review M8
+        Assert.Contains(("projecth.player_failures", 1L, ""), seen);   // server review M7
+        Assert.Contains(("projecth.rejects", 1L, "reason=ConnectRate"), seen);   // server review M2
         Assert.Contains(("projecth.stats_queries", 6L, "result=requests"), seen);
         Assert.Contains(("projecth.stats_queries", 2L, "result=limited"), seen);
         Assert.Contains(("projecth.stats_queries", 1L, "result=busy"), seen);
@@ -214,6 +234,84 @@ public class MonitoringTests
         Assert.Equal(1, health.Stalls);
         Assert.Single(log.Entries);
         watchdog.Dispose();
+    }
+
+    // Server review M8: a stall that lasts FatalStallSeconds stops the server once (the callback: stop taking connections,
+    // exit code 1), counted as a stall exit; 0 turns that off.
+    [Fact]
+    public void AStallPastTheFatalLimit_StopsTheServerOnce()
+    {
+        var time = new ManualTime();
+        var log = new ListLogger();
+        var health = new HealthCounters();
+        long lastTick = time.GetTimestamp();
+        int fatal = 0;
+        using var watchdog = new StallWatchdog(() => lastTick, time, health, log, fatalAfter: TimeSpan.FromSeconds(30), onFatalStall: () => fatal++);
+
+        for (int second = 1; second <= 30; second++)
+        {
+            time.Advance(TimeSpan.FromSeconds(1));
+            watchdog.Check();
+        }
+        Assert.Equal(0, fatal);                      // exactly 30 s: not past the limit yet
+        Assert.Equal(1, health.Stalls);
+
+        time.Advance(TimeSpan.FromSeconds(1));
+        watchdog.Check();
+        Assert.Equal(1, fatal);
+        Assert.Equal(1, health.StallExits);
+        Assert.Single(log.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("stopping the server"));
+
+        for (int i = 0; i < 5; i++)
+        {
+            time.Advance(TimeSpan.FromSeconds(1));
+            watchdog.Check();
+        }
+        lastTick = time.GetTimestamp();              // even a recovery and a second long stall do not stop it again
+        watchdog.Check();
+        time.Advance(TimeSpan.FromSeconds(60));
+        watchdog.Check();
+        Assert.Equal(1, fatal);
+        Assert.Equal(1, health.StallExits);
+        Assert.Equal(2, health.Stalls);
+    }
+
+    // One check after a long gap (a debugger break or a suspended process: every thread resumes at once and the overdue
+    // timer may read the old tick time) only reports the stall; the fatal stop needs the stall to be seen again.
+    [Fact]
+    public void ALongGapSeenOnce_DoesNotStopTheServer()
+    {
+        var time = new ManualTime();
+        var health = new HealthCounters();
+        long lastTick = time.GetTimestamp();
+        int fatal = 0;
+        using var watchdog = new StallWatchdog(() => lastTick, time, health, new ListLogger(), fatalAfter: TimeSpan.FromSeconds(30), onFatalStall: () => fatal++);
+        time.Advance(TimeSpan.FromSeconds(60));
+        watchdog.Check();
+        Assert.Equal(1, health.Stalls);
+        Assert.Equal(0, fatal);
+        lastTick = time.GetTimestamp();   // the loop ticks again
+        watchdog.Check();
+        Assert.Equal(0, fatal);
+        Assert.Equal(0, health.StallExits);
+    }
+
+    [Fact]
+    public void FatalStallZero_NeverStopsTheServer()
+    {
+        var time = new ManualTime();
+        var health = new HealthCounters();
+        long lastTick = time.GetTimestamp();
+        int fatal = 0;
+        using var watchdog = new StallWatchdog(() => lastTick, time, health, new ListLogger(), fatalAfter: TimeSpan.Zero, onFatalStall: () => fatal++);
+        for (int i = 0; i < 300; i++)
+        {
+            time.Advance(TimeSpan.FromSeconds(1));
+            watchdog.Check();
+        }
+        Assert.Equal(0, fatal);
+        Assert.Equal(0, health.StallExits);
+        Assert.Equal(1, health.Stalls);
     }
 
     [Fact]
