@@ -10,11 +10,12 @@ namespace ProjectH.Shared.Simulation
         // Vertical speed (m/s, positive) the character hit the ground with this tick in Ground, Crouch or Slide mode.
         // 0 = no landing. Vault, glide and freefall landings report 0 (D10).
         public float LandingSpeed;
-        // Index into the world span of the box that stopped a horizontal move this tick (the X sweep's first), -1 = none.
-        public int BlockedBy;
-        // The box that stopped the Z sweep, -1 = none (equal to BlockedBy when only Z was stopped). A door counts when
-        // either sweep met it (D9: a doorway entered a little off-centre meets the jamb on one axis).
-        public int BlockedByZ;
+        // Phase 13 D3: the collider that stopped a horizontal move this tick (the X sweep's first), None = none. Named by
+        // kind and id, not by its place in the gathered world.
+        public ColliderId BlockedBy;
+        // The collider that stopped the Z sweep, None = none (equal to BlockedBy when only Z was stopped). A door counts
+        // when either sweep met it (D9: a doorway entered a little off-centre meets the jamb on one axis).
+        public ColliderId BlockedByZ;
         // Sprinting this tick (snapshot flag, D11).
         public bool Sprinting;
         // Sprinting or sliding: a closed door in BlockedBy is shouldered open (D9).
@@ -24,8 +25,10 @@ namespace ProjectH.Shared.Simulation
     // The one piece of game logic allowed in Shared (see game-core-rules §4): client prediction and
     // the authoritative server run exactly this code. Pure math, no allocation, no engine types.
     // The character is an axis-aligned box (MoveSettings.HalfWidth, and a height that depends on the mode) with its feet
-    // at MoveState.Position; the world is the terrain (Phase 6 D2-D4) plus the boxes passed in. Every terrain slope is
-    // walkable (GameMapTests), so the terrain never blocks a horizontal move: it only sets the floor height under the feet.
+    // at MoveState.Position; the world is the terrain (Phase 6 D2-D4), the boxes passed in and, since Phase 13, the
+    // slopes (building ramps and roofs, D2). Every terrain slope is walkable (GameMapTests), so the terrain never blocks a
+    // horizontal move: it only sets the floor height under the feet. A slope is walked like the terrain where the feet
+    // can climb onto it, and its slab blocks like a wall elsewhere.
     // Phase 12 D1: Step branches on MoveState.Mode into a few plain functions; there is no state object or class
     // hierarchy. Every number is in MovementTuning (new) or MoveSettings (Phase 1-6).
     public static class MovementSimulation
@@ -35,6 +38,32 @@ namespace ProjectH.Shared.Simulation
         private const int AxisY = 1;
         private const int AxisZ = 2;
 
+        // Phase 13: everything one step collides with. Box i is named by BoxIds[i] (or Static i without ids: the plain
+        // span overloads); slopes by SlopeIds.
+        private readonly ref struct Scene
+        {
+            public readonly ReadOnlySpan<Box> Boxes;
+            public readonly ReadOnlySpan<ColliderId> BoxIds;
+            public readonly ReadOnlySpan<Slope> Slopes;
+            public readonly ReadOnlySpan<ColliderId> SlopeIds;
+            public readonly HeightField Terrain;
+
+            public Scene(ReadOnlySpan<Box> boxes, ReadOnlySpan<ColliderId> boxIds, ReadOnlySpan<Slope> slopes, ReadOnlySpan<ColliderId> slopeIds,
+                HeightField terrain)
+            {
+                Boxes = boxes;
+                BoxIds = boxIds;
+                Slopes = slopes;
+                SlopeIds = slopeIds;
+                Terrain = terrain;
+            }
+
+            public ColliderId BoxId(int i) =>
+                i < 0 ? ColliderId.None : i < BoxIds.Length ? BoxIds[i] : new ColliderId(ColliderKind.Static, (uint)i);
+
+            public ColliderId SlopeId(int i) => i < 0 || i >= SlopeIds.Length ? ColliderId.None : SlopeIds[i];
+        }
+
         public static void Step(ref MoveState state, in InputCommand input, float deltaTime, ReadOnlySpan<Box> world, HeightField terrain)
         {
             Step(ref state, input, deltaTime, world, terrain, out _);
@@ -43,7 +72,19 @@ namespace ProjectH.Shared.Simulation
         public static void Step(ref MoveState state, in InputCommand input, float deltaTime, ReadOnlySpan<Box> world, HeightField terrain,
             out StepResult result)
         {
-            result = new StepResult { BlockedBy = -1, BlockedByZ = -1 };
+            Run(ref state, input, deltaTime, new Scene(world, default, default, default, terrain), out result);
+        }
+
+        // Phase 13 D3: the world gathered around the character (CollisionWorld.Gather at its position before this step).
+        public static void Step(ref MoveState state, in InputCommand input, float deltaTime, CollisionWorld world, HeightField terrain,
+            out StepResult result)
+        {
+            Run(ref state, input, deltaTime, new Scene(world.Boxes, world.BoxIds, world.Slopes, world.SlopeIds, terrain), out result);
+        }
+
+        private static void Run(ref MoveState state, in InputCommand input, float deltaTime, Scene scene, out StepResult result)
+        {
+            result = new StepResult();
 
             // Untrusted input: non-finite values become 0 and the move vector is clamped to length 1,
             // so no input can exceed the configured speed.
@@ -76,19 +117,19 @@ namespace ProjectH.Shared.Simulation
                     return;
                 case MovementMode.Freefall:
                 case MovementMode.Glide:
-                    StepAir(ref state, input.Buttons, moveX, moveY, sin, cos, deltaTime, world, terrain);
+                    StepAir(ref state, input.Buttons, moveX, moveY, sin, cos, deltaTime, scene);
                     return;
             }
             // D8: a vault may start on a jump press while moving forward; it faces where the character looks.
             var forward = new Vector2(sin, cos);
-            StepGround(ref state, input.Buttons, move, moveY > 0f ? forward : Vector2.Zero, deltaTime, world, terrain, ref result);
+            StepGround(ref state, input.Buttons, move, moveY > 0f ? forward : Vector2.Zero, deltaTime, scene, ref result);
         }
 
         // Ground, Crouch and Slide (D7), walking, sprinting, jumping and falling (D3 air momentum).
         // move: the input direction in world X/Z, length 0..1. vaultDirection: the facing direction when the input moves
         // forward (a vault may start), else zero.
         private static void StepGround(ref MoveState state, InputButtons buttons, Vector2 move, Vector2 vaultDirection, float deltaTime,
-            ReadOnlySpan<Box> world, HeightField terrain, ref StepResult result)
+            Scene scene, ref StepResult result)
         {
             bool jump = (buttons & InputButtons.Jump) != 0;
             bool crouchHeld = (buttons & InputButtons.Crouch) != 0;
@@ -96,15 +137,16 @@ namespace ProjectH.Shared.Simulation
             bool moving = move.X != 0f || move.Y != 0f;
             Vector3 position = state.Position;
 
-            // 1) Leave any box we start inside (reconcile snap, rounding): sweeps assume a free start (D4).
-            Depenetrate(ref position, CollisionHeight(state.Mode), world, terrain);
+            // 1) Leave any box or slab we start inside (reconcile snap, rounding, a piece built onto us): sweeps assume a
+            //    free start (D4).
+            Depenetrate(ref position, CollisionHeight(state.Mode), scene);
 
             // 2) Stateless ground check (D3). Snapping Y onto the surface keeps a standing player at an
             //    exact height, so grounded/airborne never alternates from rounding. A fall that ends in the snap is a
             //    landing too (D10).
             bool grounded = false;
             bool onTerrain = false;
-            if (state.VelocityY <= 0f && TryFindGround(position, world, terrain, out float groundY, out onTerrain))
+            if (state.VelocityY <= 0f && TryFindGround(position, scene, out float groundY, out onTerrain))
             {
                 grounded = true;
                 if (state.VelocityY < 0f) result.LandingSpeed = -state.VelocityY;
@@ -114,7 +156,7 @@ namespace ProjectH.Shared.Simulation
 
             // 3) Posture (D7), on the ground only: crouch pressed while sprinting starts a slide, otherwise a crouch;
             //    released, the character stands up where the standing box fits.
-            bool slideStarted = grounded && UpdatePosture(ref state, position, crouchHeld, sprintHeld, world, deltaTime);
+            bool slideStarted = grounded && UpdatePosture(ref state, position, crouchHeld, sprintHeld, scene, deltaTime);
 
             // 4) Sprint and energy (D3, D7): Shift while moving in Ground mode on the ground, with energy. In the air Sprint
             //    is ignored (no cost, no charge): a sprint jump's speed was decided at the takeoff.
@@ -123,9 +165,10 @@ namespace ProjectH.Shared.Simulation
             result.Sprinting = sprinting;
 
             // 5) Horizontal velocity: the input on the ground, the slide's own speed, momentum plus air control in the air.
+            //    Phase 13: a slide speeds up downhill on the terrain only, not on ramps or roofs (no gradient there).
             if (grounded && state.Mode == MovementMode.Slide)
             {
-                SlideVelocity(ref state, position, onTerrain, terrain, deltaTime);
+                SlideVelocity(ref state, position, onTerrain, scene.Terrain, deltaTime);
             }
             else if (grounded)
             {
@@ -142,14 +185,14 @@ namespace ProjectH.Shared.Simulation
             //    already. Otherwise a jump: from a crouch only where the standing box fits; a slide jump keeps the slide's
             //    speed; a sprint jump takes off faster (D3) at the same height.
             if (grounded && jump && state.Mode == MovementMode.Ground && vaultDirection != Vector2.Zero &&
-                TryStartVault(ref state, position, vaultDirection, world, terrain, deltaTime))
+                TryStartVault(ref state, position, vaultDirection, scene, deltaTime))
             {
                 state.Position = position;
                 StepVault(ref state, deltaTime);
                 return;
             }
             bool walking = grounded;
-            if (grounded && jump && TryStartJump(ref state, position, world))
+            if (grounded && jump && TryStartJump(ref state, position, scene))
             {
                 state.VelocityY = MoveSettings.JumpSpeed;
                 if (sprinting) state.HorizontalVelocity = move * (MoveSettings.SprintSpeed * MovementTuning.SprintJumpSpeedScale);
@@ -168,21 +211,17 @@ namespace ProjectH.Shared.Simulation
             float startZ = position.Z;
             bool blocked = false;
             float wantX = state.HorizontalVelocity.X * deltaTime;
-            float movedX = Sweep(position, height, AxisX, wantX, world, terrain, out int hitX);
-            position.X += movedX;
-            if (movedX != wantX)
+            if (MoveAxis(ref position, height, AxisX, wantX, grounded, scene, out ColliderId hitX))
             {
                 state.HorizontalVelocity.X = 0f;
                 result.BlockedBy = hitX;
                 blocked = true;
             }
             float wantZ = state.HorizontalVelocity.Y * deltaTime;
-            float movedZ = Sweep(position, height, AxisZ, wantZ, world, terrain, out int hitZ);
-            position.Z += movedZ;
-            if (movedZ != wantZ)
+            if (MoveAxis(ref position, height, AxisZ, wantZ, grounded, scene, out ColliderId hitZ))
             {
                 state.HorizontalVelocity.Y = 0f;
-                if (result.BlockedBy < 0) result.BlockedBy = hitZ;
+                if (result.BlockedBy.IsNone) result.BlockedBy = hitZ;
                 result.BlockedByZ = hitZ;
                 blocked = true;
             }
@@ -191,24 +230,26 @@ namespace ProjectH.Shared.Simulation
 
             // 8) Phase 6 D4: uphill the terrain lifts the feet; downhill a walking character follows the slope instead
             //    of leaving the ground for a tick. MaxSlope bounds the drop over the distance moved, and the Y sweep
-            //    stops on a box top on the way down.
-            float floor = terrain.Height(position.X, position.Z);
+            //    stops on a box top on the way down. Phase 13: a ramp or roof is a floor like the terrain where the feet
+            //    can climb onto it (its surface at most MaxSlope times the distance moved above them).
+            float dx = position.X - startX;
+            float dz = position.Z - startZ;
+            float reach = MathF.Sqrt(dx * dx + dz * dz) * MoveSettings.MaxSlope + MoveSettings.GroundProbe;
+            float floor = FloorUnder(position, position.Y + reach, scene, out _);
             if (position.Y < floor)
             {
                 position.Y = floor;
             }
             else if (walking)
             {
-                float dx = position.X - startX;
-                float dz = position.Z - startZ;
-                float reach = MathF.Sqrt(dx * dx + dz * dz) * MoveSettings.MaxSlope + MoveSettings.GroundProbe;
                 float drop = position.Y - floor;
-                if (drop > 0f && drop <= reach) position.Y += Sweep(position, height, AxisY, -drop, world, terrain, out _);
+                if (drop > 0f && drop <= reach) position.Y += Sweep(position, height, AxisY, -drop, scene, out _);
             }
 
-            // 9) Y sweep, the floor being the terrain. Stopped on the way down is a landing (D10).
+            // 9) Y sweep, the floor being the terrain and the slopes under the feet. Stopped on the way down is a landing
+            //    (D10).
             float wantY = state.VelocityY * deltaTime;
-            float movedY = Sweep(position, height, AxisY, wantY, world, terrain, out _);
+            float movedY = Sweep(position, height, AxisY, wantY, scene, out _);
             if (movedY != wantY)
             {
                 if (wantY < 0f) result.LandingSpeed = -state.VelocityY;
@@ -219,6 +260,92 @@ namespace ProjectH.Shared.Simulation
             state.Position = position;
         }
 
+        // One horizontal axis: the box sweep (on the ground a box top within StepUpHeight is stepped onto when the body
+        // fits there), then the slopes (D2): a move that would put the body into a slope's slab without being a climb onto
+        // its surface does not happen at all. Returns true when the axis was blocked (hit says by what).
+        private static bool MoveAxis(ref Vector3 position, float height, int axis, float want, bool stepUp, Scene scene, out ColliderId hit)
+        {
+            float moved = Sweep(position, height, axis, want, scene, out int boxHit);
+            if (stepUp && moved != want && boxHit >= 0)
+            {
+                float top = scene.Boxes[boxHit].Max.Y;
+                float rise = top - position.Y;
+                if (rise > 0f && rise <= MovementTuning.StepUpHeight)
+                {
+                    Vector3 lifted = position;
+                    lifted.Y = top;
+                    if (Fits(lifted, height, scene))
+                    {
+                        float liftedMoved = Sweep(lifted, height, axis, want, scene, out int liftedHit);
+                        if (MathF.Abs(liftedMoved) > MathF.Abs(moved))
+                        {
+                            position = lifted;
+                            moved = liftedMoved;
+                            boxHit = liftedHit;
+                        }
+                    }
+                }
+            }
+            hit = scene.BoxId(boxHit);
+            if (moved != 0f)
+            {
+                Vector3 to = position;
+                if (axis == AxisX) to.X += moved;
+                else to.Z += moved;
+                int slope = SlopeBlocking(position, to, height, MathF.Abs(moved), scene);
+                if (slope >= 0)
+                {
+                    hit = scene.SlopeId(slope);
+                    return want != 0f;
+                }
+                position = to;
+            }
+            return moved != want;
+        }
+
+        // The first slope whose slab the body would enter at `to` (moved from `from` by `moved` metres) other than by
+        // climbing onto it, or -1. A slab the body was already in at `from` does not block (it may walk out).
+        private static int SlopeBlocking(Vector3 from, Vector3 to, float height, float moved, Scene scene)
+        {
+            ReadOnlySpan<Slope> slopes = scene.Slopes;
+            float climb = moved * MoveSettings.MaxSlope + MoveSettings.GroundProbe;
+            for (int i = 0; i < slopes.Length; i++)
+            {
+                if (!InSlab(to, height, slopes[i], out float high)) continue;
+                if (high - to.Y <= climb) continue;
+                if (InSlab(from, height, slopes[i], out _)) continue;
+                return i;
+            }
+            return -1;
+        }
+
+        // The body at these feet is inside the slope's slab (between its bottom and its surface, under the footprint),
+        // by more than Skin. high: the surface's highest point under the footprint.
+        private static bool InSlab(Vector3 feet, float height, in Slope slope, out float high)
+        {
+            if (!slope.Range(feet.X - MoveSettings.HalfWidth, feet.Z - MoveSettings.HalfWidth, feet.X + MoveSettings.HalfWidth,
+                    feet.Z + MoveSettings.HalfWidth, out _, out high, out float bottom)) return false;
+            return feet.Y < high - MoveSettings.Skin && feet.Y + height > bottom + MoveSettings.Skin;
+        }
+
+        // The highest floor under the footprint at or below `upTo`: the terrain under the feet or a slope's surface.
+        // onTerrain: the terrain is that floor.
+        private static float FloorUnder(Vector3 feet, float upTo, Scene scene, out bool onTerrain)
+        {
+            float floor = scene.Terrain.Height(feet.X, feet.Z);
+            onTerrain = true;
+            ReadOnlySpan<Slope> slopes = scene.Slopes;
+            for (int i = 0; i < slopes.Length; i++)
+            {
+                if (!slopes[i].Range(feet.X - MoveSettings.HalfWidth, feet.Z - MoveSettings.HalfWidth, feet.X + MoveSettings.HalfWidth,
+                        feet.Z + MoveSettings.HalfWidth, out _, out float high, out _)) continue;
+                if (high > upTo || high <= floor) continue;
+                floor = high;
+                onTerrain = false;
+            }
+            return floor;
+        }
+
         // D7: crouch held on the ground: a slide while sprinting (Sprint held, not exhausted, at least SlideMinStartSpeed),
         // otherwise a crouch. So a crouch held through a landing, or pressed at walking speed, never slides. Released: stand
         // up where the standing box fits (a slide that cannot stand becomes a crouch).
@@ -226,7 +353,7 @@ namespace ProjectH.Shared.Simulation
         // Exhausted (and an exhausted character cannot start a slide). Without this cost a Sprint+Crouch hop chain is free:
         // each landing starts a slide before any sprint tick is counted, and the air costs nothing.
         // Returns true when a slide started this tick.
-        private static bool UpdatePosture(ref MoveState state, Vector3 position, bool crouchHeld, bool sprintHeld, ReadOnlySpan<Box> world,
+        private static bool UpdatePosture(ref MoveState state, Vector3 position, bool crouchHeld, bool sprintHeld, Scene scene,
             float deltaTime)
         {
             switch (state.Mode)
@@ -245,11 +372,11 @@ namespace ProjectH.Shared.Simulation
                     return false;
 
                 case MovementMode.Crouch:
-                    if (!crouchHeld && CanStand(position, world)) state.Mode = MovementMode.Ground;
+                    if (!crouchHeld && CanStand(position, scene)) state.Mode = MovementMode.Ground;
                     return false;
 
                 case MovementMode.Slide:
-                    if (!crouchHeld) state.Mode = CanStand(position, world) ? MovementMode.Ground : MovementMode.Crouch;
+                    if (!crouchHeld) state.Mode = CanStand(position, scene) ? MovementMode.Ground : MovementMode.Crouch;
                     return false;
             }
             return false;
@@ -298,13 +425,13 @@ namespace ProjectH.Shared.Simulation
         // Crouch is ignored (D12). Touching the ground lands in Ground mode with no horizontal velocity and no fall damage
         // (LandingSpeed stays 0, D10). The outer walls are only 4 m high, so the air is bounded by them too.
         private static void StepAir(ref MoveState state, InputButtons buttons, float moveX, float moveY, float sin, float cos, float deltaTime,
-            ReadOnlySpan<Box> world, HeightField terrain)
+            Scene scene)
         {
             Vector3 position = state.Position;
-            Depenetrate(ref position, MoveSettings.Height, world, terrain);
+            Depenetrate(ref position, MoveSettings.Height, scene);
 
             bool freefall = state.Mode == MovementMode.Freefall;
-            if (freefall && ((buttons & InputButtons.Jump) != 0 || GroundDistance(position, world, terrain) <= MovementTuning.GlideAutoDeployHeight))
+            if (freefall && ((buttons & InputButtons.Jump) != 0 || GroundDistance(position, scene) <= MovementTuning.GlideAutoDeployHeight))
             {
                 state.Mode = MovementMode.Glide;
                 freefall = false;
@@ -337,14 +464,10 @@ namespace ProjectH.Shared.Simulation
             alongRight += change.Y;
             state.HorizontalVelocity = forward * alongForward + right * alongRight;
 
-            float wantX = state.HorizontalVelocity.X * deltaTime;
-            float movedX = Sweep(position, MoveSettings.Height, AxisX, wantX, world, terrain, out _);
-            position.X += movedX;
-            if (movedX != wantX) state.HorizontalVelocity.X = 0f;
-            float wantZ = state.HorizontalVelocity.Y * deltaTime;
-            float movedZ = Sweep(position, MoveSettings.Height, AxisZ, wantZ, world, terrain, out _);
-            position.Z += movedZ;
-            if (movedZ != wantZ) state.HorizontalVelocity.Y = 0f;
+            float startX = position.X;
+            float startZ = position.Z;
+            if (MoveAxis(ref position, MoveSettings.Height, AxisX, state.HorizontalVelocity.X * deltaTime, false, scene, out _)) state.HorizontalVelocity.X = 0f;
+            if (MoveAxis(ref position, MoveSettings.Height, AxisZ, state.HorizontalVelocity.Y * deltaTime, false, scene, out _)) state.HorizontalVelocity.Y = 0f;
 
             const float bound = GameMap.HalfSize - MoveSettings.HalfWidth - MoveSettings.Skin;
             if (position.X > bound || position.X < -bound)
@@ -359,14 +482,17 @@ namespace ProjectH.Shared.Simulation
             }
 
             bool landed = false;
-            float floor = terrain.Height(position.X, position.Z);
+            float dx = position.X - startX;
+            float dz = position.Z - startZ;
+            float reach = MathF.Sqrt(dx * dx + dz * dz) * MoveSettings.MaxSlope + MoveSettings.GroundProbe;
+            float floor = FloorUnder(position, position.Y + reach, scene, out _);
             if (position.Y < floor)
             {
-                position.Y = floor;   // came over rising terrain
+                position.Y = floor;   // came over rising terrain (or onto a ramp)
                 landed = true;
             }
             float wantY = state.VelocityY * deltaTime;
-            float movedY = Sweep(position, MoveSettings.Height, AxisY, wantY, world, terrain, out _);
+            float movedY = Sweep(position, MoveSettings.Height, AxisY, wantY, scene, out _);
             position.Y += movedY;
             if (landed || movedY != wantY)
             {
@@ -379,13 +505,21 @@ namespace ProjectH.Shared.Simulation
 
         // D6: height of the feet above the ground under them: the terrain or the highest box top below the feet under
         // the character's footprint.
-        public static float GroundDistance(Vector3 feet, ReadOnlySpan<Box> world, HeightField terrain)
+        public static float GroundDistance(Vector3 feet, ReadOnlySpan<Box> world, HeightField terrain) =>
+            GroundDistance(feet, new Scene(world, default, default, default, terrain));
+
+        // Phase 13: the same in a gathered world, slopes included.
+        public static float GroundDistance(Vector3 feet, CollisionWorld world, HeightField terrain) =>
+            GroundDistance(feet, new Scene(world.Boxes, world.BoxIds, world.Slopes, world.SlopeIds, terrain));
+
+        private static float GroundDistance(Vector3 feet, Scene scene)
         {
-            float ground = terrain.Height(feet.X, feet.Z);
+            float ground = FloorUnder(feet, feet.Y + MoveSettings.GroundProbe, scene, out _);
             float minX = feet.X - MoveSettings.HalfWidth;
             float maxX = feet.X + MoveSettings.HalfWidth;
             float minZ = feet.Z - MoveSettings.HalfWidth;
             float maxZ = feet.Z + MoveSettings.HalfWidth;
+            ReadOnlySpan<Box> world = scene.Boxes;
             for (int i = 0; i < world.Length; i++)
             {
                 ref readonly Box box = ref world[i];
@@ -403,10 +537,11 @@ namespace ProjectH.Shared.Simulation
         // constant velocity for its ticks, so the snapshot's velocities and ModeTicks are all a replay needs.
         // Linear passes over the boxes; it runs on every grounded tick that reads the jump level (forward + jump held).
         // The straight path must be clear of every box except the obstacle itself (a wall or door between is a blocker),
-        // and a hurdle lands on a surface within VaultBaseTolerance of the feet's level.
-        private static bool TryStartVault(ref MoveState state, Vector3 feet, Vector2 direction, ReadOnlySpan<Box> world, HeightField terrain,
-            float deltaTime)
+        // and a hurdle lands on a surface within VaultBaseTolerance of the feet's level. Phase 13: obstacles are boxes
+        // (walls and floors included); a ramp or roof is never one, but a destination on one counts as ground.
+        private static bool TryStartVault(ref MoveState state, Vector3 feet, Vector2 direction, Scene scene, float deltaTime)
         {
+            ReadOnlySpan<Box> world = scene.Boxes;
             int obstacle = -1;
             float nearest = MovementTuning.VaultReach;
             for (int i = 0; i < world.Length; i++)
@@ -439,15 +574,15 @@ namespace ProjectH.Shared.Simulation
                 float reach = back + MoveSettings.HalfWidth + MovementTuning.HurdleLandingGap;
                 float x = feet.X + direction.X * reach;
                 float z = feet.Z + direction.Y * reach;
-                float surface = SurfaceUnder(x, z, feet.Y, world, terrain);
+                float surface = SurfaceUnder(x, z, feet.Y, scene);
                 destination = new Vector3(x, surface, z);
-                found = MathF.Abs(surface - feet.Y) <= MovementTuning.VaultBaseTolerance && IsFreeStand(destination, world, terrain);
+                found = MathF.Abs(surface - feet.Y) <= MovementTuning.VaultBaseTolerance && IsFreeStand(destination, scene);
             }
             if (!found)
             {
                 float reach = MathF.Min(face + MovementTuning.MantleInset, (face + back) * 0.5f);
                 destination = new Vector3(feet.X + direction.X * reach, target.Max.Y, feet.Z + direction.Y * reach);
-                found = IsFreeStand(destination, world, terrain);
+                found = IsFreeStand(destination, scene);
             }
             if (!found || !IsPathClear(feet, destination, obstacle, world)) return false;
             // Skin above the surface: the constant-velocity sum may land a hair low, and the next ground check snaps the
@@ -464,10 +599,11 @@ namespace ProjectH.Shared.Simulation
         }
 
         // The highest surface under a footprint at (x, z) that is not above the feet's level (plus the vault tolerance): the
-        // terrain or a box top.
-        private static float SurfaceUnder(float x, float z, float feetY, ReadOnlySpan<Box> world, HeightField terrain)
+        // terrain, a slope or a box top.
+        private static float SurfaceUnder(float x, float z, float feetY, Scene scene)
         {
-            float surface = terrain.Height(x, z);
+            float surface = FloorUnder(new Vector3(x, feetY, z), feetY + MovementTuning.VaultBaseTolerance, scene, out _);
+            ReadOnlySpan<Box> world = scene.Boxes;
             for (int i = 0; i < world.Length; i++)
             {
                 ref readonly Box box = ref world[i];
@@ -499,9 +635,9 @@ namespace ProjectH.Shared.Simulation
             return true;
         }
 
-        // The standing box fits at these feet: no box overlaps it and the terrain is not above the feet.
-        private static bool IsFreeStand(Vector3 feet, ReadOnlySpan<Box> world, HeightField terrain) =>
-            feet.Y >= terrain.Height(feet.X, feet.Z) - MoveSettings.GroundProbe && !OverlapsAny(feet, MoveSettings.Height, world);
+        // The standing box fits at these feet: no box or slab overlaps it and the terrain is not above the feet.
+        private static bool IsFreeStand(Vector3 feet, Scene scene) =>
+            feet.Y >= scene.Terrain.Height(feet.X, feet.Z) - MoveSettings.GroundProbe && CanStand(feet, scene);
 
         // 2D ray from (x, z) along a unit direction against an X/Z rectangle: the distances where it enters and leaves.
         // False when it misses or the rectangle is behind.
@@ -547,11 +683,11 @@ namespace ProjectH.Shared.Simulation
 
         // A jump from the ground. A crouch stands up first and cannot jump where the standing box does not fit; a slide
         // jump becomes a normal jump with the slide's velocity.
-        private static bool TryStartJump(ref MoveState state, Vector3 position, ReadOnlySpan<Box> world)
+        private static bool TryStartJump(ref MoveState state, Vector3 position, Scene scene)
         {
             if (state.Mode == MovementMode.Crouch || state.Mode == MovementMode.Slide)
             {
-                if (!CanStand(position, world)) return false;
+                if (!CanStand(position, scene)) return false;
                 state.Mode = MovementMode.Ground;
             }
             return true;
@@ -609,9 +745,30 @@ namespace ProjectH.Shared.Simulation
         // D7: the standing box fits at these feet (nothing in the 0.6 m above a crouch).
         public static bool CanStand(Vector3 feet, ReadOnlySpan<Box> world) => !OverlapsAny(feet, MoveSettings.Height, world);
 
+        // Phase 13: neither a box nor a slope's slab (a ramp or roof overhead) is in the standing box.
+        private static bool CanStand(Vector3 feet, Scene scene) => Fits(feet, MoveSettings.Height, scene);
+
+        // A character box of this height at these feet is in no box and no slab.
+        private static bool Fits(Vector3 feet, float height, Scene scene)
+        {
+            if (OverlapsAny(feet, height, scene.Boxes)) return false;
+            ReadOnlySpan<Slope> slopes = scene.Slopes;
+            for (int i = 0; i < slopes.Length; i++)
+            {
+                if (InSlab(feet, height, slopes[i], out _)) return false;
+            }
+            return true;
+        }
+
         public static bool IsGrounded(in MoveState state, ReadOnlySpan<Box> world, HeightField terrain)
         {
-            return state.VelocityY <= 0f && TryFindGround(state.Position, world, terrain, out _, out _);
+            return state.VelocityY <= 0f && TryFindGround(state.Position, new Scene(world, default, default, default, terrain), out _, out _);
+        }
+
+        public static bool IsGrounded(in MoveState state, CollisionWorld world, HeightField terrain)
+        {
+            return state.VelocityY <= 0f &&
+                   TryFindGround(state.Position, new Scene(world.Boxes, world.BoxIds, world.Slopes, world.SlopeIds, terrain), out _, out _);
         }
 
         // True if the standing character box at these feet overlaps any box by more than zero on every axis.
@@ -635,55 +792,154 @@ namespace ProjectH.Shared.Simulation
             return false;
         }
 
-        private static void Depenetrate(ref Vector3 feet, float height, ReadOnlySpan<Box> world, HeightField terrain)
+        // Phase 13: a character box of this height is inside a gathered box by more than Skin on every axis, or inside a
+        // slope's slab. Tests use it for "nothing ever traps or swallows the character". piecesOnly: building pieces only
+        // (every slope is a piece), for the server's movement self-check.
+        public static bool Penetrates(Vector3 feet, float height, CollisionWorld world, bool piecesOnly = false)
         {
-            float floor = terrain.Height(feet.X, feet.Z);
-            if (feet.Y < floor) feet.Y = floor;
-
-            for (int i = 0; i < world.Length; i++)
+            GetBounds(feet, height, out Vector3 min, out Vector3 max);
+            ReadOnlySpan<Box> boxes = world.Boxes;
+            ReadOnlySpan<ColliderId> ids = world.BoxIds;
+            for (int i = 0; i < boxes.Length; i++)
             {
-                ref readonly Box box = ref world[i];
-                GetBounds(feet, height, out Vector3 min, out Vector3 max);
+                if (piecesOnly && ids[i].Kind != ColliderKind.Piece) continue;
+                if (OverlapDepth(min, max, boxes[i]) > MoveSettings.Skin) return true;
+            }
+            ReadOnlySpan<Slope> slopes = world.Slopes;
+            for (int i = 0; i < slopes.Length; i++)
+            {
+                if (InSlab(feet, height, slopes[i], out _)) return true;
+            }
+            return false;
+        }
 
-                float overlapX = MathF.Min(max.X, box.Max.X) - MathF.Max(min.X, box.Min.X);
-                float overlapY = MathF.Min(max.Y, box.Max.Y) - MathF.Max(min.Y, box.Min.Y);
-                float overlapZ = MathF.Min(max.Z, box.Max.Z) - MathF.Max(min.Z, box.Min.Z);
-                if (overlapX <= MoveSettings.Skin || overlapY <= MoveSettings.Skin || overlapZ <= MoveSettings.Skin) continue;
+        // Phase 13 D2: the start of a step leaves every box and slab it is in.
+        //  - Below the terrain: onto it.
+        //  - In a slope's slab (a ramp or roof built onto the character, rounding): onto its surface ("올라선다", D9).
+        //  - In a box: out through the face that needs the shortest push, in the fixed order -X, +X, -Z, +Z, +Y, -Y for
+        //    ties. Phase 13 (pieces touch side by side, unlike the map's boxes): a push that would put the character into
+        //    another box it was not in is skipped for the next shortest one, so two touching walls never push it back
+        //    and forth between them; only when every direction does that is the shortest taken. Down only while the feet
+        //    stay above the floor. A second pass catches what the first moved it into.
+        private static void Depenetrate(ref Vector3 feet, float height, Scene scene)
+        {
+            float terrain = scene.Terrain.Height(feet.X, feet.Z);
+            if (feet.Y < terrain) feet.Y = terrain;
 
-                // Distance to clear each face. The smallest wins; ties keep the first in this fixed
-                // order (-X, +X, -Z, +Z, +Y, -Y), so the result is deterministic.
-                float best = max.X - box.Min.X;
-                int direction = 0;
-                float push = box.Max.X - min.X;
-                if (push < best) { best = push; direction = 1; }
-                push = max.Z - box.Min.Z;
-                if (push < best) { best = push; direction = 2; }
-                push = box.Max.Z - min.Z;
-                if (push < best) { best = push; direction = 3; }
-                push = box.Max.Y - min.Y;
-                if (push < best) { best = push; direction = 4; }
-                push = max.Y - box.Min.Y;
-                // Pushing down is only allowed while the feet stay above the floor.
-                if (push < best && feet.Y - push - MoveSettings.Skin >= floor) { best = push; direction = 5; }
+            ReadOnlySpan<Slope> slopes = scene.Slopes;
+            for (int i = 0; i < slopes.Length; i++)
+            {
+                if (InSlab(feet, height, slopes[i], out float high)) feet.Y = high;
+            }
 
-                float distance = best + MoveSettings.Skin;
-                switch (direction)
+            ReadOnlySpan<Box> world = scene.Boxes;
+            Span<float> push = stackalloc float[6];
+            for (int pass = 0; pass < 2; pass++)
+            {
+                bool moved = false;
+                for (int i = 0; i < world.Length; i++)
                 {
-                    case 0: feet.X -= distance; break;
-                    case 1: feet.X += distance; break;
-                    case 2: feet.Z -= distance; break;
-                    case 3: feet.Z += distance; break;
-                    case 4: feet.Y += distance; break;
-                    default: feet.Y -= distance; break;
+                    ref readonly Box box = ref world[i];
+                    GetBounds(feet, height, out Vector3 min, out Vector3 max);
+                    if (OverlapDepth(min, max, box) <= MoveSettings.Skin) continue;
+
+                    // Distance to clear each face.
+                    push[0] = max.X - box.Min.X;
+                    push[1] = box.Max.X - min.X;
+                    push[2] = max.Z - box.Min.Z;
+                    push[3] = box.Max.Z - min.Z;
+                    push[4] = box.Max.Y - min.Y;
+                    push[5] = max.Y - box.Min.Y;
+                    // Pushing down is only allowed while the feet stay above the floor.
+                    float floor = FloorUnder(feet, feet.Y + MoveSettings.GroundProbe, scene, out _);
+                    if (feet.Y - push[5] - MoveSettings.Skin < floor) push[5] = float.PositiveInfinity;
+
+                    int chosen = -1;
+                    int shortest = -1;
+                    for (int round = 0; round < 6; round++)
+                    {
+                        int best = -1;
+                        for (int d = 0; d < 6; d++)
+                        {
+                            if (push[d] >= 0f && (best < 0 || push[d] < push[best])) best = d;
+                        }
+                        if (best < 0 || float.IsPositiveInfinity(push[best])) break;
+                        if (shortest < 0) shortest = best;
+                        if (!EntersAnother(feet, Pushed(feet, best, push[best] + MoveSettings.Skin), height, i, world))
+                        {
+                            chosen = best;
+                            break;
+                        }
+                        push[best] = -1f;   // tried
+                    }
+                    if (chosen < 0) chosen = shortest;
+                    if (chosen < 0) continue;
+                    // The tried pushes were marked -1; recompute the chosen one's distance.
+                    float distance = Distance(chosen, min, max, box) + MoveSettings.Skin;
+                    feet = Pushed(feet, chosen, distance);
+                    moved = true;
                 }
+                if (!moved) break;
             }
         }
 
-        // Highest floor or box top within GroundProbe of the feet, under the character's footprint. The terrain floor
-        // is its height under the feet (Phase 6 D4). onTerrain: the ground found is the terrain, not a box top.
-        private static bool TryFindGround(Vector3 feet, ReadOnlySpan<Box> world, HeightField terrain, out float groundY, out bool onTerrain)
+        private static float Distance(int direction, Vector3 min, Vector3 max, in Box box)
         {
-            float floor = terrain.Height(feet.X, feet.Z);
+            switch (direction)
+            {
+                case 0: return max.X - box.Min.X;
+                case 1: return box.Max.X - min.X;
+                case 2: return max.Z - box.Min.Z;
+                case 3: return box.Max.Z - min.Z;
+                case 4: return box.Max.Y - min.Y;
+                default: return max.Y - box.Min.Y;
+            }
+        }
+
+        private static Vector3 Pushed(Vector3 feet, int direction, float distance)
+        {
+            switch (direction)
+            {
+                case 0: feet.X -= distance; break;
+                case 1: feet.X += distance; break;
+                case 2: feet.Z -= distance; break;
+                case 3: feet.Z += distance; break;
+                case 4: feet.Y += distance; break;
+                default: feet.Y -= distance; break;
+            }
+            return feet;
+        }
+
+        // The character box at `to` is inside some box other than `skip` (by more than Skin) that it was not inside at
+        // `from`.
+        private static bool EntersAnother(Vector3 from, Vector3 to, float height, int skip, ReadOnlySpan<Box> world)
+        {
+            GetBounds(from, height, out Vector3 fromMin, out Vector3 fromMax);
+            GetBounds(to, height, out Vector3 toMin, out Vector3 toMax);
+            for (int j = 0; j < world.Length; j++)
+            {
+                if (j == skip) continue;
+                if (OverlapDepth(toMin, toMax, world[j]) > MoveSettings.Skin && OverlapDepth(fromMin, fromMax, world[j]) <= MoveSettings.Skin)
+                    return true;
+            }
+            return false;
+        }
+
+        // The smallest overlap of the character box with the box over the three axes (<= 0: apart or touching).
+        private static float OverlapDepth(Vector3 min, Vector3 max, in Box box)
+        {
+            float x = MathF.Min(max.X, box.Max.X) - MathF.Max(min.X, box.Min.X);
+            float y = MathF.Min(max.Y, box.Max.Y) - MathF.Max(min.Y, box.Min.Y);
+            float z = MathF.Min(max.Z, box.Max.Z) - MathF.Max(min.Z, box.Min.Z);
+            return MathF.Min(x, MathF.Min(y, z));
+        }
+
+        // Highest floor or box top within GroundProbe of the feet, under the character's footprint. The terrain floor
+        // is its height under the feet (Phase 6 D4); a slope's floor is its highest point under the footprint (Phase 13).
+        // onTerrain: the ground found is the terrain, not a box top or a slope.
+        private static bool TryFindGround(Vector3 feet, Scene scene, out float groundY, out bool onTerrain)
+        {
+            float floor = scene.Terrain.Height(feet.X, feet.Z);
             bool found = feet.Y <= floor + MoveSettings.GroundProbe;
             groundY = floor;
             onTerrain = found;
@@ -692,6 +948,7 @@ namespace ProjectH.Shared.Simulation
             float maxX = feet.X + MoveSettings.HalfWidth;
             float minZ = feet.Z - MoveSettings.HalfWidth;
             float maxZ = feet.Z + MoveSettings.HalfWidth;
+            ReadOnlySpan<Box> world = scene.Boxes;
             for (int i = 0; i < world.Length; i++)
             {
                 ref readonly Box box = ref world[i];
@@ -706,14 +963,28 @@ namespace ProjectH.Shared.Simulation
                     onTerrain = false;
                 }
             }
+            ReadOnlySpan<Slope> slopes = scene.Slopes;
+            for (int i = 0; i < slopes.Length; i++)
+            {
+                if (!slopes[i].Range(minX, minZ, maxX, maxZ, out _, out float top, out _)) continue;
+                if (top < feet.Y - MoveSettings.GroundProbe || top > feet.Y + MoveSettings.GroundProbe) continue;
+                if (!found || top > groundY)
+                {
+                    groundY = top;
+                    found = true;
+                    onTerrain = false;
+                }
+            }
             return found;
         }
 
         // How far the character may move along one axis (same sign as delta, |result| <= |delta|).
         // Every box that overlaps on the other two axes and lies ahead limits the move to its near
         // face minus Skin, whatever the distance, so a fast fall cannot pass through a thin box.
-        // hit: the index of the box that limited the move, -1 = none (the terrain floor or nothing).
-        private static float Sweep(Vector3 feet, float height, int axis, float delta, ReadOnlySpan<Box> world, HeightField terrain, out int hit)
+        // hit: the index of the box that limited the move, -1 = none (the floor, a slope or nothing).
+        // Phase 13: down, the floor is the terrain or a slope surface under the feet; up, a slope's slab overhead is a
+        // ceiling.
+        private static float Sweep(Vector3 feet, float height, int axis, float delta, Scene scene, out int hit)
         {
             hit = -1;
             if (delta == 0f) return 0f;
@@ -722,12 +993,25 @@ namespace ProjectH.Shared.Simulation
             float limit = MathF.Abs(delta);
             if (axis == AxisY && delta < 0f)
             {
-                // The terrain under the feet is the floor, no Skin.
-                float above = min.Y - terrain.Height(feet.X, feet.Z);
+                // The floor under the feet, no Skin.
+                float above = min.Y - FloorUnder(feet, feet.Y + MoveSettings.GroundProbe, scene, out _);
                 if (above < 0f) above = 0f;
                 if (above < limit) limit = above;
             }
+            else if (axis == AxisY)
+            {
+                ReadOnlySpan<Slope> slopes = scene.Slopes;
+                for (int i = 0; i < slopes.Length; i++)
+                {
+                    if (!slopes[i].Range(min.X, min.Z, max.X, max.Z, out _, out float high, out float bottom)) continue;
+                    if (high <= feet.Y + MoveSettings.GroundProbe || bottom < max.Y - MoveSettings.Skin) continue;   // a floor, or not overhead
+                    float gap = bottom - max.Y - MoveSettings.Skin;
+                    if (gap < 0f) gap = 0f;
+                    if (gap < limit) limit = gap;
+                }
+            }
 
+            ReadOnlySpan<Box> world = scene.Boxes;
             for (int i = 0; i < world.Length; i++)
             {
                 ref readonly Box box = ref world[i];

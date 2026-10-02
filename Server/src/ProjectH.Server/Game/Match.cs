@@ -62,6 +62,8 @@ public sealed class Match
     // uses _doors.World. _sentDoors is what every client was last told (DoorStates when it changes).
     private readonly DoorSet _doors = new();
     private byte _sentDoors;
+    // Phase 13 D3: the colliders around the player being moved, gathered before each Step (one buffer for everyone).
+    private readonly CollisionWorld _collision = new();
     // Participants who left during the current match, recorded when they left (they are no longer in _players).
     // At most MaxPlayers entries; cleared when a match starts.
     private readonly List<PlayerRecord> _leftParticipants = new();
@@ -370,11 +372,13 @@ public sealed class Match
     {
         MovementMode before = player.State.Mode;
         Vector3 from = player.State.Position;
-        MovementSimulation.Step(ref player.State, input, _tickSeconds, _doors.World, GameMap.Terrain, out StepResult step);
+        // Phase 13 D3: the same gather as the client's prediction (LocalPlayerPredictor.Simulate).
+        GatherAround(from);
+        MovementSimulation.Step(ref player.State, input, _tickSeconds, _collision, GameMap.Terrain, out StepResult step);
         player.Sprinting = step.Sprinting;
 
         // D9: sprinting or sliding into a closed door shoulders it open; the move goes on next tick.
-        if (step.Charging && step.BlockedBy >= 0)
+        if (step.Charging && !step.BlockedBy.IsNone)
         {
             int door = _doors.DoorBlocking(step);
             if (door >= 0) _doors.Set(door, true);
@@ -389,6 +393,13 @@ public sealed class Match
 
         // D10: like shots, a fall hurts only when damage is allowed (the dev sandbox, or during the match).
         return !(step.LandingSpeed > 0f && _flow.DamageAllowed && ApplyFallDamage(player, step.LandingSpeed));
+    }
+
+    // Phase 13 D3: the colliders a step at these feet may touch: map boxes, closed doors.
+    private CollisionWorld GatherAround(Vector3 feet)
+    {
+        _collision.Gather(feet, _doors.OpenMask, 0UL, null);
+        return _collision;
     }
 
     // Phase 12 D12: riding, falling, gliding and vaulting allow no shot, reload, pickup, interaction, heal, slot switch

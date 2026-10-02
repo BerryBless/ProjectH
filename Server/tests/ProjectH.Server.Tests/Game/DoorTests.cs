@@ -264,10 +264,13 @@ public class DoorTests
     {
         var doors = new DoorSet();
         var s = new MoveState { Position = OffCentre };
-        MovementSimulation.Step(ref s, SprintDiagonal, 1f / 30f, doors.World, GameMap.Terrain, out StepResult r);
+        // Phase 13 D3: the world gathered around the character names its colliders by kind and id.
+        var world = new CollisionWorld();
+        world.Gather(s.Position, doors.OpenMask, 0UL, null);
+        MovementSimulation.Step(ref s, SprintDiagonal, 1f / 30f, world, GameMap.Terrain, out StepResult r);
         Assert.True(r.Charging);
-        Assert.Equal(-1, doors.DoorAt(r.BlockedBy));          // the X sweep: the jamb
-        Assert.Equal(0, doors.DoorAt(r.BlockedByZ));          // the Z sweep: door 0
+        Assert.Equal(ColliderKind.Static, r.BlockedBy.Kind);                  // the X sweep: the jamb
+        Assert.Equal(new ColliderId(ColliderKind.Door, 0), r.BlockedByZ);     // the Z sweep: door 0
         Assert.Equal(0, doors.DoorBlocking(r));
         Assert.Equal(0, new PredictedDoors().DoorBlocking(r));
     }

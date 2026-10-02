@@ -51,4 +51,5 @@ Lock을 썼다면 Deadlock은 항상 확인한다.
 | 2026-10-01 | Shared 예외에 높이 격자 지형, 투입 지점, POI 추가 (`TestArena` → `GameMap`) | `game-core-rules` 4절 | 이동 예측이 서버와 같은 지형을 써야 하고, 맵 배치를 박스·지형과 함께 고쳐야 함 (Phase 6 D8) |
 | 2026-10-01 | 작업 경로에 봇(`Server/src/ProjectH.Bots`) 추가 | `game-core-rules` 작업 대상 경로 | 봇은 서버 폴더에 있지만 프로토콜로만 통신하는 Client임을 명시 (Phase 7 D1) |
 | 2026-10-02 | Shared 예외에 이동 모드·Vault 판정·수송기 경로 위치(`DropRoute`·`Ride`)·문 상자(`GameMap.Doors`) 추가 | `game-core-rules` 4절 | 예측과 서버가 같은 이동 결과를 내야 함. 경로 난수와 문 상호작용 규칙은 Shared 밖, 두 규칙 복사본이 같이 읽는 문 상호작용 거리·각도 상수만 Shared, 서버 전용 낙하 피해 상수는 서버(`CombatRules`) (Phase 12) |
+| 2026-10-02 | Shared 예외에 건설 격자·조각 모양·경사면·충돌 후보 수집·채집 대상 상자 추가 | `game-core-rules` 4절 | 예측과 서버가 같은 조각 충돌을 계산해야 함. 검증·지지·복제 규칙은 서버에만 둠 (Phase 13 D1–D3, D6) |
 | 2026-10-02 | Shared 예외에 건설 격자·조각 모양(`BuildGrid`)·채집 대상 상자(`GameMap.Harvestables`)·충돌 후보 수집(`CollisionWorld`) 추가 | `game-core-rules` 4절 | 서버와 예측이 같은 충돌 후보와 경사면으로 이동해야 함. 건설·채집 규칙은 서버에만 둠 (Phase 13) |

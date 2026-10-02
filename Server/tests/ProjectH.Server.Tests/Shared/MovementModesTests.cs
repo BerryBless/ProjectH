@@ -369,7 +369,7 @@ public class MovementModesTests
         StepResult r = default;
         for (int i = 0; i < 30 && s.Mode == MovementMode.Slide; i++) r = StepOnce(ref s, new InputCommand { Buttons = InputButtons.Crouch }, wall);
         Assert.Equal(MovementMode.Crouch, s.Mode);
-        Assert.Equal(0, r.BlockedBy);
+        Assert.Equal(new ColliderId(ColliderKind.Static, 0), r.BlockedBy);
         Assert.True(r.Charging);
     }
 

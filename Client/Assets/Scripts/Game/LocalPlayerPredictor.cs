@@ -7,8 +7,9 @@ using UnityEngine;
 namespace ProjectH.Client.Game
 {
     // Client-side prediction for the local player (Docs/Networking.md).
-    // Moves against Shared GameMap.Boxes plus the predicted closed doors (PredictedDoors) and GameMap.Terrain, the same
-    // world the server passes in Match.Tick.
+    // Moves against the world gathered around the character (Phase 13 D3, CollisionWorld): Shared GameMap.Boxes, the
+    // predicted closed doors (PredictedDoors), the standing harvestables and the confirmed building pieces, and
+    // GameMap.Terrain, gathered exactly as the server's Match.Move does.
     // Runs MovementSimulation at the server's tick rate, keeps a fixed 64-entry history of inputs and
     // results, and on each snapshot replays the inputs the server has not processed yet.
     // While dead (D9, D12) it predicts nothing: the server acks a dead player's inputs without moving it.
@@ -33,6 +34,7 @@ namespace ProjectH.Client.Game
         private readonly MoveState[] _results = new MoveState[HistorySize];
         private readonly float _stepSeconds;
         private readonly PredictedDoors _doors;
+        private readonly CollisionWorld _collision = new CollisionWorld();
         private MoveState _state;
         private MoveState _previous;
         private float _accumulator;
@@ -80,6 +82,11 @@ namespace ProjectH.Client.Game
         // The (fractional) server tick RenderPosition is drawn at: between the two newest steps, as RenderPosition. For the
         // transport view while riding, so the transport and the rider (and its camera) move together. Valid once HasTickBase.
         public double RenderTick => (double)(_tickBase + LastSeq - 1) + (double)_accumulator / _stepSeconds;
+
+        // Phase 13 D3, D6: the harvestables the server says are destroyed (HarvestStates) and the confirmed pieces
+        // (BuildStore; never the predicted ones). Replays use the newest values, like the doors.
+        public ulong DestroyedHarvestables { get; set; }
+        public PieceGrid Pieces { get; set; }
 
         // D5: the match's transport route (TransportRoute). Kept until the next one or ClearRoute; it acts only in Transport
         // mode.
@@ -162,11 +169,12 @@ namespace ProjectH.Client.Game
         {
             if (_hasRoute && _hasTickBase && DropTransport.Ride(ref state, command, _route, (uint)(_tickBase + command.Seq)))
             {
-                result = new StepResult { BlockedBy = -1, BlockedByZ = -1 };
+                result = default;
                 return;
             }
-            MovementSimulation.Step(ref state, command, _stepSeconds, _doors.World, GameMap.Terrain, out result);
-            if (result.Charging && result.BlockedBy >= 0)
+            _collision.Gather(state.Position, _doors.OpenMask, DestroyedHarvestables, Pieces);
+            MovementSimulation.Step(ref state, command, _stepSeconds, _collision, GameMap.Terrain, out result);
+            if (result.Charging && !result.BlockedBy.IsNone)
             {
                 int door = _doors.DoorBlocking(result);
                 if (door >= 0) _doors.Predict(door, true, _time);

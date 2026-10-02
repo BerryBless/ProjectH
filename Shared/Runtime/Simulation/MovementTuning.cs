@@ -83,6 +83,12 @@ namespace ProjectH.Shared.Simulation
         public const float DoorInteractRange = 2.5f;
         public const float DoorInteractHalfAngle = 60f;
 
+        // Phase 13 D2: on the ground, a box whose top is at most this far above the feet does not stop a walk: the feet step
+        // onto it. Building pieces need it where a ramp meets a floor or a wall top (the ramp's surface under the footprint
+        // reaches the level's height only past the wall's half thickness: 0.075 m short). The map's boxes never have a top
+        // this close above walkable ground (GameMapTests), so their collision is unchanged.
+        public const float StepUpHeight = 0.1f;
+
         // Fall damage (D3, D10) is a server rule: its numbers are CombatRules.FallDamage*, not here.
     }
 }

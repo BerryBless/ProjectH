@@ -4,6 +4,33 @@ using System.Numerics;
 
 namespace ProjectH.Shared.Simulation
 {
+    // Phase 13 D6: what a harvestable map object is. Values are stable (the map data and tests name them).
+    public enum HarvestKind : byte
+    {
+        Tree = 0,    // Wood
+        Rock = 1,    // Stone
+        Wreck = 2,   // Metal
+        Crate = 3,   // Wood (a wooden crate of the earlier map)
+    }
+
+    // Phase 13 D6: one harvestable object: a solid box like the map's boxes while it stands, gone (from movement, shots
+    // and the client's view) once the server destroys it. Its id is its index in GameMap.Harvestables.
+    public readonly struct Harvestable
+    {
+        public readonly Box Bounds;
+        public readonly HarvestKind Kind;
+
+        public Harvestable(Box bounds, HarvestKind kind)
+        {
+            Bounds = bounds;
+            Kind = kind;
+        }
+
+        // The resource it gives (request §14).
+        public BuildMaterialType Material =>
+            Kind == HarvestKind.Rock ? BuildMaterialType.Stone : Kind == HarvestKind.Wreck ? BuildMaterialType.Metal : BuildMaterialType.Wood;
+    }
+
     // Phase 6 map (D1-D7): 160 x 160 m inside the outer walls, terrain with hills and a plateau, four POIs and open
     // ground with cover. Client prediction and the authoritative server move against exactly these boxes and this
     // terrain (game-core-rules §4). Layout rules are checked by GameMapTests: boxes stand on flat terrain, no two
@@ -24,9 +51,12 @@ namespace ProjectH.Shared.Simulation
         // Phase 12 D9: a door fills its gap: DoorWidth wide, the wall's height, DoorThickness thick, centred in the wall.
         public const float DoorThickness = 0.2f;
         public const int DoorCount = 5;
+        // Phase 13 D6: at most 64 harvestables, so one ulong holds which are destroyed (HarvestStates).
+        public const int MaxHarvestables = 64;
 
         private static readonly Box[] s_boxes;
         private static readonly Box[] s_doors;
+        private static readonly Harvestable[] s_harvestables = new Harvestable[0];
 
         // Static constructor: the hills must exist before the terrain is built from them (field initializers would run
         // in textual order).
@@ -104,6 +134,10 @@ namespace ProjectH.Shared.Simulation
         // Phase 12 D9: the doors, in the order above (the three Rustvale houses: south, south, north; then Gearworks: north, south). Not part of
         // Boxes: a door is open or closed, and only the closed ones join the collision world (DoorStates bit i = Doors[i]).
         public static ReadOnlySpan<Box> Doors => s_doors;
+
+        // Phase 13 D6: the harvestable objects in a fixed order (id = index). Not part of Boxes: a destroyed one leaves the
+        // collision world (CollisionWorld.Gather skips it).
+        public static ReadOnlySpan<Harvestable> Harvestables => s_harvestables;
 
         public static HeightField Terrain { get; }
 
