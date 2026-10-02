@@ -22,7 +22,7 @@ dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 779
 | `--name-prefix` | bot | 이름 접두어 1–20자 |
 | `--stats-interval` | 10 | 로그 간격(초), 1 이상 |
 | `--build` | true | Phase 13. false면 건설을 전혀 하지 않는다(방어 벽·경사로도 없음. 부하 시나리오 A, Phase 12와 비교). `--build-spam`과 같이 쓸 수 없다 |
-| `--build-spam` | 0 | Phase 13. 0–20. 봇마다 초당 이만큼 건설 요청을 보낸다(부하 테스트, 건축 모드에 머문다). 0이면 보통 규칙(방어 벽, 높은 적 쪽 경사로)만 쓴다 |
+| `--build-spam` | 0 | Phase 13. 0–20. 봇마다 초당 이만큼 건설 요청을 보낸다(부하 테스트, 건축 모드에 머문다). 0이면 보통 규칙(방어 벽, 높은 적 쪽 경사로)만 쓴다. 요청마다 한 Tick 조준하고 다음 Tick에 보내므로 30 Hz에서 실제 상한은 초당 15개다(16–20은 15로 보낸다) |
 | `--reconnect` | false | true면 다시 해도 되는 끊김(Client와 같은 표, `Networking.md` "끊기와 재접속")에서 같은 이름으로 다시 접속한다. 끊긴 때부터 1·3·7초 뒤(Client와 같은 `DisconnectCodes.ReconnectOffsetSeconds`), 끊김마다 최대 3번이다. 시도마다 짧은 연결 예산(250 ms × 5, 약 1.5초)을 쓰고, 다음 시각에 아직 연결 중인 시도는 새 시도로 바꾼다. 처음 접속 실패는 다시 하지 않는다 |
 
 `--stats-interval` 초마다 한 줄을 남긴다: 연결된 수, 살아 있는 수(`alive`), 경기 상태, 보낸 입력/s, 받은 패킷/s, 받은 바이트/s, 봇 루프 p95 ms, 재접속 수(`reconnects`). `--reconnect true`가 아니면 끊긴 봇은 다시 접속하지 않는다.
