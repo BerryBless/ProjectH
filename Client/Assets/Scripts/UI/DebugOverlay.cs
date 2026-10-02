@@ -44,17 +44,18 @@ namespace ProjectH.Client.UI
         public DebugOverlay()
         {
             _root = UiFactory.CreateCanvas("DebugOverlay", 120, interactive: false);
+            // The lines start below the POI label (PoiLabel, top left from y -20, 40 high), so F1 never covers it.
             _text = UiFactory.CreateText("Line", _root.transform, string.Empty, 20, TextAnchor.UpperLeft, new Vector2(0f, 1f),
-                new Vector2(24f, -60f), new Vector2(900f, 30f));
+                new Vector2(24f, -100f), new Vector2(900f, 30f));
             _text.horizontalOverflow = HorizontalWrapMode.Overflow;
             _movement = UiFactory.CreateText("Movement", _root.transform, string.Empty, 20, TextAnchor.UpperLeft, new Vector2(0f, 1f),
-                new Vector2(24f, -90f), new Vector2(900f, 30f));
+                new Vector2(24f, -130f), new Vector2(900f, 30f));
             _movement.horizontalOverflow = HorizontalWrapMode.Overflow;
             _route = UiFactory.CreateText("Route", _root.transform, string.Empty, 20, TextAnchor.UpperLeft, new Vector2(0f, 1f),
-                new Vector2(24f, -120f), new Vector2(900f, 30f));
+                new Vector2(24f, -160f), new Vector2(900f, 30f));
             _route.horizontalOverflow = HorizontalWrapMode.Overflow;
             _build = UiFactory.CreateText("Build", _root.transform, string.Empty, 20, TextAnchor.UpperLeft, new Vector2(0f, 1f),
-                new Vector2(24f, -150f), new Vector2(900f, 30f));
+                new Vector2(24f, -190f), new Vector2(900f, 30f));
             _build.horizontalOverflow = HorizontalWrapMode.Overflow;
             _root.SetActive(false);
         }

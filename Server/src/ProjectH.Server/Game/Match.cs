@@ -147,7 +147,7 @@ public sealed class Match
         _build = new BuildWorld(_building);
         _replication = new BuildReplication(_build, _building, options.MaxPlayers);
         _support = new BuildSupport(_build.Capacity);
-        _buildCatalogWire = BuildCatalogWire(_building);
+        _buildCatalogWire = BuildCatalogWire(_building, _infiniteResources);
         _loadout = loadout ?? StartingLoadout.Empty;
         string? loadoutError = _loadout.Validate(data);
         if (loadoutError != null) throw new ArgumentException("Invalid starting loadout: " + loadoutError, nameof(loadout));
@@ -1848,7 +1848,9 @@ public sealed class Match
     }
 
     // Phase 13 D4: the BuildCatalog packet's content, built once.
-    private static BuildCatalogData BuildCatalogWire(BuildingCatalog c)
+    // infiniteResources: placement costs nothing (TryBuild), so the client is told cost 0; with the real cost its preview
+    // would judge NoResource and never send a request.
+    private static BuildCatalogData BuildCatalogWire(BuildingCatalog c, bool infiniteResources)
     {
         var data = new BuildCatalogData
         {
@@ -1865,7 +1867,7 @@ public sealed class Match
         for (int m = 0; m < BuildMaterials.Count; m++)
         {
             BuildMaterialConfig material = c.Material((BuildMaterialType)m);
-            data.ResourceCost[m] = (ushort)material.ResourceCost;
+            data.ResourceCost[m] = infiniteResources ? (ushort)0 : (ushort)material.ResourceCost;
             data.MaxHealth[m] = (ushort)material.MaxHealth;
             data.InitialHealth[m] = (ushort)material.InitialHealth;
             data.ConstructionTicks[m] = material.ConstructionTicks;

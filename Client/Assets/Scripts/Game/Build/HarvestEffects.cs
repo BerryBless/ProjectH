@@ -9,7 +9,8 @@ namespace ProjectH.Client.Game
     // Phase 13 D6, D7, D16 (request §18-§22): harvesting on screen, all presentation (the server decides hits and gains).
     //  - The weak point: a small marker where HarvestHit says it now is, until the target falls or a few seconds pass.
     //  - A hit: the marker flashes bigger on a weak point hit.
-    //  - A fall: a puff (a cube that grows and vanishes) where a harvestable or a piece was.
+    //  - A fall: a dust puff where a harvestable or a piece was: a few small translucent cubes (Sprites/Default, like the
+    //    build ghosts) that spread out, rise and shrink away in a short time.
     //  - The local swing: a tool head that sweeps in front of the player each swing interval while F's tool fires.
     // Created once, no colliders, nothing allocated per hit. Dispose destroys the objects and the materials.
     public sealed class HarvestEffects : System.IDisposable
@@ -18,8 +19,15 @@ namespace ProjectH.Client.Game
         private const float MarkerSize = 0.3f;
         private const float FlashSize = 0.55f;
         private const float FlashSeconds = 0.15f;
-        private const float PuffSeconds = 0.4f;
+        private const float PuffSeconds = 0.35f;
         private const int PuffCount = 4;
+        // Each puff is a few motes spread around its centre (fixed offsets: no randomness, nothing allocated).
+        private const int MotesPerPuff = 5;
+        private static readonly Vector3[] MoteOffsets =
+        {
+            new Vector3(0f, 0.1f, 0f), new Vector3(0.35f, 0f, 0.15f), new Vector3(-0.3f, 0.05f, 0.3f), new Vector3(0.1f, -0.05f, -0.35f),
+            new Vector3(-0.25f, 0.2f, -0.2f),
+        };
         private const float SwingSeconds = 0.2f;
 
         private readonly GameObject _root;
@@ -28,6 +36,8 @@ namespace ProjectH.Client.Game
         private readonly Transform _marker;
         private readonly Transform _tool;
         private readonly Transform[] _puffs = new Transform[PuffCount];
+        private readonly Transform[] _motes = new Transform[PuffCount * MotesPerPuff];
+        private readonly Vector3[] _puffCentre = new Vector3[PuffCount];
         private readonly float[] _puffStart = new float[PuffCount];
         private readonly float[] _puffSize = new float[PuffCount];
         private readonly RingCursor _nextPuff = new RingCursor(PuffCount);
@@ -42,10 +52,25 @@ namespace ProjectH.Client.Game
         {
             _root = new GameObject("HarvestEffects");
             _markerMaterial = new Material(source) { color = new Color(1f, 0.85f, 0.1f) };
-            _puffMaterial = new Material(source) { color = new Color(0.7f, 0.66f, 0.6f) };
+            // Dust: translucent where Sprites/Default is in the build (the ghosts' shader), else the opaque fallback.
+            Shader sprite = Shader.Find("Sprites/Default");
+            _puffMaterial = sprite != null ? new Material(sprite) { color = new Color(0.75f, 0.7f, 0.62f, 0.35f) }
+                : new Material(source) { color = new Color(0.7f, 0.66f, 0.6f) };
             _marker = CreateCube("WeakPoint", _markerMaterial, MarkerSize);
             _tool = CreateCube("HarvestTool", _markerMaterial, 0.18f);
-            for (int i = 0; i < PuffCount; i++) _puffs[i] = CreateCube("Puff", _puffMaterial, 1f);
+            for (int i = 0; i < PuffCount; i++)
+            {
+                _puffs[i] = new GameObject("Puff").transform;
+                _puffs[i].SetParent(_root.transform, false);
+                _puffs[i].gameObject.SetActive(false);
+                for (int k = 0; k < MotesPerPuff; k++)
+                {
+                    Transform mote = CreateCube("Mote", _puffMaterial, 1f);
+                    mote.SetParent(_puffs[i], false);
+                    mote.gameObject.SetActive(true);
+                    _motes[i * MotesPerPuff + k] = mote;
+                }
+            }
         }
 
         public void OnHit(in HarvestHit hit, float now)
@@ -85,6 +110,7 @@ namespace ProjectH.Client.Game
             int i = _nextPuff.Next();
             _puffStart[i] = now;
             _puffSize[i] = Mathf.Clamp(size, 0.5f, 5f);
+            _puffCentre[i] = center;
             _puffs[i].position = center;
             _puffs[i].gameObject.SetActive(true);
         }
@@ -119,8 +145,16 @@ namespace ProjectH.Client.Game
                     _puffs[i].gameObject.SetActive(false);
                     continue;
                 }
-                float s = _puffSize[i] * (0.6f + 0.6f * t) * (1f - t);
-                _puffs[i].localScale = new Vector3(s, s, s);
+                // Motes spread out to the puff's size and rise a little while they shrink to nothing.
+                float spread = _puffSize[i] * (0.4f + 0.6f * t);
+                float s = Mathf.Min(0.35f, _puffSize[i] * 0.15f) * (1f - t);
+                _puffs[i].position = _puffCentre[i] + new Vector3(0f, 0.6f * t, 0f);
+                for (int k = 0; k < MotesPerPuff; k++)
+                {
+                    Transform mote = _motes[i * MotesPerPuff + k];
+                    mote.localPosition = MoteOffsets[k] * spread;
+                    mote.localScale = new Vector3(s, s, s);
+                }
             }
             if (_swingStart >= 0f)
             {
