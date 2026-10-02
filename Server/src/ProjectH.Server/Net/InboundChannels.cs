@@ -6,7 +6,7 @@ namespace ProjectH.Server.Net;
 // The only handoff from LiteNetLib's threads to the game loop. Both channels are bounded:
 //
 // | Channel | Producer               | Consumer  | Capacity               | When full                          |
-// | Control | LiteNetLib event threads | GameLoop | MaxPlayers * 3         | TryWrite fails -> caller disconnects the peer |
+// | Control | LiteNetLib event threads | GameLoop | 3 * (MaxPlayers + ConnectBurstPerIp) (ServerOptions.ControlChannelCapacity) | TryWrite fails -> caller disconnects the peer |
 // | Input   | LiteNetLib event threads | GameLoop | MaxPlayers * InputBuffer | DropOldest (newest input matters most) |
 // | Build   | LiteNetLib event threads | GameLoop | MaxPlayers * BuildRequestQueue.Capacity | DropOldest (Phase 13 D8; the client's prediction of a dropped one times out) |
 //

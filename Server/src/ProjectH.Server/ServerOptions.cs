@@ -57,8 +57,12 @@ public sealed class ServerOptions
     // stops with exit code 1, so a supervisor restarts it instead of it holding its port as a zombie. 0 = off.
     public int FatalStallSeconds { get; set; } = 30;
 
-    // Each connection produces at most Connected + JoinRequested + Disconnected.
-    public int ControlChannelCapacity => MaxPlayers * 3;
+    // Each connection produces at most Connected + JoinRequested + Disconnected. Review round 1: room for every player
+    // plus one address's whole connect burst (each burst connection may connect, join and leave before the next drain),
+    // so that burst cannot fill the channel and get another player's message refused (closed with ServerError). With
+    // the per-IP limit off it is 3 per player, as before (churn is then not bounded per address).
+    public int ControlChannelCapacity => 3 * (MaxPlayers + (ConnectRateEnabled ? ConnectBurstPerIp : 0));
+    public bool ConnectRateEnabled => ConnectBurstPerIp > 0 && ConnectsPerIpPerSecond > 0;
     public int InputChannelCapacity => MaxPlayers * InputBufferPerPlayer;
     public byte SnapshotHz => (byte)(SimHz / SnapshotEveryTicks);
     // The client sends at most one input packet per simulation step; 2x leaves room for bursts
