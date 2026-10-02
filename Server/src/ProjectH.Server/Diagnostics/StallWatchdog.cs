@@ -31,6 +31,11 @@ public sealed class StallWatchdog : IDisposable
     private readonly TimeSpan _fatalAfter;   // Zero = off
     private readonly Action? _onFatalStall;
     private bool _fatalDone;   // set once, never cleared: the server is stopping
+    // Server review L9: when a caught exception was last logged (TimeProvider timestamp; inside Check only). The watchdog
+    // has no stats line to reset a flag, so it logs at most once per ErrorLogInterval (the default stats interval).
+    private static readonly TimeSpan ErrorLogInterval = TimeSpan.FromSeconds(10);
+    private bool _errorLogged;
+    private long _errorLoggedAt;
 
     public StallWatchdog(Func<long> lastTickTimestamp, TimeProvider time, HealthCounters health, ILogger logger, TimeSpan? threshold = null,
         TimeSpan fatalAfter = default, Action? onFatalStall = null)
@@ -53,6 +58,11 @@ public sealed class StallWatchdog : IDisposable
         try
         {
             CheckOnce();
+        }
+        catch (Exception ex)
+        {
+            // Server review L9: an exception escaping a timer callback would end the process.
+            OnError(ex);
         }
         finally
         {
@@ -83,6 +93,25 @@ public sealed class StallWatchdog : IDisposable
             _health.AddStallExit();
             _logger.LogCritical("Game loop stalled for {Seconds:F0} s: stopping the server (exit code 1)", since.TotalSeconds);
             _onFatalStall?.Invoke();
+        }
+    }
+
+    // Never throws (the log call is guarded too).
+    private void OnError(Exception ex)
+    {
+        _health.AddCallbackError();
+        try
+        {
+            long now = _time.GetTimestamp();
+            if (_errorLogged && _time.GetElapsedTime(_errorLoggedAt, now) < ErrorLogInterval) return;
+            _errorLogged = true;
+            _errorLoggedAt = now;
+            _logger.LogError(ex, "Exception in the stall watchdog's check (counted as callbackErrors; logged at most every {Seconds} s)",
+                ErrorLogInterval.TotalSeconds);
+        }
+        catch
+        {
+            // Counted above; nothing left to report it with.
         }
     }
 

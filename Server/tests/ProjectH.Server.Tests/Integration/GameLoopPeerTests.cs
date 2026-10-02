@@ -116,6 +116,19 @@ public sealed class GameLoopPeerTests
         Assert.Equal(1, loop.Health.Peers);
     }
 
+    // Server review L9: a throwing disconnect callback is counted and does not escape into LiteNetLib's thread.
+    [Fact]
+    public void AThrowingDisconnectCallback_IsCounted_AndDoesNotThrow()
+    {
+        using var host = new PeerHost();
+        NetPeer peer = host.AcceptPeer();
+        peer.Tag = new PeerState("p");
+        using var loop = new GameLoop(new ServerOptions { Port = 0, MaxPlayers = 4 }, TestGameData.Create(), NullLogger.Instance);
+        loop.Listener.CallbackFaultHook = _ => throw new InvalidOperationException("test fault");
+        loop.Listener.OnPeerDisconnected(peer, default);
+        Assert.Equal(1, loop.Health.CallbackErrors);
+    }
+
     [Fact]
     public void ProtocolMtu_FitsMaxPacketSizeInOneSequencedPacket()
     {

@@ -39,6 +39,8 @@ public sealed class NetworkListener : INetEventListener
     private int _handlerErrorLogged;
     // Server review M1: the same for socket errors (OnNetworkError). Interlocked: any LiteNetLib thread may report one.
     private int _networkErrorLogged;
+    // Server review L9: the same for exceptions caught in the connection request, disconnect and socket-error callbacks.
+    private int _callbackErrorLogged;
     // Set once by GameLoop (Stop, or the fatal path of repeated match resets) and never cleared: a stopping server
     // accepts no new connection. Written by the game loop or the host's thread, read on LiteNetLib's thread.
     private volatile bool _stopping;
@@ -82,6 +84,23 @@ public sealed class NetworkListener : INetEventListener
     {
         Volatile.Write(ref _handlerErrorLogged, 0);
         Volatile.Write(ref _networkErrorLogged, 0);
+        Volatile.Write(ref _callbackErrorLogged, 0);
+    }
+
+    // Server review L9: an exception caught in a callback (a server bug) is counted and logged once per stats interval,
+    // like a receive-handler exception. Never throws: the logger call is guarded too, it runs on LiteNetLib's thread.
+    private void OnCallbackError(Exception ex, string callback)
+    {
+        _health.AddCallbackError();
+        if (Interlocked.Exchange(ref _callbackErrorLogged, 1) != 0) return;
+        try
+        {
+            _logger.LogError(ex, "Exception in the {Callback} callback (first of this stats interval)", callback);
+        }
+        catch
+        {
+            // Counted above; nothing left to report it with.
+        }
     }
 
     // From now on every connection request is refused (as ServerFull: no protocol change, and the client does not
@@ -89,8 +108,41 @@ public sealed class NetworkListener : INetEventListener
     public void BeginStopping() => _stopping = true;
     internal bool IsStopping => _stopping;
 
+    // Server review L9: nothing may escape into LiteNetLib's thread, which serves every connection. A request that throws
+    // before Accept is refused (as ServerFull; not counted as a reject, callbackErrors counts it). One that throws after
+    // Accept is closed with ServerError: the game loop may never have heard of it, and nothing else would free its slot.
     public void OnConnectionRequest(ConnectionRequest request)
     {
+        NetPeer? accepted = null;
+        try
+        {
+            HandleConnectionRequest(request, ref accepted);
+        }
+        catch (Exception ex)
+        {
+            OnCallbackError(ex, "connection request");
+            try
+            {
+                if (accepted != null)
+                {
+                    _health.AddKick(DisconnectCode.ServerError);
+                    Close(accepted, DisconnectCode.ServerError);
+                }
+                else
+                {
+                    request.Reject(RejectServerFull);
+                }
+            }
+            catch
+            {
+                // The request or the peer is beyond help; LiteNetLib's own timeout ends it.
+            }
+        }
+    }
+
+    private void HandleConnectionRequest(ConnectionRequest request, ref NetPeer? accepted)
+    {
+        CallbackFaultHook?.Invoke("request");
         if (_stopping || Manager.ConnectedPeersCount >= _options.MaxPlayers)
         {
             Reject(request, RejectReason.ServerFull, RejectServerFull);
@@ -126,6 +178,8 @@ public sealed class NetworkListener : INetEventListener
         }
 
         NetPeer peer = request.Accept();
+        accepted = peer;
+        CallbackFaultHook?.Invoke("accepted");
         peer.Tag = new PeerState(connect.DevPlayerId);
         _health.AddConnection();
         // Server review M1: Debug, like every per-connection event (the Health line counts them).
@@ -159,8 +213,23 @@ public sealed class NetworkListener : INetEventListener
         // The server never connects out, so there is nothing else to handle.
     }
 
+    // Server review L9: guarded like OnConnectionRequest. A Disconnected message that is not written because of a throw is
+    // covered by the game loop's stale-peer sweep (the peer is no longer Connected).
     public void OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo)
     {
+        try
+        {
+            HandleDisconnect(peer, disconnectInfo);
+        }
+        catch (Exception ex)
+        {
+            OnCallbackError(ex, "disconnect");
+        }
+    }
+
+    private void HandleDisconnect(NetPeer peer, DisconnectInfo disconnectInfo)
+    {
+        CallbackFaultHook?.Invoke("disconnected");
         _health.AddDisconnect(disconnectInfo.Reason == DisconnectReason.Timeout);
         if (peer.Tag is PeerState state)
         {
@@ -188,6 +257,10 @@ public sealed class NetworkListener : INetEventListener
             OnBadPacket(peer, BadPacketReason.HandlerException);
         }
     }
+
+    // Test seam (server review L9): runs inside the other callbacks with where it is ("request" at the start of a connection
+    // request, "accepted" right after Accept, "disconnected", "networkError"), so a test can make one throw.
+    internal Action<string>? CallbackFaultHook { get; set; }
 
     // Test seam (D5): a hook that runs at the start of every receive, so a test can make the handler throw.
     internal Action? ReceiveFaultHook { get; set; }
@@ -295,12 +368,20 @@ public sealed class NetworkListener : INetEventListener
     }
 
     // Server review M1: counted (networkErrors) and logged once per stats interval, so a burst of socket errors cannot
-    // flood the log.
+    // flood the log. Server review L9: guarded like the other callbacks.
     public void OnNetworkError(IPEndPoint endPoint, SocketError socketError)
     {
-        _health.AddNetworkError();
-        if (Interlocked.Exchange(ref _networkErrorLogged, 1) == 0)
-            _logger.LogWarning("Network error {SocketError} from {EndPoint} (first of this stats interval)", socketError, endPoint);
+        try
+        {
+            CallbackFaultHook?.Invoke("networkError");
+            _health.AddNetworkError();
+            if (Interlocked.Exchange(ref _networkErrorLogged, 1) == 0)
+                _logger.LogWarning("Network error {SocketError} from {EndPoint} (first of this stats interval)", socketError, endPoint);
+        }
+        catch (Exception ex)
+        {
+            OnCallbackError(ex, "network error");
+        }
     }
 
     public void OnNetworkReceiveUnconnected(IPEndPoint remoteEndPoint, NetPacketReader reader, UnconnectedMessageType messageType)

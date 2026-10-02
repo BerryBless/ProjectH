@@ -58,6 +58,9 @@ public sealed class HealthCounters
     private long _playerFailures;
     // Server review M8: stalls that lasted FatalStallSeconds and stopped the server (at most 1 per process).
     private long _stallExits;
+    // Server review L9: exceptions caught at an entry point other code calls us through (LiteNetLib's connection request,
+    // disconnect and socket-error callbacks, the stall watchdog's timer).
+    private long _callbackErrors;
     // Phase 13 D18: written by the game loop after every tick (BuildCounts); the fields are read one by one.
     private long _buildPieces;
     private long _buildCells;
@@ -109,6 +112,7 @@ public sealed class HealthCounters
     public void AddConnectRateReject() => Interlocked.Increment(ref _connectRateRejects);
     public void AddPlayerFailure() => Interlocked.Increment(ref _playerFailures);
     public void AddStallExit() => Interlocked.Increment(ref _stallExits);
+    public void AddCallbackError() => Interlocked.Increment(ref _callbackErrors);
 
     public void SetGauges(int peers, int players, int graced, MatchFlowState state)
     {
@@ -179,6 +183,7 @@ public sealed class HealthCounters
     public long ConnectRateRejects => Interlocked.Read(ref _connectRateRejects);
     public long PlayerFailures => Interlocked.Read(ref _playerFailures);
     public long StallExits => Interlocked.Read(ref _stallExits);
+    public long CallbackErrors => Interlocked.Read(ref _callbackErrors);
     public int Peers => Volatile.Read(ref _peers);
     public int Players => Volatile.Read(ref _players);
     public int Graced => Volatile.Read(ref _graced);

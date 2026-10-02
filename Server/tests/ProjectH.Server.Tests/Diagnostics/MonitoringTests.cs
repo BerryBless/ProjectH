@@ -46,6 +46,7 @@ public class MonitoringTests
         loop.StatsQueries.AddLimited();
         loop.StatsQueries.AddLimited();
         loop.Health.AddNetworkError();
+        loop.Health.AddCallbackError();
         loop.Health.AddStallExit();
         loop.Health.AddPlayerFailure();
         loop.Health.AddConnectRateReject();
@@ -74,6 +75,7 @@ public class MonitoringTests
                      "db saved=3 failed=1 discarded=2 dropped=4",
                      "stats requests=0 limited=2 busy=0 unavailable=0 undelivered=0",
                      "networkErrors=1",   // server review M1
+                     "callbackErrors=1",   // server review L9
                      "stallExits=1",   // server review M8
                      "playerFailures=1",   // server review M7
                  })
@@ -103,6 +105,7 @@ public class MonitoringTests
         health.AddBuildInboxDrop();
         health.AddBuildInboxDrop();
         health.AddNetworkError();
+        health.AddCallbackError();
         health.AddStallExit();
         health.AddPlayerFailure();
         health.AddConnectRateReject();
@@ -141,6 +144,7 @@ public class MonitoringTests
         Assert.Contains(("projecth.build.inbox_drops", 2L, ""), seen);
         Assert.Contains(("projecth.harvest.hits", 9L, ""), seen);
         Assert.Contains(("projecth.network_errors", 1L, ""), seen);   // server review M1
+        Assert.Contains(("projecth.callback_errors", 1L, ""), seen);   // server review L9
         Assert.Contains(("projecth.stall_exits", 1L, ""), seen);   // server review M8
         Assert.Contains(("projecth.player_failures", 1L, ""), seen);   // server review M7
         Assert.Contains(("projecth.rejects", 1L, "reason=ConnectRate"), seen);   // server review M2
