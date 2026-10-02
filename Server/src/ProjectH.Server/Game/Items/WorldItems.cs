@@ -84,7 +84,8 @@ public sealed class WorldItems
 
     // D8: the item nearest to feet (3D distance) among those within horizontalRange on the ground plane
     // and verticalRange up or down, or -1. Ties go to the lower ItemId, so the result does not depend on
-    // the storage order (the client prompt applies the same rule to its own list).
+    // the storage order (the client prompt applies the same rule to its own list). Phase 13 D15: never a Material
+    // item (those are picked up on touch).
     public int FindNearest(Vector3 feet, float horizontalRange, float verticalRange)
     {
         int best = -1;
@@ -92,6 +93,7 @@ public sealed class WorldItems
         float rangeSq = horizontalRange * horizontalRange;
         for (int i = 0; i < _count; i++)
         {
+            if (_items[i].Data.Kind == ItemKind.Material) continue;
             Vector3 d = _items[i].Data.Position - feet;
             float horizontalSq = d.X * d.X + d.Z * d.Z;
             if (horizontalSq > rangeSq || d.Y > verticalRange || d.Y < -verticalRange) continue;

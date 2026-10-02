@@ -135,7 +135,11 @@ public class ItemPacketTests
     [Theory]
     [InlineData(0, ItemKind.Weapon, 1, 0, 5)]        // id 0 is "none"
     [InlineData(1, ItemKind.None, 1, 0, 5)]
-    [InlineData(1, (ItemKind)4, 1, 0, 5)]
+    [InlineData(1, (ItemKind)5, 1, 0, 5)]            // Phase 13: 4 is Material
+    [InlineData(1, ItemKind.Material, 0, 0, 5)]      // no such material (DefId = material + 1)
+    [InlineData(1, ItemKind.Material, 4, 0, 5)]
+    [InlineData(1, ItemKind.Material, 1, 1, 5)]      // no rarity
+    [InlineData(1, ItemKind.Material, 1, 0, 0)]      // empty
     [InlineData(1, ItemKind.Weapon, 0, 0, 5)]        // weapon id 0
     [InlineData(1, ItemKind.Weapon, 1, 5, 5)]        // rarity out of range
     [InlineData(1, ItemKind.Ammo, 4, 0, 60)]         // no such ammo type

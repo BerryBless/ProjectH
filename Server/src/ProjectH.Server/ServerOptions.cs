@@ -35,6 +35,9 @@ public sealed class ServerOptions
     // the zone's clock starts when the route ends. Off = everyone starts on a drop point as in Phases 6-11 (most rule
     // tests, and a load run that compares with them). Never with DevRespawn.
     public bool AirDrop { get; set; } = true;
+    // Phase 13 D17 (request §136): building costs nothing (load tests: --Server:BuildInfiniteResources=true). Off in
+    // production; bots in a real match follow the normal resource rules.
+    public bool BuildInfiniteResources { get; set; }
 
     // Phase 10 (D2-D4): a participant who drops during a match keeps its character this long (0 = off); a connection
     // must join within JoinTimeoutSeconds; a joined player that sends no input for InputTimeoutSeconds is disconnected

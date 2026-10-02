@@ -17,6 +17,10 @@ public static class ItemRules
     public const float DeathDropRadius = 1f;   // D12: a dead player's items lie on a 1 m circle
     // Knee height of the "is a box in the way" ray: sees 1 m boxes, passes over the box being stood on.
     private const float BlockCheckHeight = 0.5f;
+    // Phase 13 D15: a Material item (a dead player's resources) is picked up by walking within this distance (across the
+    // ground; up or down PickupHeight), checked every MaterialPickupEveryTicks ticks. E never picks one.
+    public const float MaterialPickupRange = 1.5f;
+    public const int MaterialPickupEveryTicks = 3;
 
     // How many more of this ammo type or consumable the inventory can hold (D3, D9). Weapons have no stack.
     public static int Room(Inventory inventory, ItemCatalog items, ItemKind kind, byte defId)
@@ -31,7 +35,7 @@ public static class ItemRules
                 int have = consumable == ConsumableType.Medkit ? inventory.Medkits : inventory.ShieldCells;
                 return Math.Max(0, items.Consumable(consumable).MaxStack - have);
             default:
-                return 0;
+                return 0;   // weapons have no stack; Material's room is the building catalog's (Match.PickUpMaterials)
         }
     }
 
@@ -41,6 +45,16 @@ public static class ItemRules
         {
             var type = (AmmoType)defId;
             inventory.SetAmmo(type, inventory.GetAmmo(type) + amount);
+        }
+        else if (kind == ItemKind.Material)
+        {
+            // Phase 13 D15: explicit, so a Material never falls through to the consumables below.
+            var material = (BuildMaterialType)(defId - 1);
+            inventory.SetResource(material, inventory.Resource(material) + amount);
+        }
+        else if (kind != ItemKind.Consumable)
+        {
+            return;
         }
         else if ((ConsumableType)defId == ConsumableType.Medkit)
         {

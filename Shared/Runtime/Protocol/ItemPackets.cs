@@ -17,6 +17,7 @@ namespace ProjectH.Shared.Protocol
         Weapon = 1,       // DefId = weapon id, Rarity 0-4, Amount = rounds in the magazine (may be 0)
         Ammo = 2,         // DefId = AmmoType, Amount = rounds
         Consumable = 3,   // DefId = ConsumableType, Amount = count
+        Material = 4,     // Phase 13 D15: DefId = BuildMaterialType + 1, Amount = resources (a dead player's, picked up on touch)
     }
 
     public enum ConsumableType : byte
@@ -198,6 +199,8 @@ namespace ProjectH.Shared.Protocol
                     return item.DefId >= 1 && item.DefId <= ItemConstants.AmmoTypeCount && item.Rarity == 0 && item.Amount > 0;
                 case ItemKind.Consumable:
                     return item.DefId >= 1 && item.DefId <= ItemConstants.ConsumableTypeCount && item.Rarity == 0 && item.Amount > 0;
+                case ItemKind.Material:
+                    return item.DefId >= 1 && item.DefId <= 3 && item.Rarity == 0 && item.Amount > 0;
                 default:
                     return false;
             }

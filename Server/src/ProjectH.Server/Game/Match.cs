@@ -86,6 +86,7 @@ public sealed class Match
     private readonly BuildSupport _support;
     private readonly int[] _supportStarts = new int[BuildSupport.MaxNeighbours];
     private readonly long[] _buildResults = new long[(int)BuildResultCode.BudgetFull + 1];
+    private readonly bool _infiniteResources;
     private readonly BuildCatalogData _buildCatalogWire;
     // Participants who left during the current match, recorded when they left (they are no longer in _players).
     // At most MaxPlayers entries; cleared when a match starts.
@@ -136,6 +137,7 @@ public sealed class Match
         _weapons = data.Weapons;
         _items = data.Items;
         _building = data.Building;
+        _infiniteResources = options.BuildInfiniteResources;
         _harvest = new HarvestWorld(_building);
         _build = new BuildWorld(_building);
         _replication = new BuildReplication(_build, _building, options.MaxPlayers);
@@ -410,6 +412,8 @@ public sealed class Match
             }
         }
         RefillLootPoints(now);
+        // Phase 13 D15: resources lying in reach are picked up on touch.
+        if (now % ItemRules.MaterialPickupEveryTicks == 0) PickUpMaterials();
 
         // Phase 13 D8: build requests before the moves and shots, so a wall placed this tick already blocks them (the
         // fastest defence, request §117). Placement uses each player's last input (its aim) and position.
@@ -550,7 +554,7 @@ public sealed class Match
         bool grounded = BuildSupport.IsGrounded(shape, GameMap.Terrain, GameMap.Boxes);
         if (!grounded && !_support.HasNeighbour(shape)) return BuildResultCode.Unsupported;
 
-        int cost = _building.Material(material).ResourceCost;
+        int cost = _infiniteResources ? 0 : _building.Material(material).ResourceCost;
         int have = player.Inventory.Resource(material);
         if (have < cost) return BuildResultCode.NoResource;
 
@@ -1024,6 +1028,31 @@ public sealed class Match
         return min.X < box.Max.X && max.X > box.Min.X && min.Y < box.Max.Y && max.Y > box.Min.Y && min.Z < box.Max.Z && max.Z > box.Min.Z;
     }
 
+    // Phase 13 D15 (request §158, §159): every living player on foot takes the Material items within MaterialPickupRange,
+    // up to the resource cap; what does not fit stays with the smaller amount. Players in list order, so two reaching
+    // for one item: the first takes it. At most WorldItems.Capacity items per player, every few ticks.
+    private void PickUpMaterials()
+    {
+        float rangeSq = ItemRules.MaterialPickupRange * ItemRules.MaterialPickupRange;
+        foreach (var player in _players)
+        {
+            if (!player.Alive || !ActionsAllowed(player.State.Mode)) continue;
+            for (int i = _worldItems.Count - 1; i >= 0; i--)
+            {
+                WorldItemData item = _worldItems[i].Data;
+                if (item.Kind != ItemKind.Material) continue;
+                Vector3 d = item.Position - player.State.Position;
+                if (d.X * d.X + d.Z * d.Z > rangeSq || d.Y > ItemRules.PickupHeight || d.Y < -ItemRules.PickupHeight) continue;
+                var material = (BuildMaterialType)(item.DefId - 1);
+                int take = Math.Min(item.Amount, Math.Max(0, _building.MaxResource - player.Inventory.Resource(material)));
+                if (take == 0) continue;
+                ItemRules.AddStack(player.Inventory, ItemKind.Material, item.DefId, take);
+                if (take == item.Amount) RemoveItemAt(i);
+                else SetItemAmount(i, (ushort)(item.Amount - take));
+            }
+        }
+    }
+
     // D8, D9: the server picks the nearest item in range itself; the client never names one, so it cannot
     // reach for a far item. Items are processed in player order within a tick, so when two players reach
     // for the same item the first one takes it and the second finds it gone.
@@ -1151,6 +1180,7 @@ public sealed class Match
         for (int t = 1; t <= ItemConstants.AmmoTypeCount; t++) if (inventory.GetAmmo((AmmoType)t) > 0) count++;
         if (inventory.Medkits > 0) count++;
         if (inventory.ShieldCells > 0) count++;
+        for (int m = 0; m < 3; m++) if (inventory.Resource((BuildMaterialType)m) > 0) count++;   // Phase 13 D15
 
         int n = 0;
         for (int i = 0; i < Inventory.SlotCount; i++)
@@ -1172,6 +1202,14 @@ public sealed class Match
         if (inventory.ShieldCells > 0 &&
             DropAround(player, n++, count, new LootRoll(ItemKind.Consumable, (byte)ConsumableType.ShieldCell, 0, (ushort)inventory.ShieldCells)))
             inventory.ShieldCells = 0;
+        // Phase 13 D15: the building resources too, one item per material (DefId = material + 1).
+        for (int m = 0; m < 3; m++)
+        {
+            var material = (BuildMaterialType)m;
+            int amount = Math.Min(inventory.Resource(material), ushort.MaxValue);
+            if (amount > 0 && DropAround(player, n++, count, new LootRoll(ItemKind.Material, (byte)(m + 1), 0, (ushort)amount)))
+                inventory.SetResource(material, 0);
+        }
 
         // The rest of Inventory.Clear: with every piece placed, the inventory is exactly a cleared one.
         inventory.CurrentSlot = 0;

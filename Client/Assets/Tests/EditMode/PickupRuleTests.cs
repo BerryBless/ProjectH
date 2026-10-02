@@ -55,5 +55,17 @@ namespace ProjectH.Client.Tests
             list.Remove(2, out _, out _);
             Assert.AreEqual(-1, PickupRule.FindNearest(list, feet));
         }
+
+        // Phase 13 D15: resources are picked up on touch (the server's WorldItems.FindNearest skips them too).
+        [Test]
+        public void AMaterialItem_IsNeverTheEPrompt()
+        {
+            var feet = NVector3.Zero;
+            var resources = new WorldItemData { ItemId = 3, Kind = ItemKind.Material, DefId = 1, Amount = 40, Position = new NVector3(0.5f, 0f, 0f) };
+            var list = ListOf(resources);
+            Assert.AreEqual(-1, PickupRule.FindNearest(list, feet));
+            list = ListOf(resources, Item(8, new NVector3(1.5f, 0f, 0f)));
+            Assert.AreEqual(8, list[PickupRule.FindNearest(list, feet)].ItemId);
+        }
     }
 }

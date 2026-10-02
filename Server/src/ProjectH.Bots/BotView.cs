@@ -44,6 +44,41 @@ public sealed class BotView
     // Phase 12 D15: the running match's drop transport route (TransportRoute).
     public bool HasRoute;
     public DropRoute Route;
+    // Phase 13 D17: the building numbers, our resources, the latest hit's direction (towards the attacker), and what
+    // the building stream told us: results by code, and how many pieces the server keeps in our window (bounded: only
+    // ids, at most MaxPieces).
+    public const int MaxPieces = 4096;
+    public BuildCatalogData? BuildCatalog;
+    public ResourcesState Resources;
+    public int DamageTakenCount;
+    public Vector3 LastDamageDirection;
+    public readonly long[] BuildResults = new long[(int)BuildResultCode.BudgetFull + 1];
+    public readonly HashSet<uint> Pieces = new(MaxPieces);
+
+    public void ApplyDamage(in DamageTaken damage)
+    {
+        DamageTakenCount++;
+        LastDamageDirection = damage.FromDirection;
+    }
+
+    // A building packet's pieces (placed or synced: kept up to MaxPieces; destroyed or out of the window: forgotten).
+    public void AddPiece(uint id)
+    {
+        if (Pieces.Count < MaxPieces) Pieces.Add(id);
+    }
+
+    // The other player with this entity id in the latest snapshot.
+    public bool TryGetOther(ushort id, out SnapshotEntity entity)
+    {
+        for (int i = 0; i < OtherCount; i++)
+        {
+            if (Others[i].EntityId != id) continue;
+            entity = Others[i];
+            return true;
+        }
+        entity = default;
+        return false;
+    }
 
     // MatchState. Phase 12: a new round's countdown (WaitingForPlayers, Starting) ends the last round's route; the next one
     // comes with the next match start, after this state on the same ordered channel.

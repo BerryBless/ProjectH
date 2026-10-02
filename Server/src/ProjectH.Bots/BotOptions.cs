@@ -19,6 +19,11 @@ public sealed class BotOptions
     public int StatsIntervalSeconds { get; set; } = 10;
     // Phase 10 D11: reconnect after a retryable disconnect (off by default, so load numbers stay comparable).
     public bool Reconnect { get; set; }
+    // Phase 13 D17 (request §136, §137): build requests per second per bot (0 = off). Load tests run the server with
+    // --Server:BuildInfiniteResources=true.
+    public int BuildSpam { get; set; }
+    // Phase 13: false = no building at all (load scenario A, comparable with Phase 12: not even defence walls).
+    public bool Build { get; set; } = true;
 
     public string? Validate()
     {
@@ -36,6 +41,8 @@ public sealed class BotOptions
         if (!ProtocolConstants.IsValidPlayerName(BotName(Count - 1)))
             return "--name-prefix must not contain control characters.";
         if (StatsIntervalSeconds < 1) return "--stats-interval must be at least 1.";
+        if (BuildSpam < 0 || BuildSpam > 20) return "--build-spam must be 0-20 (the server refuses more than 20 a second).";
+        if (!Build && BuildSpam > 0) return "--build-spam needs --build true.";
         return null;
     }
 
@@ -65,6 +72,8 @@ public sealed class BotOptions
                 "--name-prefix" => Set(value, v => parsed.NamePrefix = v),
                 "--stats-interval" => SetInt(value, v => parsed.StatsIntervalSeconds = v),
                 "--reconnect" => SetBool(value, v => parsed.Reconnect = v),
+                "--build-spam" => SetInt(value, v => parsed.BuildSpam = v),
+                "--build" => SetBool(value, v => parsed.Build = v),
                 _ => false,
             };
             if (!ok)
