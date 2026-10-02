@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "name": "Turbo Build Row",
+  "description": "Request §132: A stays in build mode and sends a row of three wall requests back to back (one every two ticks: aim, then send; the server queues up to 8 per player and places one per minimumBuildInterval 0.1 s). All three are accepted, each slot holds one piece, and wood goes down by exactly 3 x 10 (building.json resourceCost). Sending the same row again is refused Occupied and costs nothing.",
+  "tags": ["building"],
+  "seed": 9201,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 12.5, "z": -11, "yaw": 180 } },
+    { "id": "a_wood", "action": "giveResource", "actor": "playerA", "material": "wood", "amount": 100 },
+    { "id": "a_wood_100", "action": "waitFor", "condition": "player.resources.wood", "actor": "playerA", "equals": 100, "timeoutMilliseconds": 2000 },
+    { "id": "none_yet", "assert": "build.count", "at": "QA_Build_Test", "radius": 15, "equals": 0 },
+
+    { "id": "a_turbo", "phase": "act", "action": "build", "actor": "playerA", "piece": "wall", "material": "wood", "cellX": 17, "level": 0, "cellZ": 13, "rotation": 0, "count": 3, "dx": 1, "saveAs": "row", "description": "Three walls along the south edges of cells 17-19, row 13" },
+
+    { "id": "three_accepted", "phase": "assert", "assert": "var.row.accepted", "equals": 3 },
+    { "id": "three_pieces", "action": "waitFor", "condition": "build.count", "at": "QA_Build_Test", "radius": 15, "equals": 3, "timeoutMilliseconds": 2000 },
+    { "id": "wood_cost", "action": "waitFor", "condition": "player.resources.wood", "actor": "playerA", "equals": 70, "timeoutMilliseconds": 2000 },
+
+    { "id": "a_again", "phase": "act", "action": "build", "actor": "playerA", "piece": "wall", "material": "wood", "cellX": 17, "level": 0, "cellZ": 13, "rotation": 0, "count": 3, "dx": 1, "expect": "Occupied" },
+    { "id": "still_three", "phase": "assert", "assert": "build.count", "at": "QA_Build_Test", "radius": 15, "equals": 3 },
+    { "id": "no_charge", "assert": "player.resources.wood", "actor": "playerA", "equals": 70 }
+  ]
+}

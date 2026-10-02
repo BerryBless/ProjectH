@@ -110,6 +110,22 @@ public sealed class BotConnection : IDisposable
 
     public void Dispose() => _net.Stop();
 
+    // QA tool: round trip time of the connection in ms (0 before it connects). Read on the thread that calls Update.
+    public int RoundTripTimeMs => _peer?.RoundTripTime ?? 0;
+
+    // QA tool: close the socket without telling the server, like a pulled cable. The server notices only through its
+    // own timeout, so the drop takes the network-loss path (grace) instead of a clean leave. Marks this connection gone
+    // at once: LiteNetLib raises no disconnect event for a local stop.
+    public void Abort()
+    {
+        _net.Stop(false);
+        if (!Disconnected)
+        {
+            Disconnected = true;
+            DisconnectReason = "Aborted (QA)";
+        }
+    }
+
     private void OnConnected()
     {
         Connected = true;
@@ -213,7 +229,11 @@ public sealed class BotConnection : IDisposable
                 if (ResourcesState.TryRead(ref r, out var resources)) view.Resources = resources;
                 break;
             case PacketId.BuildResult:
-                if (BuildResult.TryRead(ref r, out var built)) view.BuildResults[(int)built.Code]++;
+                if (BuildResult.TryRead(ref r, out var built))
+                {
+                    view.BuildResults[(int)built.Code]++;
+                    view.AddBuildResult(built);
+                }
                 break;
             case PacketId.BuildSync:
                 if (!BuildSyncPacket.TryReadHeader(ref r, out _, out bool reset, out int synced)) return;

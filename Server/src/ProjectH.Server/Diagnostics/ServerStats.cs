@@ -50,11 +50,25 @@ public sealed class ServerStats
 
     public void AddInputDrop() => Interlocked.Increment(ref _inputDrops);
 
-    public StatsCounters TakeDelta() => new StatsCounters(
-        Interlocked.Exchange(ref _packetsIn, 0),
-        Interlocked.Exchange(ref _bytesIn, 0),
-        Interlocked.Exchange(ref _packetsOut, 0),
-        Interlocked.Exchange(ref _bytesOut, 0),
-        Interlocked.Exchange(ref _badPackets, 0),
-        Interlocked.Exchange(ref _inputDrops, 0));
+    // QA-1: packets since the start. TakeDelta folds each delta into these (game loop thread only), so the packet path pays
+    // nothing extra; the totals are the folded part plus the counter not yet taken. Read on the game loop thread only.
+    private long _takenPacketsIn;
+    private long _takenPacketsOut;
+
+    public long PacketsInTotal => _takenPacketsIn + Interlocked.Read(ref _packetsIn);
+    public long PacketsOutTotal => _takenPacketsOut + Interlocked.Read(ref _packetsOut);
+
+    public StatsCounters TakeDelta()
+    {
+        var delta = new StatsCounters(
+            Interlocked.Exchange(ref _packetsIn, 0),
+            Interlocked.Exchange(ref _bytesIn, 0),
+            Interlocked.Exchange(ref _packetsOut, 0),
+            Interlocked.Exchange(ref _bytesOut, 0),
+            Interlocked.Exchange(ref _badPackets, 0),
+            Interlocked.Exchange(ref _inputDrops, 0));
+        _takenPacketsIn += delta.PacketsIn;
+        _takenPacketsOut += delta.PacketsOut;
+        return delta;
+    }
 }

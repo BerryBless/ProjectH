@@ -14,8 +14,8 @@ namespace ProjectH.Server.Game.Build;
 public sealed class BuildReplication
 {
     private readonly BuildWorld _world;
-    private readonly BuildPieceRecord[] _placed;
-    private readonly byte[] _placedCell;
+    private BuildPieceRecord[] _placed;
+    private byte[] _placedCell;
     private int _placedCount;
     private int[] _damagedSlots;
     private bool[] _damagedFlag;
@@ -175,7 +175,15 @@ public sealed class BuildReplication
 
     public void Placed(in BuildPieceRecord record)
     {
-        if (_placedCount == _placed.Length) return;   // unreachable: one per player per tick
+        // One per player per tick, plus pieces placed between ticks without a player (QA-1 spawnBuildPiece): then the list
+        // grows like the others, never past the match's piece limit, so no placement goes untold.
+        if (_placedCount == _placed.Length)
+        {
+            if (_placed.Length >= _world.Capacity) return;   // unreachable: more placements than pieces in one tick
+            int length = Grown(_placed.Length, _placedCount + 1);
+            Array.Resize(ref _placed, length);
+            Array.Resize(ref _placedCell, length);
+        }
         _placed[_placedCount] = record;
         _placedCell[_placedCount++] = (byte)InterestCell(record.Shape);
         Version++;

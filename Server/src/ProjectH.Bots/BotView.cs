@@ -55,6 +55,18 @@ public sealed class BotView
     public readonly long[] BuildResults = new long[(int)BuildResultCode.BudgetFull + 1];
     public readonly HashSet<uint> Pieces = new(MaxPieces);
 
+    // QA tool: the latest BuildResults in arrival order (a ring of RecentBuildResultCount; BuildResultCount counts
+    // every one received, so a reader that remembers the count it saw finds the new ones).
+    public const int RecentBuildResultCount = 16;
+    public readonly BuildResult[] RecentBuildResults = new BuildResult[RecentBuildResultCount];
+    public long BuildResultCount;
+
+    public void AddBuildResult(in BuildResult result)
+    {
+        RecentBuildResults[BuildResultCount % RecentBuildResultCount] = result;
+        BuildResultCount++;
+    }
+
     public void ApplyDamage(in DamageTaken damage)
     {
         DamageTakenCount++;

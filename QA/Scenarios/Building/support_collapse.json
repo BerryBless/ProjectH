@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "name": "Support Collapse",
+  "description": "Request §131: one ground wall carries a chain of three level-1 floors (each floor is supported only by the wall or by its neighbour). Breaking the wall (damageBuild, the same damage path as a shot) leaves the floors unsupported: they collapse in the same step.",
+  "tags": ["building"],
+  "seed": 9101,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "wall", "phase": "arrange", "action": "spawnBuildPiece", "piece": "wall", "material": "stone", "cellX": 18, "level": 0, "cellZ": 13, "rotation": 0, "saveAs": "wall" },
+    { "id": "floor1", "action": "spawnBuildPiece", "piece": "floor", "material": "wood", "cellX": 18, "level": 1, "cellZ": 13, "saveAs": "floor1" },
+    { "id": "floor2", "action": "spawnBuildPiece", "piece": "floor", "material": "wood", "cellX": 19, "level": 1, "cellZ": 13, "saveAs": "floor2" },
+    { "id": "floor3", "action": "spawnBuildPiece", "piece": "floor", "material": "wood", "cellX": 20, "level": 1, "cellZ": 13, "saveAs": "floor3" },
+    { "id": "four_pieces", "action": "waitFor", "condition": "build.count", "at": "QA_Build_Test", "radius": 20, "equals": 4, "timeoutMilliseconds": 2000 },
+    { "id": "floor3_up", "action": "waitFor", "condition": "build.exists", "pieceId": "${floor3.pieceId}", "equals": true, "timeoutMilliseconds": 2000 },
+
+    { "id": "break_wall", "phase": "act", "action": "damageBuild", "pieceId": "${wall.pieceId}", "amount": 100000, "saveAs": "broken" },
+
+    { "id": "wall_destroyed", "phase": "assert", "assert": "var.broken.destroyed", "equals": true },
+    { "id": "collapse_event", "action": "waitForEvent", "event": "BuildDestroyed", "where": { "collapsed": 3 }, "timeoutMilliseconds": 3000 },
+    { "id": "floor1_gone", "assert": "build.exists", "pieceId": "${floor1.pieceId}", "equals": false },
+    { "id": "floor3_gone", "assert": "build.exists", "pieceId": "${floor3.pieceId}", "equals": false },
+    { "id": "nothing_left", "assert": "build.count", "at": "QA_Build_Test", "radius": 20, "equals": 0 }
+  ]
+}

@@ -97,6 +97,11 @@ public sealed class GameLoop : IDisposable
     private TimeSpan _cpuAtLastStats = CurrentCpuTime();
     private long _lateTicksSkipped;
     private bool _disposed;
+    // QA-1 D2, D5: the QA Control executor, attached before Start only in QA mode (null otherwise: one null check per
+    // tick). It runs on this thread at the end of every tick and never throws. _lastTickMs: the duration of the latest
+    // tick attempt (game loop thread only), which the QA metrics ring records.
+    private Qa.QaControl? _qa;
+    private double _lastTickMs;
 
     // loadout: test seam (D1); null = StartingLoadout.Empty, the production start. dropPoints: test seam (Phase 6 D9);
     // null = the map's DropPoints.All.
@@ -167,6 +172,22 @@ public sealed class GameLoop : IDisposable
     internal Match Match => _match;
     internal NetworkListener Listener => _listener;
     internal StatsQueryQueue StatsQueries => _statsQueries;
+    // QA-1: read by the QA executor on this loop's thread only.
+    internal GameData Data => _data;
+    internal ServerOptions Options => _options;
+    internal ServerStats Stats => _stats;
+    internal int PeerCount => _peers.Count;
+    internal double LastTickMs => _lastTickMs;
+
+    // QA-1 D2: attaches the QA executor. Before Start only, so the loop thread never sees the field change.
+    internal void AttachQa(Qa.QaControl qa)
+    {
+        ArgumentNullException.ThrowIfNull(qa);
+        if (_thread != null) throw new InvalidOperationException("The QA executor must be attached before the game loop starts.");
+        if (_qa != null) throw new InvalidOperationException("A QA executor is already attached.");
+        _qa = qa;
+        qa.Bind(this);
+    }
     internal Action? TickFaultHook { get => _tickFaultHook; set => _tickFaultHook = value; }
     internal Action? RemoveFaultHook { get => _removeFaultHook; set => _removeFaultHook = value; }
     internal Action? LoopFaultHook { get => _loopFaultHook; set => _loopFaultHook = value; }
@@ -254,7 +275,8 @@ public sealed class GameLoop : IDisposable
                 long tickStart = clock.ElapsedTicks;
                 if (!_fatal) RunTickGuarded();
                 else Volatile.Write(ref _lastTickTimestamp, _time.GetTimestamp());   // idle on purpose until Stop: no stall
-                _tickMetrics.Record((clock.ElapsedTicks - tickStart) * 1000.0 / Stopwatch.Frequency);
+                _lastTickMs = (clock.ElapsedTicks - tickStart) * 1000.0 / Stopwatch.Frequency;
+                _tickMetrics.Record(_lastTickMs);
                 _loopFaultHook?.Invoke();
 
                 if (clock.ElapsedTicks >= nextStats)
@@ -410,6 +432,9 @@ public sealed class GameLoop : IDisposable
         _match.Tick();
         _health.SetGauges(_peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State);
         _health.SetBuild(_match.BuildCounts(), _buildRejects);
+        // QA-1 D5: last, so QA commands act between ticks on a finished tick. OnTick catches everything itself: a QA
+        // failure must never count as a tick failure (that path resets the match).
+        _qa?.OnTick(this);
     }
 
     private void DrainControl()

@@ -1,0 +1,5 @@
+{
+  "name": "full-regression",
+  "description": "Request §94: every scenario, including the slow 50-client stress run (about 2.5 min in total).",
+  "scenarios": [ "Smoke", "Movement", "Combat", "Reconnect", "Loot", "Healing", "Shield", "Zone", "Building", "Network", "Stress" ]
+}

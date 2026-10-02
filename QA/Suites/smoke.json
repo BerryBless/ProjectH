@@ -1,0 +1,5 @@
+{
+  "name": "smoke",
+  "description": "Fast checks that the server starts, a client joins and moves, and a shot lands (under 20 s).",
+  "scenarios": [ "Smoke/connect.json", "Movement/move_to.json", "Combat/basic_hit.json" ]
+}

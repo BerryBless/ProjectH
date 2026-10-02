@@ -94,6 +94,19 @@ public sealed class MatchFlow
         else Enter(MatchFlowState.WaitingForPlayers, 0);
     }
 
+    // QA-1 (forceMatchState start): the countdown ends at `now` (the next Update starts the match). From
+    // WaitingForPlayers the countdown starts already over when enough players are here. False otherwise.
+    internal bool SkipCountdown(uint now, int playerCount)
+    {
+        if (DevRespawn || playerCount < MinPlayers) return false;
+        if (State == MatchFlowState.WaitingForPlayers || State == MatchFlowState.Starting)
+        {
+            Enter(MatchFlowState.Starting, now);
+            return true;
+        }
+        return false;
+    }
+
     // The zone reached its last phase (D7).
     public void EnterFinalPhase()
     {

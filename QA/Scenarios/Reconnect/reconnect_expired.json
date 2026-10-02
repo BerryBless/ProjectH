@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "name": "Reconnect After Grace Expired",
+  "description": "Request §126, current policy (Match.ExpireGraced / TryJoin, Phase 10 D2, D10): a graced player not back within ReconnectGraceSeconds is removed from the match (PlayerLeft). Coming back later is a new join: a new entity that spectates (dead, not a participant) until the next round. Three players so the match keeps going.",
+  "tags": ["reconnect"],
+  "seed": 4002,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "3", "Server:ReconnectGraceSeconds": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" }, { "id": "playerC" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "c_connect", "action": "connect", "actor": "playerC" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+    { "id": "a_entity", "action": "save", "path": "player.entityId", "actor": "playerA", "saveAs": "aEntity" },
+
+    { "id": "a_drop", "phase": "act", "action": "disconnect", "actor": "playerA" },
+    { "id": "a_graced", "phase": "assert", "action": "waitFor", "condition": "player.graced", "actor": "playerA", "equals": true, "timeoutMilliseconds": 3000 },
+    { "id": "a_left", "action": "waitForEvent", "event": "PlayerLeft", "actor": "playerA", "timeoutMilliseconds": 5000 },
+    { "id": "a_gone", "assert": "player.exists", "actor": "playerA", "equals": false },
+    { "id": "two_alive", "assert": "match.alive", "equals": 2 },
+
+    { "id": "a_reconnect", "phase": "act", "action": "reconnect", "actor": "playerA" },
+    { "id": "a_new_join", "phase": "assert", "action": "waitForEvent", "event": "PlayerJoined", "actor": "playerA", "timeoutMilliseconds": 3000 },
+    { "id": "a_new_entity", "assert": "player.entityId", "actor": "playerA", "notEquals": "${aEntity}" },
+    { "id": "a_spectating", "assert": "player.alive", "actor": "playerA", "equals": false },
+    { "id": "a_not_participant", "assert": "player.participant", "actor": "playerA", "equals": false },
+    { "id": "still_playing", "assert": "match.state", "equals": "Playing" },
+    { "id": "still_two_alive", "assert": "match.alive", "equals": 2 }
+  ]
+}

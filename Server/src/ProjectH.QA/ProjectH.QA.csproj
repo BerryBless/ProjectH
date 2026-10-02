@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- QA Scenario Orchestrator (Docs/specs/2026-10-02-qa-tool-design.md D1). A client like the bots: it talks to the
+       server only through the game protocol (ProjectH.Bots) and the QA Control HTTP API, never ProjectH.Server. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ProjectH.QA</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ProjectH.QA.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProjectH.Bots\ProjectH.Bots.csproj" />
+    <ProjectReference Include="..\ProjectH.Shared\ProjectH.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

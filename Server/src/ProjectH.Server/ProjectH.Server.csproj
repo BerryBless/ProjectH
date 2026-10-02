@@ -9,8 +9,13 @@
 
   <ItemGroup>
     <PackageReference Include="LiteNetLib" Version="2.1.4" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
     <PackageReference Include="MySqlConnector" Version="2.6.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- QA-1 D4: the QA Control HTTP endpoint (Kestrel), started only in QA mode. A shared framework of the .NET runtime,
+         not a NuGet package. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>

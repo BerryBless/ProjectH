@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "name": "Build A Wall, Shoot It Down",
+  "description": "Request §130: A builds a wood wall with real input (Q for build mode, aim, BuildRequest on the building channel; the server checks range, aim, support and cost), then shoots it with real fire: its health drops and more fire destroys it (BuildDestroyed).",
+  "tags": ["building", "combat"],
+  "seed": 9001,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 12.5, "z": -11, "yaw": 180 } },
+    { "id": "a_wood", "action": "giveResource", "actor": "playerA", "material": "wood", "amount": 50 },
+    { "id": "a_wood_before", "action": "waitFor", "condition": "player.resources.wood", "actor": "playerA", "greaterThan": 0, "timeoutMilliseconds": 2000, "saveAs": "woodBefore" },
+    { "id": "a_rifle", "action": "giveWeapon", "actor": "playerA", "weapon": "Vesper AR" },
+    { "id": "a_ammo", "action": "giveAmmo", "actor": "playerA", "type": "medium", "amount": 60 },
+
+    { "id": "a_build", "phase": "act", "action": "build", "actor": "playerA", "piece": "wall", "material": "wood", "cellX": 18, "level": 0, "cellZ": 13, "rotation": 0, "saveAs": "wall", "description": "Build a wood wall on the south edge of cell (18, 13), 4 m ahead" },
+    { "id": "wall_exists", "phase": "assert", "action": "waitFor", "condition": "build.exists", "pieceId": "${wall.pieceId}", "equals": true, "timeoutMilliseconds": 2000 },
+    { "id": "placed_event", "action": "waitForEvent", "event": "BuildPlaced", "timeoutMilliseconds": 2000 },
+    { "id": "wood_paid", "action": "waitFor", "condition": "player.resources.wood", "actor": "playerA", "lessThan": "${woodBefore}", "timeoutMilliseconds": 2000 },
+    { "id": "construction", "phase": "arrange", "action": "wait", "milliseconds": 2000, "description": "Wood builds up its health over 1.5 s (building.json)" },
+    { "id": "wall_center", "action": "save", "path": "build.piece.center", "pieceId": "${wall.pieceId}", "saveAs": "wc" },
+    { "id": "wall_hp", "action": "save", "path": "build.piece.health", "pieceId": "${wall.pieceId}", "saveAs": "wallHp" },
+    { "id": "a_aim", "action": "aim", "actor": "playerA", "at": "${wc}" },
+
+    { "id": "a_fire", "phase": "act", "action": "fire", "actor": "playerA", "slot": 0, "count": 2, "description": "Slot 1 takes the rifle out of build mode, then 2 shots" },
+    { "id": "wall_damaged", "phase": "assert", "action": "waitFor", "condition": "build.piece.health", "pieceId": "${wall.pieceId}", "lessThan": "${wallHp}", "timeoutMilliseconds": 3000 },
+
+    { "id": "a_fire_more", "phase": "act", "action": "fire", "actor": "playerA", "count": 15 },
+    { "id": "wall_gone", "phase": "assert", "action": "waitFor", "condition": "build.exists", "pieceId": "${wall.pieceId}", "equals": false, "timeoutMilliseconds": 3000 },
+    { "id": "destroyed_event", "action": "waitForEvent", "event": "BuildDestroyed", "timeoutMilliseconds": 2000 }
+  ]
+}

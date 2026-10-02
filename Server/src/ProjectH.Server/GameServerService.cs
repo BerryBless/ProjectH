@@ -20,7 +20,7 @@ public sealed class GameServerService : IHostedService, System.IDisposable
     private StallWatchdog? _watchdog;
 
     public GameServerService(IOptions<ServerOptions> options, ILogger<GameLoop> logger, MatchHistoryQueue matchHistory,
-        MatchHistoryWriter writer, StatsQueryQueue statsQueries, IHostApplicationLifetime lifetime)
+        MatchHistoryWriter writer, StatsQueryQueue statsQueries, IHostApplicationLifetime lifetime, Qa.QaControl? qa = null)
     {
         _logger = logger;
         // The data files are copied next to appsettings.json. A missing or invalid file throws here, so the
@@ -39,6 +39,8 @@ public sealed class GameServerService : IHostedService, System.IDisposable
             statsQueries: statsQueries);
         // Phase 10 D9: the writer's totals go into the Health line and the Meter.
         _loop.Health.Persistence = () => writer.Counts;
+        // QA-1 D2: registered only in QA mode (Program.cs); otherwise null and the loop pays one null check per tick.
+        if (qa != null) _loop.AttachQa(qa);
         _meter = new ServerMeter(_loop.Health);
     }
 
