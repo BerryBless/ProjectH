@@ -65,7 +65,7 @@ public class MonitoringTests
                      "buildRate=0",   // Phase 13 D8
                      "build pieces=0 cells=0 requests=0 accepted=0 destroyed=0 collapsed=0 duplicates=0", // Phase 13 D18
                      "buildRejects noResource=0 outOfRange=0 blocked=0 unsupported=0 occupied=0 rateLimited=0 invalidState=0 invalidRequest=0 budgetFull=0",
-                     "harvest hits=0 destroyed=0",
+                     "harvest hits=0 envDestroyed=0", "buildInboxDrops=0",
                      "db saved=3 failed=1 discarded=2 dropped=4",
                      "stats requests=0 limited=2 busy=0 unavailable=0 undelivered=0",
                  })
@@ -92,7 +92,9 @@ public class MonitoringTests
         health.SetGauges(peers: 3, players: 2, graced: 1, MatchFlowState.Playing);
         health.AddGraceExpiry();
         health.AddMovementAnomaly();
-        health.SetBuild(new BuildCounts(7, 3, 8, 5, 2, 10, 4, 1, 9, 2, 0, 0), code => code == BuildResultCode.Occupied ? 2 : 0);
+        health.AddBuildInboxDrop();
+        health.AddBuildInboxDrop();
+        health.SetBuild(new BuildCounts(7, 3, 8, 5, 2, 10, 4, 1, 9, 2, 0, 0, 6), code => code == BuildResultCode.Occupied ? 2 : 0);
 
         using var meter = new ServerMeter(health);
         var seen = new List<(string Name, long Value, string Tags)>();
@@ -123,6 +125,8 @@ public class MonitoringTests
         Assert.Contains(("projecth.build.requests", 5L, "result=Ok"), seen);
         Assert.Contains(("projecth.build.requests", 2L, "result=Occupied"), seen);
         Assert.Contains(("projecth.build.destroyed", 4L, "cause=collapse"), seen);
+        Assert.Contains(("projecth.build.destroyed", 6L, "cause=damage"), seen);
+        Assert.Contains(("projecth.build.inbox_drops", 2L, ""), seen);
         Assert.Contains(("projecth.harvest.hits", 9L, ""), seen);
         Assert.Contains(("projecth.stats_queries", 6L, "result=requests"), seen);
         Assert.Contains(("projecth.stats_queries", 2L, "result=limited"), seen);

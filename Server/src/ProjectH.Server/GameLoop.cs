@@ -112,7 +112,7 @@ public sealed class GameLoop : IDisposable
         _onFatal = onFatal;
         _time = time ?? TimeProvider.System;
         _failuresBeforeReset = options.SimHz * FailingSecondsBeforeReset;
-        _channels = new InboundChannels(options, _stats);
+        _channels = new InboundChannels(options, _stats, _health.AddBuildInboxDrop);
         _joinTimeoutTicks = (long)options.JoinTimeoutSeconds * options.SimHz;
         _inputTimeoutTicks = (long)options.InputTimeoutSeconds * options.SimHz;
         _statsQueries = statsQueries ?? new StatsQueryQueue();
@@ -646,7 +646,8 @@ public sealed class GameLoop : IDisposable
             "collapsed={BuildCollapsed} duplicates={BuildDuplicates} eventPackets={BuildEventPackets} syncPackets={BuildSyncPackets} " +
             "buildRejects noResource={RejectNoResource} outOfRange={RejectRange} blocked={RejectBlocked} unsupported={RejectUnsupported} " +
             "occupied={RejectOccupied} rateLimited={RejectRate} invalidState={RejectState} invalidRequest={RejectRequest} budgetFull={RejectBudget} " +
-            "harvest hits={HarvestHits} destroyed={HarvestDestroyed} " +
+            "harvest hits={HarvestHits} envDestroyed={HarvestDestroyed} " +
+            "buildInboxDrops={BuildInboxDrops} " +
             "db saved={DbSaved} failed={DbFailed} discarded={DbDiscarded} dropped={DbDropped} " +
             "stats requests={StatsRequests} limited={StatsLimited} busy={StatsBusy} unavailable={StatsUnavailable} undelivered={StatsUndelivered}",
             _peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State, _match.Flow.Round,
@@ -663,6 +664,7 @@ public sealed class GameLoop : IDisposable
             h.BuildRejects(BuildResultCode.Unsupported), h.BuildRejects(BuildResultCode.Occupied), h.BuildRejects(BuildResultCode.RateLimited),
             h.BuildRejects(BuildResultCode.InvalidState), h.BuildRejects(BuildResultCode.InvalidRequest), h.BuildRejects(BuildResultCode.BudgetFull),
             b.HarvestHits, b.EnvironmentDestroyed,
+            h.BuildInboxDrops,
             db.Saved, db.Failed, db.Discarded, db.Dropped,
             sq.Requests, sq.Limited, sq.Busy, sq.Unavailable, sq.Undelivered);
     }

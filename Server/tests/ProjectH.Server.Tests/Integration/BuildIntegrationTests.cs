@@ -36,6 +36,18 @@ public sealed class BuildIntegrationTests
     }
 
     [Fact]
+    public void AFullInboundBuildChannel_CountsTheDroppedRequests()
+    {
+        var health = new HealthCounters();
+        var options = new ServerOptions { MaxPlayers = 1 };
+        var channels = new ProjectH.Server.Net.InboundChannels(options, new ServerStats(), health.AddBuildInboxDrop);
+        int capacity = options.MaxPlayers * ProjectH.Server.Game.Build.BuildRequestQueue.Capacity;
+        for (int i = 0; i < capacity + 3; i++)
+            Assert.True(channels.Build.Writer.TryWrite(default));
+        Assert.Equal(3, health.BuildInboxDrops);
+    }
+
+    [Fact]
     public void MoreBuildRequestsThanTheLimit_AreInvalidPackets()
     {
         using GameLoop server = StartServer();

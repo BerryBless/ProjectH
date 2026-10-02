@@ -13,7 +13,7 @@ namespace ProjectH.Server.Net;
 // SingleWriter is false: with UnsyncedEvents LiteNetLib may raise events from more than one thread.
 public sealed class InboundChannels
 {
-    public InboundChannels(ServerOptions options, ServerStats stats)
+    public InboundChannels(ServerOptions options, ServerStats stats, Action? buildDropped = null)
     {
         Control = Channel.CreateBounded<ControlMessage>(new BoundedChannelOptions(options.ControlChannelCapacity)
         {
@@ -34,7 +34,7 @@ public sealed class InboundChannels
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,
             SingleWriter = false,
-        });
+        }, _ => buildDropped?.Invoke());
     }
 
     public Channel<ControlMessage> Control { get; }

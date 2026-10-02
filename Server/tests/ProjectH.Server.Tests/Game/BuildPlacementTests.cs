@@ -340,6 +340,10 @@ public class BuildPlacementTests
         Assert.True(BuildResult.TryRead(ref r, out BuildResult refused));
         Assert.Equal(BuildResultCode.RateLimited, refused.Code);
         Assert.Equal(BuildRequestQueue.Capacity + 1, refused.Sequence);
+        // The dropped request is counted as a refusal and as a request.
+        Assert.Equal(1, _h.Match.BuildResults(BuildResultCode.RateLimited));
+        Assert.Equal(1, _h.Match.BuildCounts().Rejected);
+        Assert.Equal(1, _h.Match.BuildCounts().Requests);
     }
 
     [Fact]

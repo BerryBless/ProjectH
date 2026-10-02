@@ -233,7 +233,8 @@ public sealed class Match
         long rejected = 0;
         for (int i = 1; i < _buildResults.Length; i++) rejected += _buildResults[i];
         return new BuildCounts(_build.Count, _build.Grid.OccupiedColumns, rejected + _buildResults[0] + BuildDuplicates, _buildResults[0],
-            rejected, PiecesDestroyed, PiecesCollapsed, BuildDuplicates, HarvestHits, EnvironmentDestroyed, BuildEventPackets, BuildSyncPackets);
+            rejected, PiecesDestroyed, PiecesCollapsed, BuildDuplicates, HarvestHits, EnvironmentDestroyed, BuildEventPackets, BuildSyncPackets,
+            PiecesDestroyed - PiecesCollapsed);
     }
     internal BuildSupport Support => _support;
     public int BuildPieces => _build.Count;
@@ -368,7 +369,11 @@ public sealed class Match
     public void EnqueueBuild(int peerId, in BuildRequest request)
     {
         if (!_playersByPeer.TryGetValue(peerId, out var player)) return;
-        if (!player.BuildQueue.TryAdd(request)) SendBuildResult(player, request.Sequence, BuildResultCode.RateLimited, 0);
+        if (!player.BuildQueue.TryAdd(request))
+        {
+            _buildResults[(int)BuildResultCode.RateLimited]++;   // a dropped request still counts (requests= and rateLimited=)
+            SendBuildResult(player, request.Sequence, BuildResultCode.RateLimited, 0);
+        }
     }
 
     public void Tick()

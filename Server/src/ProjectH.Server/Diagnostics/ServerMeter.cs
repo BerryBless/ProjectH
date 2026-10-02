@@ -54,9 +54,10 @@ public sealed class ServerMeter : IDisposable
         _meter.CreateObservableCounter("projecth.build.requests", () => BuildRequests(h));
         _meter.CreateObservableCounter("projecth.build.destroyed", () => new[]
         {
-            new Measurement<long>(h.Build.Destroyed - h.Build.Collapsed, Tag("cause", "damage")),
+            new Measurement<long>(h.Build.DamageDestroyed, Tag("cause", "damage")),
             new Measurement<long>(h.Build.Collapsed, Tag("cause", "collapse")),
         });
+        _meter.CreateObservableCounter("projecth.build.inbox_drops", () => h.BuildInboxDrops, description: "Build requests dropped by the full inbound channel");
         _meter.CreateObservableCounter("projecth.harvest.hits", () => h.Build.HarvestHits);
         _meter.CreateObservableCounter("projecth.harvest.destroyed", () => h.Build.EnvironmentDestroyed);
         _meter.CreateObservableCounter("projecth.db_records", () => DbRecords(h));
