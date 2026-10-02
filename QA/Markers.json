@@ -1,0 +1,24 @@
+{
+  // QA markers (request §43-44): named positions for scenarios. Read by the QA tool only; the game never loads this
+  // file, so Release builds carry nothing. y omitted = terrain height there (the server's setPosition rule).
+  // How they were chosen (Shared/Runtime/Simulation/GameMap.cs, Hill.cs, MapPois.cs, BuildGrid.cs):
+  // - The hills nearest the centre end at |x| >= 32 (west, east) and |z| >= 28 (north, south), so |x| < 30, |z| < 26
+  //   is flat ground at height 0. Inside it the plaza (radius 12, nothing built) is clear; the nearest boxes are the
+  //   cover pieces at (+-18, +-18), (0, 22), (+-26, 0) and the nearest harvestables are at (8, -24), (24, 10), (-8, -26).
+  // - The combat pairs lie on the lines z = 0 and z = -6, which cross no box, door or harvestable (MarkersTests checks
+  //   the line of sight against all three and the flat terrain). The loot points at 8 m are items, not obstacles.
+  // - Lobby spawns are on a 5 m ring around the origin (Match.SpawnPosition); scenarios move players with setPosition.
+  // - QA_Build_Test is the centre of build cell (18, 13) (cells are 5 m from -80), outside the plaza, clear of boxes.
+  "markers": [
+    { "name": "QA_Combat_A", "x": -5, "y": 0, "z": 0, "yaw": 90, "note": "faces +X towards QA_Combat_B, 10 m" },
+    { "name": "QA_Combat_B", "x": 5, "y": 0, "z": 0, "yaw": 270, "note": "faces -X towards QA_Combat_A, 10 m" },
+    { "name": "QA_Combat_20m_A", "x": -10, "y": 0, "z": -6, "yaw": 90, "note": "20 m pair" },
+    { "name": "QA_Combat_20m_B", "x": 10, "y": 0, "z": -6, "yaw": 270, "note": "20 m pair" },
+    { "name": "QA_Spawn_A", "x": 0, "y": 0, "z": 4, "yaw": 180 },
+    { "name": "QA_Spawn_B", "x": 0, "y": 0, "z": -4, "yaw": 0 },
+    { "name": "QA_Move_Start", "x": -10, "y": 0, "z": 6, "yaw": 90, "note": "open walk east to QA_Move_End (20 m)" },
+    { "name": "QA_Move_End", "x": 10, "y": 0, "z": 6, "yaw": 90 },
+    { "name": "QA_Build_Test", "x": 12.5, "y": 0, "z": -12.5, "yaw": 0, "note": "centre of build cell (18, 13)" },
+    { "name": "QA_Far_SW", "x": -68, "z": -70, "note": "a drop point near the south-west corner (DropPoints: clear 4 m), far from the centre" }
+  ]
+}

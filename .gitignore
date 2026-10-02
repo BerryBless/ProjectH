@@ -59,3 +59,7 @@ crashlytics-build.properties
 .claude/settings.local.json
 _workspace/
 _workspace_*/
+
+# ---------- QA tool ----------
+# Run reports (QA/Reports/<runId>/report.json, report.html) are local output.
+/QA/Reports/

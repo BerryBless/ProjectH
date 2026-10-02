@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "name": "Pickup And Drop",
+  "description": "Request §119-120: an item spawned next to A is picked up by a real Interact press (the server picks the nearest item in range), and a real Drop press puts A's weapon back into the world.",
+  "tags": ["loot", "inventory"],
+  "seed": 5001,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Spawn_A" },
+    { "id": "a_medkits", "action": "save", "path": "player.medkits", "actor": "playerA", "saveAs": "medkitsBefore" },
+    { "id": "loot", "action": "spawnLoot", "kind": "medkit", "amount": 1, "position": { "x": 0, "z": 5 }, "saveAs": "loot" },
+    { "id": "items_before_pickup", "action": "save", "path": "match.worldItems", "saveAs": "itemsBefore" },
+
+    { "id": "a_interact", "phase": "act", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "a_got_medkit", "phase": "assert", "action": "waitFor", "condition": "player.medkits", "actor": "playerA", "greaterThan": "${medkitsBefore}", "timeoutMilliseconds": 3000 },
+    { "id": "inventory_event", "action": "waitForEvent", "event": "InventoryChanged", "actor": "playerA", "timeoutMilliseconds": 3000 },
+    { "id": "item_gone", "assert": "match.worldItems", "lessThan": "${itemsBefore}" },
+
+    { "id": "a_weapon", "phase": "arrange", "action": "giveWeapon", "actor": "playerA", "weapon": "Wisp SMG" },
+    { "id": "a_armed", "action": "waitFor", "condition": "actor.weaponName", "actor": "playerA", "equals": "Wisp SMG", "timeoutMilliseconds": 3000 },
+    { "id": "items_before_drop", "action": "save", "path": "match.worldItems", "saveAs": "itemsBeforeDrop" },
+    { "id": "a_drop", "phase": "act", "action": "press", "actor": "playerA", "button": "Drop" },
+    { "id": "a_unarmed", "phase": "assert", "action": "waitFor", "condition": "player.weapon", "actor": "playerA", "notExists": true, "timeoutMilliseconds": 3000 },
+    { "id": "weapon_on_ground", "assert": "match.worldItems", "greaterThan": "${itemsBeforeDrop}" }
+  ]
+}

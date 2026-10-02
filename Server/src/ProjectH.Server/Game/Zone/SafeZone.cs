@@ -92,6 +92,15 @@ public sealed class SafeZone
         return true;
     }
 
+    // QA-1 (setZone): the current phase's shrink is over at `now` (its circle is the target circle from now), so the next
+    // Advance(now) starts the following phase with its wait from now. Nothing before the match (phase 0).
+    internal void EndShrink(uint now)
+    {
+        if (Phase == 0) return;
+        if (ShrinkStartTick > now) ShrinkStartTick = now;
+        ShrinkEndTick = now;
+    }
+
     // The circle at a (fractional) server tick. Keep in step with the client's ZoneMath.Sample.
     public void Sample(double tick, out float centerX, out float centerZ, out float radius)
     {

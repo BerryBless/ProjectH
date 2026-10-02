@@ -212,6 +212,9 @@ public sealed class Match
 
     public bool TryGetPlayer(int peerId, out PlayerEntity player) => _playersByPeer.TryGetValue(peerId, out player!);
 
+    // QA-1: every player (connected and graced), by index 0..PlayerCount-1, without exposing the list. Read-only use.
+    internal PlayerEntity PlayerAt(int index) => _players[index];
+
     // Test seam (InternalsVisibleTo): the store itself. Match is the only writer.
     internal WorldItems WorldItems => _worldItems;
     // Test seam: the match state machine. Match is the only writer.
@@ -1034,6 +1037,36 @@ public sealed class Match
         CollapseUnsupported();
     }
 
+    // QA-1 (damageBuild): damage through the same path as a shot (destroy at 0, then the collapse search at once, as the
+    // end of a tick does). Called between ticks; the events go out with the next tick's BuildEvents. False = no such piece.
+    internal bool DamagePieceById(uint id, float amount, out bool destroyed)
+    {
+        destroyed = false;
+        if (!_build.TryGetSlot(id, out int slot)) return false;
+        DamagePiece(slot, amount);
+        destroyed = !_build.Contains(id);
+        CollapseUnsupported();
+        return true;
+    }
+
+    // QA-1 (spawnBuildPiece): a piece placed without a player: the slot, the match budget and the support (D12) are
+    // checked; reach, view, cost and the players are not (a test setup puts pieces where it needs them). Owner 0 = nobody.
+    // Called between ticks, so it is created at the next simulated tick, like a request processed then.
+    internal BuildResultCode PlacePiece(in BuildPieceShape shape, BuildMaterialType material, out uint id)
+    {
+        id = 0;
+        if (_build.Count >= _building.MaxPiecesPerMatch) return BuildResultCode.BudgetFull;
+        if (BuildRules.Occupied(_build, shape)) return BuildResultCode.Occupied;
+        bool grounded = BuildSupport.IsGrounded(shape, GameMap.Terrain, GameMap.Boxes);
+        if (!grounded && !_support.HasNeighbour(shape)) return BuildResultCode.Unsupported;
+        id = _build.Add(shape, material, 0, ServerTick + 1, grounded);
+        if (id == 0) return BuildResultCode.BudgetFull;
+        _build.TryGetSlot(id, out int slot);
+        _support.Add(slot, shape);
+        _replication.Placed(Record(_build.At(slot)));
+        return BuildResultCode.Ok;
+    }
+
     // Test seam: several pieces destroyed within one tick, the collapse searched once afterwards (as Tick does).
     internal void DestroyPieces(ReadOnlySpan<uint> ids)
     {
@@ -1077,6 +1110,53 @@ public sealed class Match
 
         if (killed) Kill(target, shooter);
     }
+
+    // QA-1 (damagePlayer): damage from nobody, like a fall but through the shield (the shot rule, CombatRules.ApplyDamage).
+    // The victim hears DamageTaken; a fatal one is a death without a killer. Returns false for a dead player.
+    internal bool DamagePlayer(PlayerEntity target, int damage, out bool killed)
+    {
+        killed = false;
+        if (!target.Alive || damage <= 0) return false;
+        killed = CombatRules.ApplyDamage(ref target.Health, ref target.Shield, damage);
+        var writer = new PacketWriter(_sendBuffer);
+        DamageTaken.Write(ref writer, new DamageTaken { AttackerId = 0, Damage = (ushort)Math.Min(damage, ushort.MaxValue), FromDirection = Vector3.Zero });
+        _send(target.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+        if (killed) Kill(target, null);
+        return true;
+    }
+
+    // QA-1 (killPlayer): the real death path (placement, PlayerDied, the death drop); the finish check follows next tick.
+    internal bool KillPlayer(PlayerEntity victim)
+    {
+        if (!victim.Alive) return false;
+        victim.Health = 0;
+        Kill(victim, null);
+        return true;
+    }
+
+    // QA-1 (forceMatchState finish): the match ends now as if one participant were left (every living participant gets
+    // placement 1; the winner is the last of them in player order, D9). False outside a match.
+    internal bool ForceFinish()
+    {
+        if (!_flow.InMatch) return false;
+        FinishMatch(ServerTick);
+        return true;
+    }
+
+    // QA-1 (setZone): the current shrink ends now and the next phase starts (its wait from now). Between ticks ServerTick
+    // is the next tick's `now`. False outside a match, before the zone starts, or in its last phase.
+    internal bool AdvanceZone()
+    {
+        if (!_flow.InMatch || _zone.Phase == 0 || _zone.IsFinalPhase) return false;
+        _zone.EndShrink(ServerTick);
+        _zone.Advance(ServerTick);
+        if (_zone.IsFinalPhase) _flow.EnterFinalPhase();
+        return true;
+    }
+
+    // QA-1: the player is standing on something (terrain, a box, a door, a harvestable or a piece), like the simulation sees it.
+    internal bool IsGrounded(PlayerEntity player) =>
+        MovementSimulation.IsGrounded(player.State, GatherAround(player.State.Position), GameMap.Terrain);
 
     // D7, D8: the next phase when the shrink is over, then, once per second since the start, zone damage to
     // everyone outside the circle at this tick. Health only: the shield does not stop the zone. Players are

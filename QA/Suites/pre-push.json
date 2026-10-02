@@ -1,0 +1,12 @@
+{
+  "name": "pre-push",
+  "description": "Request §93: run before pushing (about 30 s): server start, connect, move, shoot, pickup, death, reconnect.",
+  "scenarios": [
+    "Smoke/connect.json",
+    "Movement/move_to.json",
+    "Combat/basic_hit.json",
+    "Loot/pickup_drop.json",
+    "Combat/elimination.json",
+    "Reconnect/reconnect.json"
+  ]
+}

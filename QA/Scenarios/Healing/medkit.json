@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "name": "Medkit Heals",
+  "description": "Request §121: A is hurt in Arrange (damagePlayer), then a real UseMedkit press (key 4) heals it after the 3 s use time (items.json: +50) and uses up the medkit.",
+  "tags": ["healing", "inventory"],
+  "seed": 6001,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Spawn_A" },
+    { "id": "a_full", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "a_no_shield", "action": "setShield", "actor": "playerA", "value": 0 },
+    { "id": "a_hurt", "action": "damagePlayer", "actor": "playerA", "amount": 60 },
+    { "id": "a_at_40", "action": "waitFor", "condition": "player.health", "actor": "playerA", "equals": 40, "timeoutMilliseconds": 2000 },
+    { "id": "a_medkit", "action": "giveItem", "actor": "playerA", "item": "medkit", "count": 1 },
+    { "id": "a_has_medkit", "action": "waitFor", "condition": "actor.hasInventory", "actor": "playerA", "equals": true, "timeoutMilliseconds": 2000 },
+
+    { "id": "a_use", "phase": "act", "action": "press", "actor": "playerA", "button": "UseMedkit" },
+    { "id": "a_healed", "phase": "assert", "action": "waitFor", "condition": "player.health", "actor": "playerA", "equals": 90, "timeoutMilliseconds": 6000 },
+    { "id": "healed_event", "action": "waitForEvent", "event": "PlayerHealed", "actor": "playerA", "timeoutMilliseconds": 2000 },
+    { "id": "a_medkit_used", "assert": "player.medkits", "actor": "playerA", "equals": 0 }
+  ]
+}

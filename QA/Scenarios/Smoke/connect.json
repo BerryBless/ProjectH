@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "Smoke Server Connect",
+  "description": "Request §115: the server starts in QA mode, a headless client joins, the server sees it, and it leaves cleanly.",
+  "tags": ["smoke"],
+  "seed": 1001,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch" },
+  "actors": [ { "id": "playerA", "type": "HeadlessClient" } ],
+  "steps": [
+    { "id": "server_up", "assert": "server.running", "equals": true },
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "a_on_server", "action": "waitFor", "condition": "player.connected", "actor": "playerA", "equals": true, "timeoutMilliseconds": 5000 },
+    { "id": "a_network", "assert": "network.connected", "actor": "playerA", "equals": true },
+    { "id": "match_waiting", "assert": "match.state", "equals": "WaitingForPlayers" },
+    { "id": "a_disconnect", "action": "disconnect", "actor": "playerA" },
+    { "id": "a_gone", "action": "waitFor", "condition": "player.exists", "actor": "playerA", "equals": false, "timeoutMilliseconds": 5000 }
+  ]
+}

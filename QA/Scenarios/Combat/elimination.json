@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "name": "Elimination And Winner",
+  "description": "Request §118, §124: B eliminates A with real fire (5 x 20 damage needed, 8 presses given). The server records the kill, A's placement, B's kill count, and with one survivor the match finishes with B as the winner.",
+  "tags": ["combat", "elimination"],
+  "seed": 3001,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2", "Server:ResultSeconds": "15" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+    { "id": "alive_before", "action": "save", "path": "match.alive", "saveAs": "aliveBefore" },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Combat_A" },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": "QA_Combat_B" },
+    { "id": "a_health", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "a_shield", "action": "setShield", "actor": "playerA", "value": 0 },
+    { "id": "b_rifle", "action": "giveWeapon", "actor": "playerB", "weapon": "Vesper AR", "rarity": 0 },
+    { "id": "b_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerB", "equals": "Vesper AR", "timeoutMilliseconds": 3000 },
+
+    { "id": "b_fire", "phase": "act", "action": "fire", "actor": "playerB", "target": "playerA", "count": 8 },
+
+    { "id": "a_killed_event", "phase": "assert", "action": "waitForEvent", "event": "PlayerKilled", "actor": "playerA", "where": { "killer": "qa-playerB" }, "timeoutMilliseconds": 5000 },
+    { "id": "a_dead", "assert": "player.alive", "actor": "playerA", "equals": false },
+    { "id": "a_placement", "assert": "player.placement", "actor": "playerA", "equals": 2 },
+    { "id": "b_kills", "assert": "player.kills", "actor": "playerB", "equals": 1 },
+    { "id": "alive_after", "assert": "match.alive", "lessThan": "${aliveBefore}" },
+    { "id": "match_finished", "action": "waitFor", "condition": "match.state", "equals": "Finished", "timeoutMilliseconds": 5000 },
+    { "id": "winner", "assert": "match.winner", "equals": "qa-playerB" },
+    { "id": "b_placement", "assert": "player.placement", "actor": "playerB", "equals": 1 }
+  ]
+}

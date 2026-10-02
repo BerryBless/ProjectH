@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "name": "Basic Hit And Reconnect",
+  "description": "Request §152 (QA-1 completion): A and B join, B gets a rifle, B really fires at A (input → server hit validation → damage), A's health drops; A drops, comes back within the grace and gets its own character back.",
+  "tags": ["combat", "reconnect", "smoke"],
+  "seed": 12345,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [
+    { "id": "playerA", "type": "HeadlessClient" },
+    { "id": "playerB", "type": "HeadlessClient" }
+  ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Combat_A" },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": "QA_Combat_B" },
+    { "id": "a_health", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "a_shield", "action": "setShield", "actor": "playerA", "value": 0 },
+    { "id": "b_rifle", "action": "giveWeapon", "actor": "playerB", "weapon": "Vesper AR", "rarity": 0, "select": true },
+    { "id": "b_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerB", "equals": "Vesper AR", "timeoutMilliseconds": 3000 },
+    { "id": "a_entity", "action": "save", "path": "player.entityId", "actor": "playerA", "saveAs": "aEntity" },
+    { "id": "a_hp_before", "action": "save", "path": "player.health", "actor": "playerA", "saveAs": "hpBefore" },
+
+    { "id": "b_fire", "phase": "act", "action": "fire", "actor": "playerB", "target": "playerA", "count": 3, "saveAs": "shots", "description": "B fires 3 Vesper AR rounds at A (3 x 20 damage cannot kill A)" },
+
+    { "id": "a_damaged", "phase": "assert", "action": "waitFor", "condition": "player.health", "actor": "playerA", "lessThan": "${hpBefore}", "timeoutMilliseconds": 3000 },
+    { "id": "b_hit_confirmed", "action": "waitFor", "condition": "actor.hitsLanded", "actor": "playerB", "greaterThan": 0, "timeoutMilliseconds": 3000, "description": "B received HitConfirmed: the damage came from the shot, not the zone" },
+    { "id": "a_damage_event", "action": "waitForEvent", "event": "PlayerDamaged", "actor": "playerA", "timeoutMilliseconds": 3000 },
+    { "id": "a_hp_after", "action": "save", "path": "player.health", "actor": "playerA", "saveAs": "hpAfter" },
+
+    { "id": "a_drop", "phase": "act", "action": "disconnect", "actor": "playerA" },
+    { "id": "a_graced", "phase": "assert", "action": "waitFor", "condition": "player.graced", "actor": "playerA", "equals": true, "timeoutMilliseconds": 3000 },
+    { "id": "a_away", "phase": "act", "action": "wait", "milliseconds": 5000 },
+    { "id": "a_reconnect", "action": "reconnect", "actor": "playerA" },
+    { "id": "a_back", "phase": "assert", "action": "waitFor", "condition": "player.connected", "actor": "playerA", "equals": true, "timeoutMilliseconds": 5000 },
+    { "id": "a_same_entity", "assert": "player.entityId", "actor": "playerA", "equals": "${aEntity}" },
+    { "id": "a_same_health", "assert": "player.health", "actor": "playerA", "equals": "${hpAfter}" },
+    { "id": "a_alive", "assert": "player.alive", "actor": "playerA", "equals": true }
+  ]
+}

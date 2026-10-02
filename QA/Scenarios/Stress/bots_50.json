@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "50 Clients Tick Budget",
+  "description": "Request §133-134: 50 headless clients join and stay in a match (sending input every tick) for 60 s; the server's tick p95 over that minute must stay under 5 ms. The threshold is deliberately loose and is the user's to tune (§134): Docs/LoadTest.md measured p95 about 0.1-0.5 ms for 50 bots on the reference machine. Runs on the same machine as the tool, so it is a smoke check, not a benchmark.",
+  "tags": ["stress", "slow"],
+  "seed": 9901,
+  "timeoutSeconds": 180,
+  "server": { "mode": "launch", "options": { "Server:MaxPlayers": "60", "Server:MinPlayers": "2" } },
+  "variables": { "tickP95LimitMs": 5 },
+  "actors": [],
+  "steps": [
+    { "id": "spawn", "action": "spawnActors", "count": 50, "prefix": "bot" },
+    { "id": "join_all", "action": "connectAll", "prefix": "bot", "timeoutMilliseconds": 30000 },
+    { "id": "sessions", "action": "waitFor", "condition": "server.activeSessions", "equals": 50, "timeoutMilliseconds": 5000 },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+    { "id": "run_60s", "action": "wait", "seconds": 60 },
+    { "id": "tick_p95", "assert": "server.tickP95Ms", "windowSeconds": 60, "lessThan": "${tickP95LimitMs}" },
+    { "id": "no_tick_failures", "assert": "server.metrics.health.tickFailures", "equals": 0 },
+    { "id": "all_still_here", "assert": "server.activeSessions", "equals": 50 },
+    { "id": "client_still_joined", "assert": "network.connected", "actor": "bot-050", "equals": true }
+  ]
+}

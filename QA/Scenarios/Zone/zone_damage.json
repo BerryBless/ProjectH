@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "name": "Zone Damage Outside, None Inside",
+  "description": "Request §123: the zone is advanced to phase 3 (circle radius 40, 5 damage/s, zones.json). A standing at the far south-west corner, outside the circle, loses health over time; moved to the circle's centre (read from /qa/match) it stops losing health. Nobody fires in this scenario, so all damage is the zone's. Seed 8002 puts the zone centre on open ground (seed 8001 put it against the Gearworks wall: setPosition 409).",
+  "tags": ["zone"],
+  "seed": 8002,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "zone_phase3", "phase": "arrange", "action": "setZone", "zonePhase": 3 },
+    { "id": "zone_is_3", "action": "waitFor", "condition": "match.zone.phase", "equals": 3, "timeoutMilliseconds": 2000 },
+    { "id": "zone_center", "action": "save", "path": "match.zone.center", "saveAs": "zc" },
+    { "id": "b_inside", "action": "setPosition", "actor": "playerB", "position": "${zc}" },
+    { "id": "a_full", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "a_no_shield", "action": "setShield", "actor": "playerA", "value": 0 },
+    { "id": "a_outside", "action": "setPosition", "actor": "playerA", "position": "QA_Far_SW" },
+
+    { "id": "a_zone_hit", "phase": "assert", "action": "waitForEvent", "event": "PlayerDamaged", "actor": "playerA", "timeoutMilliseconds": 4000 },
+    { "id": "hp_outside", "action": "save", "path": "player.health", "actor": "playerA", "saveAs": "hpOutside" },
+    { "id": "keep_outside", "action": "wait", "milliseconds": 2000 },
+    { "id": "a_still_losing", "assert": "player.health", "actor": "playerA", "lessThan": "${hpOutside}" },
+
+    { "id": "a_inside", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "${zc}" },
+    { "id": "settle", "action": "wait", "milliseconds": 1500 },
+    { "id": "hp_inside", "phase": "assert", "action": "save", "path": "player.health", "actor": "playerA", "saveAs": "hpInside" },
+    { "id": "keep_inside", "action": "wait", "milliseconds": 3000 },
+    { "id": "a_not_losing", "assert": "player.health", "actor": "playerA", "equals": "${hpInside}" },
+    { "id": "a_alive", "assert": "player.alive", "actor": "playerA", "equals": true }
+  ]
+}

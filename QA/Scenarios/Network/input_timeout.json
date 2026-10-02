@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "name": "Input Timeout Disconnect",
+  "description": "Request §75: A stays connected (LiteNetLib keeps pinging) but stops sending input. After Server:InputTimeoutSeconds (7 s here, the smallest the server allows with the default DisconnectTimeoutMs 5000: InputTimeoutSeconds*1000 >= DisconnectTimeoutMs + 2000) the server closes A with DisconnectCode.InputTimeout. A server close gives no reconnect grace: A leaves the match at once. Three players so the match keeps going.",
+  "tags": ["network", "slow"],
+  "seed": 9501,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2", "Server:InputTimeoutSeconds": "7" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" }, { "id": "playerC" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "c_connect", "action": "connect", "actor": "playerC" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_silent", "phase": "act", "action": "pauseInput", "actor": "playerA" },
+    { "id": "a_quiet_4s", "action": "wait", "milliseconds": 4000 },
+    { "id": "a_connected_4s", "phase": "assert", "assert": "network.connected", "actor": "playerA", "equals": true },
+    { "id": "a_closed", "action": "waitFor", "condition": "network.disconnectCode", "actor": "playerA", "equals": "InputTimeout", "timeoutMilliseconds": 8000 },
+    { "id": "a_reason", "assert": "network.disconnectReason", "actor": "playerA", "contains": "InputTimeout" },
+    { "id": "a_left", "action": "waitForEvent", "event": "PlayerLeft", "actor": "playerA", "timeoutMilliseconds": 3000 },
+    { "id": "a_no_grace", "assert": "player.exists", "actor": "playerA", "equals": false },
+    { "id": "no_grace_started", "assert": "server.metrics.health.graceStarts", "equals": 0 },
+    { "id": "b_unaffected", "assert": "player.connected", "actor": "playerB", "equals": true }
+  ]
+}

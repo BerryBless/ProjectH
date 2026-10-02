@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "name": "Reconnect Keeps Character",
+  "description": "Request §74, §125: during a match A drops (graceful close, the server graces a living participant), comes back within ReconnectGraceSeconds (10 s) and resumes the same character: entity, health, weapon, ammo and items.",
+  "tags": ["reconnect"],
+  "seed": 4001,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Spawn_A" },
+    { "id": "a_health", "action": "setHealth", "actor": "playerA", "value": 70 },
+    { "id": "a_shield", "action": "setShield", "actor": "playerA", "value": 25 },
+    { "id": "a_rifle", "action": "giveWeapon", "actor": "playerA", "weapon": "Kestrel LR" },
+    { "id": "a_ammo", "action": "giveAmmo", "actor": "playerA", "type": "heavy", "amount": 12 },
+    { "id": "a_medkit", "action": "giveItem", "actor": "playerA", "item": "medkit", "count": 2 },
+    { "id": "a_entity", "action": "save", "path": "player.entityId", "actor": "playerA", "saveAs": "aEntity" },
+    { "id": "a_heavy", "action": "save", "path": "player.ammo.heavy", "actor": "playerA", "saveAs": "aHeavy" },
+
+    { "id": "a_drop", "phase": "act", "action": "disconnect", "actor": "playerA" },
+    { "id": "a_graced", "phase": "assert", "action": "waitFor", "condition": "player.graced", "actor": "playerA", "equals": true, "timeoutMilliseconds": 3000 },
+    { "id": "graced_event", "action": "waitForEvent", "event": "PlayerGraced", "actor": "playerA", "timeoutMilliseconds": 3000 },
+    { "id": "a_away", "phase": "act", "action": "wait", "milliseconds": 3000 },
+    { "id": "a_reconnect", "action": "reconnect", "actor": "playerA" },
+
+    { "id": "resumed_event", "phase": "assert", "action": "waitForEvent", "event": "PlayerResumed", "actor": "playerA", "timeoutMilliseconds": 3000 },
+    { "id": "a_connected", "assert": "player.connected", "actor": "playerA", "equals": true },
+    { "id": "a_same_entity", "assert": "player.entityId", "actor": "playerA", "equals": "${aEntity}" },
+    { "id": "a_alive", "assert": "player.alive", "actor": "playerA", "equals": true },
+    { "id": "a_hp", "assert": "player.health", "actor": "playerA", "equals": 70 },
+    { "id": "a_sh", "assert": "player.shield", "actor": "playerA", "equals": 25 },
+    { "id": "a_weapon", "assert": "player.weapon.name", "actor": "playerA", "equals": "Kestrel LR" },
+    { "id": "a_ammo_kept", "assert": "player.ammo.heavy", "actor": "playerA", "equals": "${aHeavy}" },
+    { "id": "a_medkits", "assert": "player.medkits", "actor": "playerA", "equals": 2 },
+    { "id": "a_client_view", "action": "waitFor", "condition": "actor.entityId", "actor": "playerA", "equals": "${aEntity}", "timeoutMilliseconds": 2000 },
+    { "id": "still_playing", "assert": "match.state", "equals": "Playing" }
+  ]
+}

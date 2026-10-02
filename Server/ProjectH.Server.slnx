@@ -1,10 +1,12 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/ProjectH.Bots/ProjectH.Bots.csproj" />
+    <Project Path="src/ProjectH.QA/ProjectH.QA.csproj" />
     <Project Path="src/ProjectH.Server/ProjectH.Server.csproj" />
     <Project Path="src/ProjectH.Shared/ProjectH.Shared.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/ProjectH.QA.Tests/ProjectH.QA.Tests.csproj" />
     <Project Path="tests/ProjectH.Server.Tests/ProjectH.Server.Tests.csproj" />
   </Folder>
 </Solution>

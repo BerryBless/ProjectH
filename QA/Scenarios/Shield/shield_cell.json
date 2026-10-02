@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "name": "Shield Cell Restores Shield",
+  "description": "Request §122: a real UseShieldCell press (key 5) adds 25 shield after the 2 s use time (items.json) and uses up the cell; the next damage comes off the shield first.",
+  "tags": ["shield", "inventory"],
+  "seed": 7001,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Spawn_A" },
+    { "id": "a_full", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "a_no_shield", "action": "setShield", "actor": "playerA", "value": 0 },
+    { "id": "a_cells", "action": "giveItem", "actor": "playerA", "item": "shieldCell", "count": 1 },
+    { "id": "a_has_cell", "action": "waitFor", "condition": "player.shieldCells", "actor": "playerA", "equals": 1, "timeoutMilliseconds": 2000 },
+    { "id": "a_client_inventory", "action": "waitFor", "condition": "actor.hasInventory", "actor": "playerA", "equals": true, "timeoutMilliseconds": 2000 },
+
+    { "id": "a_use", "phase": "act", "action": "press", "actor": "playerA", "button": "UseShieldCell" },
+    { "id": "a_shielded", "phase": "assert", "action": "waitFor", "condition": "player.shield", "actor": "playerA", "equals": 25, "timeoutMilliseconds": 5000 },
+    { "id": "a_cell_used", "assert": "player.shieldCells", "actor": "playerA", "equals": 0 },
+
+    { "id": "a_hit", "phase": "arrange", "action": "damagePlayer", "actor": "playerA", "amount": 10 },
+    { "id": "shield_first", "phase": "assert", "action": "waitFor", "condition": "player.shield", "actor": "playerA", "equals": 15, "timeoutMilliseconds": 2000 },
+    { "id": "health_kept", "assert": "player.health", "actor": "playerA", "equals": 100 }
+  ]
+}
