@@ -95,6 +95,16 @@ public sealed class GameLoop : IDisposable
     private int _playerFailureCount;
     private int _playerFailureNext;
     private bool _resetForPlayerFailures;
+    // Review round 2 (game loop thread only): the loop ticks of the latest ticks in which every player failed, a ring of
+    // AllFailedTicksBeforeReset made once. A player's own bad state goes with it, so a fresh player (a rejoin, a newcomer)
+    // failing again and again with everyone else is a fault in the match, even when too few clients are connected to
+    // reach MaxPlayers failures (one client failing at every reconnect fails about 9 times in 10 s). 5 such ticks within
+    // the window: enough rejoins that a single unlucky player state is ruled out, still well inside the window at a
+    // normal reconnect pace. Emptied by every reset.
+    private const int AllFailedTicksBeforeReset = 5;
+    private readonly long[] _allFailedTicks = new long[AllFailedTicksBeforeReset];
+    private int _allFailedCount;
+    private int _allFailedNext;
     private bool _spawnEncodeFailureLogged;   // Phase 11: the first PlayerSpawned encode failure was logged
     private readonly Action? _onFatal;
     private readonly TimeProvider _time;
@@ -197,13 +207,16 @@ public sealed class GameLoop : IDisposable
 
     // Review round 1: true when this failure makes MaxPlayers of them within the window. The ring holds the latest
     // MaxPlayers failure ticks; once full, the entry after the newest is the oldest.
-    private bool RecordPlayerFailure()
+    private bool RecordPlayerFailure() =>
+        RecordInWindow(_playerFailureTicks, ref _playerFailureCount, ref _playerFailureNext);
+
+    // Writes the current loop tick into the ring; true when the ring is full and its oldest entry is within the window.
+    private bool RecordInWindow(long[] ring, ref int count, ref int next)
     {
-        _playerFailureTicks[_playerFailureNext] = _loopTick;
-        _playerFailureNext = (_playerFailureNext + 1) % _playerFailureTicks.Length;
-        if (_playerFailureCount < _playerFailureTicks.Length) _playerFailureCount++;
-        return _playerFailureCount == _playerFailureTicks.Length &&
-               _loopTick - _playerFailureTicks[_playerFailureNext] < _playerFailureWindowTicks;
+        ring[next] = _loopTick;
+        next = (next + 1) % ring.Length;
+        if (count < ring.Length) count++;
+        return count == ring.Length && _loopTick - ring[next] < _playerFailureWindowTicks;
     }
 
     // D2, D9: a graced player left without resuming (at most MaxPlayers per round, so logging each is cheap).
@@ -391,13 +404,14 @@ public sealed class GameLoop : IDisposable
     // is closed with ServerError; their clients reconnect into the new match. Three resets within ResetWindow mean the
     // fault is in the code, not in one match: the server stops (onFatal) instead of failing forever.
     private const string TickFailuresCause = "ticks failed in a row";
-    private const string PlayerFailuresCause = "players' ticks failed (MaxPlayers within 10 s)";
+    private const string PlayerFailuresCause = "players' ticks failed (MaxPlayers failures, or 5 ticks with every player failing, within 10 s)";
 
     private void ResetMatch(string cause)
     {
         _consecutiveTickFailures = 0;
         _resetForPlayerFailures = false;
         _playerFailureCount = 0;
+        _allFailedCount = 0;
         _stalePeers.Clear();
         _timedOut.Clear();
 
@@ -469,6 +483,8 @@ public sealed class GameLoop : IDisposable
         SweepPeers();
         SendStatsReplies();
         _match.Tick();
+        // Review round 2: a tick in which every player failed (see _allFailedTicks).
+        if (_match.EveryPlayerFailed && RecordInWindow(_allFailedTicks, ref _allFailedCount, ref _allFailedNext)) _resetForPlayerFailures = true;
         _health.SetGauges(_peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State);
         _health.SetBuild(_match.BuildCounts(), _buildRejects);
     }

@@ -144,6 +144,49 @@ public sealed class ExceptionRecoveryTests
         Assert.Equal(1, loop.Health.MatchResets);
     }
 
+    // Review round 2: one client that fails at every join and reconnects (about 1.1 s apart) never reaches MaxPlayers
+    // failures in the window. Every player of a tick failing, 5 times within the window, is a match fault too.
+    [Fact]
+    public void ALonePlayerFailingAtEveryReconnect_ResetsTheMatch()
+    {
+        using var loop = new GameLoop(new ServerOptions { Port = 0, MaxPlayers = 16 }, TestGameData.Create(), NullLogger.Instance);
+        Match match = loop.Match;
+        for (int cycle = 1; cycle <= 5; cycle++)
+        {
+            Assert.Same(match, loop.Match);
+            Assert.Equal(JoinResult.Ok, match.TryJoin(100 + cycle, "lone"));
+            match.FaultEntityId = -1;
+            loop.RunTickGuarded();
+            match.FaultEntityId = 0;
+            for (int i = 0; i < 33 && ReferenceEquals(match, loop.Match); i++) loop.RunTickGuarded();   // the reconnect
+            Assert.Equal(cycle < 5 ? 0 : 1, loop.Health.MatchResets);
+        }
+        Assert.NotSame(match, loop.Match);
+        Assert.Equal(5, loop.Health.PlayerFailures);
+    }
+
+    // One player of four failing at every rejoin is that player's fault: the others keep playing, no reset.
+    [Fact]
+    public void OnePlayerOfFourFailingAtEveryRejoin_DoesNotResetTheMatch()
+    {
+        using var loop = new GameLoop(new ServerOptions { Port = 0, MaxPlayers = 16 }, TestGameData.Create(), NullLogger.Instance);
+        Match match = loop.Match;
+        for (int peer = 1; peer <= 3; peer++) Assert.Equal(JoinResult.Ok, match.TryJoin(peer, "ok" + peer));
+        for (int cycle = 1; cycle <= 9; cycle++)
+        {
+            Assert.Equal(JoinResult.Ok, match.TryJoin(100 + cycle, "bad"));
+            Assert.True(match.TryGetPlayer(100 + cycle, out var bad));
+            match.FaultEntityId = bad.EntityId;
+            loop.RunTickGuarded();
+            match.FaultEntityId = 0;
+            for (int i = 0; i < 33; i++) loop.RunTickGuarded();
+        }
+        Assert.Same(match, loop.Match);
+        Assert.Equal(0, loop.Health.MatchResets);
+        Assert.Equal(9, loop.Health.PlayerFailures);
+        Assert.Equal(3, match.PlayerCount);
+    }
+
     // B10: while the server stops, a connection request is refused as ServerFull (no protocol change).
     [Fact]
     public void AStoppingServer_RefusesNewConnections()

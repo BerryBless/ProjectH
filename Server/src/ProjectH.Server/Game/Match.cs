@@ -226,6 +226,9 @@ public sealed class Match
     internal bool HasRoute => _hasRoute;
     internal DropRoute Route => _route;
     internal DoorSet Doors => _doors;
+    // Review round 2: whether every player the last tick's player loop ran failed (false with no player). Game loop only.
+    internal bool EveryPlayerFailed { get; private set; }
+
     // Test seam (server review M7): the player loop throws for the player with this entity id (0 = none; ids start at 1;
     // -1 = every player, review round 1).
     // Volatile: a test may set it while the loop thread ticks.
@@ -449,6 +452,7 @@ public sealed class Match
         // tick) is taken out after the loop, alone; the others move and the tick goes on. A failure outside this loop
         // still fails the whole tick (GameLoop's reset path).
         _failedPlayers.Clear();
+        int ticked = _players.Count;
         foreach (var player in _players)
         {
             try
@@ -461,6 +465,8 @@ public sealed class Match
             }
         }
         // Before the collapse and the finish check: the failed player's leave is an elimination of this tick.
+        // Review round 2: every player of this tick failed (GameLoop counts such ticks; read after Tick returns).
+        EveryPlayerFailed = ticked > 0 && _failedPlayers.Count == ticked;
         if (_failedPlayers.Count > 0) RemoveFailedPlayers();
         // Final review A2: one support search for every piece destroyed this tick.
         CollapseUnsupported();
