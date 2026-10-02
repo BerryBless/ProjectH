@@ -21,6 +21,8 @@ dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 779
 | `--connect-interval-ms` | 100 | 봇 접속 사이 간격 0–10000 (접속 폭주 방지) |
 | `--name-prefix` | bot | 이름 접두어 1–20자 |
 | `--stats-interval` | 10 | 로그 간격(초), 1 이상 |
+| `--build` | true | Phase 13. false면 건설을 전혀 하지 않는다(방어 벽·경사로도 없음. 부하 시나리오 A, Phase 12와 비교). `--build-spam`과 같이 쓸 수 없다 |
+| `--build-spam` | 0 | Phase 13. 0–20. 봇마다 초당 이만큼 건설 요청을 보낸다(부하 테스트, 건축 모드에 머문다). 0이면 보통 규칙(방어 벽, 높은 적 쪽 경사로)만 쓴다 |
 | `--reconnect` | false | true면 다시 해도 되는 끊김(Client와 같은 표, `Networking.md` "끊기와 재접속")에서 같은 이름으로 다시 접속한다. 끊긴 때부터 1·3·7초 뒤(Client와 같은 `DisconnectCodes.ReconnectOffsetSeconds`), 끊김마다 최대 3번이다. 시도마다 짧은 연결 예산(250 ms × 5, 약 1.5초)을 쓰고, 다음 시각에 아직 연결 중인 시도는 새 시도로 바꾼다. 처음 접속 실패는 다시 하지 않는다 |
 
 `--stats-interval` 초마다 한 줄을 남긴다: 연결된 수, 살아 있는 수(`alive`), 경기 상태, 보낸 입력/s, 받은 패킷/s, 받은 바이트/s, 봇 루프 p95 ms, 재접속 수(`reconnects`). `--reconnect true`가 아니면 끊긴 봇은 다시 접속하지 않는다.
@@ -72,6 +74,14 @@ dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 779
 | 회복 | Health < 60 → Medkit, Shield < 25 → Shield Cell, 근처 15 m에 적 없을 때만 |
 | 줍기 | 수평 1.5 m, 높이 차 1.8 m 안에서 E (서버 허용 2 m) |
 
+## 건설 (Phase 13 D17, `BotBuilder`)
+
+- 방어: 맞으면(`DamageTaken`) 3초에 한 번, 확률 0.3으로 공격자 쪽 칸 가장자리에 벽을 짓는다.
+- 높이: 15 m 안의 적이 1.5 m 이상 높으면 앞 칸에 그쪽으로 오르는 경사로를 짓는다(3초에 한 번).
+- 스팸(`--build-spam N`): 초당 N개, 주변 칸의 슬롯을 돌며 보낸다(고정 일정, 밀리지 않는다).
+- 한 번의 배치: Q(건축 모드) → 한 Tick 조준 → 채널 1로 `BuildRequest` → 1(무기). 서버가 모두 정한다. 보통 경기에서는 채집을 하지 않으므로 대부분 `NoResource`로 거절된다(실제 규칙 그대로). 부하 측정은 `--Server:BuildInfiniteResources=true`로 서버를 띄운다.
+- 통계 줄에 보낸 건설 요청 수가 더해졌다.
+
 ## 봇이 쓰는 정보
 
 Client가 받는 정보만 쓴다. 서버 내부 상태는 보지 않는다.
@@ -79,6 +89,7 @@ Client가 받는 정보만 쓴다. 서버 내부 상태는 보지 않는다.
 - Snapshot: 모든 플레이어 위치, 생존, 내 Health·Shield·탄창. 100명 경기는 Snapshot이 2패킷이라, 같은 Tick의 패킷은 이어 붙이고 새 Tick이 오면 다른 플레이어 목록을 비우고 다시 모은다(`BotView.ApplySnapshot`)
 - 이벤트: 아이템, 인벤토리, 경기 상태, Zone, 사망
 - Phase 12: `TransportRoute`(수송기 경로. 뛰어내리기 Tick 계산), 자기 Entity의 모드(Snapshot `Flags`, 투입 규칙의 입구), `PlayerRespawned.Mode`(경기 시작 때 `Transport`)
+- Phase 13: `BuildCatalog`, `ResourcesState`, `BuildResult`, 건설 스트림의 조각 id(최대 4096개 기억), `DamageTaken`의 방향
 - Shared 맵 데이터: `GameMap` 박스·지형
 
 ## 한계
@@ -104,6 +115,7 @@ Phase 12에서 봇이 쓰지 않는 것:
   - 배회 지점은 다음 원 안
   - `ATick_AllocatesNothing`: 판단 Tick 무할당
 - `BotDeployTests`(Phase 12): 뛰어내리기 Tick은 수송기가 목표에 가장 가까워지는 Tick이고 구간 안이다. 탑승 중에는 이동 없이 그 Tick부터 0.5초마다 Jump를 보낸다. 낙하 중에는 목표를 보고 앞으로 가다 5 m 안에서 멈춘다. 목표는 맵 안이고 POI·아이템에 흩어진다. 착지하면 전과 같이 논다. 경로가 없으면 기다린다. 막힌 봇은 달린다
+- `BotBuilderTests`(Phase 13): 방어 벽 방향·확률·대기, 경사로 조건, 스팸 일정, 실제 서버에서 스팸 요청이 받아들여짐
 - `BotPartsTests`: `LineOfSight`(트인 곳, 벽, 언덕), `BotAim`(오차 0이면 서버 `CombatRules`와 같은 방향, 오차는 범위 안), `BotSteering`(직진, 점프 → 우회 → 포기, 진전이 있으면 포기를 미룸), `BotOptions`(파싱·범위 검증)
 - `BotIntegrationTests`: 같은 프로세스에서 서버 `GameLoop`를 띄우고 봇이 실제 UDP로 접속
   - `ABot_FindsAndPicksUpAWeapon`: `DevRespawn`, 빈손, 무기만 나오는 Loot에서 20초 안에 무기를 줍는다

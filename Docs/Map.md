@@ -27,7 +27,7 @@ Phase 12 기준(문 5개 추가). 설계 근거와 결정 D1–D14: `Docs/specs/
   - 높이는 0 이상 12 m 이하다.
 - **이동:** 오르막에서는 발을 지형 위로 올린다. 걷는 중의 내리막에서는 땅에 붙인다(`Networking.md` "이동 충돌").
 
-## 박스 (`GameMap.Boxes`, 58개)
+## 박스 (`GameMap.Boxes`, 54개)
 
 - **배치 규칙(`GameMapTests`):**
   - 128개 이하다.
@@ -69,6 +69,14 @@ Phase 12 기준(문 5개 추가). 설계 근거와 결정 D1–D14: `Docs/specs/
 - **밀치기:** 달리는 중이거나 슬라이드 중에 닫힌 문에 막히면 그 문이 열린다. `Step`이 막은 상자를 알려 주고(`StepResult.BlockedBy`, Z 축은 `BlockedByZ`, `Charging`) 둘 중 하나가 문이면 서버가 연다(`DoorSet.DoorBlocking`, Client `PredictedDoors.DoorBlocking`). 문틀 쪽으로 비스듬히 달려 들어가 X 축은 문틀, Z 축은 문에 막혀도 열린다. 공중에서는 달리기가 아니라 밀치지 못한다. 걷기로는 안 열린다. 그 Tick의 이동은 막힌 채로 끝나고 다음 Tick부터 이어진다. 봇은 달리기로 자연히 연다.
 - **전달:** 문이 바뀐 Tick의 끝에 `DoorStates`를 모두에게 보낸다. Join·Resume 때 새로 온 사람에게도 보낸다. 사격은 현재 문 상태로 추적하고 문을 되감지 않는다(고정 박스와 같다). 닫힌 문은 총알을 막는다.
 - **라운드 시작:** 경기 시작 Tick에 모든 문이 닫힌다(그 전에 열려 있던 문도).
+
+## 채집 대상 (`GameMap.Harvestables`, 41개, Phase 13 D6)
+
+- 나무 23개(1 × 4 × 1 m), 바위 8개(2 × 1.2 × 2 m), 잔해 6개(3 × 1.5 × 2 m), 상자 4개. 상자 4개는 Phase 12까지 `Boxes`에 있던 엄폐물((58, 60), (8, −24), (70, −10), (−70, 20))을 옮긴 것이다. 그래서 `Boxes`는 54개다.
+- 배열 순서가 id이고 `HarvestStates`의 비트 번호다(최대 64개, `MaxHarvestables`).
+- 서 있는 동안 이동·사격·채집·건설 검사에서 박스처럼 막는다. 부서지면 빠지고 다음 경기·판에 다시 선다.
+- 배치 규칙(`HarvestableMapTests`): 64개 이하이고 종류마다 하나 이상, 외곽벽 안·중앙 광장 밖의 평평한 지형에 서고, 같은 높이대의 박스·문·서로와 캐릭터가 지나갈 간격을 두며, Loot·투입 지점·문과 떨어져 있다. 상자 4개는 Loot가 없는 엄폐물이었던 것이다.
+- 건설 격자(`BuildGrid`): 맵 전체가 5 m 칸 32 × 32, 3 m 층 16개다(`Building.md`).
 
 ## POI (`MapPois`)
 
@@ -112,4 +120,5 @@ Phase 12 기준(문 5개 추가). 설계 근거와 결정 D1–D14: `Docs/specs/
 3. 맵이 바뀌면 이동 결과가 바뀐다. `ProtocolConstants.ProtocolVersion`을 올린다.
    - 문을 바꾸면(개수나 순서) `GameMap.DoorCount`와 `DoorStatesPacket`의 비트 수(마스크 1바이트라 8개까지, 없는 비트는 읽기 실패)를 함께 본다. `Doors` 순서가 비트 번호이므로 순서를 바꾸면 프로토콜이 달라진다. `DoorTests`가 문 5개가 벽 틈을 채우고 다른 상자와 닿지 않는지 검사한다.
    - Vault 높이 구분(`MovementTuning`의 Hurdle·Mantle 높이)에 걸리는 박스 높이를 바꾸면 `VaultTests`의 맵 테스트(Gearworks 상자)도 본다.
+   - 채집 대상을 바꾸면 `HarvestableMapTests`를 돌린다. 개수나 순서를 바꾸면 `HarvestStates` 비트가 달라지므로 프로토콜이 달라진다.
 4. 넓이가 바뀌면 `zones.json`도 맞춘다. 첫 원이 맵 전체를 덮어야 한다(`ZoneDataTests.ShippedFile_CoversTheWholeMap`).
