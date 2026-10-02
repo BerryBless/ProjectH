@@ -74,6 +74,10 @@ public sealed class StallWatchdog : IDisposable
     {
         long last = _lastTickTimestamp();
         TimeSpan since = _time.GetElapsedTime(last);
+        // Server review M8: the fatal stop needs a stall an earlier check already saw and that still goes on. One check
+        // after a long gap (a debugger break or a suspended process: the overdue timer may read the old tick time before
+        // the loop ticks again) only reports it. A real hang is stopped at most one Period later.
+        bool wasStalled = _stalled;
         if (!_stalled && since > _threshold)
         {
             _stalled = true;
@@ -87,7 +91,7 @@ public sealed class StallWatchdog : IDisposable
             _logger.LogWarning("Game loop recovered after a stall of {Ms:F0} ms", _time.GetElapsedTime(_stalledFrom, last).TotalMilliseconds);
         }
 
-        if (_stalled && !_fatalDone && _fatalAfter > TimeSpan.Zero && since > _fatalAfter)
+        if (wasStalled && _stalled && !_fatalDone && _fatalAfter > TimeSpan.Zero && since > _fatalAfter)
         {
             _fatalDone = true;
             _health.AddStallExit();

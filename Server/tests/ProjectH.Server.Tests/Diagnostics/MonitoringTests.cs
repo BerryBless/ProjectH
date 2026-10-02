@@ -276,6 +276,26 @@ public class MonitoringTests
         Assert.Equal(2, health.Stalls);
     }
 
+    // One check after a long gap (a debugger break or a suspended process: every thread resumes at once and the overdue
+    // timer may read the old tick time) only reports the stall; the fatal stop needs the stall to be seen again.
+    [Fact]
+    public void ALongGapSeenOnce_DoesNotStopTheServer()
+    {
+        var time = new ManualTime();
+        var health = new HealthCounters();
+        long lastTick = time.GetTimestamp();
+        int fatal = 0;
+        using var watchdog = new StallWatchdog(() => lastTick, time, health, new ListLogger(), fatalAfter: TimeSpan.FromSeconds(30), onFatalStall: () => fatal++);
+        time.Advance(TimeSpan.FromSeconds(60));
+        watchdog.Check();
+        Assert.Equal(1, health.Stalls);
+        Assert.Equal(0, fatal);
+        lastTick = time.GetTimestamp();   // the loop ticks again
+        watchdog.Check();
+        Assert.Equal(0, fatal);
+        Assert.Equal(0, health.StallExits);
+    }
+
     [Fact]
     public void FatalStallZero_NeverStopsTheServer()
     {
