@@ -44,7 +44,10 @@ namespace ProjectH.Shared.Simulation
     // static boxes, then doors, then harvestables (each in map order), then pieces in id order. Static boxes, doors and
     // harvestables come from GatherRadius around the feet on the ground plane (any height: the glider's ground distance
     // looks straight down); pieces from the build cells within PieceCellRadius and the levels within PieceLevelRadius.
-    // Both cover the longest move of one step (a vault, under 4.2 m) with room to spare. Fixed buffers, no allocation:
+    // Both cover the longest move of one step (a vault, under 4.2 m) with room to spare. MaxPieces is every slot of those
+    // cells and levels; past it (pieces sharing a slot, which PieceGrid does not refuse) the lowest ids are kept, the same
+    // on both sides. Pieces further below are not gathered, so the glider's ground distance does not see them (it sees
+    // the terrain and the map's boxes). Fixed buffers, no allocation:
     // reuse one instance (the server one for all players, the client one for its predictor).
     public sealed class CollisionWorld
     {
@@ -113,9 +116,15 @@ namespace ProjectH.Shared.Simulation
                     for (int slot = pieces.First(x, z); slot >= 0; slot = pieces.Next(slot))
                     {
                         int y = pieces.ShapeAt(slot).Y;
-                        if (y < level - PieceLevelRadius || y > level + PieceLevelRadius || count == MaxPieces) continue;
+                        if (y < level - PieceLevelRadius || y > level + PieceLevelRadius) continue;
                         // Insertion by id: every column is in id order, but the columns interleave.
                         uint id = pieces.IdAt(slot);
+                        // Full (only pieces sharing a slot can get here): the lowest ids are kept, whatever the column order.
+                        if (count == MaxPieces)
+                        {
+                            if (id >= _pieceIds[count - 1]) continue;
+                            count--;
+                        }
                         int k = count++;
                         while (k > 0 && _pieceIds[k - 1] > id)
                         {

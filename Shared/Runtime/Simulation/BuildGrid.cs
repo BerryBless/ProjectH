@@ -33,13 +33,13 @@ namespace ProjectH.Shared.Simulation
 
     // The geometry of one piece in canonical grid coordinates (BuildGrid.TryNormalize). Rotation: a wall's edge (0 south,
     // 1 west), a ramp's rising direction (0 +Z, 1 +X, 2 -Z, 3 -X, the yaw convention); 0 for a floor and a roof.
-    public struct BuildPieceShape : IEquatable<BuildPieceShape>
+    public readonly struct BuildPieceShape : IEquatable<BuildPieceShape>
     {
-        public BuildPieceType Type;
-        public byte X;
-        public byte Y;
-        public byte Z;
-        public byte Rotation;
+        public readonly BuildPieceType Type;
+        public readonly byte X;
+        public readonly byte Y;
+        public readonly byte Z;
+        public readonly byte Rotation;
 
         public BuildPieceShape(BuildPieceType type, int x, int y, int z, int rotation)
         {

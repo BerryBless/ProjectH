@@ -209,6 +209,7 @@ namespace ProjectH.Shared.Simulation
             //    velocity is gone (it matters in the air and in a slide, which carry it over).
             float startX = position.X;
             float startZ = position.Z;
+            var start = new Vector3(startX, position.Y, startZ);   // before a step-up raises Y
             bool blocked = false;
             float wantX = state.HorizontalVelocity.X * deltaTime;
             if (MoveAxis(ref position, height, AxisX, wantX, grounded, scene, out ColliderId hitX))
@@ -238,7 +239,13 @@ namespace ProjectH.Shared.Simulation
             float floor = FloorUnder(position, position.Y + reach, scene, out _);
             if (position.Y < floor)
             {
-                position.Y = floor;
+                // Only where the body fits up there (a ramp under a roof or a floor): otherwise the move does not happen.
+                if (!TryLift(ref position, floor, height, start, scene, out ColliderId overhead))
+                {
+                    state.HorizontalVelocity = Vector2.Zero;
+                    if (result.BlockedBy.IsNone) result.BlockedBy = overhead;
+                    if (state.Mode == MovementMode.Slide) state.Mode = MovementMode.Crouch;
+                }
             }
             else if (walking)
             {
@@ -266,6 +273,8 @@ namespace ProjectH.Shared.Simulation
         private static bool MoveAxis(ref Vector3 position, float height, int axis, float want, bool stepUp, Scene scene, out ColliderId hit)
         {
             float moved = Sweep(position, height, axis, want, scene, out int boxHit);
+            // The move starts here: the position, or the step-up's lifted one (kept only if the slopes let the move happen).
+            Vector3 from = position;
             if (stepUp && moved != want && boxHit >= 0)
             {
                 float top = scene.Boxes[boxHit].Max.Y;
@@ -279,7 +288,7 @@ namespace ProjectH.Shared.Simulation
                         float liftedMoved = Sweep(lifted, height, axis, want, scene, out int liftedHit);
                         if (MathF.Abs(liftedMoved) > MathF.Abs(moved))
                         {
-                            position = lifted;
+                            from = lifted;
                             moved = liftedMoved;
                             boxHit = liftedHit;
                         }
@@ -289,10 +298,10 @@ namespace ProjectH.Shared.Simulation
             hit = scene.BoxId(boxHit);
             if (moved != 0f)
             {
-                Vector3 to = position;
+                Vector3 to = from;
                 if (axis == AxisX) to.X += moved;
                 else to.Z += moved;
-                int slope = SlopeBlocking(position, to, height, MathF.Abs(moved), scene);
+                int slope = SlopeBlocking(from, to, height, MathF.Abs(moved), scene);
                 if (slope >= 0)
                 {
                     hit = scene.SlopeId(slope);
@@ -326,6 +335,45 @@ namespace ProjectH.Shared.Simulation
             if (!slope.Range(feet.X - MoveSettings.HalfWidth, feet.Z - MoveSettings.HalfWidth, feet.X + MoveSettings.HalfWidth,
                     feet.Z + MoveSettings.HalfWidth, out _, out high, out float bottom)) return false;
             return feet.Y < high - MoveSettings.Skin && feet.Y + height > bottom + MoveSettings.Skin;
+        }
+
+        // Task 1 fix round 1: raises the feet onto the floor found under them (a slope's surface) only where the body fits
+        // there: no box by more than Skin (as Depenetrate counts it) and no slab. Otherwise the feet go back to `start` (this
+        // tick's horizontal move does not happen) and overhead names the box or slope in the way; false.
+        private static bool TryLift(ref Vector3 position, float floor, float height, Vector3 start, Scene scene, out ColliderId overhead)
+        {
+            Vector3 lifted = position;
+            lifted.Y = floor;
+            if (!Obstructed(lifted, height, scene, out overhead))
+            {
+                position = lifted;
+                return true;
+            }
+            position = start;
+            return false;
+        }
+
+        // The body of this height at these feet is in a box by more than Skin or in a slope's slab; blocker names the first
+        // such box, else the first such slope.
+        private static bool Obstructed(Vector3 feet, float height, Scene scene, out ColliderId blocker)
+        {
+            GetBounds(feet, height, out Vector3 min, out Vector3 max);
+            ReadOnlySpan<Box> world = scene.Boxes;
+            for (int i = 0; i < world.Length; i++)
+            {
+                if (OverlapDepth(min, max, world[i]) <= MoveSettings.Skin) continue;
+                blocker = scene.BoxId(i);
+                return true;
+            }
+            ReadOnlySpan<Slope> slopes = scene.Slopes;
+            for (int i = 0; i < slopes.Length; i++)
+            {
+                if (!InSlab(feet, height, slopes[i], out _)) continue;
+                blocker = scene.SlopeId(i);
+                return true;
+            }
+            blocker = ColliderId.None;
+            return false;
         }
 
         // The highest floor under the footprint at or below `upTo`: the terrain under the feet or a slope's surface.
@@ -466,6 +514,7 @@ namespace ProjectH.Shared.Simulation
 
             float startX = position.X;
             float startZ = position.Z;
+            Vector3 start = position;
             if (MoveAxis(ref position, MoveSettings.Height, AxisX, state.HorizontalVelocity.X * deltaTime, false, scene, out _)) state.HorizontalVelocity.X = 0f;
             if (MoveAxis(ref position, MoveSettings.Height, AxisZ, state.HorizontalVelocity.Y * deltaTime, false, scene, out _)) state.HorizontalVelocity.Y = 0f;
 
@@ -488,8 +537,9 @@ namespace ProjectH.Shared.Simulation
             float floor = FloorUnder(position, position.Y + reach, scene, out _);
             if (position.Y < floor)
             {
-                position.Y = floor;   // came over rising terrain (or onto a ramp)
-                landed = true;
+                // Came over rising terrain (or onto a ramp), where the body fits: otherwise the move does not happen.
+                if (TryLift(ref position, floor, MoveSettings.Height, start, scene, out _)) landed = true;
+                else state.HorizontalVelocity = Vector2.Zero;
             }
             float wantY = state.VelocityY * deltaTime;
             float movedY = Sweep(position, MoveSettings.Height, AxisY, wantY, scene, out _);
@@ -508,7 +558,10 @@ namespace ProjectH.Shared.Simulation
         public static float GroundDistance(Vector3 feet, ReadOnlySpan<Box> world, HeightField terrain) =>
             GroundDistance(feet, new Scene(world, default, default, default, terrain));
 
-        // Phase 13: the same in a gathered world, slopes included.
+        // Phase 13: the same in a gathered world: the terrain, the gathered boxes and slopes. Building pieces are gathered
+        // only within CollisionWorld.PieceLevelRadius levels of the feet, so a piece further below is not seen: a freefall
+        // opens the glider by the terrain and the map's boxes, and by a piece only once it is that close (glide and
+        // freefall landings do no damage, D10).
         public static float GroundDistance(Vector3 feet, CollisionWorld world, HeightField terrain) =>
             GroundDistance(feet, new Scene(world.Boxes, world.BoxIds, world.Slopes, world.SlopeIds, terrain));
 
@@ -829,7 +882,14 @@ namespace ProjectH.Shared.Simulation
             ReadOnlySpan<Slope> slopes = scene.Slopes;
             for (int i = 0; i < slopes.Length; i++)
             {
-                if (InSlab(feet, height, slopes[i], out float high)) feet.Y = high;
+                // Task 1 fix round 1: not into a box or slab overhead (a roof or floor above the ramp); the body then stays
+                // in this slab, which never blocks walking out of it.
+                if (InSlab(feet, height, slopes[i], out float high))
+                {
+                    Vector3 lifted = feet;
+                    lifted.Y = high;
+                    if (!EntersAnother(feet, lifted, height, -1, scene)) feet = lifted;
+                }
             }
 
             ReadOnlySpan<Box> world = scene.Boxes;
@@ -865,7 +925,7 @@ namespace ProjectH.Shared.Simulation
                         }
                         if (best < 0 || float.IsPositiveInfinity(push[best])) break;
                         if (shortest < 0) shortest = best;
-                        if (!EntersAnother(feet, Pushed(feet, best, push[best] + MoveSettings.Skin), height, i, world))
+                        if (!EntersAnother(feet, Pushed(feet, best, push[best] + MoveSettings.Skin), height, i, scene))
                         {
                             chosen = best;
                             break;
@@ -910,10 +970,11 @@ namespace ProjectH.Shared.Simulation
             return feet;
         }
 
-        // The character box at `to` is inside some box other than `skip` (by more than Skin) that it was not inside at
-        // `from`.
-        private static bool EntersAnother(Vector3 from, Vector3 to, float height, int skip, ReadOnlySpan<Box> world)
+        // The character box at `to` is inside some box other than `skip` (by more than Skin), or a slope's slab, that it was
+        // not inside at `from` (fix round 1: slabs too, so a push never moves the body into one unchecked).
+        private static bool EntersAnother(Vector3 from, Vector3 to, float height, int skip, Scene scene)
         {
+            ReadOnlySpan<Box> world = scene.Boxes;
             GetBounds(from, height, out Vector3 fromMin, out Vector3 fromMax);
             GetBounds(to, height, out Vector3 toMin, out Vector3 toMax);
             for (int j = 0; j < world.Length; j++)
@@ -921,6 +982,11 @@ namespace ProjectH.Shared.Simulation
                 if (j == skip) continue;
                 if (OverlapDepth(toMin, toMax, world[j]) > MoveSettings.Skin && OverlapDepth(fromMin, fromMax, world[j]) <= MoveSettings.Skin)
                     return true;
+            }
+            ReadOnlySpan<Slope> slopes = scene.Slopes;
+            for (int j = 0; j < slopes.Length; j++)
+            {
+                if (InSlab(to, height, slopes[j], out _) && !InSlab(from, height, slopes[j], out _)) return true;
             }
             return false;
         }

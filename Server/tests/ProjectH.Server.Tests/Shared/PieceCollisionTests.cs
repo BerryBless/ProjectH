@@ -125,6 +125,11 @@ public class PieceCollisionTests
             new[] { Piece(BuildPieceType.Floor, C, 1, C), Piece(BuildPieceType.Floor, 17, 1, C), Wall(C, 1, C, 0), Wall(17, 1, C, 0) }, // walls on floors
             new[] { Wall(C, 0, C, 0), Wall(17, 0, C, 0), Piece(BuildPieceType.Floor, C, 1, C), Piece(BuildPieceType.Floor, 17, 1, C) }, // floors over walls
             new[] { Wall(5, 1, 27, 0), Wall(5, 1, 26, 1), Piece(BuildPieceType.Floor, 5, 1, 26) },                // on a house roof
+            // Fix round 1: ramps and roofs in the cells (the pushes are out of the walls and floors).
+            new[] { Wall(C, 0, C, 0), Wall(C, 0, C, 1), Wall(C, 0, C, 2), Wall(C, 0, C, 3), Piece(BuildPieceType.Ramp, C, 0, C, 0),
+                Piece(BuildPieceType.Roof, C, 0, C) },                                                             // a roofed cell with a ramp
+            new[] { Piece(BuildPieceType.Ramp, C, 0, C, 1), Piece(BuildPieceType.Floor, C, 1, C), Wall(C, 0, C, 1), Wall(17, 0, C, 1) }, // a ramp under a floor
+            new[] { Piece(BuildPieceType.Ramp, C, 0, C, 0), Wall(C, 0, 17, 0), Piece(BuildPieceType.Floor, C, 1, 17), Piece(BuildPieceType.Roof, C, 1, 17) },
         };
         var world = new CollisionWorld();
         var rng = new Random(1301);
@@ -134,8 +139,10 @@ public class PieceCollisionTests
             PieceGrid grid = Grid(layout);
             for (int n = 0; n < 300; n++)
             {
-                // A body overlapping one piece's box through one face by up to 0.35 m, anywhere along that face.
-                Box box = BuildGrid.BoxOf(layout[rng.Next(layout.Length)]);
+                // A body overlapping one piece's box (a wall or a floor) through one face by up to 0.35 m, anywhere along that face.
+                BuildPieceShape target = layout[rng.Next(layout.Length)];
+                if (BuildGrid.IsSlope(target.Type)) continue;
+                Box box = BuildGrid.BoxOf(target);
                 float depth = 0.002f + (float)rng.NextDouble() * 0.35f;
                 float along = (float)rng.NextDouble();
                 float up = (float)rng.NextDouble();
@@ -154,7 +161,7 @@ public class PieceCollisionTests
                 }
                 feet.Y = MathF.Max(feet.Y, GameMap.Terrain.Height(feet.X, feet.Z));
                 world.Gather(feet, 0, 0UL, grid);
-                if (!MovementSimulation.Penetrates(feet, MoveSettings.Height, world) || CentreInAPiece(feet, world)) continue;
+                if (!MovementSimulation.Penetrates(feet, MoveSettings.Height, world) || CentreInAPiece(feet, world) || InASlab(feet, world)) continue;
                 cases++;
 
                 var a = new MoveState { Position = feet };
@@ -189,6 +196,19 @@ public class PieceCollisionTests
         {
             if (centre.X > b.Min.X && centre.X < b.Max.X && centre.Y > b.Min.Y && centre.Y < b.Max.Y && centre.Z > b.Min.Z && centre.Z < b.Max.Z)
                 return true;
+        }
+        return false;
+    }
+
+    // The standing body is inside a slope's slab (the touching-box cases start outside every slab: a slab start is the
+    // "built onto a character" case, tested on its own).
+    private static bool InASlab(Vector3 feet, CollisionWorld world)
+    {
+        foreach (Slope slope in world.Slopes)
+        {
+            if (!slope.Range(feet.X - MoveSettings.HalfWidth, feet.Z - MoveSettings.HalfWidth, feet.X + MoveSettings.HalfWidth,
+                    feet.Z + MoveSettings.HalfWidth, out _, out float high, out float bottom)) continue;
+            if (feet.Y < high - MoveSettings.Skin && feet.Y + MoveSettings.Height > bottom + MoveSettings.Skin) return true;
         }
         return false;
     }
@@ -428,5 +448,153 @@ public class PieceCollisionTests
             return s;
         }
         Assert.Equal(Run(), Run());
+    }
+
+    // ---- Headroom (Task 1 fix round 1) ----
+
+    // A level 0 roof's flat ceiling, and a level 1 floor's underside: 3 - 0.25.
+    private const float Ceiling = BuildGrid.LevelHeight - BuildGrid.SlopeThickness;
+
+    private static PieceGrid RoofedCellWithARamp() =>
+        Grid(Wall(C, 0, C, 0), Wall(C, 0, C, 1), Wall(C, 0, C, 2), Wall(C, 0, C, 3), Piece(BuildPieceType.Ramp, C, 0, C, 0),
+            Piece(BuildPieceType.Roof, C, 0, C));
+
+    [Fact]
+    public void UpARampInsideARoofedCell_ACharacterStopsUnderTheRoof_AndNeverLeavesTheCell()
+    {
+        PieceGrid grid = RoofedCellWithARamp();
+        var world = new CollisionWorld();
+        const float inner = BuildGrid.WallThickness * 0.5f + MoveSettings.HalfWidth;
+        foreach (bool sprint in new[] { false, true })
+        {
+            for (int yaw = -40; yaw <= 40; yaw += 10)
+            {
+                // On the ramp's low edge (its surface under the footprint), facing up it.
+                float y = BuildGrid.SlopeOf(Piece(BuildPieceType.Ramp, C, 0, C, 0)).HeightAt(2.5f, inner + 0.01f + MoveSettings.HalfWidth);
+                var s = new MoveState { Position = new Vector3(2.5f, y, inner + 0.01f), Yaw = yaw };
+                var input = new InputCommand { MoveY = 1f, Yaw = yaw, Buttons = sprint ? InputButtons.Sprint : 0 };
+                for (int i = 0; i < 90; i++)
+                {
+                    Vector3 before = s.Position;
+                    StepOnce(ref s, input, grid, world);
+                    string at = $"sprint {sprint}, yaw {yaw}, tick {i}: {before} -> {s.Position}";
+                    Assert.True(Vector3.Distance(before, s.Position) <= 0.5f, at);
+                    Assert.True(s.Position.Y + MovementSimulation.CollisionHeight(s.Mode) <= Ceiling + 0.01f, at);
+                    Assert.InRange(s.Position.X, inner - 0.01f, BuildGrid.CellSize - inner + 0.01f);
+                    Assert.InRange(s.Position.Z, inner - 0.01f, BuildGrid.CellSize - inner + 0.01f);
+                    Assert.False(Penetrates(s, grid, world), at);
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void InARoofedCellWithARamp_RandomInputs_NeverPassTheRoofOrLeaveTheCell()
+    {
+        PieceGrid grid = RoofedCellWithARamp();
+        var world = new CollisionWorld();
+        const float inner = BuildGrid.WallThickness * 0.5f + MoveSettings.HalfWidth;
+        for (int seed = 0; seed < 20; seed++)
+        {
+            var rng = new Random(1300 + seed);
+            var s = new MoveState { Position = new Vector3(2.5f, 0f, BuildGrid.CellSize - inner - 0.01f) };   // under the ramp's high end
+            for (int i = 0; i < 300; i++)
+            {
+                var input = new InputCommand
+                {
+                    MoveX = (float)rng.NextDouble() * 2f - 1f, MoveY = (float)rng.NextDouble() * 2f - 1f, Yaw = (float)rng.NextDouble() * 360f,
+                    Buttons = (rng.Next(4) == 0 ? InputButtons.Jump : 0) | (rng.Next(2) == 0 ? InputButtons.Sprint : 0) |
+                              (rng.Next(8) == 0 ? InputButtons.Crouch : 0),
+                };
+                Vector3 before = s.Position;
+                StepOnce(ref s, input, grid, world);
+                string at = $"seed {seed}, tick {i}: {before} -> {s.Position}";
+                Assert.True(Vector3.Distance(before, s.Position) <= 0.5f, at);
+                Assert.True(s.Position.Y + MovementSimulation.CollisionHeight(s.Mode) <= Ceiling + 0.01f, at);
+                Assert.InRange(s.Position.X, inner - 0.01f, BuildGrid.CellSize - inner + 0.01f);
+                Assert.InRange(s.Position.Z, inner - 0.01f, BuildGrid.CellSize - inner + 0.01f);
+                Assert.False(Penetrates(s, grid, world), at);
+            }
+        }
+    }
+
+    [Fact]
+    public void UpARampUnderALevelOneFloor_AWalkerStopsUnderIt_WithoutRubberBanding()
+    {
+        // The ramp rises +Z under a level 1 floor on the same cell (underside 2.75).
+        PieceGrid grid = Grid(Piece(BuildPieceType.Ramp, C, 0, C, 0), Piece(BuildPieceType.Floor, C, 1, C));
+        var world = new CollisionWorld();
+        foreach (bool sprint in new[] { false, true })
+        {
+            var s = new MoveState { Position = new Vector3(2.5f, 0f, -2f) };
+            var input = new InputCommand { MoveY = 1f, Yaw = 0f, Buttons = sprint ? InputButtons.Sprint : 0 };
+            Vector3 settled = default;
+            for (int i = 0; i < 120; i++)
+            {
+                Vector3 before = s.Position;
+                StepOnce(ref s, input, grid, world);
+                string at = $"sprint {sprint}, tick {i}: {before} -> {s.Position}";
+                Assert.True(s.Position.Z >= before.Z - 0.0001f, at);   // never pushed back down the ramp
+                Assert.True(s.Position.Y + MoveSettings.Height <= Ceiling + 0.01f, at);
+                Assert.False(Penetrates(s, grid, world), at);
+                if (i == 90) settled = s.Position;
+                if (i > 90) Assert.Equal(settled, s.Position);
+            }
+            Assert.True(settled.Z > 1f, $"stopped at {settled}");
+        }
+    }
+
+    [Fact]
+    public void ARampBuiltOnACharacterInARoofedCell_DoesNotLiftItThroughTheRoof()
+    {
+        // Standing under the roof where the ramp's slab cuts through the body and its surface under the footprint is about
+        // 2 m high: the body cannot stand on it there (the head would be in the roof), so it is not lifted into (or onto)
+        // the roof. It walks out downhill.
+        PieceGrid grid = Grid(Wall(C, 0, C, 0), Wall(C, 0, C, 1), Wall(C, 0, C, 2), Wall(C, 0, C, 3), Piece(BuildPieceType.Roof, C, 0, C));
+        var world = new CollisionWorld();
+        var s = new MoveState { Position = new Vector3(2.5f, 0f, 3f) };
+        Assert.True(grid.TryAdd(100, Piece(BuildPieceType.Ramp, C, 0, C, 0), out _));
+        StepOnce(ref s, Idle, grid, world);
+        Assert.True(s.Position.Y + MoveSettings.Height <= Ceiling + 0.01f, $"{s.Position}");
+        for (int i = 0; i < 60; i++)
+        {
+            StepOnce(ref s, new InputCommand { MoveY = 1f, Yaw = 180f }, grid, world);
+            Assert.True(s.Position.Y + MoveSettings.Height <= Ceiling + 0.01f, $"tick {i}: {s.Position}");
+            Assert.InRange(s.Position.Z, 0f, BuildGrid.CellSize);
+        }
+    }
+
+    [Fact]
+    public void APushOutOfAWall_DoesNotMoveTheBodyIntoARampSlab()
+    {
+        // A ramp rising +X on cell 16 and a wall on the cell's west edge (x -0.125..0.125). The body stands on the ramp's
+        // surface with its west side 0.175 m into the wall: the shortest push (+X) would move it up the slope into the slab.
+        Slope ramp = BuildGrid.SlopeOf(Piece(BuildPieceType.Ramp, C, 0, C, 1));
+        PieceGrid grid = Grid(Piece(BuildPieceType.Ramp, C, 0, C, 1), Wall(C, 0, C, 1));
+        var world = new CollisionWorld();
+        float y = ramp.HeightAt(0.3f + MoveSettings.HalfWidth, 2.5f);
+        var s = new MoveState { Position = new Vector3(0.3f, y, 2.5f) };
+        world.Gather(s.Position, 0, 0UL, grid);
+        Assert.True(MovementSimulation.Penetrates(s.Position, MoveSettings.Height, world));   // the wall
+        StepOnce(ref s, Idle, grid, world);
+        Assert.False(Penetrates(s, grid, world), $"{s.Position}");
+    }
+
+    [Fact]
+    public void AStepUpThatASlopeThenBlocks_LeavesTheFeetWhereTheyWere()
+    {
+        // A ramp on cell 16 rising -X to 3 at its west edge, a wall on that edge (top 3) and, past it, a level 1 ramp on
+        // cell 15 rising +Z whose slab is at head height. Sprinting -X from 0.09 m under the wall top: the sweep steps up
+        // onto the wall, then the slab beyond blocks the move. The feet stay on the ramp, grounded.
+        Slope ramp = BuildGrid.SlopeOf(Piece(BuildPieceType.Ramp, C, 0, C, 3));
+        PieceGrid grid = Grid(Piece(BuildPieceType.Ramp, C, 0, C, 3), Wall(C, 0, C, 1), Piece(BuildPieceType.Ramp, 15, 1, C, 0));
+        var world = new CollisionWorld();
+        float y = ramp.HeightAt(0.5f - MoveSettings.HalfWidth, 2.5f);
+        Assert.InRange(BuildGrid.LevelHeight - y, 0.01f, MovementTuning.StepUpHeight);
+        var s = new MoveState { Position = new Vector3(0.5f, y, 2.5f), Yaw = 270f };
+        StepOnce(ref s, new InputCommand { MoveY = 1f, Yaw = 270f, Buttons = InputButtons.Sprint }, grid, world);
+        Assert.Equal(y, s.Position.Y);
+        Assert.True(Grounded(s, grid, world), $"{s.Position}");
+        Assert.False(Penetrates(s, grid, world));
     }
 }

@@ -373,8 +373,7 @@ public sealed class Match
         MovementMode before = player.State.Mode;
         Vector3 from = player.State.Position;
         // Phase 13 D3: the same gather as the client's prediction (LocalPlayerPredictor.Simulate).
-        GatherAround(from);
-        MovementSimulation.Step(ref player.State, input, _tickSeconds, _collision, GameMap.Terrain, out StepResult step);
+        MovementSimulation.Step(ref player.State, input, _tickSeconds, GatherAround(from), GameMap.Terrain, out StepResult step);
         player.Sprinting = step.Sprinting;
 
         // D9: sprinting or sliding into a closed door shoulders it open; the move goes on next tick.

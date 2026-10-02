@@ -207,4 +207,31 @@ public class CollisionWorldTests
         for (int i = 0; i < 100; i++) world.Gather(new Vector3(2f + i * 0.01f, 0f, 2f), 0, 0UL, grid);
         Assert.Equal(before, GC.GetAllocatedBytesForCurrentThread());
     }
+
+    [Fact]
+    public void Gather_PastMaxPieces_KeepsTheLowestIds()
+    {
+        // MaxPieces is every slot of the gathered cells and levels, so only pieces sharing a slot (which PieceGrid does not
+        // refuse) can overflow. The first column gathered (cell 15, 15) holds the high ids, a later one (17, 17) the low ids.
+        var grid = new PieceGrid(CollisionWorld.MaxPieces + 10);
+        for (uint i = 0; i < CollisionWorld.MaxPieces; i++) Assert.True(grid.TryAdd(1000 + i, Shape(BuildPieceType.Floor, 15, 0, 15), out _));
+        for (uint id = 1; id <= 10; id++) Assert.True(grid.TryAdd(id, Shape(BuildPieceType.Floor, 17, 0, 17), out _));
+        var world = new CollisionWorld();
+        world.Gather(new Vector3(2f, 0f, 2f), 0, 0UL, grid);
+        Assert.Equal(CollisionWorld.MaxPieces, world.PieceCount);
+        ReadOnlySpan<ColliderId> ids = world.BoxIds;
+        int first = ids.Length - CollisionWorld.MaxPieces;
+        for (int i = 0; i < CollisionWorld.MaxPieces; i++)
+        {
+            uint expected = i < 10 ? (uint)(i + 1) : (uint)(1000 + i - 10);
+            Assert.Equal(new ColliderId(ColliderKind.Piece, expected), ids[first + i]);
+        }
+    }
+
+    [Fact]
+    public void MapBoxesAndDoors_FitTheirGatherBuffer()
+    {
+        Assert.True(GameMap.Boxes.Length + GameMap.Doors.Length <= CollisionWorld.MaxStaticAndDoors);
+        Assert.True(GameMap.Harvestables.Length <= GameMap.MaxHarvestables);
+    }
 }
