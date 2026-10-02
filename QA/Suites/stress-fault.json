@@ -1,5 +1,13 @@
 {
   "name": "stress-fault",
-  "description": "Stress test faults (request §35-49). Phase A has the reconnect churn at 50 players (half of the leavers drop without a disconnect packet); phase B adds the disconnect spike, input timeouts, invalid packets under load, DB persistence and DB-down under load.",
-  "scenarios": [ { "path": "Stress/reconnect_churn.json", "parameterSet": 2 } ]
+  "description": "Stress test faults (request §35-49): the reconnect churn at 50 players (half of the leavers drop without a disconnect packet), the disconnect spike (50 at once, mixed), 8 input timeouts at once among 50, invalid packets at 50/s from 10 % abusers, the mixed network faults at 50, and the DB: records written under load (db_persistence) and MySQL down and back (db_down). The DB scenarios need the project's MySQL container running (docker compose start mysql) and are SKIPPED otherwise. About 13 minutes (estimated from the single runs of 2026-10-02).",
+  "scenarios": [
+    { "path": "Stress/reconnect_churn.json", "parameterSet": 2 },
+    { "path": "Stress/disconnect_spike.json", "parameterSet": 1 },
+    "Stress/input_timeout.json",
+    { "path": "Stress/invalid_packets.json", "parameterSet": 2 },
+    { "path": "Stress/network_fault_mixed.json", "parameterSet": 1 },
+    "Stress/db_persistence.json",
+    "Stress/db_down.json"
+  ]
 }

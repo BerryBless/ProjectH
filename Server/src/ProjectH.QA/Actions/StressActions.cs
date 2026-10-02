@@ -68,6 +68,7 @@ public static partial class StressActions
             check: s => CheckChoice(s, "mode", new[] { "graceful", "drop", "mixed" })));
         r.Add(Group("groupNetworkFault", GroupNetworkFaultAsync, new[] { "latencyMs", "jitterMs", "lossPercent", "duplicatePercent", "direction" }));
         r.Add(Group("stopGroup", StopGroupAsync, Array.Empty<string>(), timeoutMs: StopGroupTimeoutMs));
+        RegisterPhaseB(r);
     }
 
     private static DelegateAction Group(string name, Func<StepContext, CancellationToken, Task<StepOutcome>> run, string[] optional,
@@ -311,7 +312,7 @@ public static partial class StressActions
     {
         r.Name, r.Seconds, r.TicksExact, r.TickP50Ms, r.TickP95Ms, r.TickP99Ms, r.TickMaxMs, r.CpuAvgPercent, r.CpuMaxPercent, r.ToolCpuAvgPercent,
         r.WorkingSetStartMB, r.WorkingSetEndMB, r.WorkingSetMaxMB, r.ManagedStartMB, r.ManagedEndMB, r.ManagedMaxMB, r.Gen0, r.Gen1, r.Gen2,
-        r.AllocatedMB, r.AllocatedMBPerSec, r.GcPauseMs, r.SendKBps, r.RecvKBps, r.PktInPerSec, r.PktOutPerSec, r.QaCommandMsAvg,
+        r.AllocatedMB, r.AllocatedMBPerSec, r.GcPauseMs, r.SendKBps, r.SendKBpsMax, r.RecvKBps, r.PktInPerSec, r.PktOutPerSec, r.QaCommandMsAvg,
         r.PlayersMin, r.PlayersMax, r.SessionsMin, r.SessionsMax, r.AliveMin, r.AliveMax, r.BuildPiecesStart, r.BuildPiecesEnd, r.DbQueueMax,
         r.DbSaved, r.DbFailed, r.Stalls, r.TickFailures, r.BadPackets, r.ArrangeCommands,
         inputLatencyP50Ms = r.InputLatency?.P50Ms, inputLatencyP95Ms = r.InputLatency?.P95Ms, inputLatencyP99Ms = r.InputLatency?.P99Ms, inputLatencyMaxMs = r.InputLatency?.MaxMs,
@@ -798,7 +799,7 @@ public static partial class StressActions
         float range = (float)(ctx.Double("searchRange") ?? 40);
         int dropEvery = ctx.Int("dropEvery", 0, 100) ?? 3;
         int seed = ctx.Run.Seed;
-        bool applied = await SetBrainsAsync(ctx, group, (i, _) => new LootBrain(new LootPlan(range, dropEvery, group.Indices[i], seed)), token).ConfigureAwait(false);
+        bool applied = await SetBrainsAsync(ctx, group, (i, _) => new LootBrain(new LootPlan(range, dropEvery, group.Indices[i], seed, group.Stats)), token).ConfigureAwait(false);
         group.Role = "loot";
         return applied ? StepOutcome.Pass($"{group.Members.Count} looting (search {range} m, drop every {dropEvery} pickups)") : StepOutcome.Fail($"Not every member of '{group.Name}' took the loot behaviour.");
     }
@@ -848,7 +849,7 @@ public static partial class StressActions
                 "move" => new MoveBrain(new MovePlan(PatternFor("mixed", i), center, radius, false, 0, i, n, seed), "move"),
                 "sprint" => new MoveBrain(new MovePlan(MovePattern.Random, center, radius, true, 0, i, n, seed), "sprint"),
                 "jump" => new MoveBrain(new MovePlan(MovePattern.Random, center, radius, false, 3, i, n, seed), "jump"),
-                "loot" => new LootBrain(new LootPlan(40, 3, index, seed)),
+                "loot" => new LootBrain(new LootPlan(40, 3, index, seed, group.Stats)),
                 "build" => new BuildBrain(new BuildBrainPlan(pool, null, StressMap.AllPieces, material, rate, index), "build"),
                 "turbo" => new BuildBrain(new BuildBrainPlan(pool, null, StressMap.AllPieces, material, turbo, index), "turbo"),
                 _ => new IdleBrain(),

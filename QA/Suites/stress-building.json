@@ -1,5 +1,12 @@
 {
   "name": "stress-building",
-  "description": "Stress test building workloads (request §20-29, §43). About 6 minutes (estimated). Phase A has real building with turbo and recycling (10 / 25 / 50 players) and the dense final zone with builders; phase B adds the piece count ramp (spawnBuildPiece), mass destruction / collapse and build spam.",
-  "scenarios": [ "Stress/building.json", { "path": "Stress/final_zone.json", "parameterSet": 3 } ]
+  "description": "Stress test building workloads (request §20-29, §43): real building with turbo and recycling (10 / 25 / 50 players), the dense final zone with builders (50), turbo building at 40, the standing piece count 1,000 / 2,500 / 5,000 / 10,000 / 20,000 (the match budget, with the BudgetFull check), the collapse of 100 / 500 / 1,000-piece structures shot at their foundation, and build spam under (15/s) and over (40/s) the network limit. About 25 minutes (estimated from the single runs of 2026-10-02).",
+  "scenarios": [
+    "Stress/building.json",
+    { "path": "Stress/final_zone.json", "parameterSet": 3 },
+    { "path": "Stress/turbo_build.json", "parameterSet": 3 },
+    "Stress/build_count.json",
+    "Stress/build_destruction.json",
+    "Stress/build_spam.json"
+  ]
 }

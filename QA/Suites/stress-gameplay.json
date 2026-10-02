@@ -1,12 +1,16 @@
 {
   "name": "stress-gameplay",
-  "description": "Stress test gameplay workloads (request §11-17, §20-23, §50-55) with their full 60 s steady phase: movement, combat and building at 50 players, the mixed match at 50 and 100, the final zone at 40 (about 8-9 minutes, estimated from the single runs). For the player-count comparison of one workload run the file itself (every parameter set, batch summary under QA/Reports/batch-<id>/).",
+  "description": "Stress test gameplay workloads (request §11-17, §20-23, §30-32, §50-58) with their full steady phase: movement, combat and building at 50 players, the mixed match at 50 and 100, the final zone at 40, loot at 50, the zone (a real match, many outside) at 50, the elimination burst of 50 (60 players), and the same workload spread over the map and packed into one POI (hotspot vs distributed, 50 each). About 20 minutes (estimated from the single runs of 2026-10-02). For the player-count comparison of one workload run the file itself (every parameter set, batch summary under QA/Reports/batch-<id>/).",
   "scenarios": [
     { "path": "Stress/movement.json", "parameterSet": 3 },
     { "path": "Stress/combat.json", "parameterSet": 3 },
     { "path": "Stress/building.json", "parameterSet": 3 },
     { "path": "Stress/mixed_match.json", "parameterSet": 1 },
     { "path": "Stress/mixed_match.json", "parameterSet": 2 },
-    { "path": "Stress/final_zone.json", "parameterSet": 2 }
+    { "path": "Stress/final_zone.json", "parameterSet": 2 },
+    { "path": "Stress/loot.json", "parameterSet": 2 },
+    { "path": "Stress/zone.json", "parameterSet": 2 },
+    { "path": "Stress/elimination_burst.json", "parameterSet": 1 },
+    "Stress/hotspot.json"
   ]
 }

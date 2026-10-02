@@ -1,0 +1,392 @@
+{
+  "schemaVersion": 1,
+  "name": "Stress DB Persistence",
+  "description": "Request §47: match records written while the game runs under load. ${players} players walk through ${matches} short matches in a row (Start -> ${matchSeconds} s -> forceMatchState finish (flow control) -> result -> reset -> next), so a record with ${players} participants reaches the writer every few seconds. The game loop never touches MySQL (Persistence/MatchHistoryWriter: one background writer behind a bounded queue, Persistence:QueueCapacity 16 by default); each phase records the DB queue's maximum and the records saved or failed in it. Judged: every record saved (db.saved = ${matches} on this fresh server), none failed or dropped, the queue drains to 0, the game loop keeps its tick (no tick failure, no stall). Needs the project's MySQL container (docker compose start mysql; the scenario is SKIPPED when it is not running). Persistence:Enabled=true. No hard limit (D42).",
+  "tags": [
+    "stress",
+    "server",
+    "db",
+    "persistence",
+    "slow"
+  ],
+  "stress": true,
+  "seed": 9700,
+  "timeoutSeconds": 900,
+  "server": {
+    "mode": "launch",
+    "options": {
+      "Server:MaxPlayers": "100",
+      "Server:AirDrop": "false",
+      "Server:StartCountdownSeconds": "3",
+      "Server:ResultSeconds": "2",
+      "Persistence:Enabled": "true"
+    }
+  },
+  "variables": {
+    "players": 50,
+    "matches": 8,
+    "matchSeconds": 10,
+    "drainSeconds": 5
+  },
+  "actors": [],
+  "steps": [
+    {
+      "id": "db_up",
+      "phase": "arrange",
+      "action": "waitDbHealthy",
+      "description": "the DB container is up (skips the scenario without Docker or with the container stopped)"
+    },
+    {
+      "id": "spawn",
+      "action": "spawnActors",
+      "count": "${players}",
+      "prefix": "bot"
+    },
+    {
+      "id": "join_all",
+      "action": "connectAll",
+      "prefix": "bot",
+      "timeoutMilliseconds": 60000
+    },
+    {
+      "id": "sessions",
+      "action": "waitFor",
+      "condition": "server.activeSessions",
+      "equals": "${players}",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "db_enabled",
+      "assert": "server.metrics.db.enabled",
+      "equals": true
+    },
+    {
+      "id": "groups",
+      "action": "actorGroup",
+      "prefix": "bot",
+      "groups": [
+        {
+          "name": "all",
+          "rest": true
+        }
+      ]
+    },
+    {
+      "id": "walk",
+      "action": "groupMove",
+      "group": "all",
+      "pattern": "mixed",
+      "radius": 60
+    },
+    {
+      "id": "m01_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 1 running"
+    },
+    {
+      "id": "m01",
+      "action": "measure",
+      "name": "match_01",
+      "seconds": "${matchSeconds}",
+      "saveAs": "match_01"
+    },
+    {
+      "id": "m01_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 1 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m01_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "m02_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 2 running"
+    },
+    {
+      "id": "m02",
+      "action": "measure",
+      "name": "match_02",
+      "seconds": "${matchSeconds}",
+      "saveAs": "match_02"
+    },
+    {
+      "id": "m02_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 2 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m02_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "m03_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 3 running"
+    },
+    {
+      "id": "m03",
+      "action": "measure",
+      "name": "match_03",
+      "seconds": "${matchSeconds}",
+      "saveAs": "match_03"
+    },
+    {
+      "id": "m03_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 3 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m03_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "m04_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 4 running"
+    },
+    {
+      "id": "m04",
+      "action": "measure",
+      "name": "match_04",
+      "seconds": "${matchSeconds}",
+      "saveAs": "match_04"
+    },
+    {
+      "id": "m04_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 4 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m04_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "m05_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 5 running"
+    },
+    {
+      "id": "m05",
+      "action": "measure",
+      "name": "match_05",
+      "seconds": "${matchSeconds}",
+      "saveAs": "match_05"
+    },
+    {
+      "id": "m05_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 5 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m05_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "m06_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 6 running"
+    },
+    {
+      "id": "m06",
+      "action": "measure",
+      "name": "match_06",
+      "seconds": "${matchSeconds}",
+      "saveAs": "match_06"
+    },
+    {
+      "id": "m06_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 6 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m06_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "m07_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 7 running"
+    },
+    {
+      "id": "m07",
+      "action": "measure",
+      "name": "match_07",
+      "seconds": "${matchSeconds}",
+      "saveAs": "match_07"
+    },
+    {
+      "id": "m07_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 7 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m07_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "m08_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 8 running"
+    },
+    {
+      "id": "m08",
+      "action": "measure",
+      "name": "match_08",
+      "seconds": "${matchSeconds}",
+      "saveAs": "match_08"
+    },
+    {
+      "id": "m08_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 8 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m08_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "drain",
+      "phase": "act",
+      "action": "measure",
+      "name": "drain",
+      "seconds": "${drainSeconds}",
+      "saveAs": "drain"
+    },
+    {
+      "id": "all_saved",
+      "phase": "assert",
+      "action": "waitFor",
+      "condition": "server.metrics.db.saved",
+      "equals": "${matches}",
+      "timeoutMilliseconds": 30000
+    },
+    {
+      "id": "none_failed",
+      "assert": "server.metrics.db.failed",
+      "equals": 0
+    },
+    {
+      "id": "none_dropped",
+      "assert": "server.metrics.db.dropped",
+      "equals": 0
+    },
+    {
+      "id": "queue_empty",
+      "assert": "server.metrics.dbQueueLength",
+      "equals": 0
+    },
+    {
+      "id": "running",
+      "assert": "server.running",
+      "equals": true
+    },
+    {
+      "id": "all_still_here",
+      "assert": "server.activeSessions",
+      "equals": "${players}"
+    },
+    {
+      "id": "no_tick_failure",
+      "assert": "server.metrics.health.tickFailures",
+      "equals": 0
+    },
+    {
+      "id": "no_stall",
+      "assert": "server.metrics.health.stalls",
+      "equals": 0
+    },
+    {
+      "id": "stop",
+      "phase": "act",
+      "action": "stopGroup",
+      "group": "all"
+    },
+    {
+      "id": "leave",
+      "action": "disconnectAll",
+      "prefix": "bot"
+    }
+  ]
+}

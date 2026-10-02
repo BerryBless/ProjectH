@@ -1,8 +1,12 @@
 {
   "name": "stress-full",
-  "description": "Every stress test scenario with every parameter set (request §73): baseline, movement and combat at 10/25/50/75/100, building at 10/25/50, the mixed match at 50/100/10/25/75, reconnect churn at 25/50/100, the final zone at 30/40/50, the 5-minute soak and the match reset loop. Well over an hour; nightly. Each file's player counts end with a batch comparison (QA/Reports/batch-<id>/summary.html).",
+  "description": "Every stress test scenario with every parameter set (request §73): baseline, movement and combat at 10/25/50/75/100, building at 10/25/50, the mixed match at 50/100/10/25/75, reconnect churn at 25/50/100, the final zone at 30/40/50, the 5-minute soak and the match reset loop; phase B: lag compensation (20/50/100), turbo building (10/25/40), the piece count (1,000-20,000), structure collapse (100/500/1,000), loot (25/50/100), the zone (25/50/100), the elimination burst (60/80/100), join ramp (5/10/20 per second), join spike (50/100), disconnect spike (4 sets), input timeout, invalid packets (3 sets), build spam (2 sets), mixed network faults (50/100), hotspot vs distributed, and the DB under load and down (needs the MySQL container; SKIPPED without it). Several hours; nightly. The restart loop (request §65) is its own suite, stress-restart. Each file's parameter sets end with a batch comparison (QA/Reports/batch-<id>/summary.html).",
   "scenarios": [
     "Stress/baseline.json", "Stress/movement.json", "Stress/combat.json", "Stress/building.json", "Stress/mixed_match.json",
-    "Stress/reconnect_churn.json", "Stress/final_zone.json", "Stress/soak.json", "Stress/soak_match_reset.json"
+    "Stress/reconnect_churn.json", "Stress/final_zone.json", "Stress/soak.json", "Stress/soak_match_reset.json",
+    "Stress/lag_compensation.json", "Stress/turbo_build.json", "Stress/build_count.json", "Stress/build_destruction.json",
+    "Stress/loot.json", "Stress/zone.json", "Stress/elimination_burst.json", "Stress/join_ramp.json", "Stress/join_spike.json",
+    "Stress/disconnect_spike.json", "Stress/input_timeout.json", "Stress/invalid_packets.json", "Stress/build_spam.json",
+    "Stress/network_fault_mixed.json", "Stress/hotspot.json", "Stress/db_persistence.json", "Stress/db_down.json"
   ]
 }

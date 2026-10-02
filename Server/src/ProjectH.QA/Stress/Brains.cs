@@ -440,9 +440,10 @@ public sealed class BuildBrain : ActorBrain
 // ---- looting ----
 
 // §30: walk to the nearest item this client knows of, press Interact next to it (the server picks the nearest item),
-// every DropEvery pickups press Drop (the current weapon) and, hurt with a Medkit, use it. Items that do not go away after
-// a few tries are skipped for a while. With nothing in reach the actor wanders around where it is.
-public sealed record LootPlan(float SearchRange, int DropEvery, int Index, int Seed);
+// every DropEvery pickups press Drop (the current weapon) and, hurt with a Medkit, use it (with a Shield Cell and the
+// shield below full, use that). Items that do not go away after a few tries are skipped for a while. With nothing in
+// reach the actor wanders around where it is. Stats (optional): the group's loot counters (Interlocked, pump thread).
+public sealed record LootPlan(float SearchRange, int DropEvery, int Index, int Seed, GroupStats? Stats = null);
 
 public sealed class LootBrain : ActorBrain
 {
@@ -451,8 +452,10 @@ public sealed class LootBrain : ActorBrain
     private const int MaxTries = 3;
     private const int Memory = 16;
     private const float SkipSeconds = 30f;
+    private const float UseRepeat = 4f;   // longer than a medkit's use time, so a use is not cancelled by the next press
 
     private readonly LootPlan _plan;
+    private float _nextUse;
     private readonly Random _rng;
     private readonly ushort[] _skipped = new ushort[Memory];
     private readonly float[] _skippedUntil = new float[Memory];
@@ -481,8 +484,18 @@ public sealed class LootBrain : ActorBrain
             // Gone: most likely picked up by us (or by someone else; either way the world changed through real input).
             _item = 0;
             _pickups++;
-            if (_plan.DropEvery > 0 && _pickups % _plan.DropEvery == 0) Press(actor, InputButtons.Drop, now, force: true);
-            if (view.Inventory.Medkits > 0 && view.Self.Health < 100) Press(actor, InputButtons.UseMedkit, now, force: true);
+            if (_plan.Stats != null) Interlocked.Increment(ref _plan.Stats.LootPickups);
+            if (_plan.DropEvery > 0 && _pickups % _plan.DropEvery == 0 && Press(actor, InputButtons.Drop, now, force: true) && _plan.Stats != null)
+                Interlocked.Increment(ref _plan.Stats.LootDrops);
+        }
+        // A consumable in the bag and something to restore: use it (one press per ButtonRepeat; the server applies it
+        // over its use time and refuses a use at full health or shield).
+        InputButtons use = view.Inventory.Medkits > 0 && view.Self.Health < 100 ? InputButtons.UseMedkit
+            : view.Inventory.ShieldCells > 0 && view.Self.Shield < 100 ? InputButtons.UseShieldCell : InputButtons.None;
+        if (use != InputButtons.None && now >= _nextUse && Press(actor, use, now, force: true))
+        {
+            _nextUse = now + UseRepeat;
+            if (_plan.Stats != null) Interlocked.Increment(ref _plan.Stats.LootUses);
         }
         if (_item != 0 && now > _itemDeadline) Skip(now);
         if (_item == 0) Pick(view, me, now);
@@ -625,5 +638,171 @@ public sealed class RoleBrain : ActorBrain
             }
         }
         _current?.Think(actor, view, now);
+    }
+}
+
+// ---- Phase B: firing at a point ----
+
+// §27-29 (build destruction): stand, aim at a fixed point (a piece's centre) and fire Presses single presses in bursts
+// that respect the weapon's fire interval (FirePress), reloading when the magazine is empty. Real shots: the server's
+// hitscan decides what they hit (a piece, a player, nothing). Done after Presses; the actor then just stands there.
+public sealed record FireAtPlan(Vector3 Point, int Presses, int Burst, int Slot = 0);
+
+public sealed class FireAtBrain : ActorBrain
+{
+    private const float ButtonRepeat = 0.5f;
+
+    private readonly FireAtPlan _plan;
+    private int _sent;
+    private float _nextButton;
+
+    public FireAtBrain(FireAtPlan plan) => _plan = plan;
+
+    public override string Role => "fireAt";
+
+    public int Sent => _sent;
+
+    internal override void Think(HeadlessActor actor, BotView view, float now)
+    {
+        if (!view.Alive) return;
+        actor.BrainMoveTo(null, 1f, false);
+        actor.BrainVector(0f, 0f);
+        actor.BrainAimPoint(_plan.Point);
+        if (_sent >= _plan.Presses || !actor.ScriptIdle) return;
+        if (view.Self.Tool != ToolKind.Weapon || view.Inventory.CurrentSlot != _plan.Slot)
+        {
+            if (now >= _nextButton)
+            {
+                actor.BrainScript(new[] { new InputStep(SlotButton(_plan.Slot), 1), new InputStep(InputButtons.None, 2) });
+                _nextButton = now + ButtonRepeat;
+            }
+            return;
+        }
+        if (view.WeaponInSlot(_plan.Slot) == null || view.Self.ReloadRemainingTicks > 0) return;
+        if (view.Self.Ammo == 0)
+        {
+            if (now >= _nextButton)
+            {
+                actor.BrainScript(new[] { new InputStep(InputButtons.Reload, 1), new InputStep(InputButtons.None, 1) });
+                _nextButton = now + ButtonRepeat;
+            }
+            return;
+        }
+        int presses = Math.Min(Math.Min(_plan.Burst, (int)view.Self.Ammo), _plan.Presses - _sent);
+        var steps = new InputStep[presses];
+        for (int i = 0; i < presses; i++) steps[i] = new InputStep(InputButtons.Fire, 1, FirePress: true);
+        actor.BrainScript(steps);
+        _sent += presses;
+    }
+}
+
+// ---- Phase B: abusive clients (§40-43) ----
+
+// Spreads RatePerSecond sends over the pump's ticks (a fraction carries over), at most MaxPerTick in one tick so a
+// stalled pump does not burst. Pure (tests).
+public struct RateBudget
+{
+    public const int MaxPerTick = 20;
+    private float _carry;
+    private float _last;
+    private bool _started;
+
+    public int Take(float ratePerSecond, float now)
+    {
+        if (!_started)
+        {
+            _started = true;
+            _last = now;
+            return 0;
+        }
+        float dt = Math.Clamp(now - _last, 0f, 1f);
+        _last = now;
+        _carry = MathF.Min(_carry + ratePerSecond * dt, MaxPerTick);
+        int n = (int)_carry;
+        _carry -= n;
+        return n;
+    }
+}
+
+// §40-42: a connected client that also sends invalid packets (FaultActions.InvalidPacket bytes, kinds in turn, seeded
+// per actor) at RatePerSecond on its live connection, while it keeps sending its normal input. The server counts each
+// one and kicks the connection at its BadPacketDisconnectThreshold; the group's rejoin workload brings it back.
+public sealed record InvalidPacketPlan(IReadOnlyList<string> Kinds, float RatePerSecond, int Index, int Seed, GroupStats Stats);
+
+public sealed class InvalidPacketBrain : ActorBrain
+{
+    private readonly InvalidPacketPlan _plan;
+    private readonly Random _rng;
+    private RateBudget _budget;
+    private int _next;
+
+    public InvalidPacketBrain(InvalidPacketPlan plan)
+    {
+        _plan = plan;
+        _rng = new Random(Seed(plan.Seed, plan.Index, 41));
+    }
+
+    public override string Role => "invalidPackets";
+
+    internal override void Think(HeadlessActor actor, BotView view, float now)
+    {
+        int n = _budget.Take(_plan.RatePerSecond, now);
+        for (int i = 0; i < n; i++)
+        {
+            string kind = _plan.Kinds[_next++ % _plan.Kinds.Count];
+            if (!actor.BrainSendRaw(FaultActions.InvalidPacket(kind, _rng))) return;
+            Interlocked.Increment(ref _plan.Stats.AbuseSent);
+        }
+    }
+}
+
+// §43: build mode on (Q, as a real builder), then build requests at RatePerSecond sent at once, without the aim ticks
+// and spacing a correct client keeps: random walls, floors and ramps in the cells around the player at its level. The
+// server answers each one (placed, refused for aim, range, occupancy or resources, or RateLimited when the player's
+// 8-request queue is full); above its network limit (maxRequestsPerSecond) a request is a bad packet and counts toward
+// the kick. The group's rejoin workload brings a kicked spammer back.
+public sealed record BuildSpamPlan(float RatePerSecond, BuildMaterialType Material, int Index, int Seed, GroupStats Stats);
+
+public sealed class BuildSpamBrain : ActorBrain
+{
+    private const float ButtonRepeat = 0.5f;
+    private static readonly BuildPieceType[] Types = { BuildPieceType.Wall, BuildPieceType.Floor, BuildPieceType.Ramp };
+
+    private readonly BuildSpamPlan _plan;
+    private readonly Random _rng;
+    private RateBudget _budget;
+    private float _nextButton;
+
+    public BuildSpamBrain(BuildSpamPlan plan)
+    {
+        _plan = plan;
+        _rng = new Random(Seed(plan.Seed, plan.Index, 43));
+    }
+
+    public override string Role => "buildSpam";
+
+    internal override void Think(HeadlessActor actor, BotView view, float now)
+    {
+        if (!view.Alive) return;
+        if (view.Self.Tool != ToolKind.Build)
+        {
+            if (actor.ScriptIdle && now >= _nextButton)
+            {
+                actor.BrainScript(new[] { new InputStep(InputButtons.ToolBuild, 1), new InputStep(InputButtons.None, 1) });
+                _nextButton = now + ButtonRepeat;
+            }
+            return;
+        }
+        int n = _budget.Take(_plan.RatePerSecond, now);
+        Vector3 me = view.MyPosition;
+        int cx = BuildGrid.CellX(me.X), cz = BuildGrid.CellZ(me.Z), level = Math.Clamp(BuildGrid.Level(me.Y + 0.1f), 0, BuildGrid.Levels - 1);
+        for (int i = 0; i < n; i++)
+        {
+            int x = Math.Clamp(cx + _rng.Next(-1, 2), 0, BuildGrid.CellsX - 1);
+            int z = Math.Clamp(cz + _rng.Next(-1, 2), 0, BuildGrid.CellsZ - 1);
+            BuildPieceType type = Types[_rng.Next(Types.Length)];
+            if (actor.BrainSendBuildNow(type, _plan.Material, (byte)x, (byte)level, (byte)z, (byte)_rng.Next(4)) < 0) return;
+            Interlocked.Increment(ref _plan.Stats.AbuseSent);
+        }
     }
 }
