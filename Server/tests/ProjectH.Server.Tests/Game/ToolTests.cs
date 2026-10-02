@@ -56,6 +56,7 @@ public class ToolTests
         PlayerEntity p = _h.Join(1, Spot);
         _h.Press(p, InputButtons.ToolBuild | InputButtons.ToolHarvest);
         Assert.Equal(ToolKind.Harvest, p.Inventory.Tool);
+        _h.Press(p, InputButtons.None);   // final review A5: released between presses
         _h.Press(p, InputButtons.ToolBuild | InputButtons.ToolHarvest | InputButtons.Slot1);
         Assert.Equal(ToolKind.Weapon, p.Inventory.Tool);
     }

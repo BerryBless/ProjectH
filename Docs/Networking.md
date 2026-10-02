@@ -36,7 +36,7 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
 | ZoneState | S→C(전원, 단계가 바뀐 Tick 끝)·Join | ReliableOrdered | Phase(0 = Zone 없음), From(X, Z, Radius), To(X, Z, Radius), ShrinkStartTick, ShrinkEndTick, DamagePerSecond u16. 36B |
 | MatchResult | S→C(접속 중인 참가자 본인) | ReliableOrdered | WinnerId(0 = 없음), Placement, Kills, Participants. 6B |
 | StatsRequest | C→S | ReliableOrdered | 없음(PacketId만). Join을 요청한 연결만, 연결당 2초에 한 번. 본문이 있으면 잘못된 패킷 |
-| BuildCatalog | S→C | ReliableOrdered(채널 0) | Phase 13. Join 때 ItemCatalog 뒤 1회. 49B. 내용은 `Building.md` "네트워크" |
+| BuildCatalog | S→C | ReliableOrdered(채널 1) | Phase 13. Join·Resume 때 1회, 건설 채널의 첫 패킷(reset Sync 바로 앞, 최종 리뷰 A3). 49B. 내용은 `Building.md` "네트워크" |
 | ResourcesState · HarvestHit · HarvestStates | S→C | ReliableOrdered(채널 0) | Phase 13. 자원 7B(본인, 바뀐 Tick 끝·Join·Resume), 채집 타격 18B(휘두른 사람), 부서진 채집 대상 마스크 9B(바뀐 Tick 끝·Join·Resume) |
 | BuildRequest | C→S | ReliableOrdered(채널 1) | Phase 13. 9B. Join한 연결만, 연결당 초당 20개 |
 | BuildResult · BuildEvents · BuildSync · BuildInterest | S→C | ReliableOrdered(채널 1) | Phase 13. 8B, 헤더 8B + 기록(Placed 14B, Health 6B, Destroyed 4B), 헤더 7B + 조각 16B × 최대 74(1191B), 9B. `Building.md` "네트워크" |

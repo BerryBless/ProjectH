@@ -180,12 +180,12 @@ D20의 항목.
 20. **바뀐 기존 테스트.** 무엇이 왜 바뀌는지:
     - `MovementModesTests`·`DoorTests`(Task 1): `StepResult.BlockedBy`가 배열 위치에서 `ColliderId`가 됐다. 같은 대상을 (종류, id)로 본다.
     - 패킷 번호·크기를 고정한 테스트(Task 2): `PacketWriterReaderTests`·`StatsPacketTests`의 범위 밖 Id 26 → 35, `ProtocolConstantsTests.ProtocolVersion_IsEleven`, `PacketTests`의 알려진 버튼 `0x3FFF`, `TraversalPacketTests`의 모르는 비트(0x1000 → 0x4000), `ProtocolFuzzTests`의 새 파서
-    - `MatchTests`(Task 3): Join 순서에 `BuildCatalog`가 셋째로 들어가 뒤 번호가 하나씩 밀린다.
+    - `MatchTests`(Task 3): Join 순서에 `BuildCatalog`가 셋째로 들어가 뒤 번호가 하나씩 밀린다. 최종 리뷰 A3에서 `BuildCatalog`는 채널 1의 reset Sync 바로 앞으로 옮겨, 채널 0 순서는 다시 Phase 12와 같다(26–28 참고).
     - `ItemPacketTests`(Task 7): 종류 4가 `Material`이 되어, 잘못된 종류 예는 5로 바꾸고 `Material` 경우를 더한다. EditMode `PickupRuleTests`에 `Material` 경우를 더한다.
     - `MonitoringTests`(Task 6): Health 줄과 Meter의 새 값
     - 약하게 만든 테스트는 없다.
 21. **Client 위치.** spec 1절의 `Game/Harvest/`는 두지 않는다. 채집 대상 표시(`HarvestableViews`)는 Task 2(13A)에서 `Game/`에, 채집 효과는 건설 표시와 같은 `Game/Build/`의 `HarvestEffects`에 둔다. 휘두르기 표시는 표현 Task 9에 있다.
-22. **소리는 자리만 있다(`BuildAudio`).** 클립이 없어 횟수만 센다. spec D16과 같고, 요청서 §109의 "효과음"은 에셋이 생기면 이 클래스만 바꾼다.
+22. **소리는 자리만 있다(`BuildAudio`).** 클립이 없어 `Play`는 아무것도 하지 않는다(처음에는 횟수를 셌지만 읽는 곳이 없어 최종 리뷰에서 지웠다, 39). spec D16과 같고, 요청서 §109의 "효과음"은 에셋이 생기면 이 클래스만 바꾼다.
 23. **F1 건설 줄은 Development Build와 Editor에서만 보인다(`Debug.isDebugBuild`, 요청서 §190).** 다른 F1 줄은 Phase 11·12대로 모든 빌드에서 보인다.
 24. **유령(미리보기·대기)은 `Sprites/Default` 반투명이다.** URP Lit의 투명 변형은 빌드에서 빠질 수 있다(Phase 6 `ZoneView`와 같은 이유).
 25. **이동 이상 검사(Phase 12 D12)는 건설 조각 안에서 시작한 이동을 세지 않는다(`Penetrates(..., piecesOnly: true)`). 맵 상자·문·채집 대상은 그대로 센다.** 머리를 가로지르게 지은 경사로는 그 Tick에 캐릭터를 표면 위로 2 m 넘게 들어 올린다(지상 한도 2.15 m/Tick). 시뮬레이션 버그가 아니라 조각이 민 것이다. 계획 단계의 봇 20명 Turbo 실행에서 이 경우가 13번 나와 찾았고, 고친 뒤 0이다(`BuildPlacementTests.ARampBuiltUnderItsBuilder_LiftsThem_WithoutAMovementAnomaly`, Task 3). 한도를 넘은 Tick에만 겹침을 본다.
@@ -208,7 +208,7 @@ Phase 13 최종 리뷰와 동료 측정에서 나온 것이다.
 33. **유예 중인 플레이어의 건설 요청은 버린다(B8).** 연결이 끊길 때 요청 큐를 비운다.
 34. **회복은 배치와 도구 키로도 끊긴다(B9).** 받아들여진 배치는 진행 중인 회복을 취소한다. F와 Q도 회복을 끊는 키다.
 35. **버린 아이템은 경사로·지붕 위에도 놓인다(B10).** 발에서 걸어 오를 수 있는 높이(MaxSlope)까지의 경사면을 땅으로 본다.
-36. **머리 높이 선에서 대각선 입력이 멈추지 않는다(B11).** 대각선 이동의 들어 올림이 막히면 X만, 그다음 Z만 움직여 보고, 둘 다 안 되면 그 자리에 둔다. 막힌 축의 `BlockedBy`/`BlockedByZ`를 채운다. Shared 이동 코드라 서버와 예측이 같다(예측 일치 테스트 보정 0). (`PieceCollisionTests.AtTheHeadroomLine_ADiagonalInput_SlidesAlongIt`)
+36. **머리 높이 선에서 대각선 입력이 멈추지 않는다(B11).** 대각선 이동의 들어 올림이 막히면 X만, 그다음 Z만 움직여 보고, 둘 다 안 되면 그 자리에 둔다. 들어 올림이 막히면 `BlockedBy`가 비어 있을 때 언제나 머리 위 조각을 넣는다(어느 축이 움직였든). Z가 막혔으면(X만 움직였거나 둘 다 안 됨) `BlockedByZ`도 비어 있을 때 머리 위 조각을 넣는다. Shared 이동 코드라 서버와 예측이 같다(예측 일치 테스트 보정 0). (`PieceCollisionTests.AtTheHeadroomLine_ADiagonalInput_SlidesAlongIt`)
 37. **건설·채집 Meter는 경기 리셋 뒤에도 줄지 않는다(B12).** `HealthCounters`가 리셋된 경기의 합계를 기준값으로 들고 새 경기의 값을 더한다. 조각 수와 칸 수(현재값)는 새 경기의 값이다.
 38. **설계 메모: 적의 조각 너머로도 지을 수 있다.** D9의 "벽 너머" 검사는 맵 상자·닫힌 문·지형만 본다. 조각은 보지 않는다. Phase 13.5에서 다룬다.
 39. **작은 수정(C).** `WorldItems.MaterialCount`(재료 아이템이 없으면 줍기 검사를 건너뜀), `BuildMaterials.Count`, 봇 건설(맞은 것은 매 Tick 소비, 죽으면 배치 취소, 조준 2초 제한, 건축 모드에서 Q를 누르지 않음), `BuildInfiniteResources` 시작 경고, 한 번에 얻는 자원이 255를 넘는 `building.json` 거절, Client `BuildStore.Reset`이 Version·Ignored도 초기화, `BuildAudio`의 읽지 않는 횟수 제거.

@@ -293,7 +293,8 @@ namespace ProjectH.Shared.Protocol
         public byte InterestKeepMargin;
     }
 
-    // Phase 13 D4: S->C, ReliableOrdered, once after the item catalog. 49 bytes.
+    // Phase 13 D4: S->C, ReliableOrdered on the building channel (1), once per join or resume as that channel's first packet,
+    // right before the reset sync (final review A3). 49 bytes.
     public static class BuildCatalogPacket
     {
         public const int Size = 49;

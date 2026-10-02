@@ -582,6 +582,7 @@ public class PickupDropTests
         Assert.Equal(start, Count());
         Press(a, InputButtons.Interact);                       // takes the nearest thing back
         Assert.Equal(start, Count());
+        Press(a, InputButtons.None);   // final review A5: released between presses
         Press(a, InputButtons.Interact);
         Assert.Equal(start, Count());
 
@@ -603,7 +604,11 @@ public class PickupDropTests
                      (afterShot.weapons, afterShot.light, afterShot.heavy, afterShot.medkits, afterShot.cells));
 
         b.State.Position = a.State.Position;
-        for (int i = 0; i < 12; i++) Press(b, InputButtons.Interact);
+        for (int i = 0; i < 12; i++)
+        {
+            Press(b, InputButtons.Interact);
+            Press(b, InputButtons.None);   // final review A5: released between presses
+        }
         Assert.Equal(afterShot, Count());
     }
 
