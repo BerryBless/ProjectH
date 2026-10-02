@@ -46,6 +46,13 @@ public sealed class ServerOptions
     public int JoinTimeoutSeconds { get; set; } = 5;
     public int InputTimeoutSeconds { get; set; } = 10;
 
+    // Server review M2: connection requests one remote IP may make, as a token bucket: ConnectBurstPerIp at once, then
+    // ConnectsPerIpPerSecond. More are refused as ServerFull before Accept (counted as connectRate), so connect/disconnect
+    // churn cannot fill the shared Control channel. 0 = off. A load test with many bots on one machine raises the burst
+    // (--Server:ConnectBurstPerIp=200).
+    public int ConnectBurstPerIp { get; set; } = 20;
+    public int ConnectsPerIpPerSecond { get; set; } = 5;
+
     // Each connection produces at most Connected + JoinRequested + Disconnected.
     public int ControlChannelCapacity => MaxPlayers * 3;
     public int InputChannelCapacity => MaxPlayers * InputBufferPerPlayer;
@@ -87,6 +94,8 @@ public sealed class ServerOptions
         // 3 s the smallest usable value.
         if (InputTimeoutSeconds != 0 && (long)InputTimeoutSeconds * 1000 < (long)DisconnectTimeoutMs + 2000)
             return "InputTimeoutSeconds * 1000 must be at least DisconnectTimeoutMs + 2000 (or 0 = off), so a network loss keeps its reconnect grace.";
+        if (ConnectBurstPerIp < 0 || ConnectBurstPerIp > 10000) return "ConnectBurstPerIp must be 0 (off) or 1-10000.";
+        if (ConnectsPerIpPerSecond < 0 || ConnectsPerIpPerSecond > 1000) return "ConnectsPerIpPerSecond must be 0 (off) or 1-1000.";
         return null;
     }
 }

@@ -682,7 +682,7 @@ public sealed class GameLoop : IDisposable
             "Health peers={Peers} players={Players} graced={Graced} match={State}#{Round} " +
             "connections={Connections} joins={Joins} resumed={Resumed} graceStarts={GraceStarts} graceExpiries={GraceExpiries} " +
             "disconnects timeout={DisconnectTimeouts} other={DisconnectOthers} " +
-            "rejects full={RejectFull} badRequest={RejectBad} version={RejectVersion} " +
+            "rejects full={RejectFull} badRequest={RejectBad} version={RejectVersion} connectRate={RejectConnectRate} " +
             "kicks kicked={KickBad} joinTimeout={KickJoin} inputTimeout={KickInput} serverError={KickError} congested={KickCongested} " +
             "badPackets unknownId={BadUnknown} malformed={BadMalformed} beforeJoin={BadBeforeJoin} duplicateJoin={BadDuplicate} " +
             "inputRate={BadRate} wrongDirection={BadDirection} handlerException={BadHandler} buildRate={BadBuildRate} " +
@@ -699,7 +699,7 @@ public sealed class GameLoop : IDisposable
             _peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State, _match.Flow.Round,
             h.Connections, h.Joins, h.Resumes, h.GraceStarts, h.GraceExpiries,
             h.DisconnectTimeouts, h.DisconnectOthers,
-            h.Rejects(RejectReason.ServerFull), h.Rejects(RejectReason.BadRequest), h.Rejects(RejectReason.VersionMismatch),
+            h.Rejects(RejectReason.ServerFull), h.Rejects(RejectReason.BadRequest), h.Rejects(RejectReason.VersionMismatch), h.ConnectRateRejects,
             h.Kicks(DisconnectCode.Kicked), h.Kicks(DisconnectCode.JoinTimeout), h.Kicks(DisconnectCode.InputTimeout), h.Kicks(DisconnectCode.ServerError),
             h.Kicks(DisconnectCode.Congested),
             h.BadPackets(BadPacketReason.UnknownId), h.BadPackets(BadPacketReason.Malformed), h.BadPackets(BadPacketReason.InputBeforeJoin),

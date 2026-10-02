@@ -24,6 +24,8 @@ public sealed class ServerIntegrationTests : IDisposable
             // Phase 10 D3: FullMatch connects 100 clients before any of them joins; on a slow machine that can take
             // longer than the 5 s default.
             JoinTimeoutSeconds = 30,
+            // Server review M2: FullMatch connects 100 clients from 127.0.0.1 at once, over the per-IP connect burst.
+            ConnectBurstPerIp = 0,
         }, TestGameData.Create(), NullLogger.Instance);
         loop.Start();
         return loop;

@@ -46,6 +46,8 @@ public class MonitoringTests
         loop.StatsQueries.AddLimited();
         loop.StatsQueries.AddLimited();
         loop.Health.AddNetworkError();
+        loop.Health.AddConnectRateReject();
+        loop.Health.AddConnectRateReject();
         loop.RunTickGuarded();
 
         loop.LogPeriodic();
@@ -59,7 +61,7 @@ public class MonitoringTests
                  {
                      "peers=0", "players=0", "graced=0", "match=WaitingForPlayers#1",
                      "connections=", "joins=", "resumed=", "graceStarts=", "graceExpiries=0", "disconnects timeout=", "other=",
-                     "rejects full=1", "badRequest=0", "version=0",
+                     "rejects full=1", "badRequest=0", "version=0 connectRate=2",   // server review M2
                      "kicks kicked=0", "joinTimeout=0", "inputTimeout=1", "serverError=0", "congested=0",   // Phase 13 final review A4
                      "badPackets unknownId=0", "malformed=", "beforeJoin=", "duplicateJoin=", "inputRate=", "wrongDirection=1", "handlerException=",
                      "tickFailures=0", "loopFailures=0", "matchResets=0", "stalls=0", "movementAnomalies=0",
@@ -97,6 +99,7 @@ public class MonitoringTests
         health.AddBuildInboxDrop();
         health.AddBuildInboxDrop();
         health.AddNetworkError();
+        health.AddConnectRateReject();
         health.SetBuild(new BuildCounts(7, 3, 8, 5, 2, 10, 4, 1, 9, 2, 0, 0, 6), code => code == BuildResultCode.Occupied ? 2 : 0);
 
         using var meter = new ServerMeter(health);
@@ -132,6 +135,7 @@ public class MonitoringTests
         Assert.Contains(("projecth.build.inbox_drops", 2L, ""), seen);
         Assert.Contains(("projecth.harvest.hits", 9L, ""), seen);
         Assert.Contains(("projecth.network_errors", 1L, ""), seen);   // server review M1
+        Assert.Contains(("projecth.rejects", 1L, "reason=ConnectRate"), seen);   // server review M2
         Assert.Contains(("projecth.stats_queries", 6L, "result=requests"), seen);
         Assert.Contains(("projecth.stats_queries", 2L, "result=limited"), seen);
         Assert.Contains(("projecth.stats_queries", 1L, "result=busy"), seen);

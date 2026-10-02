@@ -39,6 +39,8 @@ public sealed class ServerMeter : IDisposable
             new Measurement<long>(h.Rejects(RejectReason.ServerFull), Tag("reason", nameof(RejectReason.ServerFull))),
             new Measurement<long>(h.Rejects(RejectReason.BadRequest), Tag("reason", nameof(RejectReason.BadRequest))),
             new Measurement<long>(h.Rejects(RejectReason.VersionMismatch), Tag("reason", nameof(RejectReason.VersionMismatch))),
+            // Server review M2: sent as ServerFull, counted apart (no RejectReason value: that enum is the protocol's).
+            new Measurement<long>(h.ConnectRateRejects, Tag("reason", "ConnectRate")),
         });
         _meter.CreateObservableCounter("projecth.kicks", () => ByCode(h));
         _meter.CreateObservableCounter("projecth.bad_packets", () => ByReason(h));

@@ -52,6 +52,8 @@ public sealed class HealthCounters
     private long _movementAnomalies;
     // Server review M1: socket errors LiteNetLib reported (OnNetworkError; logged once per stats interval).
     private long _networkErrors;
+    // Server review M2: connection requests refused by the per-IP rate (sent as ServerFull, counted apart from it).
+    private long _connectRateRejects;
     // Phase 13 D18: written by the game loop after every tick (BuildCounts); the fields are read one by one.
     private long _buildPieces;
     private long _buildCells;
@@ -100,6 +102,7 @@ public sealed class HealthCounters
     // Phase 12 D12: a move faster than its mode allows (Match's self-check; should stay 0).
     public void AddMovementAnomaly() => Interlocked.Increment(ref _movementAnomalies);
     public void AddNetworkError() => Interlocked.Increment(ref _networkErrors);
+    public void AddConnectRateReject() => Interlocked.Increment(ref _connectRateRejects);
 
     public void SetGauges(int peers, int players, int graced, MatchFlowState state)
     {
@@ -167,6 +170,7 @@ public sealed class HealthCounters
     public long Stalls => Interlocked.Read(ref _stalls);
     public long MovementAnomalies => Interlocked.Read(ref _movementAnomalies);
     public long NetworkErrors => Interlocked.Read(ref _networkErrors);
+    public long ConnectRateRejects => Interlocked.Read(ref _connectRateRejects);
     public int Peers => Volatile.Read(ref _peers);
     public int Players => Volatile.Read(ref _players);
     public int Graced => Volatile.Read(ref _graced);

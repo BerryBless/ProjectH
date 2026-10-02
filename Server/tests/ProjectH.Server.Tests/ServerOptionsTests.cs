@@ -140,4 +140,20 @@ public class ServerOptionsTests
             ReconnectGraceSeconds = grace, JoinTimeoutSeconds = joinTimeout, InputTimeoutSeconds = inputTimeout,
         }.Validate());
     }
+
+    // Server review M2: 0 = off for either value; otherwise burst 1-10000 and 1-1000 per second.
+    [Theory]
+    [InlineData(20, 5, true)]
+    [InlineData(0, 5, true)]
+    [InlineData(20, 0, true)]
+    [InlineData(10000, 1000, true)]
+    [InlineData(-1, 5, false)]
+    [InlineData(10001, 5, false)]
+    [InlineData(20, -1, false)]
+    [InlineData(20, 1001, false)]
+    public void Validate_ConnectRate(int burst, int perSecond, bool valid)
+    {
+        string? error = new ServerOptions { ConnectBurstPerIp = burst, ConnectsPerIpPerSecond = perSecond }.Validate();
+        Assert.Equal(valid, error == null);
+    }
 }

@@ -43,6 +43,10 @@ public sealed class NetworkListener : INetEventListener
     // accepts no new connection. Written by the game loop or the host's thread, read on LiteNetLib's thread.
     private volatile bool _stopping;
 
+    // Server review M2: connection requests per remote IP (fixed table; OnConnectionRequest only, so LiteNetLib's receive
+    // thread only, like PeerState's receive fields).
+    private readonly ConnectRateLimiter _connectRate;
+
     // Phase 13 D8: build requests a peer may send per second (building.json); more are invalid packets.
     private readonly int _maxBuildRequestsPerSecond;
 
@@ -56,6 +60,7 @@ public sealed class NetworkListener : INetEventListener
         _health = health;
         _statsQueries = statsQueries;
         _logger = logger;
+        _connectRate = new ConnectRateLimiter(options.ConnectBurstPerIp, options.ConnectsPerIpPerSecond);
     }
 
     // Set once by GameLoop right after creating the NetManager (the two reference each other).
@@ -89,6 +94,15 @@ public sealed class NetworkListener : INetEventListener
         if (_stopping || Manager.ConnectedPeersCount >= _options.MaxPlayers)
         {
             Reject(request, RejectReason.ServerFull, RejectServerFull);
+            return;
+        }
+        // Server review M2: after the full check (a refused request takes no token), before anything is read. The client
+        // is told ServerFull (no protocol change; it does not retry a reject); the Health line counts it as connectRate.
+        if (!_connectRate.TryAcquire(request.RemoteEndPoint.Address, Environment.TickCount64))
+        {
+            _health.AddConnectRateReject();
+            _logger.LogDebug("Rejected connection from {EndPoint}: over the per-IP connect rate", request.RemoteEndPoint);
+            request.Reject(RejectServerFull);
             return;
         }
 
