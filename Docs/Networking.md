@@ -81,6 +81,7 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
 | 3 | `JoinTimeout` | 연결하고 Join하지 않음 | 안 한다 |
 | 4 | `InputTimeout` | Join하고 입력을 보내지 않음 | 안 한다 |
 | 5 | `ServerError` | Tick이 계속 실패해 경기를 초기화함. 또는 서버 Control 채널이 가득 차 연결·Join을 받지 못함 | 한다 |
+| 6 | `Congested` | (Phase 13 최종 리뷰) Join한 연결의 신뢰 대기열(채널 0 + 1)이 512개를 넘은 채 10초 지남. 연결이 게임 트래픽을 받지 못한다. Client 문구 "연결이 너무 느려 끊겼습니다." | 안 한다 |
 
 **재접속 표(Shared `DisconnectCodes.ShouldReconnect(remoteClose, code, networkLoss)`, Client와 봇이 같이 쓴다):**
 
@@ -215,6 +216,9 @@ Step 순서:
 - **Snapshot은 그대로다:** Entity 13B, Self 14B. 도구는 빈 비트에 넣었다. 건설 상태는 Snapshot에 싣지 않는다.
 - **요청 검사(수신 스레드):** Join 전 요청은 `InputBeforeJoin`, 본문이 틀리면 `Malformed`, 연결당 초당 20개를 넘으면 `BuildRate`(잘못된 패킷, 고정 1초 창). 통과한 요청은 유한 채널(`InboundChannels.Build`)로 Game Loop에 가고, 플레이어마다 큐 8개다(가득 차면 `RateLimited`로 답한다).
 - **받는 쪽:** `BuildStore`가 id로 적용한다(중복·늦은 이벤트 무시, 관심 칸 밖 조각은 저장하지 않음). reset Sync를 받으면 모두 버린다(Join·Resume·라운드).
+- **카탈로그 채널(최종 리뷰 A3):** `BuildCatalog`는 채널 1로, Join·Resume의 reset Sync 바로 앞에 간다. 두 채널은 서로 순서를 지키지 않으므로, 같은 채널의 첫 패킷이어야 관심 칸 크기를 모른 채 `BuildInterest`·조각을 읽는 일이 없다. 그래서 접속 순서 4·5번의 채널 0 목록에는 `BuildCatalog`가 없다.
+- **밀린 건설 채널(최종 리뷰 A4):** 건설 채널의 신뢰 대기열이 32개를 넘은 연결은 그 Tick의 `BuildSync`를 건너뛴다. 사건·창·결과는 계속 간다. 오래 밀리면 `Congested`로 끊는다(위 표).
+- **누르는 키(최종 리뷰 A5):** 서버는 E(Interact), G(Drop), F(ToolHarvest), Q(ToolBuild), 1–3(Slot), R(Reload)을 직전 실제 입력에 없던 때만 처리한다. 키를 쥔 채 보내는 수정 Client도 줍기·버리기·문·도구 전환을 Tick마다 되풀이하지 못한다. Client와 봇은 이미 누름을 한 입력에만 싣는다(`LocalPlayerPredictor`의 queued 버튼). Fire·회복·점프·달리기·웅크리기는 쥔 상태 그대로다.
 - **Fuzz:** 새 파서 9개 모두 `ProtocolFuzzTests`에 들어 있다.
 
 ## 전적 조회 (Phase 11 D8)

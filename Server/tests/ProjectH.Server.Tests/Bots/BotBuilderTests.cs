@@ -75,6 +75,53 @@ public class BotBuilderTests
         Assert.Single(Run(always, view, 14f, 10), s => s.Request.HasValue);
     }
 
+    // Final review C: a hit during the cooldown is used up then (no wall when the cooldown ends), a death drops the
+    // placement in progress, a placement that never reaches build mode is given up, and Q is not pressed in build mode.
+    [Fact]
+    public void HitsAreTakenAtOnce_DeathAndTimeoutDropThePlacement_AndBuildModeIsNotLeft()
+    {
+        BotView view = View();
+        var always = new BotBuilder(seed: 1, chance: 1f);
+        view.ApplyDamage(new DamageTaken { FromDirection = Vector3.UnitX });
+        Assert.Single(Run(always, view, 10f, 10), s => s.Request.HasValue);
+        view.ApplyDamage(new DamageTaken { FromDirection = Vector3.UnitX });
+        Assert.DoesNotContain(Run(always, view, 11f, 10), s => s.Request.HasValue);   // within the cooldown
+        Assert.DoesNotContain(Run(always, view, 14f, 10), s => s.Request.HasValue);   // and not later either
+
+        // Dies while aiming: nothing is sent after the respawn.
+        var dying = new BotBuilder(seed: 1, chance: 1f);
+        BotView v2 = View();
+        v2.ApplyDamage(new DamageTaken { FromDirection = Vector3.UnitX });
+        var command = new InputCommand();
+        dying.Tick(v2, 20f, 0, ref command, out _);                       // presses Q (phase 1)
+        v2.Alive = false;
+        command = new InputCommand();
+        dying.Tick(v2, 20.1f, 0, ref command, out _);
+        v2.Alive = true;
+        v2.Self = v2.Self with { Tool = ToolKind.Build };
+        Assert.DoesNotContain(Run(dying, v2, 20.2f, 10), s => s.Request.HasValue);
+
+        // Build mode never comes: given up after the timeout.
+        var stuck = new BotBuilder(seed: 1, chance: 1f);
+        BotView v3 = View();
+        v3.ApplyDamage(new DamageTaken { FromDirection = Vector3.UnitX });
+        for (int i = 0; i < 90; i++)
+        {
+            command = new InputCommand();
+            Assert.False(stuck.Tick(v3, 30f + i * Dt, 0, ref command, out _));   // the tool stays Weapon
+        }
+        v3.Self = v3.Self with { Tool = ToolKind.Build };
+        Assert.DoesNotContain(Run(stuck, v3, 33.1f, 5), s => s.Request.HasValue);
+
+        // Already in build mode: the placement goes without a Q press.
+        var inMode = new BotBuilder(seed: 1, chance: 1f);
+        BotView v4 = View(ToolKind.Build);
+        v4.ApplyDamage(new DamageTaken { FromDirection = Vector3.UnitX });
+        var steps = Run(inMode, v4, 40f, 3);
+        Assert.DoesNotContain(steps, s => (s.Command.Buttons & InputButtons.ToolBuild) != 0);
+        Assert.Single(steps, s => s.Request.HasValue);
+    }
+
     [Fact]
     public void AHigherTarget_GetsARampTowardsIt()
     {

@@ -128,12 +128,12 @@ Health peers players graced match=<State>#<Round>
   connections joins resumed graceStarts graceExpiries
   disconnects timeout other
   rejects full badRequest version
-  kicks kicked joinTimeout inputTimeout serverError
+  kicks kicked joinTimeout inputTimeout serverError congested
   badPackets unknownId malformed beforeJoin duplicateJoin inputRate wrongDirection handlerException
   tickFailures loopFailures matchResets stalls movementAnomalies
   build pieces cells requests accepted destroyed collapsed duplicates eventPackets syncPackets
   buildRejects noResource outOfRange blocked unsupported occupied rateLimited invalidState invalidRequest budgetFull
-  harvest hits envDestroyed
+  harvest hits envDestroyed syncDeferred
   buildInboxDrops
   db saved failed discarded dropped
   stats requests limited busy unavailable undelivered
@@ -142,12 +142,15 @@ Health peers players graced match=<State>#<Round>
 - `peers`: 열린 연결 수. `players`: 경기의 플레이어 수(유예 중 포함). `graced`: 재접속을 기다리는 플레이어 수.
 - `joins`·`resumed`: 새 Join과 Resume 수. `graceStarts`: 유예가 시작된 수. `graceExpiries`: Resume 없이 유예가 끝난 수(시간 초과, 유예 중 사망, 판 재시작). 만료마다 DevPlayerId를 넣은 Information 로그가 하나 남는다. 경기 초기화가 버린 유예 캐릭터는 세지 않는다.
 - `disconnects timeout`·`other`: 끊긴 연결 수(LiteNetLib 사유가 `Timeout`인지 아닌지).
-- `rejects`: 연결 요청 거절(이유별). 종료 중의 거절도 `full`로 센다. `kicks`: 서버가 끊은 수(코드별. `kicked`는 잘못된 패킷 때문에 끊은 수, `serverError`는 경기 초기화와 Control 채널이 가득 차서 끊은 수). 종료(`ServerShutdown`)와 Join 거절 뒤의 끊기는 Kick이 아니라 세지 않는다.
+- `rejects`: 연결 요청 거절(이유별). 종료 중의 거절도 `full`로 센다. `kicks`: 서버가 끊은 수(코드별. `kicked`는 잘못된 패킷 때문에 끊은 수, `serverError`는 경기 초기화와 Control 채널이 가득 차서 끊은 수, `congested`는 아래 "밀린 연결"로 끊은 수).
+- 밀린 연결(Phase 13 최종 리뷰 A4): `SweepPeers`가 Tick마다 Join한 연결의 신뢰 대기열(LiteNetLib `GetPacketsCountInReliableQueue`, 채널 0 + 1)을 읽는다. 512개(`GameLoop.MaxReliableBacklog`)를 넘은 채 10초(`CongestedSeconds`)가 지나면 `Congested`로 끊는다. 한 번이라도 그 아래로 내려가면 다시 센다(`PeerState.CongestedSinceTick`, Game Loop만 쓴다). 링크가 게임 트래픽을 받지 못하는 연결이 LiteNetLib 메모리를 끝없이 키우지 않게 한다. Match는 GameLoop가 한 번 만든 질의 delegate로 건설 채널 대기열만 읽어, 32개를 넘은 연결의 그 Tick `BuildSync`를 건너뛴다(`syncDeferred`). 종료(`ServerShutdown`)와 Join 거절 뒤의 끊기는 Kick이 아니라 세지 않는다.
 - `badPackets` 7개 항목: 잘못된 패킷(이유별, `Networking.md` "Validation").
 - `tickFailures`·`loopFailures`·`matchResets`: 예외 복구 카운터. `stalls`: Watchdog이 센 멈춤.
 - `movementAnomalies`(Phase 12 D12): 한 Tick의 이동이 그 모드의 최대 속도 × dt × 1.5를 넘은 수(`MovementLimits`, `Movement.md` "이동 이상 검사"). 서버가 이동을 입력만으로 직접 계산하므로 치트가 아니라 시뮬레이션 버그를 알리는 값이다. 정상이면 언제나 0이다. Phase 13: 건설 조각 안에서 시작한 이동(머리를 가로질러 지은 경사로가 한 번에 2 m 넘게 들어 올리는 경우 등)은 조각이 민 것이라 세지 않는다. 맵 상자·문·채집 대상 안에서 시작한 이동은 그대로 센다.
 - `build`(Phase 13): `pieces`·`cells`는 지금 서 있는 조각 수와 조각이 있는 건설 칸 수(공간 색인), 나머지는 누적이다. `requests`는 Game Loop가 처리한 요청, `accepted`는 지어진 수, `destroyed`는 부서진 조각(붕괴 포함), `collapsed`는 그중 지지를 잃어 무너진 수, `duplicates`는 이미 본 번호라 버린 요청, `eventPackets`·`syncPackets`는 보낸 건설 패킷 수다. `buildRejects`는 거절 코드별 수다. `badPackets`에는 `buildRate`(연결당 초당 상한 초과)가 더해졌다.
-- `harvest`(Phase 13): 채집 타격 수(`hits`)와 부서진 채집 대상 수(`envDestroyed`).
+- `harvest`(Phase 13): 채집 타격 수(`hits`)와 부서진 채집 대상 수(`envDestroyed`). `syncDeferred`: 건설 채널이 밀려 Sync를 건너뛴 (연결, Tick) 수. Meter는 `projecth.build.sync_deferred`.
+- 경기 초기화(Phase 13 최종 리뷰 B12): `build`·`harvest`의 누적 값은 새 `Match`에서 0부터 다시 세지만, `HealthCounters`가 버린 경기의 합계를 기준값으로 들고 더하므로 Health 줄과 Meter의 값은 줄지 않는다. `pieces`·`cells`는 지금 값이다.
+- 시작할 때 `Server:BuildInfiniteResources`가 켜져 있으면 Warning 로그를 남긴다(부하 측정 전용).
 - `buildRejects`의 `rateLimited`(Phase 13): 플레이어 큐(8개)가 가득 차 버린 요청도 센다(`requests`에도 들어간다).
 - `buildInboxDrops`(Phase 13): 수신 스레드에서 Game Loop로 가는 유한 채널(`InboundChannels.Build`)이 넘쳐 버린 요청 수. 정상이면 0이다. Meter는 `projecth.build.inbox_drops`.
 - `db`: `MatchHistoryWriter`의 `Saved`·`Failed`·`Discarded`와 큐의 `Dropped`(`Database.md`).

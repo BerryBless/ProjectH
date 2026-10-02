@@ -26,6 +26,8 @@ public sealed class WorldItems
     private ulong _nextOrder;
 
     public int Count => _count;
+    // Phase 13 final review C: how many of them are Material items (the touch pickup skips its scan without any).
+    public int MaterialCount { get; private set; }
 
     // index 0..Count-1
     public ref readonly WorldItem this[int index] => ref _items[index];
@@ -57,6 +59,7 @@ public sealed class WorldItems
             SpawnPoint = spawnPoint,
             Order = _nextOrder++,
         };
+        if (kind == ItemKind.Material) MaterialCount++;
         _count++;
         return true;
     }
@@ -72,6 +75,7 @@ public sealed class WorldItems
 
     public void RemoveAt(int index)
     {
+        if (_items[index].Data.Kind == ItemKind.Material) MaterialCount--;
         _count--;
         _items[index] = _items[_count];
         _items[_count] = default;

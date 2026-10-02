@@ -21,6 +21,8 @@ public sealed class BotBuilder
     public const float RampHeight = 1.5f;
     public const float RampRange = 15f;
     private const float ButtonRepeatSeconds = 0.5f;
+    // Final review C: a placement still aiming (build mode not reached) this long after it started is given up.
+    public const float AimTimeoutSeconds = 2f;
 
     private readonly System.Random _rng;
     private readonly float _chance;
@@ -33,6 +35,7 @@ public sealed class BotBuilder
     private ushort _sequence;
     // The placement in progress: 0 none, 1 aiming (build mode pressed), 2 sent (back to weapons next).
     private int _phase;
+    private float _phaseStarted;
     private BuildRequest _pending;
     private Vector3 _aimAt;
 
@@ -50,12 +53,27 @@ public sealed class BotBuilder
     public bool Tick(BotView view, float now, ushort fightTarget, ref InputCommand command, out BuildRequest request)
     {
         request = default;
-        if (!view.Joined || !view.HasSnapshot || !view.Alive || !ActionsAllowed(view.MyMode)) return false;
+        if (!view.Joined || !view.HasSnapshot) return false;
+        // Final review C: every hit is taken at once (one during the cooldown, or while dead, never builds later), and a
+        // death drops the placement in progress.
+        bool hit = view.DamageTakenCount != _damageSeen;
+        _damageSeen = view.DamageTakenCount;
+        if (!view.Alive)
+        {
+            _phase = 0;
+            return false;
+        }
+        if (!ActionsAllowed(view.MyMode)) return false;
         if (_spamPerSecond > 0) return Spam(view, now, ref command, out request);
 
         switch (_phase)
         {
             case 1:
+                if (now - _phaseStarted > AimTimeoutSeconds)
+                {
+                    _phase = 0;   // build mode never came (a refused tool switch): give up, the cooldown still runs
+                    return false;
+                }
                 // Aimed at the piece for one input; the server places with the last input's aim.
                 Aim(view, ref command);
                 command.Buttons &= ~InputButtons.Fire;
@@ -77,9 +95,8 @@ public sealed class BotBuilder
         }
 
         if (now < _nextPlan) return false;
-        if (view.DamageTakenCount != _damageSeen)
+        if (hit)
         {
-            _damageSeen = view.DamageTakenCount;
             Vector3 from = view.LastDamageDirection;
             if ((from.X != 0f || from.Z != 0f) && _rng.NextDouble() < _chance && Plan(view, BuildPieceType.Wall, from)) return Start(view, now, ref command);
         }
@@ -95,8 +112,10 @@ public sealed class BotBuilder
     private bool Start(BotView view, float now, ref InputCommand command)
     {
         _phase = 1;
+        _phaseStarted = now;
         _nextPlan = now + DefenceCooldownSeconds;
-        Press(ref command, InputButtons.ToolBuild, now);
+        // Q toggles: already in build mode (a spam-free bot left there), pressing it would take the bot out again.
+        if (view.Self.Tool != ToolKind.Build) Press(ref command, InputButtons.ToolBuild, now);
         Aim(view, ref command);
         return false;
     }
@@ -134,7 +153,7 @@ public sealed class BotBuilder
     private static BuildMaterialType Affordable(BotView view)
     {
         if (view.BuildCatalog == null) return BuildMaterialType.Wood;
-        for (int m = 0; m < 3; m++)
+        for (int m = 0; m < BuildMaterials.Count; m++)
         {
             if (view.Resources.Get((BuildMaterialType)m) >= view.BuildCatalog.ResourceCost[m]) return (BuildMaterialType)m;
         }

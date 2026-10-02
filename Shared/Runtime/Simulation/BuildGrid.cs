@@ -20,6 +20,12 @@ namespace ProjectH.Shared.Simulation
         Metal = 2,
     }
 
+    // Final review C: how many materials there are (the wire's per-material arrays, the resources).
+    public static class BuildMaterials
+    {
+        public const int Count = 3;
+    }
+
     // D1: the slot a piece takes. A cell owns a floor, a ramp and a roof slot and its south and west edges; its north and
     // east walls are the next cells' south and west walls, so one edge has one key.
     public enum BuildSlotKind : byte

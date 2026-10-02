@@ -35,6 +35,22 @@ public class WorldItemsTests
         Assert.Equal(7, _items[_items.IndexOf(b)].SpawnPoint);
     }
 
+    // Phase 13 final review C: the Material items are counted through adds, removals and evictions.
+    [Fact]
+    public void MaterialCount_FollowsAddsRemovalsAndEvictions()
+    {
+        ushort wood = Add(Vector3.Zero, kind: ItemKind.Material, defId: 1);   // the oldest drop
+        Add(Vector3.Zero, kind: ItemKind.Material, defId: 2);
+        Add(Vector3.Zero);
+        Assert.Equal(2, _items.MaterialCount);
+        _items.RemoveAt(_items.IndexOf(wood));
+        Assert.Equal(1, _items.MaterialCount);
+        while (_items.Count < WorldItems.Capacity) Add(Vector3.Zero);
+        Assert.True(_items.TryAdd(ItemKind.Ammo, 1, 0, 1, Vector3.Zero, -1, out _, out ushort evicted));   // evicts the stone
+        Assert.NotEqual(0, evicted);
+        Assert.Equal(0, _items.MaterialCount);
+    }
+
     [Fact]
     public void Remove_And_SetAmount()
     {

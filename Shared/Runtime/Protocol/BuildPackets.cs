@@ -301,7 +301,7 @@ namespace ProjectH.Shared.Protocol
         public static void Write(ref PacketWriter writer, BuildCatalogData c)
         {
             writer.WriteByte((byte)PacketId.BuildCatalog);
-            for (int m = 0; m < 3; m++)
+            for (int m = 0; m < BuildMaterials.Count; m++)
             {
                 writer.WriteUInt16(c.ResourceCost[m]);
                 writer.WriteUInt16(c.MaxHealth[m]);
@@ -325,7 +325,7 @@ namespace ProjectH.Shared.Protocol
             c = null;
             if (reader.Remaining < Size - 1) return false;
             var data = new BuildCatalogData();
-            for (int m = 0; m < 3; m++)
+            for (int m = 0; m < BuildMaterials.Count; m++)
             {
                 reader.TryReadUInt16(out data.ResourceCost[m]);
                 reader.TryReadUInt16(out data.MaxHealth[m]);

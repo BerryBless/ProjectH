@@ -393,6 +393,20 @@ public class BuildReplicationTests
         Assert.True(a.Alive);
     }
 
+    // Final review B8: a player whose connection dropped keeps no waiting build request through its grace.
+    [Fact]
+    public void AGracedPlayer_HasNoWaitingBuildRequests()
+    {
+        var h = new RoyaleHarness(reconnectGraceSeconds: 10);
+        PlayerEntity a = h.Join(1);
+        h.Join(2);
+        h.RunToMatch();
+        h.Match.EnqueueBuild(1, new BuildRequest { Sequence = 1, Piece = (byte)BuildPieceType.Wall, X = 16, Y = 0, Z = 16 });
+        Assert.Equal(1, a.BuildQueue.Count);
+        Assert.True(h.Match.Disconnect(1, allowGrace: true));
+        Assert.Equal(0, a.BuildQueue.Count);
+    }
+
     [Fact]
     public void Versions_OnlyGrow()
     {

@@ -190,6 +190,54 @@ public class BuildPlacementTests
         Assert.True(other.State.Position.Y > 1.5f);
     }
 
+    // Final review B6: a ramp that would lift a player into a level 1 floor above it is refused; a vault in progress
+    // blocks a piece across its path.
+    [Fact]
+    public void ARampThatWouldLiftAPlayerIntoAFloorAbove_IsBlocked()
+    {
+        PlayerEntity p = Ready(1, Builder);
+        _h.AddPiece(new BuildPieceShape(BuildPieceType.Floor, C, 1, C, 0));   // underside 2.75
+        _h.Join(2, new Vector3(2.5f, 0f, 3.5f));                            // the ramp's surface there is about 2.3 m up
+        Assert.Equal(BuildResultCode.Blocked, Build(p, Request(BuildPieceType.Ramp, C, 0, C)).Code);
+        Assert.Equal(1, _h.Match.BuildPieces);   // the floor only
+        Assert.Equal(100, p.Inventory.Resource(BuildMaterialType.Wood));
+        // Near the ramp's low edge the body fits under the floor: allowed.
+        _h.Match.TryGetPlayer(2, out PlayerEntity other);
+        other.State.Position = new Vector3(2.5f, 0f, 0.5f);
+        Assert.Equal(BuildResultCode.Ok, Build(p, Request(BuildPieceType.Ramp, C, 0, C)).Code);
+    }
+
+    [Fact]
+    public void APieceAcrossAVaultInProgress_IsBlocked()
+    {
+        PlayerEntity p = Ready(1, Builder);
+        PlayerEntity vaulter = _h.Join(2, new Vector3(4f, 0f, -1f));
+        vaulter.State.Mode = MovementMode.Vault;
+        vaulter.State.HorizontalVelocity = new Vector2(0f, 5f);   // north, across the cell's south edge
+        vaulter.State.ModeTicks = 20;
+        Assert.Equal(BuildResultCode.Blocked, Build(p, Request(BuildPieceType.Wall, C, 0, C)).Code);
+    }
+
+    // Final review B9: an accepted placement interrupts a heal, and so do the tool keys.
+    [Fact]
+    public void APlacement_OrAToolKey_CancelsAHeal()
+    {
+        PlayerEntity p = Ready(1, Builder);
+        p.Health = 50;
+        p.Inventory.Medkits = 1;
+        _h.Press(p, InputButtons.UseMedkit);
+        Assert.Equal(ConsumableType.Medkit, p.Inventory.Using);
+        Assert.Equal(BuildResultCode.Ok, Build(p, Request(BuildPieceType.Wall, C, 0, C)).Code);
+        Assert.Equal(ConsumableType.None, p.Inventory.Using);
+        Assert.Equal(50, p.Health);
+
+        _h.Press(p, InputButtons.UseMedkit);
+        Assert.Equal(ConsumableType.Medkit, p.Inventory.Using);
+        _h.Press(p, InputButtons.ToolHarvest);
+        Assert.Equal(ConsumableType.None, p.Inventory.Using);
+        Assert.Equal(1, p.Inventory.Medkits);
+    }
+
     [Fact]
     public void AWallCuttingACrate_IsBlocked()
     {

@@ -218,6 +218,7 @@ namespace ProjectH.Shared.Simulation
                 result.BlockedBy = hitX;
                 blocked = true;
             }
+            Vector3 afterX = position;
             float wantZ = state.HorizontalVelocity.Y * deltaTime;
             if (MoveAxis(ref position, height, AxisZ, wantZ, grounded, scene, out ColliderId hitZ))
             {
@@ -240,10 +241,30 @@ namespace ProjectH.Shared.Simulation
             if (position.Y < floor)
             {
                 // Only where the body fits up there (a ramp under a roof or a floor): otherwise the move does not happen.
+                // Phase 13 final review B11: a diagonal move then still goes along one axis where that fits (X first, then
+                // Z), so walking along the headroom line does not stick.
                 if (!TryLift(ref position, floor, height, start, scene, out ColliderId overhead))
                 {
-                    state.HorizontalVelocity = Vector2.Zero;
                     if (result.BlockedBy.IsNone) result.BlockedBy = overhead;
+                    if (TryOneAxis(ref position, afterX, start, height, scene))
+                    {
+                        state.HorizontalVelocity.Y = 0f;
+                        if (result.BlockedByZ.IsNone) result.BlockedByZ = overhead;
+                    }
+                    else
+                    {
+                        Vector3 zOnly = start;
+                        MoveAxis(ref zOnly, height, AxisZ, wantZ, grounded, scene, out _);
+                        if (TryOneAxis(ref position, zOnly, start, height, scene))
+                        {
+                            state.HorizontalVelocity.X = 0f;
+                        }
+                        else
+                        {
+                            state.HorizontalVelocity = Vector2.Zero;
+                            if (result.BlockedByZ.IsNone) result.BlockedByZ = overhead;
+                        }
+                    }
                     if (state.Mode == MovementMode.Slide) state.Mode = MovementMode.Crouch;
                 }
             }
@@ -351,6 +372,24 @@ namespace ProjectH.Shared.Simulation
             }
             position = start;
             return false;
+        }
+
+        // Final review B11: the feet moved along one axis only (candidate, from start), lifted onto the floor there when it is
+        // higher and the body fits up there. False (position unchanged) when that axis did not move or the lift does not fit.
+        private static bool TryOneAxis(ref Vector3 position, Vector3 candidate, Vector3 start, float height, Scene scene)
+        {
+            float dx = candidate.X - start.X;
+            float dz = candidate.Z - start.Z;
+            if (dx == 0f && dz == 0f) return false;
+            float reach = MathF.Sqrt(dx * dx + dz * dz) * MoveSettings.MaxSlope + MoveSettings.GroundProbe;
+            float floor = FloorUnder(candidate, candidate.Y + reach, scene, out _);
+            if (candidate.Y < floor)
+            {
+                candidate.Y = floor;
+                if (Obstructed(candidate, height, scene, out _)) return false;
+            }
+            position = candidate;
+            return true;
         }
 
         // The body of this height at these feet is in a box by more than Skin or in a slope's slab; blocker names the first

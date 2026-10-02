@@ -16,7 +16,10 @@ namespace ProjectH.Client.Game
     // Main thread only; no UnityEngine.
     public sealed class BuildStore
     {
-        public const int MaxPieces = 20000;   // the server's default piece limit per match
+        // The server's default piece limit per match (building.json maxPiecesPerMatch). Fixed, not taken from the catalog:
+        // the collision grid is sized once. A window can hold at most the match's pieces, so with the shipped data this is
+        // never reached; a server set higher would have pieces past it ignored (counted in Ignored), never stored.
+        public const int MaxPieces = 20000;
         public const int CellsPerSide = 8;    // 20 m interest cells (the shipped building.json)
 
         private readonly Dictionary<uint, BuildPieceRecord> _pieces = new Dictionary<uint, BuildPieceRecord>();
@@ -51,12 +54,15 @@ namespace ProjectH.Client.Game
             return shape.X / per + side * (shape.Z / per);
         }
 
+        // A reset sync (join, resume, round) or a new connection: everything goes, the debug counts too.
         public void Reset()
         {
             foreach (uint id in _pieces.Keys) MarkChanged(id);
             _pieces.Clear();
             Grid.Clear();
             Cells = 0;
+            Version = 0;
+            Ignored = 0;
         }
 
         public void ApplyInterest(ulong cells)

@@ -544,6 +544,31 @@ public class PieceCollisionTests
         }
     }
 
+    // Final review B11: at the headroom line under a level 1 floor, a diagonal input (up the ramp and sideways) still moves
+    // sideways along the line instead of sticking; the blocked axis reports the floor.
+    [Fact]
+    public void AtTheHeadroomLine_ADiagonalInput_SlidesAlongIt()
+    {
+        PieceGrid grid = Grid(Piece(BuildPieceType.Ramp, C, 0, C, 0), Piece(BuildPieceType.Floor, C, 1, C));
+        var world = new CollisionWorld();
+        var s = new MoveState { Position = new Vector3(1.5f, 0f, -2f) };
+        for (int i = 0; i < 90; i++) StepOnce(ref s, new InputCommand { MoveY = 1f, Yaw = 0f }, grid, world);
+        Vector3 line = s.Position;
+        Assert.True(line.Z > 1f, $"stopped at {line}");
+        var diagonal = new InputCommand { MoveX = 1f, MoveY = 1f, Yaw = 0f };   // +X and +Z
+        for (int i = 0; i < 10; i++)
+        {
+            Vector3 before = s.Position;
+            StepResult result = StepOnce(ref s, diagonal, grid, world);
+            string at = $"tick {i}: {before} -> {s.Position}";
+            Assert.True(s.Position.X > before.X + 0.05f, at);
+            Assert.True(s.Position.Z >= before.Z - 0.0001f, at);
+            Assert.True(s.Position.Y + MoveSettings.Height <= Ceiling + 0.01f, at);
+            Assert.False(Penetrates(s, grid, world), at);
+            if (s.Position.Z == before.Z) Assert.Equal(ColliderKind.Piece, result.BlockedByZ.Kind);
+        }
+    }
+
     [Fact]
     public void ARampBuiltOnACharacterInARoofedCell_DoesNotLiftItThroughTheRoof()
     {

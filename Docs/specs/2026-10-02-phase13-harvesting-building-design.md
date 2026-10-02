@@ -190,5 +190,28 @@ D20의 항목.
 24. **유령(미리보기·대기)은 `Sprites/Default` 반투명이다.** URP Lit의 투명 변형은 빌드에서 빠질 수 있다(Phase 6 `ZoneView`와 같은 이유).
 25. **이동 이상 검사(Phase 12 D12)는 건설 조각 안에서 시작한 이동을 세지 않는다(`Penetrates(..., piecesOnly: true)`). 맵 상자·문·채집 대상은 그대로 센다.** 머리를 가로지르게 지은 경사로는 그 Tick에 캐릭터를 표면 위로 2 m 넘게 들어 올린다(지상 한도 2.15 m/Tick). 시뮬레이션 버그가 아니라 조각이 민 것이다. 계획 단계의 봇 20명 Turbo 실행에서 이 경우가 13번 나와 찾았고, 고친 뒤 0이다(`BuildPlacementTests.ARampBuiltUnderItsBuilder_LiftsThem_WithoutAMovementAnomaly`, Task 3). 한도를 넘은 Tick에만 겹침을 본다.
 
+### 최종 리뷰 수정 (final fix wave)
+
+Phase 13 최종 리뷰와 동료 측정에서 나온 것이다.
+
+26. **Sync는 가까운 칸부터 보낸다(A1).** 남은 관심 칸 가운데 플레이어의 지금 칸과 Chebyshev 거리가 가장 작은 칸을 고르고, 같으면 번호가 작은 칸이다. 시작한 칸은 끝까지 보낸다. 재접속이나 큰 창에서 내 주변이 먼저 온다. (`BuildReplication.NearestPending`, `BuildReplicationTests.TheSync_SendsThePlayersOwnCellFirst`)
+27. **붕괴 탐색은 Tick 끝에 한 번 한다(A2).** 파괴마다 옛 이웃을 탐색 시작점으로 모으고(칸마다 한 번, 경기 상한까지), 모든 행동이 끝난 뒤 사건을 보내기 전에 `Unsupported`를 한 번 돈다. 한 Tick의 여러 파괴가 "앞선 탐색이 닿은 노드" 멈춤을 나눠 쓴다. 남는 조각은 하나씩 탐색할 때와 같다.
+    - 무너질 조각은 그 Tick 끝까지 서 있다. 그동안 이동과 사격을 막고, 맞으면 붕괴가 아니라 파괴로 센다.
+    - 동료 측정: 10.5k 조각의 가는 탑에서 무너지지 않는 파괴 50개가 한 Tick에 64 ms였다. 같은 모양의 테스트(갑판 512개, 구멍 50개)에서 방문 노드가 하나씩 할 때의 10분의 1 아래다. (`SupportTests.ManyDestroysThatCollapseNothing_ShareOneSearch`, `ManyDestroysInOneTick_LeaveTheSameAsOneAtATime`)
+28. **`BuildCatalog`는 건설 채널(1)로, Join·Resume의 reset Sync 바로 앞에 보낸다(A3).** 채널 0과 1은 서로 순서를 지키지 않는다. 같은 채널의 첫 패킷이라야 `BuildInterest`나 조각이 기본 관심 칸 크기로 읽히는 일이 없다. Client는 바뀌지 않는다(받는 순서대로 적용한다). `MatchTests`·`BuildReplicationTests`·`BuildIntegrationTests`의 채널 고정 검사를 바꿨다.
+29. **밀린 연결을 막는다(A4).**
+    - 건설 채널의 ReliableOrdered 대기열이 32개를 넘은 연결은 그 Tick의 Sync를 건너뛴다. 사건, 관심 창, 결과는 계속 간다. GameLoop가 만든 연결별 질의 delegate 하나로 읽는다. 건너뛴 횟수는 Health `syncDeferred`, Meter `projecth.build.sync_deferred`다.
+    - 참가한 연결의 대기열(채널 0 + 1)이 512개를 넘은 채로 10초가 지나면 `DisconnectCode.Congested`(6)로 끊는다. 재접속하지 않는다. Client 문구는 "연결이 너무 느려 끊겼습니다."다. Health `kicks congested`, Meter `projecth.kicks{code=Congested}`로 센다. (`GameLoopPeerTests.APeerBackedUpForTenSeconds_IsClosedAsCongested`)
+30. **누르는 키는 누른 입력에서만 동작한다(A5).** E, G, F, Q, 1-3, R은 직전 실제 입력에 없던 때만 본다. 수정한 Client가 키를 쥐고 있어도 줍기·버리기·문·도구 전환이 매 Tick 되풀이되지 않는다. 정상 Client는 누름을 한 입력에만 실으므로 바뀌는 것이 없다. Fire, 회복 키, 점프, 달리기, 웅크리기는 그대로 쥔 상태를 본다. 연속한 입력에서 같은 키를 두 번 누르는 경우는 한 번으로 본다. 기존 테스트 몇 개는 두 누름 사이에 뗀 입력을 넣었다.
+31. **올려 줄 자리가 없으면 경사로·지붕을 세우지 않는다(B6).** 경사로·지붕의 판이 캐릭터 몸에 걸리면 그 표면으로 올려 준다. 그 높이에서 몸이 위 조각·맵 상자·다른 판에 걸리면 `Blocked`다. 진행 중인 넘기(Vault)의 남은 경로를 가로지르는 조각도 `Blocked`다(문 닫기와 같은 `VaultPathOverlaps`).
+32. **0층 바닥과 땅 평면이 같은 거리면 조각이 맞는다(B7).** 0층 바닥 윗면이 y 0이라 위에서 쏜 총알이 땅에 먼저 닿았다. 1 mm 안이면 조각을 고른다(사격·채집 모두).
+33. **유예 중인 플레이어의 건설 요청은 버린다(B8).** 연결이 끊길 때 요청 큐를 비운다.
+34. **회복은 배치와 도구 키로도 끊긴다(B9).** 받아들여진 배치는 진행 중인 회복을 취소한다. F와 Q도 회복을 끊는 키다.
+35. **버린 아이템은 경사로·지붕 위에도 놓인다(B10).** 발에서 걸어 오를 수 있는 높이(MaxSlope)까지의 경사면을 땅으로 본다.
+36. **머리 높이 선에서 대각선 입력이 멈추지 않는다(B11).** 대각선 이동의 들어 올림이 막히면 X만, 그다음 Z만 움직여 보고, 둘 다 안 되면 그 자리에 둔다. 막힌 축의 `BlockedBy`/`BlockedByZ`를 채운다. Shared 이동 코드라 서버와 예측이 같다(예측 일치 테스트 보정 0). (`PieceCollisionTests.AtTheHeadroomLine_ADiagonalInput_SlidesAlongIt`)
+37. **건설·채집 Meter는 경기 리셋 뒤에도 줄지 않는다(B12).** `HealthCounters`가 리셋된 경기의 합계를 기준값으로 들고 새 경기의 값을 더한다. 조각 수와 칸 수(현재값)는 새 경기의 값이다.
+38. **설계 메모: 적의 조각 너머로도 지을 수 있다.** D9의 "벽 너머" 검사는 맵 상자·닫힌 문·지형만 본다. 조각은 보지 않는다. Phase 13.5에서 다룬다.
+39. **작은 수정(C).** `WorldItems.MaterialCount`(재료 아이템이 없으면 줍기 검사를 건너뜀), `BuildMaterials.Count`, 봇 건설(맞은 것은 매 Tick 소비, 죽으면 배치 취소, 조준 2초 제한, 건축 모드에서 Q를 누르지 않음), `BuildInfiniteResources` 시작 경고, 한 번에 얻는 자원이 255를 넘는 `building.json` 거절, Client `BuildStore.Reset`이 Version·Ignored도 초기화, `BuildAudio`의 읽지 않는 횟수 제거.
+
 ---
 

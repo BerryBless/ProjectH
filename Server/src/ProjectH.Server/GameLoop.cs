@@ -192,6 +192,9 @@ public sealed class GameLoop : IDisposable
         _thread.Start();
         _logger.LogInformation("Server listening on UDP {Port} (SimHz {SimHz}, SnapshotHz {SnapshotHz}, MaxPlayers {MaxPlayers})",
             _net.LocalPort, _options.SimHz, _options.SnapshotHz, _options.MaxPlayers);
+        // Phase 13 final review C: a load-test switch must never go unnoticed on a real server.
+        if (_options.BuildInfiniteResources)
+            _logger.LogWarning("Server:BuildInfiniteResources is on: building costs no resources (load tests only)");
     }
 
     public void Stop() => Stop(ThreadJoinTimeout);

@@ -26,6 +26,21 @@ namespace ProjectH.Client.Tests
             return store;
         }
 
+        // Final review C: a reset starts the debug numbers over too (a new connection's versions start from 0).
+        [Test]
+        public void AReset_ClearsTheVersionAndTheIgnoredCount()
+        {
+            BuildStore store = Store();
+            store.ApplyPiece(Piece(1, 3, 3), 7);
+            store.ApplyHealth(99, 5, 8);   // unknown: ignored
+            Assert.AreEqual(8u, store.Version);
+            Assert.AreEqual(1, store.Ignored);
+            store.Reset();
+            Assert.AreEqual(0u, store.Version);
+            Assert.AreEqual(0, store.Ignored);
+            Assert.AreEqual(0, store.Count);
+        }
+
         [Test]
         public void ARepeatedPlacement_ChangesNothing()
         {

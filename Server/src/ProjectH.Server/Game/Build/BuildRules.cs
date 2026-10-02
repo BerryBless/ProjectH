@@ -89,4 +89,18 @@ public static class BuildRules
         Vector3 c = feet + new Vector3(0f, height * 0.5f, 0f);
         return c.X > b.Min.X && c.X < b.Max.X && c.Y > b.Min.Y && c.Y < b.Max.Y && c.Z > b.Min.Z && c.Z < b.Max.Z;
     }
+
+    // Final review B6: a ramp or roof whose slab holds part of a character's body lifts it onto its surface (D2). Returns
+    // true and the feet up there when it does; the caller refuses the piece if the body does not fit there.
+    public static bool Lifts(in BuildPieceShape shape, Vector3 feet, float height, out Vector3 lifted)
+    {
+        lifted = feet;
+        if (!BuildGrid.IsSlope(shape.Type)) return false;
+        Slope slope = BuildGrid.SlopeOf(shape);
+        const float w = MoveSettings.HalfWidth;
+        if (!slope.Range(feet.X - w, feet.Z - w, feet.X + w, feet.Z + w, out _, out float high, out float bottom)) return false;
+        if (!(feet.Y < high - MoveSettings.Skin && feet.Y + height > bottom + MoveSettings.Skin)) return false;
+        lifted.Y = high;
+        return true;
+    }
 }

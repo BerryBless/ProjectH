@@ -332,6 +332,18 @@ public class PickupDropTests
         Assert.Equal(2, _match.WorldItems.Count);
     }
 
+    // Final review B10: a weapon dropped on a ramp lies on the ramp's surface ahead, not on the terrain under it.
+    [Fact]
+    public void Drop_OnARamp_LandsOnItsSurface()
+    {
+        SandboxHarness.AddPiece(_match, new BuildPieceShape(BuildPieceType.Ramp, 16, 0, 16, 0));   // rises +Z, 0.6 per metre from z 0
+        var a = Join(1, new Vector3(2.5f, 0.6f * (2f + MoveSettings.HalfWidth), 2f), yaw: 0f);
+        Press(a, InputButtons.Drop);
+        var item = Assert.Single(WorldList());
+        Assert.Equal(3f, item.Position.Z, 3);
+        Assert.Equal(0.6f * 3f, item.Position.Y, 3);
+    }
+
     // Placement fallback: 1 m in front is behind (or inside) a wall, so the weapon lands at the feet. The
     // field wall (26, 1.5, 0) is 0.5 m thick (x 25.75-26.25): 1 m from x 25.3 is already past it.
     [Theory]

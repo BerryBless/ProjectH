@@ -6,12 +6,13 @@ using ProjectH.Shared.Simulation;
 namespace ProjectH.Server.Game.Items;
 
 // D11: Medkit (4) and Shield Cell (5) are used over a channel time, decided in server ticks. Moving does
-// not interrupt; firing, switching slots, dropping or pressing the other heal does. Pure state changes on
+// not interrupt; firing, switching slots or tools (Phase 13 final review B9), dropping or pressing the other heal does,
+// and so does an accepted placement (Match.TryBuild). Pure state changes on
 // PlayerEntity; Match calls them in the spec §2 order (cancel = step 2, start = step 8, finish = step 9).
 public static class ConsumableRules
 {
     private const InputButtons Interrupts = InputButtons.Fire | InputButtons.Slot1 | InputButtons.Slot2 |
-                                            InputButtons.Slot3 | InputButtons.Drop;
+                                            InputButtons.Slot3 | InputButtons.Drop | InputButtons.ToolHarvest | InputButtons.ToolBuild;
 
     // Step 2, real inputs only. Returns true when a running use was cancelled.
     public static bool CancelIfInterrupted(PlayerEntity player, InputButtons buttons)

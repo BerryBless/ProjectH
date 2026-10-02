@@ -139,6 +139,27 @@ public class MonitoringTests
         Assert.Contains(("projecth.kicks", 0L, "code=Congested"), seen);
     }
 
+    // Final review B12: a match reset starts the match's numbers over; the counters carry the old ones, so they never go
+    // back. The gauges (pieces, cells) are the new match's.
+    [Fact]
+    public void BuildCounters_SurviveAMatchReset()
+    {
+        var health = new HealthCounters();
+        health.SetBuild(new BuildCounts(7, 3, 8, 5, 2, 10, 4, 1, 9, 2, 6, 11, 6, 1), code => code == BuildResultCode.Occupied ? 2 : 0);
+        health.CarryBuildTotals();
+        health.SetBuild(new BuildCounts(1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0), code => code == BuildResultCode.Occupied ? 1 : 0);
+        BuildCounts b = health.Build;
+        Assert.Equal(1, b.Pieces);
+        Assert.Equal(1, b.Cells);
+        Assert.Equal(9, b.Requests);
+        Assert.Equal(6, b.Accepted);
+        Assert.Equal(10, b.Destroyed);
+        Assert.Equal(10, b.HarvestHits);
+        Assert.Equal(12, b.SyncPackets);
+        Assert.Equal(1, b.SyncDeferred);
+        Assert.Equal(3, health.BuildRejects(BuildResultCode.Occupied));
+    }
+
     [Fact]
     public void TheWatchdog_ReportsAStallOnce_AndTheRecovery()
     {

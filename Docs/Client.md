@@ -104,6 +104,9 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
 - **조작:** F 채집 도구, Q 건축 모드(다시 누르면 이전 도구), 1–3 무기. 건축 모드에서 Z 벽, X 바닥, V 경사로, B 지붕(누르면 건축 모드로 들어간다), T 재료(나무 → 돌 → 금속), R 회전(재장전 대신), 좌클릭 배치(누르고 있으면 Turbo).
 - **예측:** 도구는 입력마다 예측한다(`ToolState`). 이동은 확정 조각과 충돌한다(`LocalPlayerPredictor.Pieces = BuildStore.Grid`). 대기 중인 배치는 그리기만 하고 충돌하지 않는다. 받아들여진 배치는 확정 조각이 도착할 때까지(최대 1초 시간 초과) 대기로 계속 보인다. 요청은 초당 20개까지만 보낸다(`BuildController.MaxRequestsPerSecond`).
 - **HUD:** 오른쪽 아래 "나무 n   돌 n   금속 n"(서버 값 − 대기 비용), 건축 모드에서 "건축: 벽 · 나무"와 키 안내, 거절 이유("자원이 부족합니다" 등, `UiText.BuildRefusal`).
+- **카탈로그:** `BuildCatalog`는 건설 채널(1)의 첫 패킷으로 온다(최종 리뷰 A3). 받는 순서대로 적용하므로 Client 코드는 바뀌지 않았다. `BuildStore.MaxPieces`(20,000)는 기본 경기 상한이고 카탈로그에서 받지 않는다(충돌 격자를 한 번 잡는다). 넘는 조각은 저장하지 않고 `Ignored`로 센다. `BuildStore.Reset`은 Version과 `Ignored`도 0으로 되돌린다.
+- **끊김 문구:** `Congested`(6)는 "연결이 너무 느려 끊겼습니다."이고 자동 재접속하지 않는다(`Networking.md`).
+- **소리:** `BuildAudio.Play`는 자리만 있고 아무것도 하지 않는다(읽지 않던 횟수를 지웠다). 클립이 생기면 이 클래스만 바꾼다.
 - **F1:** 건설 줄 "도구 · 조각/재료 · 구조물 n(표시 n, 무시 n) · 요청 n(n/s) · 거절 n 코드"(0.25초마다, 바뀔 때만). 요청 §190에 따라 Development Build와 Editor에서만 보인다(`Debug.isDebugBuild`). 다른 F1 줄은 전과 같다.
 - **Lifetime:** `PieceMeshes`, `BuildPieceViews`, `BuildPreview`, `HarvestEffects`, `BuildHud`는 `Awake`에서 만들고 `OnDestroy`에서 해제한다. 이벤트 구독이 9개 늘었다(`BuildCatalogReceived`, `ResourcesReceived`, `BuildResultReceived`, `BuildPieceReceived`, `BuildHealthReceived`, `BuildDestroyedReceived`, `BuildResetReceived`, `BuildInterestReceived`, `HarvestHitReceived`). 연결이 끊기면(`ClearMatchState`) 조각·유령·효과를 모두 치운다.
 

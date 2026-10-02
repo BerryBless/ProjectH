@@ -76,6 +76,19 @@ public class StructureDamageTests
         _h.Act(shooter, InputButtons.None, at);
     }
 
+    // Final review B7: a level 0 floor's top is the ground plane (y 0); a shot from above hits the floor, not the ground.
+    [Fact]
+    public void AShotFromAbove_DamagesALevelZeroFloor()
+    {
+        _h.Ticks(160);
+        uint floor = _h.Match.Build.Add(new BuildPieceShape(BuildPieceType.Floor, 16, 0, 16, 0), BuildMaterialType.Wood, 99, 0, grounded: true);
+        PlayerEntity shooter = _h.Join(1, new Vector3(2.5f, 0f, -3f));
+        Shoot(shooter, new Vector3(2.5f, 0f, 2.5f));
+        Assert.True(_h.Match.Build.TryGetSlot(floor, out int slot));
+        Assert.True(_h.Match.Build.At(slot).Damage > 0);
+        Assert.Contains(HealthRecords(1), r => r.Id == floor);
+    }
+
     [Fact]
     public void AShot_DamagesTheWall_AndStopsThere()
     {

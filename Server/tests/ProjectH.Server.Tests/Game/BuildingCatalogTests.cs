@@ -101,6 +101,7 @@ public class BuildingCatalogTests
     [InlineData("\"cellSize\": 20", "\"cellSize\": 30", "interest.cellSize")]
     [InlineData("\"cellSize\": 20", "\"cellSize\": 10", "interest.cellSize")]
     [InlineData("\"minimumBuildInterval\": 0.1", "\"minimumBuildInterval\": 0", "minimumBuildInterval")]
+    [InlineData("\"baseResourcePerHit\": 6, \"destroyBonus\": 10 },", "\"baseResourcePerHit\": 100, \"destroyBonus\": 60 },", "at most 255")]   // final review C
     public void ABadValue_IsRefused_WithItsName(string from, string to, string expected)
     {
         string json = BuildingCatalog.DefaultJson.Replace(from, to);

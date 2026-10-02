@@ -188,6 +188,9 @@ public sealed class BuildingCatalog
             if (h.Health < 1 || h.Health > ushort.MaxValue) return Fail($"harvestables[{i}]: health must be 1-65535.", out error);
             if (h.BaseResourcePerHit < 0 || h.BaseResourcePerHit > 100 || h.DestroyBonus < 0 || h.DestroyBonus > 1000)
                 return Fail($"harvestables[{i}]: baseResourcePerHit must be 0-100 and destroyBonus 0-1000.", out error);
+            // Final review C: HarvestHit.Gained is one byte, so the most one hit can give (a weak point hit that destroys) fits.
+            if (h.BaseResourcePerHit * tool.WeakPointMultiplier + h.DestroyBonus > byte.MaxValue)
+                return Fail($"harvestables[{i}]: baseResourcePerHit x weakPointMultiplier + destroyBonus must be at most 255.", out error);
             harvestables[(int)kind] = new HarvestableConfig(kind, h.Health, h.BaseResourcePerHit, h.DestroyBonus);
         }
 

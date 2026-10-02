@@ -336,6 +336,7 @@ public sealed class Match
         player.PeerId = PlayerEntity.NoPeer;
         player.GraceEndTick = ServerTick + _graceTicks;
         player.Inputs.Reset();
+        player.BuildQueue.Clear();   // final review B8: a graced player places nothing (Resume starts the sequence over)
         _graced.Add(player);
         return true;
     }
@@ -571,6 +572,7 @@ public sealed class Match
 
         player.Inventory.SetResource(material, have - cost);
         id = _build.Add(shape, material, player.EntityId, tick, grounded);
+        ConsumableRules.Cancel(player.Inventory);   // final review B9: placing interrupts a heal, like firing
         if (id == 0) return BuildResultCode.BudgetFull;   // unreachable: the budget was checked
         _build.TryGetSlot(id, out int slot);
         _support.Add(slot, shape);
@@ -597,12 +599,21 @@ public sealed class Match
         return false;
     }
 
-    // D9: a wall or floor through a living character's body centre.
+    // D9: a wall or floor through a living character's body centre. Final review B6: also a ramp or roof that would lift a
+    // character into something overhead (its body does not fit on the new surface: a floor, roof or map box above), and
+    // any piece across the rest of a vault in progress (a vault moves without collision, D8, so it would pass through).
     private bool CutsAPlayer(in BuildPieceShape shape)
     {
         foreach (var p in _players)
         {
-            if (p.Alive && BuildRules.HoldsBodyCentre(shape, p.State.Position, MovementSimulation.CollisionHeight(p.State.Mode))) return true;
+            if (!p.Alive) continue;
+            float height = MovementSimulation.CollisionHeight(p.State.Mode);
+            if (BuildRules.HoldsBodyCentre(shape, p.State.Position, height)) return true;
+            if (p.State.Mode == MovementMode.Vault && p.State.ModeTicks > 0 && VaultPathOverlaps(p.State, height, BuildGrid.BoundsOf(shape))) return true;
+            // Gathered only for a character the slope would lift (the new piece is not in the world yet).
+            if (BuildRules.Lifts(shape, p.State.Position, height, out Vector3 lifted) &&
+                MovementSimulation.Penetrates(lifted, height, GatherAround(p.State.Position)))
+                return true;
         }
         return false;
     }
@@ -736,6 +747,9 @@ public sealed class Match
 
     // Phase 12 D12: riding, falling, gliding and vaulting allow no shot, reload, pickup, interaction, heal, slot switch
     // or drop. A reload or heal already running goes on.
+    // Final review B7: a piece this close to (or level with) the map surface a ray met is hit first.
+    private const float PieceTieTolerance = 1e-3f;
+
     private static bool ActionsAllowed(MovementMode mode) =>
         mode == MovementMode.Ground || mode == MovementMode.Crouch || mode == MovementMode.Slide;
 
@@ -840,7 +854,7 @@ public sealed class Match
         // Phase 13 D11 (request §68): a piece in front takes the tool's structure damage and gives no resources.
         float pieceRange = target >= 0 ? distance : _building.HarvestRange;
         if (PieceTrace.Trace(origin, direction, pieceRange, _build, out _, out int pieceSlot, out float pieceDistance) &&
-            HitScan.TraceWorld(origin, direction, pieceDistance, Blockers, GameMap.Terrain) >= pieceDistance)
+            HitScan.TraceWorld(origin, direction, pieceDistance, Blockers, GameMap.Terrain) >= pieceDistance - PieceTieTolerance)
         {
             DamagePiece(pieceSlot, _building.HarvestStructureDamage * _building.Material(_build.At(pieceSlot).Material).HarvestToolDamageMultiplier);
             return;
@@ -882,8 +896,9 @@ public sealed class Match
         // Phase 12 D13: crouched or sliding the eye is lower (the client aims from the same height, AimSolver).
         Vector3 origin = shooter.State.Position + new Vector3(0f, CombatRules.EyeHeightOf(shooter.State.Mode), 0f);
         float nearest = HitScan.TraceWorld(origin, direction, weapon.Range, Blockers, GameMap.Terrain);   // a closed door or a tree stops it
-        // Phase 13 D11: a piece in front stops the shot too (no rewind: pieces as they are now, like doors).
-        bool hitPiece = PieceTrace.Trace(origin, direction, nearest, _build, out _, out int pieceSlot, out float pieceDistance);
+        // Phase 13 D11: a piece in front stops the shot too (no rewind: pieces as they are now, like doors). Final review B7:
+        // a piece level with what the world trace met wins (a level 0 floor's top is the ground plane, y 0).
+        bool hitPiece = PieceTrace.Trace(origin, direction, nearest + PieceTieTolerance, _build, out _, out int pieceSlot, out float pieceDistance);
         if (hitPiece) nearest = pieceDistance;
         double rewindTick = CombatRules.ClampViewTick(viewTick, ServerTick, _maxRewindTicks);
 
@@ -1093,6 +1108,7 @@ public sealed class Match
     // for one item: the first takes it. At most WorldItems.Capacity items per player, every few ticks.
     private void PickUpMaterials()
     {
+        if (_worldItems.MaterialCount == 0) return;   // final review C: nothing to scan for
         float rangeSq = ItemRules.MaterialPickupRange * ItemRules.MaterialPickupRange;
         foreach (var player in _players)
         {
@@ -1188,7 +1204,7 @@ public sealed class Match
             // It is placed like a G-drop (in front of the player), not on the loot point: the point rolls a new
             // item there after its respawn delay and the two would overlap.
             Vector3 dropOffset = ItemRules.Offset(player.State.Yaw, ItemRules.DropDistance);
-            Vector3 dropAt = ItemRules.DropPosition(player.State.Position, dropOffset, GatherAround(player.State.Position).Boxes, GameMap.Terrain);
+            Vector3 dropAt = DropAt(player, dropOffset);
             if (SpawnItem(new LootRoll(ItemKind.Weapon, old.Weapon!.Id, old.Rarity, (ushort)old.MagAmmo), dropAt, -1) == 0)
             {
                 // Impossible: RemoveItemAt above just freed a record, so the store is below Capacity and
@@ -1217,7 +1233,7 @@ public sealed class Match
         Vector3 offset = ItemRules.Offset(player.State.Yaw, ItemRules.DropDistance);
         // Conservation: the weapon leaves the hand only once it lies in the world. SpawnItem touches the
         // world list only, so the ref into the inventory stays valid.
-        if (SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, GatherAround(player.State.Position).Boxes, GameMap.Terrain), -1) == 0) return;
+        if (SpawnItem(roll, DropAt(player, offset), -1) == 0) return;
 
         inventory.DroppedFireLockTick = Math.Max(inventory.DroppedFireLockTick, held.NextFireTick);
         held = default;
@@ -1240,7 +1256,7 @@ public sealed class Match
         for (int t = 1; t <= ItemConstants.AmmoTypeCount; t++) if (inventory.GetAmmo((AmmoType)t) > 0) count++;
         if (inventory.Medkits > 0) count++;
         if (inventory.ShieldCells > 0) count++;
-        for (int m = 0; m < 3; m++) if (inventory.Resource((BuildMaterialType)m) > 0) count++;   // Phase 13 D15
+        for (int m = 0; m < BuildMaterials.Count; m++) if (inventory.Resource((BuildMaterialType)m) > 0) count++;   // Phase 13 D15
 
         int n = 0;
         for (int i = 0; i < Inventory.SlotCount; i++)
@@ -1263,7 +1279,7 @@ public sealed class Match
             DropAround(player, n++, count, new LootRoll(ItemKind.Consumable, (byte)ConsumableType.ShieldCell, 0, (ushort)inventory.ShieldCells)))
             inventory.ShieldCells = 0;
         // Phase 13 D15: the building resources too, one item per material (DefId = material + 1).
-        for (int m = 0; m < 3; m++)
+        for (int m = 0; m < BuildMaterials.Count; m++)
         {
             var material = (BuildMaterialType)m;
             int amount = Math.Min(inventory.Resource(material), ushort.MaxValue);
@@ -1277,11 +1293,18 @@ public sealed class Match
         inventory.Changed = true;
     }
 
+    // Where an item dropped at this offset from the player lies (final review B10: on a ramp or roof under it too).
+    private Vector3 DropAt(PlayerEntity player, Vector3 offset)
+    {
+        CollisionWorld world = GatherAround(player.State.Position);
+        return ItemRules.DropPosition(player.State.Position, offset, world.Boxes, GameMap.Terrain, world.Slopes);
+    }
+
     // Returns false when the world could not take the item.
     private bool DropAround(PlayerEntity player, int n, int count, in LootRoll roll)
     {
         Vector3 offset = ItemRules.Offset(player.State.Yaw + 360f * n / count, ItemRules.DeathDropRadius);
-        return SpawnItem(roll, ItemRules.DropPosition(player.State.Position, offset, GatherAround(player.State.Position).Boxes, GameMap.Terrain), -1) != 0;
+        return SpawnItem(roll, DropAt(player, offset), -1) != 0;
     }
 
     // End of tick (D11): the match state when any of its fields changed (state, timer, alive and player counts,
@@ -1839,7 +1862,7 @@ public sealed class Match
             InterestRadius = (byte)c.InterestRadius,
             InterestKeepMargin = (byte)c.InterestKeepMargin,
         };
-        for (int m = 0; m < 3; m++)
+        for (int m = 0; m < BuildMaterials.Count; m++)
         {
             BuildMaterialConfig material = c.Material((BuildMaterialType)m);
             data.ResourceCost[m] = (ushort)material.ResourceCost;

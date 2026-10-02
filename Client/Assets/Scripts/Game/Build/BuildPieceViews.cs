@@ -51,7 +51,7 @@ namespace ProjectH.Client.Game
         {
             _meshes = meshes;
             _root = new GameObject("BuildPieces");
-            for (int m = 0; m < 3; m++)
+            for (int m = 0; m < BuildMaterials.Count; m++)
             {
                 for (int s = 0; s < BuildPieceLook.Stages; s++)
                 {
