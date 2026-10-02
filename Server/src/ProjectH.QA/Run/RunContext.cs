@@ -24,6 +24,10 @@ public sealed class RunContext
         Variables["seed"] = JsonPath.From(seed);
     }
 
+    // QA-5 playInputs: recordings are resolved next to the scenario file and must stay under <RepoRoot>/QA.
+    public string RepoRoot { get; init; } = string.Empty;
+    public string ScenarioPath { get; init; } = string.Empty;
+
     public string RunId { get; }
     public int Seed { get; }
     // Replaced by SwitchServer when a scenario restarts the launched server (new process, new ports).

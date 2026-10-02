@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "name": "Latency Sweep Combat",
+  "description": "QA-5 D31 (request §108-109): latency_loss_combat once per ping. B plays through its fault proxy with the parameter set's latency each way and 10% loss each way, and fights a standing A. Every set: B's shots land (server damage), B stays connected with one connection and no grace. rttMin / delayedMin are per set because ping 0 has no RTT floor and delays nothing.",
+  "tags": ["network", "combat", "faults", "parameters"],
+  "seed": 7302,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "parameters": [
+    { "ping": 0, "rttMin": -1, "delayedMin": -1 },
+    { "ping": 100, "rttMin": 150, "delayedMin": 0 },
+    { "ping": 200, "rttMin": 300, "delayedMin": 0 }
+  ],
+  "actors": [ { "id": "playerA" }, { "id": "playerB", "network": { "proxy": true } } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Combat_A" },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": "QA_Combat_B" },
+    { "id": "a_health", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "a_shield", "action": "setShield", "actor": "playerA", "value": 0 },
+    { "id": "b_rifle", "action": "giveWeapon", "actor": "playerB", "weapon": "Vesper AR", "rarity": 0, "select": true },
+    { "id": "b_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerB", "equals": "Vesper AR", "timeoutMilliseconds": 3000 },
+    { "id": "b_latency", "phase": "act", "action": "networkFault", "actor": "playerB", "latencyMs": "${ping}", "lossPercent": 10, "direction": "both" },
+    { "id": "b_settle", "action": "wait", "milliseconds": 3000, "description": "LiteNetLib measures the new RTT from its pings" },
+    { "id": "b_rtt", "phase": "assert", "action": "waitFor", "condition": "network.rtt", "actor": "playerB", "greaterThan": "${rttMin}", "timeoutMilliseconds": 5000 },
+    { "id": "a_hp_before", "action": "save", "path": "player.health", "actor": "playerA", "saveAs": "hpBefore" },
+    { "id": "b_fire", "phase": "act", "action": "fire", "actor": "playerB", "target": "playerA", "count": 4, "saveAs": "shots" },
+    { "id": "a_damaged", "phase": "assert", "action": "waitFor", "condition": "player.health", "actor": "playerA", "lessThan": "${hpBefore}", "timeoutMilliseconds": 5000 },
+    { "id": "b_hit_confirmed", "action": "waitFor", "condition": "actor.hitsLanded", "actor": "playerB", "greaterThan": 0, "timeoutMilliseconds": 5000 },
+    { "id": "delay_happened", "assert": "network.proxy.delayed", "actor": "playerB", "greaterThan": "${delayedMin}" },
+    { "id": "b_still_connected", "assert": "network.connected", "actor": "playerB", "equals": true },
+    { "id": "b_one_connection", "assert": "actor.connections", "actor": "playerB", "equals": 1 },
+    { "id": "no_grace", "assert": "server.metrics.health.graceStarts", "equals": 0 },
+    { "id": "b_clear", "phase": "act", "action": "clearNetworkFault", "actor": "playerB" }
+  ]
+}

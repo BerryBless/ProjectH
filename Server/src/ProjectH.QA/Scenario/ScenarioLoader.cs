@@ -71,6 +71,9 @@ public static class ScenarioLoader
                 else foreach (JsonProperty p in vars.EnumerateObject()) variables[p.Name] = p.Value.Clone();
             }
 
+            List<JsonElement> parameters = ReadParameters(root, errors);
+            (List<string> baselineValues, double warnPercent) = ReadBaseline(root, errors);
+
             var actors = new List<ActorSpec>();
             if (root.TryGetProperty("actors", out JsonElement actorsElement))
             {
@@ -137,9 +140,71 @@ public static class ScenarioLoader
                 Actors = actors,
                 Steps = steps,
                 SourcePath = sourcePath,
+                Parameters = parameters,
+                BaselineValues = baselineValues,
+                BaselineWarnPercent = warnPercent,
             };
             return new ScenarioLoadResult(scenario, errors);
         }
+    }
+
+    // D31: `parameters` is an array of objects (at most MaxParameterSets). The names are checked by the validator.
+    private static List<JsonElement> ReadParameters(JsonElement root, List<string> errors)
+    {
+        var list = new List<JsonElement>();
+        if (!root.TryGetProperty("parameters", out JsonElement p) || p.ValueKind == JsonValueKind.Null) return list;
+        if (p.ValueKind != JsonValueKind.Array)
+        {
+            errors.Add("'parameters' must be an array of objects, like [ { \"ping\": 0 }, { \"ping\": 100 } ].");
+            return list;
+        }
+        int i = 0;
+        foreach (JsonElement set in p.EnumerateArray())
+        {
+            if (i >= ScenarioDefinition.MaxParameterSets)
+            {
+                errors.Add($"Too many parameter sets (max {ScenarioDefinition.MaxParameterSets}).");
+                break;
+            }
+            if (set.ValueKind != JsonValueKind.Object) errors.Add($"parameters[{i}] must be an object.");
+            else list.Add(set.Clone());
+            i++;
+        }
+        if (i == 0) errors.Add("'parameters' is empty: remove it or give at least one set.");
+        return list;
+    }
+
+    // D33: `baseline: { "values": ["name", ...] }` and `baselineWarnPercent` (default 50). Unknown baseline fields are
+    // errors so a typo does not silently record nothing.
+    private static (List<string> Values, double WarnPercent) ReadBaseline(JsonElement root, List<string> errors)
+    {
+        var values = new List<string>();
+        double percent = ReadDouble(root, "baselineWarnPercent", errors) ?? ScenarioDefinition.DefaultBaselineWarnPercent;
+        if (!root.TryGetProperty("baseline", out JsonElement b) || b.ValueKind == JsonValueKind.Null) return (values, percent);
+        if (b.ValueKind != JsonValueKind.Object)
+        {
+            errors.Add("'baseline' must be an object like { \"values\": [\"tickP95\"] }.");
+            return (values, percent);
+        }
+        foreach (JsonProperty prop in b.EnumerateObject())
+        {
+            if (prop.Name != "values")
+            {
+                errors.Add($"Unknown 'baseline' field '{prop.Name}' (known: values).");
+                continue;
+            }
+            if (prop.Value.ValueKind != JsonValueKind.Array)
+            {
+                errors.Add("'baseline.values' must be an array of variable names.");
+                continue;
+            }
+            foreach (JsonElement v in prop.Value.EnumerateArray())
+            {
+                if (v.ValueKind == JsonValueKind.String) values.Add(v.GetString()!);
+                else errors.Add("'baseline.values' must be an array of variable names.");
+            }
+        }
+        return (values, percent);
     }
 
     private static ServerSpec ReadServer(JsonElement root, List<string> errors)

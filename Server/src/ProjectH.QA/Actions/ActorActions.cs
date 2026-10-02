@@ -44,6 +44,107 @@ public static class ActorActions
         r.Add(Actor("build", BuildAsync, required: new[] { "piece", "cellX|position" },
             optional: new[] { "material", "level", "cellZ", "rotation", "count", "dx", "dz", "expect" }, positions: new[] { "position" },
             check: CheckBuild));
+        // QA-5 D34. The recording's length is not known before the run: give a long recording timeoutMilliseconds
+        // (convert-recording writes it).
+        r.Add(Actor("playInputs", PlayInputsAsync, required: new[] { "file" }, optional: new[] { "speed" }, check: CheckPlayInputs, timeoutMs: 60_000));
+        // QA-5 D35: a group of actors walking (load scenarios): every actor whose alias starts with prefix gets the move
+        // vector, each facing its own direction (spread evenly) so they spread over the map instead of stacking.
+        r.Add(new DelegateAction(new ActionSpec
+        {
+            Name = "moveVectorAll",
+            Optional = new[] { "prefix", "x", "y", "spread" },
+            Check = CheckMoveVector,
+        }, MoveVectorAllAsync));
+    }
+
+    // ---- QA-5: replaying a recording (D34) ----
+
+    private static IEnumerable<string> CheckPlayInputs(StepDefinition s)
+    {
+        if (s.Params.TryGetValue("file", out JsonElement f) && !Variables.HasReference(f))
+        {
+            if (f.ValueKind != JsonValueKind.String || f.GetString()!.Length == 0) yield return "'file' must be the recording's path (relative to the scenario file).";
+            else if (!f.GetString()!.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase)) yield return "'file' must be a .jsonl recording (convert-recording writes <name>.inputs.jsonl).";
+        }
+        if (s.Params.TryGetValue("speed", out JsonElement v) && !Variables.HasReference(v)
+            && (!Comparison.TryNumber(v, out double speed) || speed < PlayInputsCommand.MinSpeed || speed > PlayInputsCommand.MaxSpeed))
+            yield return $"'speed' must be {PlayInputsCommand.MinSpeed}-{PlayInputsCommand.MaxSpeed}.";
+    }
+
+    // The recording file next to the scenario, never outside <repo>/QA (a scenario must not read arbitrary files).
+    internal static string ResolveRecording(RunContext run, string file)
+    {
+        if (run.ScenarioPath.Length == 0) throw new QaStepException("playInputs needs a saved scenario file: the recording path is relative to it.");
+        string qaRoot = Path.GetFullPath(Path.Combine(run.RepoRoot.Length > 0 ? run.RepoRoot : Directory.GetCurrentDirectory(), "QA")) + Path.DirectorySeparatorChar;
+        string full = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(run.ScenarioPath))!, file));
+        if (!full.StartsWith(qaRoot, StringComparison.OrdinalIgnoreCase)) throw new QaStepException($"'file' {file} resolves outside QA/ ({full}); recordings live next to their scenario.");
+        return full;
+    }
+
+    private static async Task<StepOutcome> PlayInputsAsync(StepContext ctx, CancellationToken token)
+    {
+        IQaActor actor = ctx.Actor();
+        string file = ctx.RequireString("file");
+        double speed = ctx.Double("speed") ?? 1.0;
+        if (speed < PlayInputsCommand.MinSpeed || speed > PlayInputsCommand.MaxSpeed) throw new QaStepException($"'speed' must be {PlayInputsCommand.MinSpeed}-{PlayInputsCommand.MaxSpeed}.");
+        string path = ResolveRecording(ctx.Run, file);
+        InputRecording recording;
+        try
+        {
+            recording = await Task.Run(() => InputRecording.Load(path), token).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is RecordingException or IOException or UnauthorizedAccessException)
+        {
+            throw new QaStepException($"Recording {file}: {e.Message}");
+        }
+        // The actor sends one entry per tick at its pump rate (the server's SimHz, about the recording's own).
+        int ticks = HeadlessActor.PlaybackTicks(recording.Inputs.Length, speed);
+        long needMs = (long)Math.Ceiling(ticks * 1000.0 / recording.SimHz);
+        if (needMs + 1000 > ctx.TimeoutMs)
+            return StepOutcome.Fail($"The recording plays for about {needMs} ms at speed {speed}, longer than the step timeout {ctx.TimeoutMs} ms. Set timeoutMilliseconds to at least {needMs + 5000}.",
+                $"timeout >= {needMs + 1000} ms", $"{ctx.TimeoutMs} ms");
+        if (RequireJoined(actor) is { } notJoined) return notJoined;
+
+        var command = new PlayInputsCommand(recording.Inputs, speed);
+        bool done = false;
+        try
+        {
+            if (!await SendAppliedAsync(ctx, actor, command, token).ConfigureAwait(false)) return StepOutcome.Fail("The actor did not apply the playback command.");
+            done = await ctx.WaitUntilAsync(() =>
+            {
+                ActorState s = actor.State;
+                return s.PlaybackCommandId != command.Id || !s.PlaybackActive || !s.Joined;
+            }, token).ConfigureAwait(false);
+            ActorState state = actor.State;
+            var value = new { inputs = recording.Inputs.Length, sent = state.PlaybackSent, simHz = recording.SimHz, speed, seconds = Math.Round(recording.Seconds, 3), ms = ctx.ElapsedMs };
+            if (done && state.PlaybackCommandId == command.Id && state.PlaybackCompleted)
+                return StepOutcome.Pass($"{recording.Inputs.Length} recorded inputs sent as {state.PlaybackSent} ticks in {ctx.ElapsedMs} ms", JsonPath.From(value));
+            done = false;
+            string actual = $"{state.PlaybackSent}/{ticks} sent, {FlowActions.Describe(state)}";
+            if (!state.Joined) return StepOutcome.Fail($"{actor.Alias} left the game during the replay ({FlowActions.Describe(state)}).", $"{ticks} inputs sent", actual);
+            return StepOutcome.Fail($"Replay not finished within {ctx.TimeoutMs} ms.", $"{ticks} inputs sent", actual);
+        }
+        finally
+        {
+            // Timeout, cancel or a lost connection: the rest of the recording must not leak into the next step.
+            if (!done) await TrySendAsync(actor, new ClearInputQueueCommand()).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<StepOutcome> MoveVectorAllAsync(StepContext ctx, CancellationToken token)
+    {
+        string? prefix = ctx.String("prefix");
+        float x = (float)Math.Clamp(ctx.Double("x") ?? 0, -1, 1);
+        float y = (float)Math.Clamp(ctx.Double("y") ?? 1, -1, 1);
+        bool spread = ctx.Bool("spread") ?? true;
+        IQaActor[] actors = ctx.Run.Actors.All.Where(a => a is not UnityActor && (prefix == null || a.Alias.StartsWith(prefix, StringComparison.Ordinal))).ToArray();
+        if (actors.Length == 0) return StepOutcome.Fail($"No headless actors{(prefix != null ? $" with prefix '{prefix}'" : string.Empty)}.");
+        for (int i = 0; i < actors.Length; i++)
+        {
+            if (spread) await actors[i].SendAsync(new LookCommand(360f * i / actors.Length, 0f), token).ConfigureAwait(false);
+            await actors[i].SendAsync(new MoveVectorCommand(x, y, 0), token).ConfigureAwait(false);
+        }
+        return StepOutcome.Pass($"{actors.Length} actors moving ({x}, {y}){(spread ? ", directions spread" : string.Empty)}");
     }
 
     private static DelegateAction Actor(string name, Func<StepContext, CancellationToken, Task<StepOutcome>> run,

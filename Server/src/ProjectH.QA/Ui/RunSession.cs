@@ -7,7 +7,16 @@ public sealed record UiStep(int Index, string Id, string Title, string Action, s
 
 public sealed record UiRunState(string Status, string? RunStatus, string? RunId, string? Scenario, string? Path, int? Seed,
     int WaitingAt, bool FailedWaiting, bool Unsaved, string? ReportUrl, int? ExitCode, string? Error,
-    IReadOnlyList<UiStep> Steps, IReadOnlyList<string> Warnings, string? ManualCheck = null);
+    IReadOnlyList<UiStep> Steps, IReadOnlyList<string> Warnings, string? ManualCheck = null, UiBatch? Batch = null);
+
+// QA-5 D31-D32: the batch of the current run (parameter sets, repeat, seed sweep). Rows: the newest MaxRows runs.
+public sealed record UiBatch(int Total, int Done, int Passed, int Failed, int Skipped, int Errors, int Current, string? CurrentParameters,
+    bool StopOnFail, IReadOnlyList<UiBatchRow> Rows, IReadOnlyList<string> Summary)
+{
+    public const int MaxRows = 200;
+}
+
+public sealed record UiBatchRow(int Number, int Iteration, int? ParameterSet, string? Parameters, int Seed, string Status, string RunId, string? ReportUrl);
 
 // POST /api/run. Mode: run, from (Run From Step), until (Run Until Step), single (start paused before the first step).
 public sealed class UiRunRequest
@@ -19,6 +28,10 @@ public sealed class UiRunRequest
     public int? Seed { get; set; }
     public bool Debug { get; set; }
     public int[]? Breakpoints { get; set; }
+    // QA-5 (mode "run" only): repeat count, seed sweep "A..B", stop at the first failing run.
+    public int Repeat { get; set; } = 1;
+    public string? SeedSweep { get; set; }
+    public bool StopOnFail { get; set; }
 }
 
 public sealed class UiActorRow
@@ -74,6 +87,9 @@ public sealed class RunSession
     private LiveRun? _live;
     private IQaServerClient? _inspector;
     private UiRunRequest? _last;
+    // QA-5: the current batch (null for a plain run without parameters). Rows are bounded (UiBatch.MaxRows).
+    private UiBatch? _batch;
+    private readonly List<UiBatchRow> _batchRows = new();
 
     public RunSession(UiHostOptions host, UiHub hub, ActionRegistry registry, MarkerStore markers)
     {
@@ -98,7 +114,7 @@ public sealed class RunSession
         lock (_lock)
         {
             return new UiRunState(_status, _runStatus, _runId, _scenario, _path, _seed, _waitingAt, _failedWaiting, _unsaved,
-                _reportUrl, _exitCode, _error, _steps.ToArray(), _warnings, _manualCheck);
+                _reportUrl, _exitCode, _error, _steps.ToArray(), _warnings, _manualCheck, _batch);
         }
     }
 
@@ -107,8 +123,28 @@ public sealed class RunSession
     {
         int count = scenario.Steps.Count;
         if (request.Mode is "from" or "until" && (request.StepIndex < 0 || request.StepIndex >= count)) return $"Step index must be 0-{count - 1}.";
+        // QA-5 D31-D32: a batch (several parameter sets, repeat, seed sweep) runs with "Run" only; the debugging modes
+        // run the first parameter set once.
+        (int From, int To)? sweep = null;
+        if (!string.IsNullOrWhiteSpace(request.SeedSweep))
+        {
+            if (!BatchOptions.TryParseSweep(request.SeedSweep.Trim(), out var range, out string? sweepError)) return sweepError!.Replace("--seed-sweep", "Seed sweep");
+            if (request.Seed != null) return "Give a seed or a seed sweep, not both.";
+            sweep = range;
+        }
+        bool debugMode = request.Mode != "run";
+        if (debugMode && (request.Repeat > 1 || sweep != null)) return "Repeat and seed sweep work with Run only (not Run From / Run Until / Single Step).";
+        var batchOptions = new BatchOptions
+        {
+            Repeat = request.Repeat, SeedSweep = sweep, StopOnFail = request.StopOnFail,
+            ParameterSet = debugMode && scenario.Parameters.Count > 0 ? 1 : null,
+        };
+        if (batchOptions.Check() is string batchError) return batchError.Replace("--repeat", "Repeat");
+        int total = BatchPlanner.Count(scenario, batchOptions);
+        bool batch = total > 1;
         int seed = request.Seed ?? scenario.Seed ?? Random.Shared.Next(1, int.MaxValue);
-        var gate = new RunGate(honorBreakpoints: true, holdOnFailure: true, holdManual: true);
+        // A held failure would stall a batch at its first failing run: batches record the failure and go on.
+        var gate = new RunGate(honorBreakpoints: true, holdOnFailure: !batch, holdManual: true);
         var cts = new CancellationTokenSource();
         lock (_lock)
         {
@@ -142,9 +178,13 @@ public sealed class RunSession
             _cts = cts;
             _last = new UiRunRequest
             {
-                Path = request.Path, Text = request.Text, Mode = request.Mode, StepIndex = request.StepIndex, Seed = seed,
-                Debug = request.Debug, Breakpoints = request.Breakpoints,
+                Path = request.Path, Text = request.Text, Mode = request.Mode, StepIndex = request.StepIndex, Seed = sweep != null ? null : seed,
+                Debug = request.Debug, Breakpoints = request.Breakpoints, Repeat = request.Repeat, SeedSweep = request.SeedSweep, StopOnFail = request.StopOnFail,
             };
+            _batchRows.Clear();
+            _batch = scenario.Parameters.Count > 0 || batch
+                ? new UiBatch(total, 0, 0, 0, 0, 0, 0, null, request.StopOnFail, Array.Empty<UiBatchRow>(), Array.Empty<string>())
+                : null;
         }
         // Outside the session lock (lock order).
         gate.SetBreakpoints(request.Breakpoints ?? Array.Empty<int>());
@@ -152,10 +192,10 @@ public sealed class RunSession
         if (request.Mode == "single") gate.Pause();
         gate.PausedChanged = paused => OnPausedChanged(gate, paused);
 
-        var options = new QaRunOptions
+        QaRunOptions Options(PlannedRun planned) => new()
         {
             RepoRoot = _host.RepoRoot,
-            SeedOverride = seed,
+            SeedOverride = planned.Seed,
             AttachUrl = _host.AttachUrl,
             ServerDll = _host.ServerDll,
             UnityExe = _host.UnityExe,
@@ -173,13 +213,21 @@ public sealed class RunSession
             StartAtStep = request.Mode == "from" ? request.StepIndex : 0,
             DebugRun = request.Debug,
             UnsavedText = unsaved,
+            Parameters = planned.Parameters,
+            ParameterIndex = planned.ParameterIndex,
+            BatchLabel = planned.Total > 1 ? $"run {planned.Number}/{planned.Total}" + (planned.Iteration > 0 ? $", iteration {planned.Iteration}" : "") : null,
         };
+        // A single run keeps the seed chosen above (Retry Scenario repeats it); a batch plans its own (the sweep's
+        // seeds, or the fixed seed, or a new random seed per run when neither the request nor the scenario has one).
+        IEnumerable<PlannedRun> plan = BatchPlanner.Plan(scenario, batchOptions, batch ? request.Seed : seed);
+        string file = request.Path != null ? "QA/Scenarios/" + request.Path : scenario.Name;
         // The run task publishes its own states ("running" first); publishing here could deliver a stale "starting" late.
-        _ = Task.Run(() => RunAsync(scenario, warnings, options, cts.Token));
+        _ = Task.Run(() => RunAsync(scenario, warnings, plan, Options, batchOptions.StopOnFail, file, cts.Token));
         return null;
     }
 
-    private async Task RunAsync(ScenarioDefinition scenario, IReadOnlyList<ValidationIssue> warnings, QaRunOptions options, CancellationToken token)
+    private async Task RunAsync(ScenarioDefinition scenario, IReadOnlyList<ValidationIssue> warnings, IEnumerable<PlannedRun> plan,
+        Func<PlannedRun, QaRunOptions> options, bool stopOnFail, string file, CancellationToken token)
     {
         lock (_lock)
         {
@@ -187,21 +235,67 @@ public sealed class RunSession
         }
         _hub.Publish("run", new { phase = "started", scenario = scenario.Name });
         PublishState();
+        var summary = new BatchSummary(scenario.Name, file);
         try
         {
-            RunReport report = await new QaOrchestrator(options, _registry, _markers, new HubWriter(_hub))
-                .RunAsync(scenario, warnings, token).ConfigureAwait(false);
-            lock (_lock)
+            foreach (PlannedRun planned in plan)
             {
-                _runId = report.RunId;
-                _runStatus = report.Status.ToString();
-                _exitCode = report.ExitCode;
-                _warnings = report.Warnings.ToArray();
-                _error = report.ToolError ?? (report.SkipReason != null ? $"Skipped {report.SkipReason}" : null);
-                _reportUrl = report.ReportDirectory != null ? $"/reports/{report.RunId}/report.html" : null;
-                // Steps the runner never reached (a tool error before the first step) stay Pending in the report; show
-                // what the report says for the ones it has.
-                foreach (StepResult r in report.Steps) Store(Copy(r));
+                if (token.IsCancellationRequested)
+                {
+                    summary.Stopped = true;
+                    break;
+                }
+                if (planned.Number > 1) BeginNextRun(scenario, planned);
+                else SetCurrent(planned);
+                PublishState();
+                RunReport report = await new QaOrchestrator(options(planned), _registry, _markers, new HubWriter(_hub))
+                    .RunAsync(scenario, warnings, token).ConfigureAwait(false);
+                summary.Add(planned, report);
+                lock (_lock)
+                {
+                    _runId = report.RunId;
+                    _seed = report.Seed;
+                    _runStatus = report.Status.ToString();
+                    _exitCode = summary.ExitCode;
+                    _warnings = report.Warnings.ToArray();
+                    _error = report.ToolError ?? (report.SkipReason != null ? $"Skipped {report.SkipReason}" : null);
+                    _reportUrl = report.ReportDirectory != null ? $"/reports/{report.RunId}/report.html" : null;
+                    // Steps the runner never reached (a tool error before the first step) stay Pending in the report; show
+                    // what the report says for the ones it has.
+                    foreach (StepResult r in report.Steps) Store(Copy(r));
+                    if (_batch != null)
+                    {
+                        if (_batchRows.Count >= UiBatch.MaxRows) _batchRows.RemoveAt(0);
+                        _batchRows.Add(new UiBatchRow(planned.Number, planned.Iteration, planned.ParameterIndex + 1,
+                            planned.ParameterIndex != null ? BatchSummary.Compact(planned.Parameters) : null, report.Seed, report.Status.ToString(), report.RunId, _reportUrl));
+                        _batch = _batch with
+                        {
+                            Done = summary.Runs, Passed = summary.Passed, Failed = summary.Failed, Skipped = summary.Skipped, Errors = summary.Errors,
+                            Rows = _batchRows.ToArray(),
+                        };
+                    }
+                }
+                if (report.Status == RunStatus.Cancelled || token.IsCancellationRequested)
+                {
+                    summary.Stopped = true;
+                    break;
+                }
+                if (stopOnFail && report.Status is RunStatus.Failed or RunStatus.Error && planned.Number < planned.Total)
+                {
+                    summary.Stopped = true;
+                    break;
+                }
+            }
+            if (summary.Runs > 1 || summary.Stopped)
+            {
+                string[] lines = summary.Lines().ToArray();
+                foreach (string line in lines) _hub.Log("QA", line);
+                lock (_lock)
+                {
+                    if (_batch != null) _batch = _batch with { Summary = lines };
+                    // The badge shows the batch result: the worst run, not the last one.
+                    if (summary.Runs > 1) _runStatus = summary.Failed + summary.Errors > 0 ? (summary.Errors > 0 && summary.Failed == 0 ? nameof(RunStatus.Error) : nameof(RunStatus.Failed)) : _runStatus;
+                }
             }
         }
         catch (Exception e)
@@ -227,6 +321,30 @@ public sealed class RunSession
             _hub.Publish("run", new { phase = "finished" });
             PublishState();
             done?.TrySetResult();
+        }
+    }
+
+    // Between two runs of a batch: the timeline starts over for the next run (the previous one is in the batch rows).
+    private void BeginNextRun(ScenarioDefinition scenario, PlannedRun planned)
+    {
+        lock (_lock)
+        {
+            _steps = scenario.Steps.Select(s => new UiStep(s.Index, s.Id, ScenarioRunner.Title(s), s.Action, s.Actor, s.EffectivePhase,
+                "Pending", 0, null, null, null, 0)).ToArray();
+            _runId = null;
+            _runStatus = null;
+            _reportUrl = null;
+            _error = null;
+        }
+        SetCurrent(planned);
+    }
+
+    private void SetCurrent(PlannedRun planned)
+    {
+        lock (_lock)
+        {
+            if (planned.Seed is int s) _seed = s;
+            if (_batch != null) _batch = _batch with { Current = planned.Number, CurrentParameters = planned.ParameterIndex is int i ? $"parameters[{i + 1}] {BatchSummary.Compact(planned.Parameters)}" : null };
         }
     }
 

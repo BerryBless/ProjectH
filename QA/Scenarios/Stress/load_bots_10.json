@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "name": "Load 10 Moving Clients",
+  "description": "QA-5 D35 (request §133-134): Docs/LoadTest.md's conditions as a scenario. Server:DevRespawn=true and MaxPlayers 100 like the load test (no match flow; nobody dies), Qa:Events=false so the QA tick diff adds no cost the load test did not have. 10 headless clients join and walk (each its own direction) for 60 s while sending input every tick. tickP95 over that minute must stay under ${tickP95LimitMs} ms: a deliberately loose smoke threshold, the real target is the user's to set from the baseline (§134; LoadTest.md measured p95 0.1-0.3 ms for 50 bots). The 60 s tick p95/p99 and memory are saved and recorded in the run history (QA/Reports/history), so a second run shows the Baseline table.",
+  "tags": ["stress", "slow"],
+  "seed": 9910,
+  "timeoutSeconds": 180,
+  "server": { "mode": "launch", "options": { "Server:MaxPlayers": "100", "Server:DevRespawn": "true", "Qa:Events": "false" } },
+  "variables": { "tickP95LimitMs": 5 },
+  "baseline": { "values": ["tickP95_60s", "tickP99_60s", "memoryMB"] },
+  "actors": [],
+  "steps": [
+    { "id": "spawn", "action": "spawnActors", "count": 10, "prefix": "bot" },
+    { "id": "join_all", "action": "connectAll", "prefix": "bot", "timeoutMilliseconds": 30000 },
+    { "id": "sessions", "action": "waitFor", "condition": "server.activeSessions", "equals": 10, "timeoutMilliseconds": 5000 },
+    { "id": "walk", "action": "moveVectorAll", "prefix": "bot", "y": 1 },
+    { "id": "run_60s", "action": "wait", "seconds": 60 },
+    { "id": "tick_p95", "assert": "server.tickP95Ms", "windowSeconds": 60, "lessThan": "${tickP95LimitMs}", "saveAs": "tickP95_60s" },
+    { "id": "tick_p99", "action": "save", "path": "server.tickP99Ms", "windowSeconds": 60, "saveAs": "tickP99_60s" },
+    { "id": "memory", "action": "save", "path": "server.memoryMB", "saveAs": "memoryMB" },
+    { "id": "no_tick_failures", "assert": "server.metrics.health.tickFailures", "equals": 0 },
+    { "id": "all_still_here", "assert": "server.activeSessions", "equals": 10 },
+    { "id": "last_still_joined", "assert": "network.connected", "actor": "bot-010", "equals": true }
+  ]
+}

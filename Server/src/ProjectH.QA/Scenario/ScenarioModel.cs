@@ -21,6 +21,18 @@ public sealed class ScenarioDefinition
     public IReadOnlyList<StepDefinition> Steps { get; init; } = Array.Empty<StepDefinition>();
     // Where it was loaded from (empty for text loaded in tests).
     public string SourcePath { get; init; } = string.Empty;
+
+    // QA-5 D31: `parameters: [ {..}, {..} ]`. Each entry is a JSON object merged over `variables` for one run (its own
+    // run id). Empty = no parameters (one run). At most MaxParameterSets.
+    public const int MaxParameterSets = 100;
+    public IReadOnlyList<JsonElement> Parameters { get; init; } = Array.Empty<JsonElement>();
+
+    // QA-5 D33: saved values recorded in the run history (`baseline: { "values": ["tickP95", ...] }`) and the change
+    // that makes a metric without an explicit threshold a Warning (never a failure, request §136).
+    public const double DefaultBaselineWarnPercent = 50;
+    public const int MaxBaselineValues = 50;
+    public IReadOnlyList<string> BaselineValues { get; init; } = Array.Empty<string>();
+    public double BaselineWarnPercent { get; init; } = DefaultBaselineWarnPercent;
 }
 
 public sealed class ServerSpec

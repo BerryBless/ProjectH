@@ -228,8 +228,12 @@ public sealed partial class QaUiHost : IAsyncDisposable
         {
             UiRunRequest? last = Session.LastRequest;
             if (last == null) { await Error(ctx, 409, "Nothing ran yet.").ConfigureAwait(false); return; }
-            // Same scenario text and seed, run from the start (D23).
-            await StartRunCore(ctx, new UiRunRequest { Path = last.Path, Text = last.Text, Seed = last.Seed, Debug = last.Debug, Breakpoints = last.Breakpoints }).ConfigureAwait(false);
+            // Same scenario text and seed, run from the start (D23); a batch (QA-5) runs again as the same batch.
+            await StartRunCore(ctx, new UiRunRequest
+            {
+                Path = last.Path, Text = last.Text, Seed = last.Seed, Debug = last.Debug, Breakpoints = last.Breakpoints,
+                Repeat = last.Mode == "run" ? last.Repeat : 1, SeedSweep = last.Mode == "run" ? last.SeedSweep : null, StopOnFail = last.StopOnFail,
+            }).ConfigureAwait(false);
         });
         app.MapPost("/api/run/pause", ctx => Command(ctx, Session.Pause));
         app.MapPost("/api/run/resume", ctx => Command(ctx, Session.Resume));
@@ -400,6 +404,10 @@ public sealed partial class QaUiHost : IAsyncDisposable
             Seed = JsonPath.Child(body, "seed") is { ValueKind: JsonValueKind.Number } s && s.TryGetInt32(out int seed) ? seed : null,
             Debug = JsonPath.Child(body, "debug") is { ValueKind: JsonValueKind.True },
             Breakpoints = Ints(body, "breakpoints"),
+            // QA-5: range checks are RunSession.Start's (one place for the CLI's and the UI's rules).
+            Repeat = JsonPath.Child(body, "repeat") is { ValueKind: JsonValueKind.Number } r && r.TryGetInt32(out int repeat) ? repeat : 1,
+            SeedSweep = Str(body, "seedSweep"),
+            StopOnFail = JsonPath.Child(body, "stopOnFail") is { ValueKind: JsonValueKind.True },
         };
         await StartRunCore(ctx, request).ConfigureAwait(false);
     }

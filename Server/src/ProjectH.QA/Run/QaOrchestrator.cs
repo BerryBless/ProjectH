@@ -35,6 +35,46 @@ public sealed class QaRunOptions
     public Func<int, HttpMessageHandler?>? UnityHandlerFactory { get; init; }
     // D30, when no Control is given (CLI): asks on the terminal; null = nobody to ask (manual checks are SKIPPED).
     public Func<StepDefinition, string, CancellationToken, Task<ManualCheckAnswer>>? ManualPrompt { get; init; }
+    // QA-5 D31: the parameter set of this run (merged over the scenario variables) and its 0-based index; D32: the run's
+    // place in a batch for the report ("run 3/10, iteration 3").
+    public JsonElement? Parameters { get; init; }
+    public int? ParameterIndex { get; init; }
+    public string? BatchLabel { get; init; }
+    // QA-5 D33: append the run to <report root>/history (only when reports are written too: tests that write no report
+    // never touch a history folder).
+    public bool History { get; init; } = true;
+}
+
+// D32: a batch starts several runs within one second. Run ids keep their format (qa-yyyyMMdd-HHmmss-xxxx: the UI and
+// the report links match it) and are made unique: not issued before by this process and no such report folder yet.
+// The set holds only ids of the current and the previous second (ids embed the time, older ones cannot recur).
+internal static class RunIds
+{
+    private static readonly object s_lock = new();   // only lock here; held for the set update alone
+    private static readonly HashSet<string> s_recent = new(StringComparer.Ordinal);
+    private static string s_second = string.Empty;
+
+    public static string Claim(string reportRoot)
+    {
+        // 65536 ids per second: a few attempts always find a free one; the bound only guards against a broken clock.
+        for (int attempt = 0; ; attempt++)
+        {
+            string id = QaOrchestrator.NewRunId(DateTime.Now);
+            // File I/O outside the lock (lock rules).
+            if (attempt < 100 && Directory.Exists(Path.Combine(reportRoot, id))) continue;
+            lock (s_lock)
+            {
+                string second = id[..18];   // "qa-yyyyMMdd-HHmmss"
+                if (second != s_second)
+                {
+                    string previous = s_second;
+                    s_recent.RemoveWhere(r => !r.StartsWith(previous, StringComparison.Ordinal));
+                    s_second = second;
+                }
+                if (s_recent.Add(id) || attempt >= 1000) return id;
+            }
+        }
+    }
 }
 
 // What the UI inspector may touch from its HTTP threads: the QA URL (it builds its own client) and the actors'
@@ -101,9 +141,13 @@ public sealed class QaOrchestrator
     {
         var clock = Stopwatch.StartNew();
         int seed = _options.SeedOverride ?? scenario.Seed ?? Random.Shared.Next(1, int.MaxValue);
+        string reportRoot = _options.ReportDir ?? Path.Combine(_options.RepoRoot, "QA", "Reports");
         var report = new RunReport
         {
-            RunId = NewRunId(DateTime.Now),
+            RunId = RunIds.Claim(reportRoot),
+            Parameters = _options.Parameters,
+            ParameterSet = _options.ParameterIndex + 1,
+            Batch = _options.BatchLabel,
             Scenario = scenario.Name,
             ScenarioFile = scenario.SourcePath,
             Description = scenario.Description,
@@ -113,9 +157,18 @@ public sealed class QaOrchestrator
         };
         foreach (ValidationIssue w in warnings) report.Warnings.Add(w.ToString());
         // The report folder is known from the start: Unity screenshots and player logs are written into it during the run.
-        string reportDir = Path.Combine(_options.ReportDir ?? Path.Combine(_options.RepoRoot, "QA", "Reports"), report.RunId);
+        string reportDir = Path.Combine(reportRoot, report.RunId);
         IRunControl control = _options.Control ?? new RunGate(honorBreakpoints: false) { Prompt = _options.ManualPrompt };
-        _out.WriteLine($"== {scenario.Name}  runId {report.RunId}  seed {seed}");
+        string batch = _options.BatchLabel != null ? $"  [{_options.BatchLabel}]" : string.Empty;
+        string parameterText = _options.ParameterIndex is int pi ? $"  parameters[{pi + 1}] {BatchSummary.Compact(_options.Parameters)}" : string.Empty;
+        _out.WriteLine($"== {scenario.Name}  runId {report.RunId}  seed {seed}{parameterText}{batch}");
+
+        // D31: the parameter set is merged over the scenario variables (a parameter wins over a variable of its name).
+        var variables = new Dictionary<string, JsonElement>(scenario.Variables, StringComparer.Ordinal);
+        if (_options.Parameters is JsonElement { ValueKind: JsonValueKind.Object } set)
+        {
+            foreach (JsonProperty p in set.EnumerateObject()) variables[p.Name] = p.Value;
+        }
 
         (report.GitCommit, report.GitDirty, report.GitError) = await GitInfo.ReadAsync(_options.RepoRoot).ConfigureAwait(false);
 
@@ -200,8 +253,10 @@ public sealed class QaOrchestrator
                     HandlerFactory = _options.UnityHandlerFactory,
                 },
             };
-            run = new RunContext(report.RunId, seed, client, actors, _markers, scenario.Variables, Log)
+            run = new RunContext(report.RunId, seed, client, actors, _markers, variables, Log)
             {
+                RepoRoot = _options.RepoRoot,
+                ScenarioPath = scenario.SourcePath,
                 Control = control,
                 ReportDirectory = reportDir,
                 Events = events,
@@ -347,7 +402,14 @@ public sealed class QaOrchestrator
 
         report.ExitCode = serverStopFailed ? 2 : RunReport.ExitCodeFor(report.Status, _options.FailOnSkip);
         report.DurationMs = clock.ElapsedMilliseconds;
+        RecordBaseline(scenario, report, reportRoot, run?.Variables ?? (IReadOnlyDictionary<string, JsonElement>)variables);
         PrintSummary(report);
+        if (report.Baseline != null)
+        {
+            foreach (string w in report.Baseline.Warnings) _out.WriteLine($"   WARNING {w}");
+            if (report.Baseline.PreviousRunId != null && report.Baseline.Warnings.Count == 0)
+                _out.WriteLine($"   baseline: compared with {report.Baseline.PreviousRunId}, no metric worse by more than {report.Baseline.WarnPercent:0.#}%");
+        }
         if (_options.WriteReport)
         {
             try
@@ -364,6 +426,41 @@ public sealed class QaOrchestrator
             }
         }
         return report;
+    }
+
+    // D33: one history line per run and the comparison with the previous PASSED run (same scenario file, same
+    // parameter set). Skipped when the run is not the file's content (unsaved editor text, Run From Step) or has no
+    // file. Never changes the result or the exit code: problems become warnings.
+    private void RecordBaseline(ScenarioDefinition scenario, RunReport report, string reportRoot, IReadOnlyDictionary<string, JsonElement> variables)
+    {
+        if (!_options.WriteReport || !_options.History) return;
+        string? skip = scenario.SourcePath.Length == 0 ? "the scenario has no file (new editor text)"
+            : _options.UnsavedText ? "the run used unsaved editor text"
+            : _options.StartAtStep > 0 ? "Run From Step did not run the whole scenario"
+            : null;
+        if (skip != null)
+        {
+            report.Baseline = new BaselineReport { Note = $"Not recorded in the history: {skip}." };
+            return;
+        }
+        try
+        {
+            string key = BaselineHistory.Key(_options.RepoRoot, scenario.SourcePath);
+            string dir = Path.Combine(reportRoot, "history");
+            HistoryEntry entry = BaselineHistory.EntryFor(report, scenario, BaselineHistory.ScenarioFile(_options.RepoRoot, scenario.SourcePath), variables);
+            (HistoryEntry? previous, string? warning) = BaselineHistory.Record(dir, key, entry);
+            BaselineReport baseline = BaselineHistory.Compare(entry, previous, scenario);
+            baseline.HistoryFile = Path.Combine(dir, key + ".jsonl");
+            baseline.Recorded = warning == null || !warning.StartsWith("Baseline history not written", StringComparison.Ordinal);
+            if (warning != null) baseline.Warnings.Insert(0, warning);
+            report.Baseline = baseline;
+            report.Warnings.AddRange(baseline.Warnings);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            report.Baseline = new BaselineReport { Note = $"Baseline failed: {e.Message}" };
+            report.Warnings.Add($"Baseline failed: {e.Message}");
+        }
     }
 
     private static async Task<JsonElement> HealthAsync(IQaServerClient client, CancellationToken token)
@@ -452,7 +549,7 @@ public sealed class QaOrchestrator
         "connect" or "disconnect" or "reconnect" or "connectAll" or "disconnectAll" or "pauseInput" or "resumeInput"
             or "networkFault" or "clearNetworkFault" or "blockNetwork" or "unblockNetwork" or "dropConnection" or "sendInvalidPackets" => "Network",
         "moveTo" or "moveVector" or "look" or "aim" or "fire" or "stopFire" or "press" or "release" or "switchWeapon" or "jump"
-            or "sprint" or "crouch" or "build" or "spawnActors" => "Actor",
+            or "sprint" or "crouch" or "build" or "spawnActors" or "playInputs" or "moveVectorAll" => "Actor",
         _ => "QA",
     };
 
