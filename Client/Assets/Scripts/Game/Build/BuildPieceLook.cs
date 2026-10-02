@@ -35,6 +35,17 @@ namespace ProjectH.Client.Game
             return health * 3 > maxHealth ? 1 : 2;
         }
 
+        // The stage the piece is drawn with: damage against the health grown so far, so a piece that is still building
+        // but undamaged is whole (the server's low initial health is not damage).
+        public static int DamageStage(in BuildPieceRecord piece, BuildCatalogData catalog, double serverTick)
+        {
+            if (catalog == null) return 0;
+            int m = (int)piece.Material;
+            float progress = Progress(piece.CreatedTick, serverTick, catalog.ConstructionTicks[m]);
+            int grown = (int)Math.Floor(catalog.InitialHealth[m] + (catalog.MaxHealth[m] - catalog.InitialHealth[m]) * progress);
+            return Stage(grown - piece.Damage, grown);
+        }
+
         // The drawn height while building: from MinConstructionScale up to full.
         public static float ConstructionScale(float progress) =>
             MinConstructionScale + (1f - MinConstructionScale) * Math.Max(0f, Math.Min(1f, progress));

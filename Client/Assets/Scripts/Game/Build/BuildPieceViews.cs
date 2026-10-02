@@ -36,6 +36,8 @@ namespace ProjectH.Client.Game
             public int Stage = -1;
             public float Height = -1f;
             public bool Building;
+            public bool Posed;               // root pose and collider size are set for Shape
+            public BuildPieceShape Shape;
         }
 
         private readonly PieceMeshes _meshes;
@@ -136,7 +138,7 @@ namespace ProjectH.Client.Game
                 view = Take(piece.Shape.Type);
                 _active.Add(id, view);
             }
-            view.Height = -1f;   // placed again below
+            if (view.Posed && !view.Shape.Equals(piece.Shape)) view.Posed = false;   // a damage-only change leaves the colliders alone
             bool wasBuilding = view.Building;
             Draw(view, piece, catalog, serverTick);
             if (view.Building && !wasBuilding) _building.Add(id);
@@ -149,14 +151,20 @@ namespace ProjectH.Client.Game
             float progress = BuildPieceLook.Progress(piece.CreatedTick, serverTick, constructionTicks);
             view.Building = progress < 1f;
             float height = BuildPieceLook.ConstructionScale(progress);
+            if (!view.Posed)
+            {
+                view.Posed = true;
+                view.Shape = piece.Shape;
+                view.Height = -1f;
+                _meshes.PlaceRoot(view.Root.transform, piece.Shape);
+                if (view.Box != null) view.Box.size = BuildGrid.BoxOf(piece.Shape).Size.ToUnity();
+            }
             if (height != view.Height)
             {
                 view.Height = height;
-                _meshes.Place(view.Root.transform, view.Body, piece.Shape, height);
-                if (view.Box != null) view.Box.size = BuildGrid.BoxOf(piece.Shape).Size.ToUnity();
+                _meshes.PlaceBody(view.Body, piece.Shape, height);
             }
-            int max = catalog != null ? catalog.MaxHealth[m] : 1;
-            int stage = BuildPieceLook.Stage(BuildPieceLook.Health(piece, catalog, serverTick), max);
+            int stage = BuildPieceLook.DamageStage(piece, catalog, serverTick);
             int index = m * BuildPieceLook.Stages + stage;
             if (index != view.Stage)
             {
@@ -188,6 +196,7 @@ namespace ProjectH.Client.Game
                 if (pooled.Root == null) continue;   // destroyed with the scene
                 pooled.Root.SetActive(true);
                 pooled.Stage = -1;
+                pooled.Posed = false;
                 pooled.Building = false;
                 return pooled;
             }

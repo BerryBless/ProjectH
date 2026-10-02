@@ -56,6 +56,17 @@ namespace ProjectH.Client.Tests
         }
 
         [Test]
+        public void DamageStage_UndamagedMidBuild_IsWhole_AndDamageShowsStages()
+        {
+            Assert.AreEqual(0, BuildPieceLook.DamageStage(Piece(), Catalog(), 100));
+            Assert.AreEqual(0, BuildPieceLook.DamageStage(Piece(), Catalog(), 130));
+            Assert.AreEqual(0, BuildPieceLook.DamageStage(Piece(), Catalog(), 1000));
+            Assert.AreEqual(1, BuildPieceLook.DamageStage(Piece(50), Catalog(), 1000));
+            Assert.AreEqual(2, BuildPieceLook.DamageStage(Piece(120), Catalog(), 1000));
+            Assert.AreEqual(2, BuildPieceLook.DamageStage(Piece(20), Catalog(), 100));
+        }
+
+        [Test]
         public void ConstructionScale_StartsLow_AndEndsFull()
         {
             Assert.AreEqual(BuildPieceLook.MinConstructionScale, BuildPieceLook.ConstructionScale(0f), 1e-5f);

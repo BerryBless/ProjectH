@@ -76,7 +76,7 @@ namespace ProjectH.Client.Game
         // A harvestable gone by another player's hit (HarvestStates) loses its marker too.
         public void OnStates(ulong destroyed)
         {
-            if (_markerTarget >= 0 && (destroyed & (1UL << _markerTarget)) != 0) HideMarker();
+            if (_markerTarget >= 0 && _markerTarget < 64 && (destroyed & (1UL << _markerTarget)) != 0) HideMarker();
         }
 
         public void Puff(Vector3 center, float size, float now)

@@ -28,21 +28,35 @@ namespace ProjectH.Client.Game
         // root: position and rotation; body: a child, scaled (box: to the piece's size) and lowered to height (0-1].
         public void Place(Transform root, Transform body, in BuildPieceShape shape, float height)
         {
+            PlaceRoot(root, shape);
+            PlaceBody(body, shape, height);
+        }
+
+        // The root part (pose; it carries the collider): only when a piece is new or its shape changed.
+        public void PlaceRoot(Transform root, in BuildPieceShape shape)
+        {
             if (shape.Type == BuildPieceType.Wall || shape.Type == BuildPieceType.Floor)
             {
-                Shared.Simulation.Box box = BuildGrid.BoxOf(shape);
-                Vector3 size = box.Size.ToUnity();
-                root.SetPositionAndRotation(box.Center.ToUnity(), Quaternion.identity);
-                body.localRotation = Quaternion.identity;
-                body.localScale = new Vector3(size.x, size.y * height, size.z);
-                body.localPosition = new Vector3(0f, -size.y * (1f - height) * 0.5f, 0f);
+                root.SetPositionAndRotation(BuildGrid.BoxOf(shape).Center.ToUnity(), Quaternion.identity);
                 return;
             }
             Slope slope = BuildGrid.SlopeOf(shape);
             var pivot = new Vector3((slope.MinX + slope.MaxX) * 0.5f, slope.BaseY, (slope.MinZ + slope.MaxZ) * 0.5f);
             float yaw = shape.Type == BuildPieceType.Ramp ? shape.Rotation * 90f : 0f;
             root.SetPositionAndRotation(pivot, Quaternion.Euler(0f, yaw, 0f));
+        }
+
+        // The body part (the child, lowered to the construction height): whenever the height changes.
+        public void PlaceBody(Transform body, in BuildPieceShape shape, float height)
+        {
             body.localRotation = Quaternion.identity;
+            if (shape.Type == BuildPieceType.Wall || shape.Type == BuildPieceType.Floor)
+            {
+                Vector3 size = BuildGrid.BoxOf(shape).Size.ToUnity();
+                body.localScale = new Vector3(size.x, size.y * height, size.z);
+                body.localPosition = new Vector3(0f, -size.y * (1f - height) * 0.5f, 0f);
+                return;
+            }
             body.localPosition = Vector3.zero;
             body.localScale = new Vector3(1f, height, 1f);
         }

@@ -17,6 +17,7 @@ namespace ProjectH.Client.Game
         private static readonly Color NoResourceColor = new Color(1f, 0.65f, 0.15f, 0.35f);
         private static readonly Color PendingColor = new Color(1f, 1f, 1f, 0.3f);
 
+        private static bool _warnedNoSprite;
         private readonly PieceMeshes _meshes;
         private readonly GameObject _root;
         private readonly Transform[] _ghostRoots = new Transform[4];
@@ -118,6 +119,11 @@ namespace ProjectH.Client.Game
 
         private static Material Make(Shader sprite, Material fallback, Color color)
         {
+            if (sprite == null && !_warnedNoSprite)
+            {
+                _warnedNoSprite = true;
+                Debug.LogWarning("BuildPreview: Sprites/Default not found (not in the build); ghosts are drawn opaque.");
+            }
             if (sprite != null) return new Material(sprite) { color = color };
             return new Material(fallback) { color = new Color(color.r, color.g, color.b, 1f) };
         }

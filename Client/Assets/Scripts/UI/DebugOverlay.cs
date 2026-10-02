@@ -69,6 +69,7 @@ namespace ProjectH.Client.UI
             _hasRoute = false;
             _route.text = string.Empty;
             _buildDirty = true;
+            _rateFrom = -1f;
         }
 
         public void Tick(ClientState state, int roundTripMs, ushort entityId)
