@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Numerics;
+using ProjectH.Client.Game;
 using ProjectH.Server.Game;
 using ProjectH.Server.Game.Harvest;
 using ProjectH.Shared.Protocol;
@@ -128,5 +129,33 @@ public class ToolTests
         Assert.False(HarvestRules.SelectTool(p, InputButtons.Slot1));
         Assert.True(HarvestRules.SelectTool(p, InputButtons.ToolHarvest));
         Assert.False(HarvestRules.SelectTool(p, InputButtons.ToolHarvest));
+    }
+
+    // The client predicts the tool with its own copy of the rule (ToolState.Select): every sequence of four inputs drawn
+    // from the tool keys (alone and together) must leave both copies on the same tool and the same tool before.
+    [Fact]
+    public void TheClientsCopy_SwitchesLikeTheServer()
+    {
+        InputButtons[] keys =
+        {
+            InputButtons.None, InputButtons.Slot1, InputButtons.Slot3, InputButtons.ToolHarvest, InputButtons.ToolBuild,
+            InputButtons.ToolHarvest | InputButtons.ToolBuild, InputButtons.Slot2 | InputButtons.ToolBuild,
+        };
+        PlayerEntity p = _h.Join(1, Spot);
+        int n = keys.Length;
+        for (int combo = 0; combo < n * n * n * n; combo++)
+        {
+            p.Inventory.Clear();
+            ToolKind current = ToolKind.Weapon;
+            ToolKind previous = ToolKind.Weapon;
+            for (int i = 0, c = combo; i < 4; i++, c /= n)
+            {
+                InputButtons buttons = keys[c % n];
+                HarvestRules.SelectTool(p, buttons);
+                current = ToolState.Select(current, ref previous, buttons);
+                Assert.Equal(p.Inventory.Tool, current);
+                Assert.Equal(p.Inventory.PreviousTool, previous);
+            }
+        }
     }
 }

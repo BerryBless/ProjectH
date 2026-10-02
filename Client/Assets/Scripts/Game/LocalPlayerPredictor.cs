@@ -28,7 +28,8 @@ namespace ProjectH.Client.Game
         private const InputButtons HeldButtons = InputButtons.Sprint | InputButtons.Fire | InputButtons.Crouch;
         private const InputButtons QueuedButtons = InputButtons.Jump | InputButtons.Reload | InputButtons.Slot1 | InputButtons.Slot2 |
                                                    InputButtons.Slot3 | InputButtons.Interact | InputButtons.Drop |
-                                                   InputButtons.UseMedkit | InputButtons.UseShieldCell;
+                                                   InputButtons.UseMedkit | InputButtons.UseShieldCell | InputButtons.ToolBuild |
+                                                   InputButtons.ToolHarvest;
 
         private readonly InputCommand[] _inputs = new InputCommand[HistorySize];
         private readonly MoveState[] _results = new MoveState[HistorySize];

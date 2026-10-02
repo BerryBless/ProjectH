@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using LiteNetLib;
+using ProjectH.Client.Game;
 using ProjectH.Server.Game;
 using ProjectH.Server.Game.Build;
 using ProjectH.Shared.Protocol;
@@ -13,7 +14,8 @@ namespace ProjectH.Server.Tests.Game;
 
 // Phase 13 D13, D14 (request §178): what each client is told of the building, in the dev sandbox. A mirror of one client
 // applies the packets in order (as BuildStore does), so the tests compare what a client would hold with the server.
-// Interest cells are 20 m (8 x 8); the plaza is interest cell (4, 4) = 36, build cells 16..19.
+// Interest cells are 20 m (8 x 8); the plaza is interest cell (4, 4) = 36, build cells 16..19. The client's real store
+// (BuildStore, linked from the client) is fed the same packets as NetClient feeds it and must hold the same pieces.
 public class BuildReplicationTests
 {
     private readonly List<(int Peer, byte[] Data, bool BuildChannel)> _sent = new();
@@ -97,6 +99,54 @@ public class BuildReplicationTests
 
     private static int Cell(BuildPieceShape s) => s.X / 4 + 8 * (s.Z / 4);
 
+    // What NetClient does with the building stream, into the client's real store.
+    private BuildStore StoreOf(int peer)
+    {
+        var store = new BuildStore();
+        foreach (var s in _sent.Where(s => s.Peer == peer && s.BuildChannel)) ApplyToStore(store, s.Data);
+        return store;
+    }
+
+    private static void ApplyToStore(BuildStore store, byte[] data)
+    {
+        var r = new PacketReader(data);
+        Assert.True(r.TryReadPacketId(out PacketId id));
+        switch (id)
+        {
+            case PacketId.BuildSync:
+                Assert.True(BuildSyncPacket.TryReadHeader(ref r, out uint version, out bool reset, out int count));
+                if (reset) store.Reset();
+                for (int i = 0; i < count; i++)
+                {
+                    Assert.True(BuildPieceRecord.TryReadSync(ref r, out BuildPieceRecord p));
+                    store.ApplyPiece(p, version);
+                }
+                break;
+            case PacketId.BuildEvents:
+                Assert.True(BuildEventsPacket.TryReadHeader(ref r, out version, out int placed, out int health, out int destroyed));
+                for (int i = 0; i < placed; i++)
+                {
+                    Assert.True(BuildPieceRecord.TryReadPlaced(ref r, out BuildPieceRecord p));
+                    store.ApplyPiece(p, version);
+                }
+                for (int i = 0; i < health; i++)
+                {
+                    Assert.True(BuildEventsPacket.TryReadHealth(ref r, out uint hid, out ushort damage));
+                    store.ApplyHealth(hid, damage, version);
+                }
+                for (int i = 0; i < destroyed; i++)
+                {
+                    Assert.True(BuildEventsPacket.TryReadDestroyed(ref r, out uint did));
+                    store.ApplyDestroyed(did, version);
+                }
+                break;
+            case PacketId.BuildInterest:
+                Assert.True(BuildInterestPacket.TryRead(ref r, out ulong cells));
+                store.ApplyInterest(cells);
+                break;
+        }
+    }
+
     private Mirror MirrorOf(int peer)
     {
         var m = new Mirror();
@@ -126,10 +176,49 @@ public class BuildReplicationTests
         Dictionary<uint, BuildPieceShape> server = ServerPieces(m.Cells);
         Assert.Equal(server.Keys.OrderBy(k => k), m.Pieces.Keys.OrderBy(k => k));
         foreach (var kv in server) Assert.Equal(kv.Value, m.Pieces[kv.Key].Shape);
+        // The client's real store holds the same window and pieces (and its collision grid the same count).
+        BuildStore store = StoreOf(peer);
+        Assert.Equal(m.Cells, store.Cells);
+        Assert.Equal(server.Count, store.Count);
+        Assert.Equal(server.Count, store.Grid.Count);
+        foreach (var kv in server)
+        {
+            Assert.True(store.TryGet(kv.Key, out BuildPieceRecord piece));
+            Assert.Equal(kv.Value, piece.Shape);
+            Assert.Equal(m.Pieces[kv.Key].Damage, piece.Damage);
+        }
     }
 
     private uint Add(int x, int y, int z, BuildPieceType type = BuildPieceType.Floor, int rotation = 0) =>
         SandboxHarness.AddPiece(_match, new BuildPieceShape(type, x, y, z, rotation));
+
+    // The client files a piece under the same interest cell as the server, and sees the same slots taken.
+    [Fact]
+    public void TheClientsStore_UsesTheServersInterestCells_AndOccupiedRule()
+    {
+        var store = new BuildStore();
+        for (int z = 0; z < BuildGrid.CellsZ; z++)
+            for (int x = 0; x < BuildGrid.CellsX; x++)
+                Assert.Equal(_match.Replication.InterestCell(x, z), store.CellOf(new BuildPieceShape(BuildPieceType.Floor, x, 0, z, 0)));
+
+        Add(17, 1, 17);                                     // a floor on level 1
+        Add(18, 0, 17, BuildPieceType.Roof);                // a roof on level 0 (its slab is level 1's floor)
+        Add(17, 0, 17, BuildPieceType.Wall);
+        Add(16, 0, 16, BuildPieceType.Ramp, 1);
+        Join(1, new Vector3(2f, 0f, 2f));
+        _match.Tick();
+        BuildStore client = StoreOf(1);
+        Assert.Equal(4, client.Count);
+        for (int type = 0; type < 4; type++)
+            for (int y = 0; y < 3; y++)
+                for (int z = 15; z < 20; z++)
+                    for (int x = 15; x < 20; x++)
+                        for (int rotation = 0; rotation < 4; rotation++)
+                        {
+                            if (!BuildGrid.TryNormalize((BuildPieceType)type, x, y, z, rotation, out BuildPieceShape shape)) continue;
+                            Assert.Equal(BuildRules.Occupied(_match.Build, shape), client.Occupied(shape));
+                        }
+    }
 
     [Fact]
     public void TheInterestGrid_Is8By8_AndAWindowIs5By5()
