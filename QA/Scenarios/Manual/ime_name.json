@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "IME Player Name (Manual)",
+  "description": "Request §88-90 (D30): what an automated client cannot judge. The run stops at each manual check; a person answers PASS / FAIL in the web UI (or p/f on a terminal). In CI (no terminal) the checks are SKIPPED and the run continues (--manual fail turns them into failures).",
+  "tags": ["manual", "ui"],
+  "seed": 4403,
+  "timeoutSeconds": 120,
+  "steps": [
+    { "id": "mark", "action": "mark", "text": "manual IME check ${runId}" },
+    { "id": "ime_compose", "action": "manualCheck", "description": "Title screen: type a Korean name (테스트) in the name field with the IME. While composing, the syllable shows in the field (not in a separate box at the screen corner)." },
+    { "id": "ime_commit", "action": "manualCheck", "description": "Press Enter / Connect: the committed name is exactly 테스트 (no leftover jamo, no doubled last syllable), and it shows on the kill feed / result screen." },
+    { "id": "server_up", "assert": "server.running", "equals": true }
+  ]
+}

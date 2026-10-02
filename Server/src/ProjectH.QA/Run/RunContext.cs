@@ -42,6 +42,13 @@ public sealed class RunContext
     public NetworkFaultHub Network { get; }
     public DbFaultHub Db { get; init; } = new();
     public IServerControl? ServerControl { get; internal set; }
+    // QA-4. The run control (manual checks), the run's report folder (screenshots go to <it>/screenshots), and what the
+    // run produced for the report (bounded: MaxScreenshots, one manual check per step).
+    public IRunControl? Control { get; init; }
+    public string ReportDirectory { get; init; } = string.Empty;
+    public List<string> Screenshots { get; } = new();
+    public List<ManualCheckRecord> ManualChecks { get; } = new();
+    public const int MaxScreenshots = 200;
 
     // After a server restart: the new QA client, a fresh event cursor (event sequence numbers start again) and the new
     // game port. Actors keep their objects; their next connect goes to the new port.
@@ -61,3 +68,6 @@ public sealed class RunContext
         Variables[name] = value.Clone();
     }
 }
+
+// One manual check's outcome for the report (D30): PASS / FAIL / SKIPPED, who answered and the note.
+public sealed record ManualCheckRecord(int StepIndex, string StepId, string Description, string Result, string? Note, string By);

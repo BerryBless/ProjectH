@@ -47,11 +47,18 @@ public static partial class ScenarioValidator
             string where = $"actor {a.Id}";
             if (!actors.Add(a.Id)) Error(where, "Duplicate actor id.");
             if (ActorManager.CheckAlias(a.Id) is string aliasError) Error(where, aliasError);
-            if (!string.Equals(a.Type, ActorSpec.HeadlessClient, StringComparison.OrdinalIgnoreCase))
-                Error(where, $"Actor type '{a.Type}' is not supported yet (QA-1: {ActorSpec.HeadlessClient}).");
+            if (!string.Equals(a.Type, ActorSpec.HeadlessClient, StringComparison.OrdinalIgnoreCase) && !a.IsUnity)
+                Error(where, $"Actor type '{a.Type}' is not supported ({ActorSpec.HeadlessClient} or {ActorSpec.UnityClient}).");
+            if (a.Unity != null && !a.IsUnity) Error(where, "'unity' is only for UnityClient actors.");
+            if (a.IsUnity && a.Proxy) Error(where, "A UnityClient actor cannot use the network fault proxy.");
+            if (a.Unity?.AttachPort is int ap && (ap < 1 || ap > 65535)) Error(where, "unity.attachPort must be 1-65535.");
+            if (a.Unity?.AttachPort != null && a.Unity.Exe != null) Error(where, "Give unity.exe or unity.attachPort, not both.");
+            if (a.Unity?.Width is int w && (w < 160 || w > 7680)) Error(where, "unity.width must be 160-7680.");
+            if (a.Unity?.Height is int h && (h < 120 || h > 4320)) Error(where, "unity.height must be 120-4320.");
         }
 
         var proxied = new HashSet<string>(s.Actors.Where(a => a.Proxy).Select(a => a.Id), StringComparer.Ordinal);
+        var unity = new HashSet<string>(s.Actors.Where(a => a.IsUnity).Select(a => a.Id), StringComparer.Ordinal);
         var variables = new HashSet<string>(s.Variables.Keys, StringComparer.Ordinal) { "runId", "seed" };
         foreach (string name in s.Variables.Keys)
         {
@@ -86,6 +93,11 @@ public static partial class ScenarioValidator
             if (spec.Actor == ActorUse.Required && step.Actor == null) Error(where, $"'{spec.Name}' needs 'actor'.");
             if (spec.Actor == ActorUse.None && step.Actor != null) Error(where, $"'{spec.Name}' takes no 'actor'.");
             if (step.Actor != null && !actors.Contains(step.Actor)) Error(where, $"Unknown actor '{step.Actor}'.");
+            // QA-4 §87: Unity players get UI commands and screenshots, never gameplay input.
+            if (step.Actor != null && unity.Contains(step.Actor) && Array.IndexOf(UnityActions.HeadlessOnly, spec.Name) >= 0)
+                Error(where, $"'{spec.Name}' is gameplay input; UnityClient actor '{step.Actor}' takes none (§87). Use a HeadlessClient actor.");
+            if (step.Actor != null && actors.Contains(step.Actor) && !unity.Contains(step.Actor) && Array.IndexOf(UnityActions.UnityOnly, spec.Name) >= 0)
+                Error(where, $"'{spec.Name}' needs a UnityClient actor ('{step.Actor}' is not one).");
             if (spec.NeedsProxy && step.Actor != null && actors.Contains(step.Actor) && !proxied.Contains(step.Actor))
                 Error(where, $"'{spec.Name}' needs actor '{step.Actor}' to have \"network\": {{ \"proxy\": true }}.");
             if (spec.LaunchOnly && string.Equals(s.Server.Mode, ServerSpec.Attach, StringComparison.OrdinalIgnoreCase))

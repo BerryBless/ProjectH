@@ -7,7 +7,7 @@ public sealed record UiStep(int Index, string Id, string Title, string Action, s
 
 public sealed record UiRunState(string Status, string? RunStatus, string? RunId, string? Scenario, string? Path, int? Seed,
     int WaitingAt, bool FailedWaiting, bool Unsaved, string? ReportUrl, int? ExitCode, string? Error,
-    IReadOnlyList<UiStep> Steps, IReadOnlyList<string> Warnings);
+    IReadOnlyList<UiStep> Steps, IReadOnlyList<string> Warnings, string? ManualCheck = null);
 
 // POST /api/run. Mode: run, from (Run From Step), until (Run Until Step), single (start paused before the first step).
 public sealed class UiRunRequest
@@ -58,6 +58,7 @@ public sealed class RunSession
     private int? _seed;
     private int _waitingAt = -1;
     private bool _failedWaiting;
+    private string? _manualCheck;   // D30: the description of the manual check the run waits for
     private bool _unsaved;
     private string? _reportUrl;
     private int? _exitCode;
@@ -97,7 +98,7 @@ public sealed class RunSession
         lock (_lock)
         {
             return new UiRunState(_status, _runStatus, _runId, _scenario, _path, _seed, _waitingAt, _failedWaiting, _unsaved,
-                _reportUrl, _exitCode, _error, _steps.ToArray(), _warnings);
+                _reportUrl, _exitCode, _error, _steps.ToArray(), _warnings, _manualCheck);
         }
     }
 
@@ -107,7 +108,7 @@ public sealed class RunSession
         int count = scenario.Steps.Count;
         if (request.Mode is "from" or "until" && (request.StepIndex < 0 || request.StepIndex >= count)) return $"Step index must be 0-{count - 1}.";
         int seed = request.Seed ?? scenario.Seed ?? Random.Shared.Next(1, int.MaxValue);
-        var gate = new RunGate(honorBreakpoints: true, holdOnFailure: true);
+        var gate = new RunGate(honorBreakpoints: true, holdOnFailure: true, holdManual: true);
         var cts = new CancellationTokenSource();
         lock (_lock)
         {
@@ -157,6 +158,8 @@ public sealed class RunSession
             SeedOverride = seed,
             AttachUrl = _host.AttachUrl,
             ServerDll = _host.ServerDll,
+            UnityExe = _host.UnityExe,
+            UnityHandlerFactory = _host.UnityHandlerFactory,
             ReportDir = _host.ReportDir,
             PollMs = _host.PollMs,
             ServerClientFactory = _host.ServerClientFactory,
@@ -214,6 +217,7 @@ public sealed class RunSession
                 _status = "finished";
                 _waitingAt = -1;
                 _failedWaiting = false;
+                _manualCheck = null;
                 _gate = null;
                 cts = _cts;
                 _cts = null;
@@ -233,6 +237,9 @@ public sealed class RunSession
     public void StepOnce() => GateOrNull()?.StepOnce();
 
     public bool Retry() => GateOrNull()?.Retry() ?? false;
+
+    // D30: the person's answer to the manual check the run waits for. False when none is waiting.
+    public bool AnswerManual(bool passed, string? note) => GateOrNull()?.AnswerManual(passed, note) ?? false;
 
     public void SetBreakpoints(int[] indices) => GateOrNull()?.SetBreakpoints(indices);
 
@@ -357,12 +364,14 @@ public sealed class RunSession
         // Gate first (its own lock), then the session lock: never both at once.
         int waitingAt = paused ? gate.WaitingAt : -1;
         bool failed = paused && gate.FailedWaiting;
+        string? manual = paused ? gate.ManualWaiting : null;
         lock (_lock)
         {
             if (_status is not ("running" or "paused")) return;
             _status = paused ? "paused" : "running";
             _waitingAt = waitingAt;
             _failedWaiting = failed;
+            _manualCheck = manual;
         }
         PublishState();
     }

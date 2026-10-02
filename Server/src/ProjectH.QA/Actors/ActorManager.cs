@@ -43,6 +43,9 @@ public sealed class ActorManager : IAsyncDisposable
         return null;
     }
 
+    // QA-4: where UnityClient actors' players come from (null: UnityClient actors cannot be created).
+    public UnitySettings? Unity { get; init; }
+
     public int Count => _actors.Count;
     public IReadOnlyList<IQaActor> Snapshot => Volatile.Read(ref _snapshot);
     public IEnumerable<IQaActor> All => _actors.Values;
@@ -52,7 +55,7 @@ public sealed class ActorManager : IAsyncDisposable
     public IQaActor Get(string alias) =>
         _actors.TryGetValue(alias, out IQaActor? actor) ? actor : throw new QaStepException($"Unknown actor '{alias}'.");
 
-    public async Task<IQaActor> CreateAsync(string alias, string type, CancellationToken token)
+    public async Task<IQaActor> CreateAsync(string alias, string type, CancellationToken token, UnitySpec? unity = null)
     {
         if (_actors.ContainsKey(alias)) throw new QaStepException($"Actor '{alias}' already exists.");
         if (_actors.Count >= MaxActors) throw new QaStepException($"Too many actors (max {MaxActors}).");
@@ -60,7 +63,12 @@ public sealed class ActorManager : IAsyncDisposable
         if (error != null) throw new QaStepException(error);
 
         IQaActor actor;
-        if (_factory != null)
+        if (string.Equals(type, ActorSpec.UnityClient, StringComparison.OrdinalIgnoreCase))
+        {
+            // Not from the test factory: Unity actors are tested with a fake receiver (UnitySettings.HandlerFactory).
+            actor = new UnityActor(alias, unity, Unity ?? throw new QaStepException("UnityClient actors are not available in this run."), _log);
+        }
+        else if (_factory != null)
         {
             actor = _factory(alias, type);
         }
@@ -91,8 +99,29 @@ public sealed class ActorManager : IAsyncDisposable
         return stopped;
     }
 
+    // Closes every Unity player this run launched (cleanup). One line per launched or attached Unity actor.
+    public async Task<IReadOnlyList<CleanupResult>> StopUnityAsync()
+    {
+        var results = new List<CleanupResult>();
+        foreach (UnityActor u in _actors.Values.OfType<UnityActor>())
+        {
+            try
+            {
+                await u.DisposeAsync().ConfigureAwait(false);
+                if (u.Attached) results.Add(new CleanupResult($"unity {u.Alias}", true, "attached (left running)"));
+                else if (u.LastStop is { } stop) results.Add(new CleanupResult($"unity {u.Alias}", stop.Stopped, stop.Message));
+            }
+            catch (Exception e)
+            {
+                results.Add(new CleanupResult($"unity {u.Alias}", false, e.Message));
+            }
+        }
+        return results;
+    }
+
     public async ValueTask DisposeAsync()
     {
+        await StopUnityAsync().ConfigureAwait(false);
         await StopAsync().ConfigureAwait(false);
         _actors.Clear();
         Volatile.Write(ref _snapshot, Array.Empty<IQaActor>());

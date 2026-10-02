@@ -20,6 +20,9 @@ public sealed class UiHostOptions
     public int Port { get; init; } = DefaultPort;   // 0 = any free port (tests)
     public string? AttachUrl { get; init; }
     public string? ServerDll { get; init; }
+    // QA-4: the default Unity Development player and a fake receiver per port (tests).
+    public string? UnityExe { get; init; }
+    public Func<int, HttpMessageHandler?>? UnityHandlerFactory { get; init; }
     public string? ReportDir { get; init; }
     public int PollMs { get; init; } = 100;
     public bool WriteReports { get; init; } = true;
@@ -79,6 +82,9 @@ public sealed partial class QaUiHost : IAsyncDisposable
 
     [GeneratedRegex(@"^qa-\d{8}-\d{6}-[0-9a-f]{4}$")]
     private static partial Regex RunIdPattern();
+
+    [GeneratedRegex(@"^[A-Za-z0-9_-]{1,80}\.png$")]
+    private static partial Regex ShotFile();
 
     public static async Task<QaUiHost> StartAsync(UiHostOptions options, CancellationToken token)
     {
@@ -229,6 +235,19 @@ public sealed partial class QaUiHost : IAsyncDisposable
         app.MapPost("/api/run/resume", ctx => Command(ctx, Session.Resume));
         app.MapPost("/api/run/step", ctx => Command(ctx, Session.StepOnce));
         app.MapPost("/api/run/stop", ctx => Command(ctx, Session.Stop));
+        app.MapPost("/api/run/manual", async ctx =>
+        {
+            JsonElement body = await Body(ctx).ConfigureAwait(false);
+            if (JsonPath.Child(body, "passed") is not { ValueKind: JsonValueKind.True or JsonValueKind.False } passed)
+            {
+                await Error(ctx, 400, "'passed' must be true or false.").ConfigureAwait(false);
+                return;
+            }
+            string? note = Str(body, "note");
+            if (note != null && note.Length > 1000) note = note[..1000];
+            if (!Session.AnswerManual(passed.GetBoolean(), note)) { await Error(ctx, 409, "No manual check is waiting.").ConfigureAwait(false); return; }
+            await Json(ctx, new { ok = true }).ConfigureAwait(false);
+        });
         app.MapPost("/api/run/retry", async ctx =>
         {
             if (!Session.Retry()) { await Error(ctx, 409, "No failed step is held.").ConfigureAwait(false); return; }
@@ -260,6 +279,17 @@ public sealed partial class QaUiHost : IAsyncDisposable
             if (!RunIdPattern().IsMatch(runId) || !File.Exists(file)) { await Error(ctx, 404, "No such report.").ConfigureAwait(false); return; }
             ctx.Response.ContentType = "text/html; charset=utf-8";
             await ctx.Response.SendFileAsync(file, ctx.RequestAborted).ConfigureAwait(false);
+        });
+        // QA-4: the report's screenshot thumbnails (relative links) when it is opened through the UI. Same guards:
+        // run id pattern, a plain PNG file name, the reports folder only.
+        app.MapGet("/reports/{runId}/screenshots/{file}", async ctx =>
+        {
+            string runId = (string)ctx.Request.RouteValues["runId"]!;
+            string name = (string)ctx.Request.RouteValues["file"]!;
+            string path = Path.Combine(_options.ReportRoot, runId, "screenshots", name);
+            if (!RunIdPattern().IsMatch(runId) || !ShotFile().IsMatch(name) || !File.Exists(path)) { await Error(ctx, 404, "No such screenshot.").ConfigureAwait(false); return; }
+            ctx.Response.ContentType = "image/png";
+            await ctx.Response.SendFileAsync(path, ctx.RequestAborted).ConfigureAwait(false);
         });
     }
 

@@ -96,6 +96,7 @@ public sealed class ActionRegistry
         ActorActions.Register(registry);
         ServerCommandActions.Register(registry);
         FaultActions.Register(registry);
+        UnityActions.Register(registry);
         return registry;
     }
 }

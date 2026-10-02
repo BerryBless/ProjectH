@@ -432,7 +432,10 @@ function applyState(run) {
   const badge = $('run-status');
   let text = run.status;
   if (run.status === 'finished' && run.runStatus) text = run.runStatus + (run.exitCode !== null && run.exitCode !== undefined ? ' (exit ' + run.exitCode + ')' : '');
-  if (run.status === 'paused') text = run.failedWaiting ? 'held at failed step ' + (run.waitingAt + 1) : 'paused before step ' + (run.waitingAt + 1);
+  if (run.status === 'paused') text = run.manualCheck ? 'manual check at step ' + (run.waitingAt + 1) : run.failedWaiting ? 'held at failed step ' + (run.waitingAt + 1) : 'paused before step ' + (run.waitingAt + 1);
+  // D30: a manual check waits for PASS / FAIL from a person.
+  $('manual-panel').classList.toggle('hidden', !run.manualCheck);
+  if (run.manualCheck) $('manual-text').textContent = run.manualCheck;
   badge.textContent = text + (run.seed !== null && run.seed !== undefined ? '  seed ' + run.seed : '');
   badge.className = 'badge ' + run.status + ' ' + (run.runStatus || '');
   const b = busy();
@@ -645,6 +648,13 @@ async function init() {
     if (confirm('Run the failed step again in the same game? Its state may have changed since it failed.')) command('retry');
   });
   $('btn-retry-scenario').addEventListener('click', () => command('retry-scenario'));
+  const answer = async (passed) => {
+    const { ok, data } = await api('POST', '/api/run/manual', { passed, note: $('manual-note').value });
+    if (!ok) message(data ? data.error : 'answer failed', 'error');
+    else $('manual-note').value = '';
+  };
+  $('btn-manual-pass').addEventListener('click', () => answer(true));
+  $('btn-manual-fail').addEventListener('click', () => answer(false));
   window.addEventListener('beforeunload', (e) => { if (state.raw && state.raw !== (state.savedText ?? '')) e.preventDefault(); });
   await loadTree();
   const run = await api('GET', '/api/run');

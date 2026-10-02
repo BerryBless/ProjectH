@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "name": "Kill Feed On A Unity Client",
+  "description": "QA-4 (request §84): headless B eliminates headless A with real fire while a Unity Development player watches; the server records the kill and a screenshot of the Unity HUD (kill feed) goes into the report for a person to look at (no automatic image check, §85). Needs --unity-exe; SKIPPED without it.",
+  "tags": ["ui", "unity", "combat", "slow"],
+  "seed": 4402,
+  "timeoutSeconds": 180,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "3", "Server:ResultSeconds": "15" } },
+  "actors": [
+    { "id": "playerA", "type": "HeadlessClient" },
+    { "id": "playerB", "type": "HeadlessClient" },
+    { "id": "viewer", "type": "UnityClient", "unity": { "width": 960, "height": 540 } }
+  ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "viewer_launch", "action": "connect", "actor": "viewer" },
+    { "id": "viewer_joined", "action": "waitForUnity", "actor": "viewer", "condition": "joined", "equals": true, "timeoutMilliseconds": 30000 },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+    { "id": "in_game", "action": "waitForUnity", "actor": "viewer", "condition": "screen", "equals": "InGame", "timeoutMilliseconds": 10000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Combat_A" },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": "QA_Combat_B" },
+    { "id": "viewer_place", "action": "setPosition", "actor": "viewer", "position": { "x": 0, "z": -12, "yaw": 0 } },
+    { "id": "a_health", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "a_shield", "action": "setShield", "actor": "playerA", "value": 0 },
+    { "id": "b_rifle", "action": "giveWeapon", "actor": "playerB", "weapon": "Vesper AR" },
+    { "id": "b_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerB", "equals": "Vesper AR", "timeoutMilliseconds": 3000 },
+
+    { "id": "b_fire", "phase": "act", "action": "fire", "actor": "playerB", "target": "playerA", "count": 8 },
+
+    { "id": "a_killed", "phase": "assert", "action": "waitForEvent", "event": "PlayerKilled", "actor": "playerA", "where": { "killer": "qa-playerB" }, "timeoutMilliseconds": 5000 },
+    { "id": "feed_settle", "action": "wait", "milliseconds": 500, "description": "Let the kill feed entry draw" },
+    { "id": "shot_kill_feed", "action": "captureScreenshot", "actor": "viewer", "name": "kill_feed" },
+    { "id": "still_playing", "assert": "match.state", "equals": "Playing" }
+  ]
+}

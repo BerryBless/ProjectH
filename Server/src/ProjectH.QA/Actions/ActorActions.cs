@@ -18,7 +18,9 @@ public static class ActorActions
 
     public static void Register(ActionRegistry r)
     {
-        r.Add(Actor("connect", ConnectAsync));
+        // A Unity player needs time to start and join (QA-4); a headless client joins in well under a second.
+        r.Add(Actor("connect", ConnectAsync,
+            defaultTimeout: s => string.Equals(s.ActorType, ActorSpec.UnityClient, StringComparison.OrdinalIgnoreCase) ? UnityConnectTimeoutMs : ActionSpec.StandardTimeoutMs));
         r.Add(Actor("disconnect", DisconnectAsync, optional: new[] { "graceful" }));
         r.Add(Actor("reconnect", ReconnectAsync, timeoutMs: 20_000));
         r.Add(Actor("moveTo", MoveToAsync, required: new[] { "position" }, optional: new[] { "tolerance", "sprint" },
@@ -120,9 +122,13 @@ public static class ActorActions
 
     // ---- connection ----
 
+    public const int UnityConnectTimeoutMs = 90_000;
+
     private static async Task<StepOutcome> ConnectAsync(StepContext ctx, CancellationToken token)
     {
         IQaActor actor = ctx.Actor();
+        // No Unity player on this machine: skip the rest (like a missing Docker), not a game failure.
+        if (actor is UnityActor { CannotStart: string why }) return StepOutcome.Skip(why, skipRest: true);
         int before = actor.State.Connections;   // read before sending: the command may apply at once
         (string host, int port) = await ctx.Run.ConnectTargetAsync(actor.Alias).ConfigureAwait(false);
         await actor.SendAsync(new ConnectCommand(host, port, false), token).ConfigureAwait(false);

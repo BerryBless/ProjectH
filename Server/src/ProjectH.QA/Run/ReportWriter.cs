@@ -102,8 +102,46 @@ public static class ReportWriter
             sb.Append("<tr><td>").Append(E(c.Name)).Append("</td><td class=\"").Append(c.Ok ? "PASS" : "FAIL").Append("\">").Append(c.Ok ? "OK" : "FAILED").Append("</td><td>").Append(E(c.Message)).Append("</td></tr>");
         sb.Append("</table>");
 
-        sb.Append("<h2>Manual checks</h2>").Append(r.ManualChecks.Count == 0 ? "<p class=\"muted\">None.</p>" : "<pre>" + E(string.Join("\n", r.ManualChecks.Select(m => m.GetRawText()))) + "</pre>");
-        sb.Append("<h2>Screenshots</h2>").Append(r.Screenshots.Count == 0 ? "<p class=\"muted\">None.</p>" : "<ul>" + string.Concat(r.Screenshots.Select(s => $"<li>{E(s)}</li>")) + "</ul>");
+        // D30: manual checks (request §90), one row each.
+        sb.Append("<h2>Manual checks</h2>");
+        if (r.ManualChecks.Count == 0)
+        {
+            sb.Append("<p class=\"muted\">None.</p>");
+        }
+        else
+        {
+            sb.Append("<table><tr><th>#</th><th>Step</th><th>Check</th><th>Result</th><th>By</th><th>Note</th></tr>");
+            foreach (JsonElement m in r.ManualChecks)
+            {
+                string Field(string name) => JsonPath.Child(m, name) is { ValueKind: not JsonValueKind.Null } v ? QaJson.Text(v) : string.Empty;
+                string result = Field("result");
+                string css = result is "PASS" or "FAIL" ? result : "SKIPPED";
+                int index = JsonPath.Child(m, "stepIndex") is { ValueKind: JsonValueKind.Number } n ? n.GetInt32() + 1 : 0;
+                sb.Append("<tr><td>").Append(index).Append("</td><td>").Append(E(Field("stepId"))).Append("</td><td>").Append(E(Field("description")))
+                  .Append("</td><td class=\"").Append(css).Append("\">").Append(E(result)).Append("</td><td>").Append(E(Field("by")))
+                  .Append("</td><td>").Append(E(Field("note"))).Append("</td></tr>");
+            }
+            sb.Append("</table>");
+        }
+
+        // QA-4: Unity screenshots next to the report (relative links keep the folder movable); a thumbnail links the PNG.
+        sb.Append("<h2>Screenshots</h2>");
+        if (r.Screenshots.Count == 0)
+        {
+            sb.Append("<p class=\"muted\">None.</p>");
+        }
+        else
+        {
+            sb.Append("<div>");
+            foreach (string shot in r.Screenshots)
+            {
+                string href = string.Join('/', shot.Split('/').Select(Uri.EscapeDataString));
+                sb.Append("<figure style=\"display:inline-block;margin:4px\"><a href=\"").Append(E(href)).Append("\"><img src=\"").Append(E(href))
+                  .Append("\" style=\"max-width:320px;border:1px solid #ccc\" alt=\"").Append(E(shot)).Append("\"></a><figcaption>")
+                  .Append(E(shot)).Append("</figcaption></figure>");
+            }
+            sb.Append("</div>");
+        }
 
         if (r.ServerArguments.Count > 0) sb.Append("<h2>Server command</h2><pre>dotnet ").Append(E(string.Join(' ', r.ServerArguments))).Append("</pre>");
         sb.Append("<h2>Server log (last ").Append(r.ServerLogTail.Length).Append(" lines)</h2><pre>");

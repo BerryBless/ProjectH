@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "name": "Unity Client Smoke",
+  "description": "QA-4 (request §83-87): a real Unity Development player (UnityClient actor) joins the match with a headless client. Its QA receiver reports the screen; screenshots of the HUD, the menu and the stats panel are saved into the report. The player gets UI commands only, never gameplay input (§87). Needs --unity-exe <ProjectH.exe> (a Development Build); without it the scenario is SKIPPED.",
+  "tags": ["smoke", "unity", "slow"],
+  "seed": 4401,
+  "timeoutSeconds": 180,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [
+    { "id": "playerA", "type": "HeadlessClient" },
+    { "id": "viewer", "type": "UnityClient", "unity": { "width": 960, "height": 540 } }
+  ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "viewer_launch", "action": "connect", "actor": "viewer", "description": "Launch the Unity player and wait until it joined" },
+    { "id": "viewer_joined", "action": "waitForUnity", "actor": "viewer", "condition": "joined", "equals": true, "timeoutMilliseconds": 30000 },
+    { "id": "viewer_on_server", "action": "waitFor", "condition": "player.connected", "actor": "viewer", "equals": true, "timeoutMilliseconds": 5000 },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+    { "id": "in_game", "action": "waitForUnity", "actor": "viewer", "condition": "screen", "equals": "InGame", "timeoutMilliseconds": 10000 },
+    { "id": "shot_hud", "action": "captureScreenshot", "actor": "viewer", "name": "hud" },
+    { "id": "open_menu", "action": "uiCommand", "actor": "viewer", "command": "openMenu" },
+    { "id": "menu_shown", "action": "waitForUnity", "actor": "viewer", "condition": "screen", "equals": "Menu", "timeoutMilliseconds": 5000 },
+    { "id": "shot_menu", "action": "captureScreenshot", "actor": "viewer", "name": "menu" },
+    { "id": "open_stats", "action": "uiCommand", "actor": "viewer", "command": "openStats" },
+    { "id": "stats_shown", "action": "waitForUnity", "actor": "viewer", "condition": "statsOpen", "equals": true, "timeoutMilliseconds": 5000 },
+    { "id": "shot_stats", "action": "captureScreenshot", "actor": "viewer", "name": "stats" },
+    { "id": "close_stats", "action": "uiCommand", "actor": "viewer", "command": "closeStats" },
+    { "id": "close_menu", "action": "uiCommand", "actor": "viewer", "command": "closeMenu" },
+    { "id": "back_in_game", "action": "waitForUnity", "actor": "viewer", "condition": "screen", "equals": "InGame", "timeoutMilliseconds": 5000 },
+    { "id": "viewer_alive", "assert": "player.alive", "actor": "viewer", "equals": true }
+  ]
+}
