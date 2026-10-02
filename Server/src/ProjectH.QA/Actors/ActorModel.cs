@@ -81,6 +81,12 @@ public sealed record ActorState
     // QA-4 UnityClient actors: the player's latest GET /qa/status body (null for headless actors). Assertions read it as
     // actor.unity.<field> (screen, joined, statsOpen, debugVisible, fps...).
     public JsonElement? Unity { get; init; }
+    // QA-5 playInputs: the latest PlayInputsCommand's id, whether it is still playing, inputs sent for it (ticks) and
+    // whether it reached the end of the recording (false when stopped early: disconnect, clear, a new connection).
+    public long PlaybackCommandId { get; init; }
+    public bool PlaybackActive { get; init; }
+    public int PlaybackSent { get; init; }
+    public bool PlaybackCompleted { get; init; }
     // The newest command applied (ActorCommand.Id).
     public long LastCommandId { get; init; }
     // Last exception of this actor's pump work (the pump keeps running).
@@ -128,8 +134,16 @@ public sealed record SendRawCommand(IReadOnlyList<byte[]> Packets) : ActorComman
 {
     public const int MaxRawPackets = 2500;
 }
-// Drops the queued timed inputs (presses, holds) and the one in progress; held buttons stay.
+// Drops the queued timed inputs (presses, holds) and the one in progress; held buttons stay. Also stops a playback.
 public sealed record ClearInputQueueCommand : ActorCommand;
+// QA-5 D34: replay recorded inputs, one per pump tick while joined and sending (Seq and ViewTick are the connection's
+// own). Speed 0.25-4: the recording cursor advances Speed entries per tick; entries skipped at Speed > 1 have their
+// buttons merged into the sent one so a one-tick press is not lost. Replaces the actor's own intent while it plays.
+public sealed record PlayInputsCommand(IReadOnlyList<RecordedInput> Inputs, double Speed) : ActorCommand
+{
+    public const double MinSpeed = 0.25;
+    public const double MaxSpeed = 4;
+}
 // Stop moving, aiming, holding, pressing: the actor stands still (still sending inputs).
 public sealed record ResetIntentCommand : ActorCommand;
 

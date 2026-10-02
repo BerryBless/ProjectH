@@ -118,6 +118,13 @@ public sealed class RunReport
     // QA-3: a step skipped the rest of the scenario (e.g. no Docker for a DB fault). The run still passes (exit 0).
     public string? SkipReason { get; set; }
     public string? ReportDirectory { get; set; }
+    // QA-5 D31-D32: the parameter set this run used (merged over the variables), its 1-based number, and the run's
+    // place in a batch ("3/10", repeat iteration). Null outside parameters / batches.
+    public JsonElement? Parameters { get; set; }
+    public int? ParameterSet { get; set; }
+    public string? Batch { get; set; }
+    // QA-5 D33: the history line and the comparison with the previous PASSED run (null: history off for this run).
+    public BaselineReport? Baseline { get; set; }
 
     public static int ExitCodeFor(RunStatus status, bool failOnSkip = false) => status switch
     {

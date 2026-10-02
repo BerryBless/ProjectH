@@ -67,6 +67,15 @@ public sealed class HeadlessActor : IQaActor
     private int _buildLast;
     private long _buildResultsSeen;
     private readonly Queue<BuildResultInfo> _buildResults = new();
+    // QA-5 playInputs (pump thread): the recording being replayed (null = none; released when it ends or stops), the
+    // cursor in recording entries, the last entry sent, and the progress the state publishes.
+    private IReadOnlyList<RecordedInput>? _playback;
+    private double _playSpeed;
+    private double _playCursor;
+    private int _playLastIndex;
+    private long _playCommandId;
+    private int _playSent;
+    private bool _playCompleted;
 
     private ActorState _state;
 
@@ -168,6 +177,17 @@ public sealed class HeadlessActor : IQaActor
                 _builds.Clear();
                 _buildAimTicks = 0;
                 _buildHold = 0;
+                StopPlayback();
+                break;
+            case PlayInputsCommand play:
+                StopPlayback();
+                _playback = play.Inputs.Count > 0 ? play.Inputs : null;
+                _playSpeed = Math.Clamp(play.Speed, PlayInputsCommand.MinSpeed, PlayInputsCommand.MaxSpeed);
+                _playCursor = 0;
+                _playLastIndex = -1;
+                _playCommandId = play.Id;
+                _playSent = 0;
+                _playCompleted = play.Inputs.Count == 0;
                 break;
             case PauseInputCommand p:
                 _inputPaused = p.Paused;
@@ -217,7 +237,9 @@ public sealed class HeadlessActor : IQaActor
                 // Sent every tick even when idle: the server's InputTimeout closes a joined client that goes silent (D8).
                 // pauseInput stops exactly this (and nothing else) to let that timeout happen.
                 _sendBuild = null;
-                c.SendInput(BuildInput(c.View, now));
+                // A replay advances only here, where an input is really sent: a paused or not yet joined actor does
+                // not "finish" a recording it never sent.
+                c.SendInput(_playback != null ? NextPlaybackInput(c.View) : BuildInput(c.View, now));
                 // After the input that carries the aim, like BotRunner: the server places with the last input's aim.
                 if (_sendBuild is BuildRequest request) c.SendBuild(request);
             }
@@ -280,6 +302,64 @@ public sealed class HeadlessActor : IQaActor
         _buildAimTicks = 0;
         _buildHold = 0;
         _inputPaused = false;
+        StopPlayback();
+    }
+
+    // One replay tick (pure, tested): the entry at the cursor (clamped to the last one), with the buttons of every entry
+    // skipped since the last sent one (speed > 1), then the cursor advances by speed. Done once the last entry has been
+    // sent and the cursor passed the end, so the last entry is always sent (and held 1/speed ticks when speed < 1).
+    internal static (int Index, InputButtons Buttons, bool Done) PlaybackStep(IReadOnlyList<RecordedInput> inputs, ref double cursor, ref int lastIndex, double speed)
+    {
+        int index = Math.Min(inputs.Count - 1, (int)cursor);
+        InputButtons buttons = inputs[index].Buttons;
+        for (int i = lastIndex + 1; i < index; i++) buttons |= inputs[i].Buttons;
+        lastIndex = Math.Max(lastIndex, index);
+        cursor += speed;
+        return (index, buttons, lastIndex == inputs.Count - 1 && cursor >= inputs.Count);
+    }
+
+    // How many ticks a replay of `count` entries takes at `speed` (the same steps as PlaybackStep).
+    public static int PlaybackTicks(int count, double speed)
+    {
+        if (count <= 0) return 0;
+        double cursor = 0;
+        int last = -1, ticks = 0;
+        while (true)
+        {
+            int index = Math.Min(count - 1, (int)cursor);
+            last = Math.Max(last, index);
+            cursor += speed;
+            ticks++;
+            if (last == count - 1 && cursor >= count) return ticks;
+        }
+    }
+
+    // Ends a replay early (it did not complete) and drops the recording.
+    private void StopPlayback() => _playback = null;
+
+    // The recorded entry for this tick (D34). Entries skipped because of Speed > 1 give their buttons to this one.
+    private InputCommand NextPlaybackInput(BotView view)
+    {
+        IReadOnlyList<RecordedInput> inputs = _playback!;
+        (int index, InputButtons buttons, bool done) = PlaybackStep(inputs, ref _playCursor, ref _playLastIndex, _playSpeed);
+        RecordedInput entry = inputs[index];
+        _playSent++;
+        if (done)
+        {
+            _playback = null;
+            _playCompleted = true;
+        }
+        _bodyYaw = entry.Yaw;
+        return new InputCommand
+        {
+            MoveX = entry.MoveX,
+            MoveY = entry.MoveY,
+            Yaw = entry.Yaw,
+            Buttons = buttons,
+            AimYaw = entry.AimYaw,
+            AimPitch = entry.AimPitch,
+            ViewTick = view.ServerTick,   // as BuildInput: the tick of the latest snapshot this client applied
+        };
     }
 
     private void TakeBuildResults(BotView view)
@@ -493,6 +573,7 @@ public sealed class HeadlessActor : IQaActor
             {
                 Alias = Alias, DevPlayerId = DevPlayerId, Status = ActorStatus.Idle, LastCommandId = _lastCommandId, Error = _error,
                 InputPaused = _inputPaused, BuildFirstSequence = _buildFirst, BuildLastSequence = _buildLast, BuildsQueued = _builds.Count,
+                PlaybackCommandId = _playCommandId, PlaybackActive = _playback != null, PlaybackSent = _playSent, PlaybackCompleted = _playCompleted,
             };
         }
         else
@@ -551,6 +632,10 @@ public sealed class HeadlessActor : IQaActor
                 BuildLastSequence = _buildLast,
                 BuildsQueued = _builds.Count,
                 BuildResults = _buildResults.ToArray(),
+                PlaybackCommandId = _playCommandId,
+                PlaybackActive = _playback != null,
+                PlaybackSent = _playSent,
+                PlaybackCompleted = _playCompleted,
                 Error = _error,
             };
         }

@@ -169,6 +169,8 @@ function renderScenarioFields() {
   field('server', 'server', 'json');
   field('variables', 'variables', 'json');
   field('actors', 'actors', 'json');
+  field('parameters', 'parameters', 'json');   // QA-5 D31: one run per entry
+  field('baseline', 'baseline', 'json');       // QA-5 D33: { "values": ["savedName"] }
 }
 
 function runStepFor(i) {
@@ -416,6 +418,14 @@ async function startRun(mode) {
     path: state.path, text: state.raw, mode, stepIndex: Math.max(0, state.selected),
     seed: seedText === '' ? null : Number(seedText), debug: $('debug').checked, breakpoints: [...state.breakpoints],
   };
+  // QA-5: repeat / seed sweep / stop on fail (Run only; the server checks the ranges).
+  if (mode === 'run') {
+    const repeat = Number($('repeat').value || '1');
+    if (repeat > 1) body.repeat = repeat;
+    const sweep = $('seed-sweep').value.trim();
+    if (sweep) body.seedSweep = sweep;
+  }
+  if ($('stop-on-fail').checked) body.stopOnFail = true;
   const { ok, data } = await api('POST', '/api/run', body);
   if (!ok) message(data && data.errors ? ['Not started:'].concat(data.errors) : (data ? data.error : 'Run failed to start.'), 'error');
   else { message(''); clearLog(); applyState(data); }
@@ -436,7 +446,12 @@ function applyState(run) {
   // D30: a manual check waits for PASS / FAIL from a person.
   $('manual-panel').classList.toggle('hidden', !run.manualCheck);
   if (run.manualCheck) $('manual-text').textContent = run.manualCheck;
+  const batch = run.batch;
+  if (batch && batch.total > 1 && busy()) text += '  run ' + batch.current + '/' + batch.total;
+  if (batch && run.status === 'finished' && batch.total > 1) text = 'batch ' + batch.done + '/' + batch.total + ': ' + batch.passed + ' passed, ' + (batch.failed + batch.errors) + ' not passed';
+  if (batch && batch.currentParameters && busy()) text += '  ' + batch.currentParameters;
   badge.textContent = text + (run.seed !== null && run.seed !== undefined ? '  seed ' + run.seed : '');
+  renderBatch(batch);
   badge.className = 'badge ' + run.status + ' ' + (run.runStatus || '');
   const b = busy();
   $('btn-run').disabled = b;
@@ -456,6 +471,26 @@ function applyState(run) {
   if (run.unsaved) notes.push('Ran from unsaved editor text.');
   if (notes.length || run.status === 'finished') message(notes.concat(run.status === 'finished' ? run.warnings : []), run.runStatus === 'Passed' ? 'info' : 'warning');
   renderForm();
+}
+
+// QA-5 D31-D32: one row per run of the batch (parameter set, seed, result, report) and the end summary.
+function renderBatch(batch) {
+  const box = $('batch');
+  if (!batch) return;
+  box.replaceChildren();
+  box.append(el('div', { text: `${batch.done}/${batch.total} runs: ${batch.passed} passed, ${batch.failed} failed, ${batch.skipped} skipped, ${batch.errors} errors` + (batch.stopOnFail ? '  (stop on fail)' : '') }));
+  if (batch.currentParameters && busy()) box.append(el('div', { class: 'muted', text: 'Now: run ' + batch.current + ' ' + batch.currentParameters }));
+  const table = el('table', null, el('tr', null, el('th', { text: '#' }), el('th', { text: 'Iteration' }), el('th', { text: 'Parameters' }),
+    el('th', { text: 'Seed' }), el('th', { text: 'Result' }), el('th', { text: 'Run' })));
+  for (const r of batch.rows) {
+    table.append(el('tr', null,
+      el('td', { text: String(r.number) }), el('td', { text: r.iteration ? String(r.iteration) : '' }),
+      el('td', { text: r.parameterSet ? '[' + r.parameterSet + '] ' + (r.parameters || '') : '' }), el('td', { text: String(r.seed) }),
+      el('td', { class: 'st ' + r.status, text: r.status }),
+      el('td', null, r.reportUrl ? el('a', { href: r.reportUrl, target: '_blank', rel: 'noopener', text: r.runId }) : el('span', { text: r.runId }))));
+  }
+  box.append(table);
+  if (batch.summary && batch.summary.length) box.append(el('pre', { text: batch.summary.join('\n') }));
 }
 
 function applyStep(step) {

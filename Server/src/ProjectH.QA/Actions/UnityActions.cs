@@ -57,7 +57,7 @@ public static partial class UnityActions
     public static readonly string[] HeadlessOnly =
     {
         "reconnect", "moveTo", "moveVector", "look", "aim", "fire", "stopFire", "press", "release", "switchWeapon", "jump", "sprint",
-        "crouch", "build", "pauseInput", "resumeInput",
+        "crouch", "build", "pauseInput", "resumeInput", "playInputs",
     };
 
     private static IEnumerable<string> CheckName(StepDefinition s)

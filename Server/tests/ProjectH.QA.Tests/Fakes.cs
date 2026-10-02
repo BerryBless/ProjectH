@@ -25,6 +25,8 @@ public sealed class MockActor : IQaActor
     public bool StallScripts { get; set; }
     // Null: every build request is accepted; else every one gets this code.
     public string? BuildRefusal { get; set; }
+    // QA-5: a playback that never completes (it is reported stopped, as after a lost connection).
+    public bool NeverFinishPlayback { get; set; }
     // Called after a command is applied (tests react, e.g. the fake server takes damage on fire).
     public Action<MockActor, ActorCommand>? OnCommand { get; set; }
 
@@ -56,6 +58,7 @@ public sealed class MockActor : IQaActor
                 BuildResults = s.BuildResults.Concat(b.Pieces.Select((p, i) => new BuildResultInfo(s.BuildLastSequence + 1 + i,
                     BuildRefusal ?? "Ok", BuildRefusal == null ? (uint)(100 + s.BuildLastSequence + i) : 0u))).ToArray(),
             },
+            PlayInputsCommand play => s with { PlaybackCommandId = play.Id, PlaybackActive = false, PlaybackCompleted = !NeverFinishPlayback, PlaybackSent = NeverFinishPlayback ? 0 : HeadlessActor.PlaybackTicks(play.Inputs.Count, play.Speed) },
             ScriptCommand sc => s with { PressesSent = s.PressesSent + sc.Steps.Count(x => x.FirePress || x.Buttons != 0), ScriptSteps = 0 },
             AimAtActorCommand a => s with { VisibleEntityIds = s.VisibleEntityIds.Append(a.EntityId).ToArray() },
             _ => s,
@@ -120,8 +123,11 @@ public sealed class FakeQaServer : IQaServerClient
     public Task<JsonElement> GetBuildAsync(float? x, float? z, float? radius, int? max, CancellationToken token) =>
         Task.FromResult(JsonSerializer.SerializeToElement(new { count = 1, pieces = new[] { new { id = 42, health = 100 } } }));
 
+    // QA-5: settable so baseline tests can make a run worse than the previous one.
+    public object Metrics { get; set; } = new { tickP50Ms = 0.4, tickP95Ms = 0.9, tickP99Ms = 1.5, tickMaxMs = 3.0, workingSetMB = 80.5 };
+
     public Task<JsonElement> GetMetricsAsync(int? windowSeconds, CancellationToken token) =>
-        Task.FromResult(JsonSerializer.SerializeToElement(new { tickP50Ms = 0.4, tickP95Ms = 0.9, tickP99Ms = 1.5, tickMaxMs = 3.0, workingSetMB = 80.5 }));
+        Task.FromResult(JsonSerializer.SerializeToElement(Metrics));
 
     public Task<JsonElement> GetEventsAsync(long after, int max, CancellationToken token)
     {

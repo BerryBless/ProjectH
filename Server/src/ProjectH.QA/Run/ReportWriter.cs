@@ -41,6 +41,8 @@ public static class ReportWriter
         Row(sb, "Git commit", (r.GitCommit ?? "(unknown)") + (r.GitDirty == true ? " (dirty working tree)" : r.GitDirty == false ? " (clean)" : string.Empty) + (r.GitError != null ? $" — {r.GitError}" : string.Empty));
         Row(sb, "Server", $"{r.ServerMode} {r.QaUrl} game port {r.GamePort}" + (r.ServerPid != null ? $" pid {r.ServerPid}" : string.Empty));
         Row(sb, "Server version", r.ServerVersion ?? "(unknown)");
+        if (r.ParameterSet != null) Row(sb, "Parameters", $"set {r.ParameterSet}: {BatchSummary.Compact(r.Parameters)}");
+        if (r.Batch != null) Row(sb, "Batch", r.Batch);
         sb.Append("</table>");
         if (r.ToolError != null) sb.Append("<div class=\"fail\"><b>Tool error:</b> <pre>").Append(E(r.ToolError)).Append("</pre></div>");
 
@@ -72,6 +74,8 @@ public static class ReportWriter
             foreach (string w in r.Warnings) sb.Append("<li>").Append(E(w)).Append("</li>");
             sb.Append("</ul>");
         }
+
+        if (r.Baseline != null) Baseline(sb, r.Baseline);
 
         if (r.StateDump != null)
         {
@@ -148,6 +152,31 @@ public static class ReportWriter
         foreach (string line in r.ServerLogTail) sb.Append(E(line)).Append('\n');
         sb.Append("</pre></body></html>");
         return sb.ToString();
+    }
+
+    // D33 / request §136: Previous / Current / Change % against the latest earlier PASSED run with the same parameters.
+    private static void Baseline(StringBuilder sb, BaselineReport b)
+    {
+        sb.Append("<h2>Baseline</h2>");
+        if (b.Note != null) sb.Append("<p class=\"muted\">").Append(E(b.Note)).Append("</p>");
+        if (b.PreviousRunId != null)
+        {
+            sb.Append("<p>Compared with run <b>").Append(E(b.PreviousRunId)).Append("</b> (").Append(E(b.PreviousUtc ?? ""))
+              .Append(b.PreviousGitCommit != null ? ", commit " + E(b.PreviousGitCommit[..Math.Min(10, b.PreviousGitCommit.Length)]) : "")
+              .Append("). A metric without a threshold in the scenario that is more than ").Append(b.WarnPercent.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture))
+              .Append("% worse (higher) is a warning, never a failure.</p>");
+            sb.Append("<table><tr><th>Metric</th><th>Previous</th><th>Current</th><th>Change %</th><th>Threshold</th><th></th></tr>");
+            foreach (BaselineRow row in b.Rows)
+            {
+                string change = row.ChangePercent is double c ? (c >= 0 ? "+" : "") + c.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "%" : "-";
+                sb.Append("<tr><td>").Append(E(row.Name)).Append("</td><td>").Append(BaselineHistory.Fmt(row.Previous)).Append("</td><td>")
+                  .Append(BaselineHistory.Fmt(row.Current)).Append("</td><td>").Append(E(change)).Append("</td><td>").Append(E(row.Threshold))
+                  .Append("</td>").Append(row.Warning ? "<td class=\"FAIL\">WARNING</td>" : "<td></td>").Append("</tr>");
+            }
+            sb.Append("</table>");
+        }
+        foreach (string w in b.Warnings) sb.Append("<p class=\"fail\">").Append(E(w)).Append("</p>");
+        if (b.HistoryFile != null) sb.Append("<p class=\"muted\">History: ").Append(E(b.HistoryFile)).Append(b.Recorded ? "" : " (this run was not recorded)").Append("</p>");
     }
 
     private static void Row(StringBuilder sb, string name, string value) =>

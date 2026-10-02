@@ -64,6 +64,37 @@ public static partial class ScenarioValidator
         {
             if (!VariableName().IsMatch(name)) Error("variables", $"Bad variable name '{name}'.");
         }
+
+        // D31: every parameter set is merged over `variables` for its run, so a name is usable when every set has it
+        // (or `variables` has it as the default).
+        var parameterNames = new List<HashSet<string>>();
+        for (int i = 0; i < s.Parameters.Count; i++)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (JsonProperty p in s.Parameters[i].EnumerateObject())
+            {
+                if (!VariableName().IsMatch(p.Name)) Error($"parameters[{i}]", $"Bad parameter name '{p.Name}'.");
+                else if (p.Name is "runId" or "seed") Error($"parameters[{i}]", $"'{p.Name}' is a built-in variable; it cannot be a parameter.");
+                if (!names.Add(p.Name)) Error($"parameters[{i}]", $"Duplicate parameter '{p.Name}'.");
+            }
+            parameterNames.Add(names);
+        }
+        if (parameterNames.Count > 0)
+        {
+            foreach (string name in parameterNames[0].Where(n => parameterNames.All(set => set.Contains(n)))) variables.Add(name);
+        }
+        string UnknownVariable(string root)
+        {
+            var missing = parameterNames.Select((set, i) => (set, i)).Where(x => !x.set.Contains(root)).Select(x => $"parameters[{x.i}]").ToList();
+            if (missing.Count > 0 && missing.Count < parameterNames.Count)
+                return $"Variable '${{{root}}}' is not in every parameter set (missing in {string.Join(", ", missing.Take(10))}{(missing.Count > 10 ? ", ..." : "")}); add it there or give a default in 'variables'.";
+            return $"Unknown variable '${{{root}}}'";
+        }
+
+        if (!(s.BaselineWarnPercent > 0 && s.BaselineWarnPercent <= 100_000))
+            Error("scenario", "baselineWarnPercent must be a positive percentage (default 50).");
+        if (s.BaselineValues.Count > ScenarioDefinition.MaxBaselineValues)
+            Error("baseline", $"At most {ScenarioDefinition.MaxBaselineValues} baseline values.");
         var stepIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (StepDefinition step in s.Steps)
         {
@@ -78,7 +109,7 @@ public static partial class ScenarioValidator
             {
                 foreach (string root in Variables.ReferencedRoots(p.Value))
                 {
-                    if (!variables.Contains(root)) Error(where, $"Unknown variable '${{{root}}}' in '{p.Key}'.");
+                    if (!variables.Contains(root)) Error(where, $"{UnknownVariable(root)} in '{p.Key}'.");
                 }
             }
 
@@ -144,6 +175,15 @@ public static partial class ScenarioValidator
                 }
             }
             if (actors.Count > ActorManager.MaxActors) Error(where, $"More than {ActorManager.MaxActors} actors.");
+        }
+
+        // D33: a baseline value is a variable the run has at its end (a saveAs, a scenario variable or a parameter).
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string name in s.BaselineValues)
+        {
+            if (!seen.Add(name)) Error("baseline", $"Duplicate baseline value '{name}'.");
+            else if (!VariableName().IsMatch(name)) Error("baseline", $"Bad baseline value name '{name}'.");
+            else if (!variables.Contains(name)) Error("baseline", $"Baseline value '{name}' is never saved (no step has saveAs '{name}' and it is not a variable).");
         }
         return issues;
     }

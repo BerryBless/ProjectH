@@ -4,13 +4,14 @@ QA Tool은 서버를 띄우고 Headless Client(Actor)를 실제 게임 프로토
 
 - 요청: `Docs/requests/2026-10-02-qa-scenario-orchestrator-request.md`. § 번호는 이 요청서 기준이다.
 - 설계: `Docs/specs/2026-10-02-qa-tool-design.md`. D 번호는 이 설계서의 결정이다.
-- 현재 범위: QA-1(MVP), QA-2(Web UI, 아래 "Web UI"), QA-3(Fault Injection, 아래 "Fault Injection"), QA-4(Unity Client 자동화·Screenshot·Manual Check, 아래 "Unity Client Actor"와 "Manual Check"). Parameter·Repeat·Baseline(QA-5)은 이 문서 기준 아직 없다.
+- 현재 범위: QA-1(MVP), QA-2(Web UI, 아래 "Web UI"), QA-3(Fault Injection, 아래 "Fault Injection"), QA-4(Unity Client 자동화·Screenshot·Manual Check, 아래 "Unity Client Actor"와 "Manual Check"), QA-5(Parameter·Repeat·Seed Sweep·Baseline·Recording 재생·Load 시나리오, 아래 "QA-5").
 
 ## Architecture
 
 ```text
 QA Tool (Server/src/ProjectH.QA, .NET 10 콘솔)
- └ QaCli: run / validate / list
+ └ QaCli: run / validate / list / ui / convert-recording
+    └ BatchPlanner: 파라미터 세트 × (반복 | Seed) 만큼 순차 실행 → BatchSummary (QA-5)
     └ QaOrchestrator: 시나리오 실행 1회 (RunContext: runId, seed, 변수, 취소)
         ├ ScenarioLoader / ScenarioValidator: JSON → DTO (schemaVersion 1)
         ├ ActionRegistry: action 이름 → IScenarioActionHandler
@@ -19,7 +20,8 @@ QA Tool (Server/src/ProjectH.QA, .NET 10 콘솔)
         ├ ActorManager → HeadlessActor (ProjectH.Bots 재사용). 테스트용 MockActor
         ├ AssertionEngine + Comparison: 경로 → 값 → 연산자
         ├ EventCursor: /qa/events 폴링 (필요할 때만)
-        └ ReportWriter: report.json + report.html
+        ├ ReportWriter: report.json + report.html
+        └ BaselineHistory: QA/Reports/history/<key>.jsonl + Baseline 비교 (QA-5)
 
 Game Server (ProjectH.Server, QA 모드)
  ├ UDP: 게임 프로토콜 (Actor = 실제 Client와 같은 경로)
@@ -132,6 +134,12 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `server.options` | {} | 서버 설정 덮어쓰기(`--Key=Value`). Tool 기본값보다 나중에 적용된다 |
 | `variables` | {} | `${name}`으로 쓰는 값 |
 | `actors` | [] | `{id, type}`. type은 `HeadlessClient`만 지원한다 |
+| `parameters` | 없음 | QA-5 D31: 객체 배열(최대 100). 항목마다 `variables` 위에 합쳐 한 번씩 실행한다. 아래 "QA-5" |
+| `baseline` | 없음 | QA-5 D33: `{ "values": ["저장한 변수", ...] }`(최대 50). 실행 기록에 남기고 비교한다 |
+| `baselineWarnPercent` | 50 | QA-5 D33: Threshold가 없는 지표가 이 비율보다 나빠지면 Warning(실패 아님) |
+| `parameters` | 없음 | QA-5 D31: 객체 배열(최대 100). 항목마다 `variables` 위에 합쳐 한 번씩 실행한다. 아래 "QA-5" |
+| `baseline` | 없음 | QA-5 D33: `{ "values": ["저장한 변수", ...] }`(최대 50). 실행 기록에 남기고 비교한다 |
+| `baselineWarnPercent` | 50 | QA-5 D33: Threshold가 없는 지표가 이 비율보다 나빠지면 Warning(실패 아님) |
 
 **Step 공통 필드**
 
@@ -191,6 +199,8 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `fire` | actor, `count?`(1–500, 기본 1) \| `holdMilliseconds?`, `slot?`(0–2), `target?` | 무기가 오고(UDP) 무기 Tool이 될 때까지 최대 3 s 기다린다. 필요하면 슬롯 키를 누른다. 한 번 누름 = Fire 1 Tick 후, 무기 FireIntervalTicks만큼 뗀다. 반자동 Edge를 만들고 Cooldown 때문에 누름을 잃지 않게 하려는 것이다. 다 누른 뒤 HitConfirmed 수가 150 ms 동안 그대로일 때까지(최대 500 ms) 기다린 다음 `hits`를 읽는다. saveAs = `{presses, hits, ammoBefore, ammoAfter, weapon}` |
 | `build` | actor, `piece`(wall/floor/ramp/roof), `material?`(wood), `cellX`,`level`,`cellZ` 또는 `position`, `rotation?`(0–3), `count?`(1–8), `dx?`,`dz?`(셀 간격), `expect?`(Ok, 또는 `any`나 다른 코드) | 실제 건설 입력이다(BotBuilder와 같은 순서).<br>1. Snapshot이 Build Tool을 보일 때까지 Q(`ToolBuild`)를 누른다(0.5 s 간격).<br>2. 조각마다 2 Tick 동안 조각 중심을 조준하고, 다음 Tick에 Input 뒤에 BuildRequest를 보낸다. 3 Tick = 서버 minimumBuildInterval 0.1 s.<br>3. 마지막 조각 뒤에도 10 Tick 동안 조준을 유지한다.<br>모든 BuildResult를 받으면 끝난다. saveAs = `{sent, accepted, pieceId, pieceIds[], codes[]}`. 끝난 뒤에도 Build Tool에 그대로 있다. `fire`는 슬롯 키로 무기를 다시 꺼낸다 |
 | `pauseInput` / `resumeInput` | actor | 연결은 유지하고 Input만 멈춘다. 다시 시작하면 원래대로 보낸다. 서버의 InputTimeout을 확인할 때 쓴다(§75) |
+| `playInputs` | actor, `file`(시나리오 옆 `.jsonl`, QA/ 밖 금지), `speed?`(0.25–4, 기본 1) (기본 Timeout 60 s) | QA-5 D34: Unity 녹화의 InputCommand를 Tick마다 하나씩 보낸다. 아래 "QA-5" |
+| `moveVectorAll` | `prefix?`, `x?`(0), `y?`(1), `spread?`(true) | QA-5 D35: prefix로 시작하는 모든 Headless Actor가 이 이동 입력을 계속 보낸다. spread면 각자 다른 방향(360°/N)을 본다. Load 시나리오용 |
 | `stopFire` | actor | Fire를 떼고, 대기 중인 사격을 버린다 |
 | `press` | actor, `button`(`Jump`, `Interact`, `Drop`, `UseMedkit`, `UseShieldCell`, `Reload`, `Slot1`…, `A+B` 조합), `count?`, `hold?` | 누르고 뗀다(Edge). `hold: true`면 계속 누른다 |
 | `release` | actor, `button` | 누르고 있던 버튼을 뗀다 |
@@ -365,6 +375,9 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `Stress/bots_50.json` | 133–134 | 50 Client가 60 s 경기 → tick p95 < 5 ms(느슨한 기준, 사용자가 조정). 측정값 0.15 ms | ~62 s |
 | `Network/latency_loss_combat.json` | 73 | B가 Proxy로 양방향 200 ms 지연 + 10% 손실(RTT 측정 ≈330 ms) → 정지한 A를 4발 사격 → 4발 모두 명중(서버 피해). B는 끊기지 않고 재접속도 없음(connections 1, graceStarts 0). 장애를 지우면 RTT가 돌아온다 | ~11 s |
 | `Combat/lag_compensation.json` | 119 | B RTT ≈150 ms(양방향 75 ms). A가 B 시야를 가로질러 달리고(≈5 m/s) B가 자기 Client가 본 A 위치를 쏜다 → 5발 중 5발 명중(4발 이상 기준). 대조: RTT ≈650–800 ms(되감기 창 0.4 s 밖)에서는 같은 사격이 1/5만 맞는다(2발 이하 기준) | ~15 s |
+| `Network/latency_sweep.json` | 108–109 | QA-5 D31: latency_loss_combat을 ping 0/100/200(파라미터 3세트)으로. 세트마다 RunId가 따로 생기고 요약이 나온다. 모든 세트에서 4발 명중, 연결 유지 | ~7 s × 3 |
+| `Recorded/sample.json` | 106–107 | QA-5 D34: 손으로 만든 녹화(`sample.inputs.jsonl`, 100 입력)를 재생 → 북쪽으로 2 s 걸음(z 6 → >12), 동쪽을 봄(yaw 90), 소총 발사(magAmmo 감소) | ~5 s |
+| `Stress/load_bots_10.json`, `load_bots_50.json` | 133–135 | QA-5 D35: LoadTest.md 조건(DevRespawn, MaxPlayers 100)으로 10/50 Client가 60 s 걸음 → tick p95 < 5 ms(느슨한 기준, 사용자가 조정), 60 s p95/p99·메모리를 Baseline에 기록. 측정: 10명 p95 0.06 ms, 50명 0.15 ms | ~62 s |
 | `Reconnect/network_drop.json` | 74 | A(Proxy)가 알림 없이 끊김(`dropConnection`) → 1 s 뒤 서버는 아직 connected → DisconnectTimeout 뒤 Graced → 새 Proxy로 재접속 → 같은 Entity·체력·실드·무기·Medkit·위치 | ~9 s |
 | `Network/invalid_packet.json` | 127 | 잘못된 패킷 9개(unknownId, truncated, oversized) → badPackets 9, 연결 유지 → garbage 15개 더(합 24 ≥ 20) → A만 Kicked. C의 Input Flood 120개 → C Kicked. 서버 계속 실행, tickFailures 0, B는 계속 Snapshot 수신 | ~3.5 s |
 | `ServerProcess/shutdown.json` | 129 | 2명 접속 중 `stopServer` → 두 Client 모두 `ServerShutdown` 수신, 종료 코드 0, 종료 시간 측정값 ≈0.1 s(기준 8 s) → `server.running` false | ~4 s |
@@ -377,8 +390,9 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 |---|---|---|
 | `smoke` | connect, move_to, basic_hit | ~16 s |
 | `pre-push` | §93: connect, move, shoot, pickup, death, reconnect | ~30 s |
-| `full-regression` | 모든 카테고리. Stress, Persistence, ServerProcess 포함 | ~3.5 min |
+| `full-regression` | 모든 카테고리. Stress, Persistence, ServerProcess, Recorded 포함 | ~6 min |
 | `faults` | QA-3: latency_loss_combat, lag_compensation, network_drop, invalid_packet, input_timeout, shutdown, restart, db_down | ~1 min |
+| `stress` | QA-5 D35: `Stress` 전체(bots_50, load_bots_10, load_bots_50). 같은 이름의 카테고리가 있으므로 `suite:stress`로 부른다 | ~3.2 min |
 
 **아직 없는 시나리오와 이유**
 
@@ -400,6 +414,10 @@ dotnet run --project Server/src/ProjectH.QA -- run category:Smoke --seed 7 --ver
 dotnet run --project Server/src/ProjectH.QA -- run category:Smoke --attach http://127.0.0.1:7780  # 이미 떠 있는 QA 서버
 dotnet run --project Server/src/ProjectH.QA -- validate QA/Scenarios
 dotnet run --project Server/src/ProjectH.QA -- list
+dotnet run --project Server/src/ProjectH.QA -- run QA/Scenarios/Smoke/connect.json --repeat 3          # QA-5
+dotnet run --project Server/src/ProjectH.QA -- run QA/Scenarios/Combat/basic_hit.json --seed-sweep 1..100 --stop-on-fail
+dotnet run --project Server/src/ProjectH.QA -- run suite:stress
+dotnet run --project Server/src/ProjectH.QA -- convert-recording rec.jsonl --out QA/Scenarios/Recorded/my_run.json
 ```
 
 **대상 지정**
@@ -426,6 +444,10 @@ dotnet run --project Server/src/ProjectH.QA -- list
 | `--unity-exe PATH` | UnityClient Actor의 기본 Development Player(`ProjectH.exe`, QA-4) |
 | `--manual ask\|skip\|fail` | Manual Check: ask(기본: 터미널이면 묻고 아니면 SKIPPED), skip(묻지 않음), fail(답할 사람이 없으면 FAIL) |
 | `--fail-on-skip` | SKIPPED 시나리오를 종료 코드 1로 친다(기본은 0). Docker가 꼭 있어야 하는 CI에서 쓴다 |
+| `--repeat N` | QA-5: 시나리오마다 N번 연속 실행(1–1000). Seed가 있으면 같은 Seed |
+| `--seed-sweep A..B` | QA-5: Seed A..B로 한 번씩(최대 1000개). `--seed`·`--repeat`와 같이 쓸 수 없다 |
+| `--stop-on-fail` | QA-5: 반복·Sweep·파라미터 묶음을 첫 실패에서 멈춘다(Suite도 거기서 멈춘다) |
+| `--parameter-set N` | QA-5: 파라미터 세트 N(1부터)만 실행한다. 요약의 재현 명령이 쓴다 |
 
 - **종료 코드**(D18):
   - 0: 모두 PASS(또는 SKIPPED).
@@ -469,6 +491,7 @@ dotnet run --project Server/src/ProjectH.QA -- ui --attach http://127.0.0.1:7780
 | Actors | 이름·상태·체력 목록. 선택한 Actor는 서버 Player DTO와 Actor 상태를 보인다: PlayerId, 연결, 위치, 속도, 체력, 실드, 무기, 탄약, 인벤토리, 자원, 이동 모드 |
 | Match | 상태, Tick, 플레이어, 생존, Zone, 경과 시간 |
 | Server | CPU, 메모리, GC, tick p50/p95/p99/max, 패킷/s, QA 명령 시간과 큐 카운터 |
+| Batch | QA-5: 묶음 실행의 실행별 줄(번호, 반복, 파라미터 세트, Seed, 결과, Report)과 요약 |
 | Reports | 최근 실행 50개의 `report.html` 링크 |
 
 - Server 탭에 bytes/s는 없다. `/qa/metrics`가 내지 않기 때문이다.
@@ -487,6 +510,7 @@ dotnet run --project Server/src/ProjectH.QA -- ui --attach http://127.0.0.1:7780
 | Retry Scenario | 마지막 시나리오를 같은 Seed로 처음부터 다시 실행 |
 | Seed | 덮어쓸 Seed. 비우면 시나리오 Seed를 쓴다 |
 | Debug Run | Step 앞뒤로 `/qa/match`·`/qa/players` Snapshot을 Report `debugSnapshots`에 남긴다(D24, 최대 400개) |
+| Repeat / Seed sweep / Stop on fail | QA-5: Run에만 쓴다(Run From·Until·Single Step이면 거부). 파라미터가 있는 시나리오의 Run도 묶음이다. 묶음은 실패를 보류하지 않고 다음 실행으로 간다. 아래 "Batch" 탭에 실행마다 파라미터 세트·Seed·결과·Report 링크가 한 줄씩(최근 200줄) 나오고 끝에 요약이 나온다. 배지는 `run 2/3 parameters[2] {...}`. Retry Scenario는 같은 묶음을 다시 실행한다. Run From·Until·Single Step은 파라미터 세트 1만 쓴다 |
 
 **멈춰 있을 때**
 - 시나리오 Timeout은 실행 시간만 센다. Pause, Breakpoint, 실패 보류 중에는 멈춘다.
@@ -524,7 +548,7 @@ dotnet run --project Server/src/ProjectH.QA -- ui --attach http://127.0.0.1:7780
 | GET | `/api/tree`, `/api/actions`, `/api/markers` | 트리, Action Spec, Marker 이름 |
 | GET | `/api/scenario?path=Combat/basic_hit.json` | 파일 내용 |
 | POST | `/api/validate` `{text}`, `/api/save` `{path, text}` | |
-| GET / POST | `/api/run` | 상태 / 시작 `{path?, text?, mode: run\|from\|until\|single, stepIndex, seed?, debug, breakpoints[]}` |
+| GET / POST | `/api/run` | 상태 / 시작 `{path?, text?, mode: run\|from\|until\|single, stepIndex, seed?, debug, breakpoints[], repeat?, seedSweep?, stopOnFail?}` |
 | POST | `/api/run/pause`, `resume`, `step`, `stop`, `retry`, `retry-scenario`, `breakpoints` `{indices}` | |
 | GET | `/api/stream` | SSE: `state`, `step`, `run`, `log` |
 | GET | `/api/inspect/actors`, `/api/inspect/actor?alias=`, `/api/inspect/match`, `/api/inspect/server` | 실행 중일 때만 |
@@ -546,6 +570,7 @@ curl -s http://127.0.0.1:5180/api/run
 - 최근 이벤트 50개(§105), Metrics Snapshot, 서버 로그 마지막 200줄, 서버 실행 명령
 - Cleanup 결과. 결과와 따로 적는다(§114)
 - 변수 최종값, Validation 경고, Manual Check·Screenshot(QA-4 전까지 비어 있음)
+- QA-5: Parameters·Batch 줄(Summary), Baseline 표(아래 "QA-5")
 
 ## Fault Injection
 
@@ -668,6 +693,91 @@ Client 쪽 세부 사항(스레드, 상태 코드 전체, 녹화 형식)은 `Doc
 - `t` = Step 번호 / simHz다. Spawn 전이나 끊긴 동안의 시간은 빠진다. Step 번호는 `round(t*simHz)`로 구한다.
 - `buttons`는 `InputButtons` 비트다. 건설 요청과 접속은 녹화에 없다.
 - 최대 54,000줄이다.
+
+## QA-5
+
+D31–D35, 요청서 §106–111, §133–136, §156. 실행은 언제나 순차다(병렬 없음). 성능 측정이 다른 실행과 CPU를 나눠 쓰지 않게 하기 위해서다.
+
+### Parameterized Scenario (D31)
+
+```json
+"variables": { "limit": 150 },
+"parameters": [ { "ping": 0, "rttMin": -1 }, { "ping": 100, "rttMin": 150 }, { "ping": 200, "rttMin": 300 } ]
+```
+
+- 항목마다 `variables` 위에 합쳐서(같은 이름은 파라미터가 이긴다) 한 번씩 실행한다. 실행마다 RunId·Report·history 줄이 따로 생긴다.
+- **Validation**: 항목은 객체여야 하고(최대 100), 이름은 변수 이름 규칙을 따르며 `runId`·`seed`는 쓸 수 없다. `${x}`는 모든 항목에 있거나 `variables`에 기본값이 있어야 한다. 일부 항목에만 있으면 빠진 항목을 오류에 적는다.
+- 서버 설정(`server.options`)에는 변수가 들어가지 않는다. 파라미터는 Step 인자에만 쓴다.
+- 콘솔 첫 줄과 Report Summary에 `parameters[2] {"ping":100}`이 나온다. 끝에 묶음 요약이 나온다. 요약에는 파라미터 세트별 PASS 수, 실패 Seed, 재현 명령(`run <file> --seed S --parameter-set N`)이 있다.
+- 예: `Network/latency_sweep.json`.
+
+### Repeat / Seed Sweep (D32)
+
+- `--repeat N`(1–1000): 같은 시나리오를 N번 실행한다. Seed는 `--seed`, 그다음 시나리오 Seed다. 둘 다 없으면 실행마다 새 무작위 Seed를 쓴다. 요약은 그 실행의 실제 Seed를 적는다.
+- `--seed-sweep A..B`: Seed A부터 B까지 한 번씩(최대 1000개, 음수 가능).
+- 파라미터와 함께 쓰면 파라미터 세트마다 반복이나 Sweep 전체를 돈다(세트 1의 모든 Seed, 그다음 세트 2…).
+- `--stop-on-fail`: 첫 FAILED·ERROR에서 남은 실행을 시작하지 않는다. SKIPPED는 실패가 아니다.
+- **Ctrl+C**: 현재 실행을 멈추고 Cleanup한 뒤, 남은 실행은 시작하지 않는다(종료 코드 1).
+- 종료 코드는 모든 실행 중 가장 큰 값이다. 마지막 줄은 `1 scenario, 3 runs: 3 passed, ...`다.
+
+```text
+== Batch Basic Hit And Reconnect: 3 runs: 2 passed, 1 failed, 0 skipped, 0 errors; exit code 1.
+   failing seeds: 2
+   run 2/3 seed 2 FAILED at step 05 (a_damaged)  runId qa-...
+   reproduce: dotnet run --project Server/src/ProjectH.QA -- run QA/Scenarios/Combat/basic_hit.json --seed 2
+```
+
+- RunId는 같은 초에 여러 개 만들어도 겹치지 않는다(이 프로세스가 이번 초와 직전 초에 낸 id 집합 + Report 폴더 존재 확인). 형식은 그대로다.
+- Web UI: 툴바의 Repeat / Seed sweep / Stop on fail과 "Batch" 탭(위 "Web UI").
+
+### Baseline (D33, §135–136)
+
+- 실행이 끝날 때마다 `QA/Reports/history/<key>.jsonl`에 한 줄을 덧붙인다(`--report-dir`이면 그 아래 `history/`).
+  - key는 `QA/Scenarios` 기준 경로(`.json` 제외)에서 `[A-Za-z0-9_-]` 밖의 문자를 `_`로 바꾼 읽기용 부분 + `_` + 경로(소문자)의 SHA-256 앞 8자리다(`Stress/load_bots_10.json` → `Stress_load_bots_10_<8 hex>`). 읽기용 부분이 같아지는 두 파일(`Stress/a.json`, `Stress_a.json`)도 history가 섞이지 않는다. 밖의 파일은 `external_<이름>_<경로 해시>`. 각 줄에 `scenarioFile`(상대 경로)도 남기고, 직전 PASSED 실행은 같은 `scenarioFile`에서만 찾는다.
+  - 줄: `runId, utc, scenario, scenarioFile, seed, parameters, parametersKey, gitCommit, gitDirty, status, durationMs, metrics{tickP50Ms, tickP95Ms, tickP99Ms, workingSetMB}, values{...}`.
+  - `metrics`는 실행 끝의 `/qa/metrics`(기본 창)다. 시나리오가 서버를 멈춘 채 끝나면 없다.
+  - `values`는 시나리오 `baseline.values`에 적은 변수의 끝 값이다. 숫자·문자열(200자)·bool만 남긴다. 객체는 "(object, not recorded)".
+  - 시나리오 파일마다 최근 50줄만 남긴다. FAILED·ERROR·CANCELLED 실행도 남는다(비교 대상은 PASSED만).
+- **기록하지 않는 경우**: 파일이 없는 UI 텍스트, 저장하지 않은 편집기 텍스트, Run From Step. Report Baseline에 이유가 나온다. Report를 쓰지 않는 실행(테스트)도 기록하지 않는다.
+- **두 Tool 프로세스가 동시에 쓸 때**: `<key>.lock`을 `FileShare.None`으로 열어(최대 3 s 재시도) 잠근 뒤 읽기 → 추가 → 50줄로 자르기 → 같은 폴더의 임시 파일에 쓰기 → `File.Move(overwrite)`로 바꾼다. 읽는 쪽은 옛 파일이나 새 파일을 통째로 본다. 잠금을 못 얻거나 I/O가 실패하면 Warning만 남기고 결과·종료 코드는 그대로다. `.lock` 파일은 빈 표시 파일로 남는다.
+- **Report "Baseline"**: 같은 시나리오, 같은 파라미터 세트의 가장 최근 PASSED 실행과 비교한 Previous / Current / Change % 표.
+  - 행: durationMs(정보만, 경고 없음), server.tickP50Ms·tickP95Ms·tickP99Ms·workingSetMB, `baseline.values`.
+  - **Threshold가 있는 지표**(그 경로를 연산자로 검사하는 `assert`·`waitFor`가 있음, 또는 그런 `assert`의 `saveAs` 값)는 그 Step이 판정한다. 표에는 "assert in scenario"로 나온다.
+  - **Threshold가 없는 지표**가 `baselineWarnPercent`(기본 50 %)보다 커지면(값이 클수록 나쁘다고 본다) Warning이다. Report Warnings와 콘솔 `WARNING Baseline: ...`에 나온다. **FAIL은 아니다**(§136).
+  - 이전 값이 0이면 Change %를 계산하지 않는다. 0.05 ms 같은 작은 Tick 값은 실행 사이 편차가 커서 Warning이 날 수 있다. Warning은 확인할 것을 알리는 것이지 회귀 판정이 아니다.
+- history는 로컬이다(`QA/Reports`는 gitignore).
+
+### Recording 재생 (D34, §106–107)
+
+```bash
+ProjectH.exe -qaRecord C:/tmp/run1.jsonl ...          # Unity Development Build에서 녹화 (위 "Unity Client")
+dotnet run --project Server/src/ProjectH.QA -- convert-recording C:/tmp/run1.jsonl [--out QA/Scenarios/Recorded/run1.json] [--actor playerA] [--force]
+```
+
+- `convert-recording`은 녹화를 검사하고, 시나리오 옆에 `<name>.inputs.jsonl`로 복사하고, 초안 시나리오를 쓴다.
+  - 검사: header(`type: header`, version 1, simHz 1–240 정수), 줄 길이 1024자, 파일 16 MB, 입력 54,000줄, 모든 숫자가 유한하고 범위 안(moveX·moveY −1..1, aimPitch −90..90, buttons 0–65535 정수), `t`가 줄마다 증가. 빈 파일은 "한 번도 Spawn하지 않음"으로 알린다. 모르는 버튼 비트는 지우고 수를 알린다.
+  - `--out`은 저장소 루트 기준 경로(절대 경로도 가능)이고 `QA/Scenarios` 아래 `.json`이어야 한다. 초안을 먼저 쓰고 입력을 복사한다. 실패하면 이번 호출이 만든 파일(초안·입력)을 지운다(`--force`로 덮어쓰던 기존 파일은 그대로). 기본은 `QA/Scenarios/Recorded/<녹화 이름>.json`. 이미 있으면 `--force` 없이는 쓰지 않는다(종료 코드 2).
+  - 초안: `Server:DevRespawn=true`(Client 하나로 움직이고 쏠 수 있다), connect → `player.alive` 대기 → `playInputs`(녹화 길이 + 15 s Timeout) → 자리표시 assert 2개(연결·생존). description의 TODO에 바꿀 assert 예가 있다.
+- `playInputs {actor, file, speed?}`
+  - `file`은 시나리오 파일 기준 상대 경로이고 정규화 뒤 `QA/` 밖이면 실패한다. 저장되지 않은 UI 텍스트에서는 쓸 수 없다.
+  - Headless Actor가 Pump Tick마다(서버 SimHz) 기록된 입력 하나를 보낸다. MoveX·MoveY·Yaw·Buttons·AimYaw·AimPitch는 기록 그대로, Seq는 BotConnection이 매기고 ViewTick은 그 Actor의 최신 Snapshot Tick이다.
+  - 실제로 입력을 보낸 Tick에만 진행한다(입력 정지·접속 전에는 멈춰 있다). 모두 보내면 Step이 끝난다. saveAs = `{inputs, sent, simHz, speed, seconds, ms}`.
+  - `speed`(0.25–4): Tick마다 녹화 커서를 speed만큼 옮긴다. 1보다 크면 건너뛴 입력의 버튼을 보낸 입력에 합친다(한 Tick 누름을 잃지 않게). 마지막 입력은 어느 속도에서도 반드시 보낸다(100개를 speed 2로 재생하면 51 Tick). 1보다 작으면 같은 입력을 여러 Tick 보낸다(누름이 길어진다).
+  - 녹화 길이가 Step Timeout보다 길면 보내기 전에 실패하고 필요한 `timeoutMilliseconds`를 알린다. 기본 Timeout은 60 s다.
+  - Timeout·취소·연결 끊김이면 남은 재생을 지운다(다음 Step으로 새지 않는다). 재생 중에는 Actor의 다른 의도(moveTo, aim 등)를 쓰지 않는다.
+  - 메모리: 녹화 전체를 한 배열(최대 54,000개, 약 1.5 MB)로 읽는다. 재생이 끝나거나 멈추면 Actor가 놓는다.
+- **한계**: 녹화는 입력만 담는다. Build 요청, UI, 접속, 녹화 때 서버 상태(Spawn 위치, Loot, 다른 플레이어)는 없다. 그래서 같은 녹화도 다른 결과가 날 수 있다. 시작 상태가 중요하면 재생 전에 Arrange(setPosition, giveWeapon)로 만든다(`Recorded/sample.json`).
+
+### Load 시나리오 (D35, §133–134)
+
+- `Stress/load_bots_10.json`, `load_bots_50.json`: Docs/LoadTest.md 조건을 `server.options`로 고정한다.
+  - `Server:DevRespawn=true`(경기 흐름 없음, 죽어도 3 s 뒤 부활), `Server:MaxPlayers=100`, `Qa:Events=false`(QA Tick diff 비용을 빼서 LoadTest와 같게).
+  - `spawnActors` → `connectAll` → `moveVectorAll`(각자 다른 방향으로 걷기) → 60 s → `tickP95Ms`(60 s 창) < `${tickP95LimitMs}`(5 ms).
+  - **5 ms는 느슨한 기본값이다.** 실제 목표는 Baseline을 보고 사용자가 `variables.tickP95LimitMs`로 정한다(§134).
+  - 60 s p95·p99·메모리를 `baseline.values`로 남긴다. 두 번째 실행부터 Report에 Baseline 표가 나온다.
+  - LoadTest의 봇과 다른 점: 봇 Brain(사격·줍기)이 아니라 걷기만 한다. 같은 PC에서 Tool·Actor Pump·서버가 같이 돈다.
+- 측정(2026-10-02, 이 PC, Debug): 10명 p95 0.062 ms·p99 0.097 ms·메모리 60 MB(2회째, 1회째 대비 +4 %), 50명 p95 0.151 ms·p99 0.197 ms·61 MB.
+- Suite `suite:stress`(카테고리 `Stress`와 이름이 같아서 접두어가 필요하다).
 
 ## Adding New Actions
 

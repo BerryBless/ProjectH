@@ -20,6 +20,9 @@
   <button id="btn-retry" title="Run the failed step again in the same game (its state may have changed)">Retry Failed Step</button>
   <button id="btn-retry-scenario" title="Run the last scenario again from the start with the same seed">Retry Scenario</button>
   <label>Seed <input id="seed" type="number" placeholder="scenario"></label>
+  <label title="QA-5: run the scenario N times in a row (Run only)">Repeat <input id="repeat" type="number" min="1" max="1000" value="1" style="width:4em"></label>
+  <label title="QA-5: one run per seed A..B, at most 1000 (Run only; leave Seed empty)">Seed sweep <input id="seed-sweep" placeholder="A..B" style="width:6em"></label>
+  <label title="QA-5: stop a repeat / sweep / parameter batch at its first failing run"><input id="stop-on-fail" type="checkbox"> Stop on fail</label>
   <label title="Save /qa/match and /qa/players before and after every step in the report (D24)"><input id="debug" type="checkbox"> Debug Run</label>
   <span id="run-status" class="badge">idle</span>
 </header>
@@ -64,6 +67,7 @@
     <button data-tab="actors">Actors</button>
     <button data-tab="match">Match</button>
     <button data-tab="server">Server</button>
+    <button data-tab="batch">Batch</button>
     <button data-tab="reports">Reports</button>
     <span class="sep"></span>
     <span id="log-filters"></span>
@@ -75,6 +79,7 @@
   </div>
   <div class="tab-body hidden" data-group="bottom" data-tab="match"><pre id="match-view" class="muted">No live run.</pre></div>
   <div class="tab-body hidden" data-group="bottom" data-tab="server"><pre id="server-view" class="muted">No live run.</pre></div>
+  <div class="tab-body hidden" data-group="bottom" data-tab="batch"><div id="batch"><p class="muted">No batch. A scenario with parameters, Repeat &gt; 1 or a seed sweep runs as a batch: one row per run.</p></div></div>
   <div class="tab-body hidden" data-group="bottom" data-tab="reports"><div id="reports"></div></div>
 </section>
 <script src="app.js"></script>

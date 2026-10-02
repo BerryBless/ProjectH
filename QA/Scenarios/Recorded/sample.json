@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "name": "Recorded Sample Replay",
+  "description": "QA-5 D34: a small hand-made recording in the Unity -qaRecord format (sample.inputs.jsonl, 100 inputs at 30 Hz): walk forward (+Z) for 2 s, turn to +X over 0.5 s, take slot 1 and pull the trigger 3 times. A headless client replays it one input per tick; the server's state proves the inputs went through the real path: the player moved about 2 s of walking north, faces east, and the rifle fired. Server:DevRespawn lets one client move and shoot without a second player.",
+  "tags": ["recorded", "movement"],
+  "seed": 3401,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:DevRespawn": "true" } },
+  "actors": [ { "id": "playerA" } ],
+  "steps": [
+    { "id": "connect", "action": "connect", "actor": "playerA" },
+    { "id": "alive", "action": "waitFor", "condition": "player.alive", "actor": "playerA", "equals": true, "timeoutMilliseconds": 5000 },
+    { "id": "start", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Move_Start", "yaw": 0 },
+    { "id": "rifle", "action": "giveWeapon", "actor": "playerA", "weapon": "Vesper AR", "rarity": 0, "slot": 0, "select": true },
+    { "id": "rifle_ready", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerA", "equals": "Vesper AR", "timeoutMilliseconds": 3000 },
+    { "id": "mag_before", "action": "save", "path": "player.weapon.magAmmo", "actor": "playerA", "saveAs": "magBefore" },
+    { "id": "play", "phase": "act", "action": "playInputs", "actor": "playerA", "file": "sample.inputs.jsonl", "timeoutMilliseconds": 15000, "saveAs": "played" },
+    { "id": "all_sent", "phase": "assert", "assert": "var.played.sent", "equals": 100 },
+    { "id": "moved_north", "action": "waitFor", "condition": "player.position.z", "actor": "playerA", "greaterThan": 12, "timeoutMilliseconds": 2000, "description": "2 s of walking (4.5 m/s) from z 6 ends near z 15" },
+    { "id": "kept_x", "assert": "player.position.x", "actor": "playerA", "approximately": -10, "tolerance": 1 },
+    { "id": "faces_east", "assert": "player.yaw", "actor": "playerA", "approximately": 90, "tolerance": 1 },
+    { "id": "fired", "action": "waitFor", "condition": "player.weapon.magAmmo", "actor": "playerA", "lessThan": "${magBefore}", "timeoutMilliseconds": 2000, "description": "the replayed trigger presses fired the rifle" },
+    { "id": "still_connected", "assert": "player.connected", "actor": "playerA", "equals": true }
+  ]
+}

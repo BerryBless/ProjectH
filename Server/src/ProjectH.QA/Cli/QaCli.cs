@@ -14,6 +14,7 @@ public static class QaCli
         "  dotnet run --project Server/src/ProjectH.QA -- validate <same targets>\n" +
         "    (a bare name is a category or a suite; if both exist, choose with category: or suite:)\n" +
         "  dotnet run --project Server/src/ProjectH.QA -- list\n" +
+        "  dotnet run --project Server/src/ProjectH.QA -- convert-recording <recording.jsonl> [--out QA/Scenarios/Recorded/<name>.json] [--actor playerA] [--force]\n" +
         "  dotnet run --project Server/src/ProjectH.QA -- ui [--port 5180]   (web UI on http://127.0.0.1:<port>/)\n" +
         "Options:\n" +
         "  --seed N            override the scenario seed\n" +
@@ -25,6 +26,10 @@ public static class QaCli
         "  --fail-on-skip      a SKIPPED scenario (e.g. no Docker for a DB fault) exits 1 instead of 0\n" +
         "  --unity-exe PATH    QA-4: the Unity Development player for UnityClient actors (ProjectH.exe)\n" +
         "  --manual MODE       QA-4 manual checks: ask (default: ask on a terminal, SKIPPED otherwise), skip, fail (FAIL when nobody can answer)\n" +
+        "  --repeat N          QA-5: run each scenario N times in a row, 1-1000 (same seed when it has one)\n" +
+        "  --seed-sweep A..B   QA-5: run each scenario once per seed A..B (at most 1000 seeds), in order\n" +
+        "  --stop-on-fail      QA-5: stop a repeat / sweep / parameter batch at its first failing run\n" +
+        "  --parameter-set N   QA-5: run only the scenario's parameter set N (1-based; the reproduce command)\n" +
         "  --repo DIR          repository root (default: found from the current directory)\n" +
         "  --port N            ui only: the UI's port on 127.0.0.1, 0-65535 (default 5180; 0 = any free port)";
 
@@ -43,6 +48,17 @@ public static class QaCli
         public string? UnityExe { get; set; }
         public string Manual { get; set; } = "ask";
         public int Port { get; set; } = UiHostOptions.DefaultPort;
+        // QA-5 (D31-D32).
+        public int Repeat { get; set; } = 1;
+        public (int From, int To)? SeedSweep { get; set; }
+        public bool StopOnFail { get; set; }
+        public int? ParameterSet { get; set; }
+        // QA-5 convert-recording (D34).
+        public string? Out { get; set; }
+        public string Actor { get; set; } = "playerA";
+        public bool Force { get; set; }
+
+        public BatchOptions Batch => new() { Repeat = Repeat, SeedSweep = SeedSweep, StopOnFail = StopOnFail, ParameterSet = ParameterSet };
     }
 
     public static bool TryParse(string[] args, out Parsed parsed, out string? error)
@@ -76,6 +92,16 @@ public static class QaCli
             if (a == "--fail-on-skip")
             {
                 parsed.FailOnSkip = true;
+                continue;
+            }
+            if (a == "--stop-on-fail")
+            {
+                parsed.StopOnFail = true;
+                continue;
+            }
+            if (a == "--force")
+            {
+                parsed.Force = true;
                 continue;
             }
             if (i + 1 >= args.Length)
@@ -118,17 +144,41 @@ public static class QaCli
                 case "--repo":
                     parsed.Repo = Path.GetFullPath(value);
                     break;
+                case "--repeat":
+                    if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int repeat) || repeat < 1 || repeat > BatchOptions.MaxRepeat) { error = $"--repeat must be 1-{BatchOptions.MaxRepeat}."; return false; }
+                    parsed.Repeat = repeat;
+                    break;
+                case "--seed-sweep":
+                    if (!BatchOptions.TryParseSweep(value, out var sweep, out error)) return false;
+                    parsed.SeedSweep = sweep;
+                    break;
+                case "--parameter-set":
+                    if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int set) || set < 1 || set > ScenarioDefinition.MaxParameterSets) { error = $"--parameter-set must be 1-{ScenarioDefinition.MaxParameterSets}."; return false; }
+                    parsed.ParameterSet = set;
+                    break;
+                case "--out":
+                    parsed.Out = value;
+                    break;
+                case "--actor":
+                    parsed.Actor = value;
+                    break;
                 default:
                     error = $"Unknown option {a}.";
                     return false;
             }
         }
-        if (parsed.Command is "run" or "validate" && parsed.Target == null)
+        if (parsed.Command is "run" or "validate" or "convert-recording" && parsed.Target == null)
         {
-            error = $"'{parsed.Command}' needs a scenario file, directory, category or suite.";
+            error = parsed.Command == "convert-recording" ? "'convert-recording' needs the recording file (.jsonl)." : $"'{parsed.Command}' needs a scenario file, directory, category or suite.";
             return false;
         }
-        return true;
+        if (parsed.SeedSweep != null && parsed.Seed != null)
+        {
+            error = "Use --seed or --seed-sweep, not both.";
+            return false;
+        }
+        error = parsed.Batch.Check();
+        return error == null;
     }
 
     public static async Task<int> RunAsync(string[] args, TextWriter output, CancellationToken token,
@@ -163,6 +213,8 @@ public static class QaCli
                 return 0;
             case "ui":
                 return await RunUiAsync(p, root, output, token, serverFactory, actorFactory).ConfigureAwait(false);
+            case "convert-recording":
+                return RecordingConverter.Run(root, p.Target!, p.Out, p.Actor, p.Force, output);
             case "validate":
             case "run":
                 break;
@@ -187,7 +239,8 @@ public static class QaCli
         }
 
         int exit = 0;
-        int passed = 0, failed = 0, skipped = 0, errors = 0;
+        int passed = 0, failed = 0, skipped = 0, errors = 0, runs = 0;
+        BatchOptions batchOptions = p.Batch;
         foreach (string file in files)
         {
             if (token.IsCancellationRequested)
@@ -213,39 +266,94 @@ public static class QaCli
             }
             foreach (ValidationIssue w in issues) output.WriteLine($"   {w}");
 
-            var options = new QaRunOptions
+            ScenarioDefinition scenario = load.Scenario!;
+            if (BatchPlanner.CheckFor(scenario, batchOptions) is string planError)
             {
-                RepoRoot = root,
-                SeedOverride = p.Seed,
-                AttachUrl = p.Attach,
-                ServerDll = p.ServerDll,
-                ReportDir = p.ReportDir,
-                PollMs = p.PollMs,
-                Verbose = p.Verbose,
-                ServerClientFactory = serverFactory,
-                ActorFactory = actorFactory,
-                FailOnSkip = p.FailOnSkip,
-                UnityExe = p.UnityExe,
-                UnityHandlerFactory = unityHandlerFactory,
-                ManualPrompt = ManualPrompt(p.Manual, input ?? Console.In, interactive ?? !Console.IsInputRedirected, output),
-            };
-            RunReport report = await new QaOrchestrator(options, registry, markers, output).RunAsync(load.Scenario!, issues, token).ConfigureAwait(false);
-            exit = Math.Max(exit, report.ExitCode);
-            switch (report.Status)
-            {
-                case RunStatus.Passed: passed++; break;
-                case RunStatus.Skipped: skipped++; break;
-                case RunStatus.Error: errors++; break;
-                default: failed++; break;
+                output.WriteLine($"INVALID {Relative(root, file)}: {planError}");
+                exit = 2;
+                errors++;
+                continue;
             }
+            // D31-D32: one run per parameter set and per iteration / seed, one after another.
+            int total = BatchPlanner.Count(scenario, batchOptions);
+            var summary = new BatchSummary(scenario.Name, Relative(root, file).Replace('\\', '/'));
+            foreach (PlannedRun planned in BatchPlanner.Plan(scenario, batchOptions, p.Seed))
+            {
+                if (token.IsCancellationRequested)
+                {
+                    summary.Stopped = true;
+                    break;
+                }
+                var options = new QaRunOptions
+                {
+                    RepoRoot = root,
+                    SeedOverride = planned.Seed,
+                    AttachUrl = p.Attach,
+                    ServerDll = p.ServerDll,
+                    ReportDir = p.ReportDir,
+                    PollMs = p.PollMs,
+                    Verbose = p.Verbose,
+                    ServerClientFactory = serverFactory,
+                    ActorFactory = actorFactory,
+                    FailOnSkip = p.FailOnSkip,
+                    UnityExe = p.UnityExe,
+                    UnityHandlerFactory = unityHandlerFactory,
+                    ManualPrompt = ManualPrompt(p.Manual, input ?? Console.In, interactive ?? !Console.IsInputRedirected, output),
+                    Parameters = planned.Parameters,
+                    ParameterIndex = planned.ParameterIndex,
+                    BatchLabel = total > 1 ? BatchLabel(planned) : null,
+                };
+                RunReport report = await new QaOrchestrator(options, registry, markers, output).RunAsync(scenario, issues, token).ConfigureAwait(false);
+                summary.Add(planned, report);
+                runs++;
+                exit = Math.Max(exit, report.ExitCode);
+                switch (report.Status)
+                {
+                    case RunStatus.Passed: passed++; break;
+                    case RunStatus.Skipped: skipped++; break;
+                    case RunStatus.Error: errors++; break;
+                    default: failed++; break;
+                }
+                // A stopped run ends the batch at once (Ctrl+C), and --stop-on-fail ends it at the first failing run.
+                if (report.Status == RunStatus.Cancelled || token.IsCancellationRequested)
+                {
+                    summary.Stopped = true;
+                    break;
+                }
+                if (batchOptions.StopOnFail && report.Status is RunStatus.Failed or RunStatus.Error && planned.Number < total)
+                {
+                    summary.Stopped = true;
+                    output.WriteLine($"   --stop-on-fail: {total - planned.Number} remaining runs not started.");
+                    break;
+                }
+            }
+            if (total > 1)
+            {
+                foreach (string line in summary.Lines()) output.WriteLine(line);
+            }
+            if (token.IsCancellationRequested)
+            {
+                output.WriteLine("Stopped.");
+                return Math.Max(exit, 1);
+            }
+            if (summary.Stopped && batchOptions.StopOnFail && summary.Failures.Count > 0) break;
         }
-        if (files.Count > 1)
+        if (files.Count > 1 || runs > files.Count)
         {
+            string what = runs == files.Count ? $"{files.Count} scenarios" : $"{files.Count} scenario{(files.Count == 1 ? "" : "s")}, {runs} runs";
             output.WriteLine(p.Command == "run"
-                ? $"{files.Count} scenarios: {passed} passed, {failed} failed, {skipped} skipped, {errors} errors; exit code {exit}."
+                ? $"{what}: {passed} passed, {failed} failed, {skipped} skipped, {errors} errors; exit code {exit}."
                 : $"{files.Count} scenarios, exit code {exit}.");
         }
         return exit;
+    }
+
+    private static string BatchLabel(PlannedRun r)
+    {
+        string label = $"run {r.Number}/{r.Total}";
+        if (r.Iteration > 0) label += $", iteration {r.Iteration}";
+        if (r.ParameterIndex is int i) label += $", parameters[{i + 1}]";
+        return label;
     }
 
     // D30 on the console: on a terminal ask p(ass) / f(ail) / s(kip) and a note; without one, SKIPPED (or FAIL with

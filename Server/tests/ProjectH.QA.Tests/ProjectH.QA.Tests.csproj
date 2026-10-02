@@ -18,6 +18,12 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- QA-5: the Unity client's recording writer (pure C#), so tests convert what the client really writes. -->
+  <ItemGroup>
+    <Compile Include="..\..\..\Client\Assets\Scripts\Qa\QaInputRecordFormat.cs" Link="ClientCopies\QaInputRecordFormat.cs" />
+    <Compile Include="..\..\..\Client\Assets\Scripts\Qa\QaProtocol.cs" Link="ClientCopies\QaProtocol.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\ProjectH.QA\ProjectH.QA.csproj" />
     <ProjectReference Include="..\..\src\ProjectH.Bots\ProjectH.Bots.csproj" />
