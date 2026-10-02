@@ -147,3 +147,48 @@
 ## 4. 범위 밖
 
 D20의 항목.
+
+## 5. 계획 단계 변경
+
+프로토타입(계획 `Docs/plans/2026-10-02-phase13-harvesting-building.md`)에서 정한 것이다. 아래는 계획의 "Spec과 다른 점"을 그대로 옮긴 것이다.
+
+
+계획 단계의 프로토타입에서 spec과 다르게 정한 것이다. 컨트롤러가 spec에 반영한다.
+
+1. **`BuildingCatalog`는 `Game/Build/`에 둔다.** spec 1절은 `Data/BuildingCatalog.cs`다. 서버에 `Data` 폴더가 없고, 다른 카탈로그(`WeaponCatalog`, `ItemCatalog`)도 `Game` 아래다.
+2. **지지 연결 규칙은 서버 `BuildSupport`에 둔다.** spec D12는 Shared `BuildGrid`의 이웃 표다. game-core-rules 4절이 Shared에 규칙을 두지 못하게 하고, Client는 지지를 계산하지 않는다(서버가 붕괴를 사건으로 보낸다).
+3. **이웃 "표" 대신 격자 모서리 키를 쓴다.** 조각마다 자기 모서리(최대 6개)를 계산하고, 같은 모서리를 쓰는 조각이 이웃이다. 경우의 표를 손으로 만들면 빠지는 경우(경사로 옆면과 벽 대각선)가 생겨서다. 결과는 spec의 예(벽–바닥, 위·아래 벽, 이웃 바닥, 경사로 끝)를 모두 포함한다.
+4. **부하용 무한 자원은 `--Server:BuildInfiniteResources=true`다.** spec D17은 `Build:InfiniteResources`다. 서버 설정은 모두 `Server` 절(`ServerOptions`)에 있고, `building.json`은 게임 수치만 둔다.
+5. **"배치 직후 충돌 지연"은 설정을 두지 않는다.** spec D4의 값이 0이고, 조각은 생긴 Tick부터 충돌한다. 0 아닌 값을 쓸 계획이 없으면 코드 경로만 늘어난다.
+6. **맞닿은 조각은 "틈"이 아니라 밀어내기 개선과 계단 오르기로 푼다.** spec D2가 계획 단계에 맡긴 선택이다.
+   - 밀어내기: 겹친 상자마다 가장 짧게 밀되, 원래 겹치지 않았던 다른 상자로 들어가는 쪽은 고르지 않는다(없으면 가장 짧은 쪽). 두 번 돈다.
+   - `MovementTuning.StepUpHeight` 0.1 m: 땅에 있을 때 그 높이 안의 윗면에 올라선다(경사로–바닥, 경사로–벽 윗면 이음매).
+   - 0.01 m 틈은 경사로 끝과 바닥의 높이 차를 없애지 못하고, 서버·Client의 모든 모양 계산에 예외를 만든다.
+7. **`BuildInterest` 패킷(31, 9 B)을 더한다.** spec D19의 목록에 없다. 서버가 여유 1칸을 지닌 창을 갖고 있으므로 그 마스크를 보내면 Client가 같은 계산을 다시 하지 않는다. 죽은 사람·관전자(맵 전체)도 같은 패킷으로 끝난다. `BuildSync`의 reset 플래그는 "모두 버림"이다.
+8. **Sync는 받는 사람마다 Tick당 최대 4패킷(약 4.7 KB)이다.** spec은 속도를 정하지 않았다. 창 전체(수천 조각)를 한 Tick에 보내면 그 Tick의 송신이 몰린다. 칸 → 칸 안 열 → id 순서로 이어 보낸다.
+9. **바닥과 그 아래층 지붕은 함께 있을 수 없다(`Occupied`).** 둘 다 같은 높이의 판을 쓴다(바닥 윗면 = 다음 층 높이 = 지붕 처마). spec은 "Ramp와 Roof는 같은 칸에 함께 있을 수 있다"만 정했다. 경사로와 지붕은 그대로 함께 있을 수 있다.
+10. **요청은 이동 전에 처리하고, 조각의 생성 Tick은 다음 Tick이다.** 그 Tick의 입력 조준(마지막 입력)과 이동 전 위치로 검사해야, 클라이언트가 조준한 순간과 맞는다. 생성 Tick = 지금 + 1은 그 Tick의 사건이 나가는 Snapshot Tick과 같다.
+11. **저장 배열은 미리 잡지 않고 늘린다(256 → 두 배, 경기 상한까지).** spec D10은 "미리 할당한 배열"이다. 20,000칸을 미리 잡으면 빈 경기도 약 5 MB를 쓰고, 계획 단계에서 다른 할당 테스트가 흔들렸다. 상한은 그대로라 끝없이 늘지 않는다.
+12. **채집 대상은 41개(나무 23, 바위 8, 잔해 6, 상자 4)다.** 상자 4개는 Loot가 없던 엄폐물을 `Boxes`에서 옮긴 것이라 `Boxes`는 58개에서 54개가 된다.
+13. **조각 수 단계의 "20,000"은 19,000을 미리 채우고 측정 중 플레이어가 짓는다.** 20,000을 다 채우면 모든 요청이 `BudgetFull`이 되어 배치 경로를 재지 못한다. 줄의 `pieces`는 미리 채운 수다.
+14. **조각 수 단계·대량 붕괴는 프로세스 안 스트레스 테스트로 잰다.** 봇으로 수천 조각을 쌓으려면 수 분이 걸리고 매번 다르다. `BuildStressTests`는 `PROJECTH_BUILD_STRESS=1`일 때만 돌고(평소에는 건너뜀 3개), Release에서 서버 `Match`를 직접 돌린다(소켓 없음, 송신 바이트를 센다).
+15. **봇에 `--build`(기본 true)를 더한다.** spec D17에 없다. 시나리오 A가 Phase 12와 같은 조건이 되려면 방어 벽 요청도 없어야 한다.
+16. **미리보기는 물리 질의 없이 격자 계산만 한다.** spec D16은 "물리 질의는 한 번"이다. 발 칸과 시선 축만으로 서버 격자와 같은 결과가 나오고, Collider 상태(아직 안 온 조각)에 흔들리지 않는다.
+17. **Client의 미리보기 판정은 사거리·자리·자원·대기 중인 자리만 본다.** 시야각, 막힘, 지지는 Client가 정확히 알 수 없어서 `BuildResult`(거절 안내)로 안다.
+18. **R은 벽(내 칸 둘레로)과 경사로(제자리)만 돌린다.** 바닥·지붕은 돌려도 같은 모양이다.
+19. **건설 진행은 몸 높이로 보이고 Collider는 처음부터 전체 크기다.** 서버가 생긴 Tick부터 전체 크기로 충돌·사격하기 때문이다.
+20. **바뀐 기존 테스트.** 무엇이 왜 바뀌는지:
+    - `MovementModesTests`·`DoorTests`(Task 1): `StepResult.BlockedBy`가 배열 위치에서 `ColliderId`가 됐다. 같은 대상을 (종류, id)로 본다.
+    - 패킷 번호·크기를 고정한 테스트(Task 2): `PacketWriterReaderTests`·`StatsPacketTests`의 범위 밖 Id 26 → 35, `ProtocolConstantsTests.ProtocolVersion_IsEleven`, `PacketTests`의 알려진 버튼 `0x3FFF`, `TraversalPacketTests`의 모르는 비트(0x1000 → 0x4000), `ProtocolFuzzTests`의 새 파서
+    - `MatchTests`(Task 3): Join 순서에 `BuildCatalog`가 셋째로 들어가 뒤 번호가 하나씩 밀린다.
+    - `ItemPacketTests`(Task 7): 종류 4가 `Material`이 되어, 잘못된 종류 예는 5로 바꾸고 `Material` 경우를 더한다. EditMode `PickupRuleTests`에 `Material` 경우를 더한다.
+    - `MonitoringTests`(Task 6): Health 줄과 Meter의 새 값
+    - 약하게 만든 테스트는 없다.
+21. **Client 위치.** spec 1절의 `Game/Harvest/`는 두지 않는다. 채집 대상 표시(`HarvestableViews`)는 Task 2(13A)에서 `Game/`에, 채집 효과는 건설 표시와 같은 `Game/Build/`의 `HarvestEffects`에 둔다. 휘두르기 표시는 표현 Task 9에 있다.
+22. **소리는 자리만 있다(`BuildAudio`).** 클립이 없어 횟수만 센다. spec D16과 같고, 요청서 §109의 "효과음"은 에셋이 생기면 이 클래스만 바꾼다.
+23. **F1 건설 줄은 Development Build와 Editor에서만 보인다(`Debug.isDebugBuild`, 요청서 §190).** 다른 F1 줄은 Phase 11·12대로 모든 빌드에서 보인다.
+24. **유령(미리보기·대기)은 `Sprites/Default` 반투명이다.** URP Lit의 투명 변형은 빌드에서 빠질 수 있다(Phase 6 `ZoneView`와 같은 이유).
+25. **이동 이상 검사(Phase 12 D12)는 건설 조각 안에서 시작한 이동을 세지 않는다(`Penetrates(..., piecesOnly: true)`). 맵 상자·문·채집 대상은 그대로 센다.** 머리를 가로지르게 지은 경사로는 그 Tick에 캐릭터를 표면 위로 2 m 넘게 들어 올린다(지상 한도 2.15 m/Tick). 시뮬레이션 버그가 아니라 조각이 민 것이다. 계획 단계의 봇 20명 Turbo 실행에서 이 경우가 13번 나와 찾았고, 고친 뒤 0이다(`BuildPlacementTests.ARampBuiltUnderItsBuilder_LiftsThem_WithoutAMovementAnomaly`, Task 3). 한도를 넘은 Tick에만 겹침을 본다.
+
+---
+

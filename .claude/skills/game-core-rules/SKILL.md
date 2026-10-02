@@ -100,6 +100,8 @@ Shared에 게임 로직을 넣지 않는다.
 
 예외 3(Phase 12): 이동 모드(웅크리기·슬라이드·Vault·자유 낙하·글라이드·수송기 탑승)와 그 판정(`CanStand`, Mantle·Hurdle 후보 검사, 지면 거리), 수송기 경로에서 위치를 구하는 순수 계산(`DropRoute`·`Ride`), 문 상자(`GameMap.Doors`)는 이동 계산의 일부라 `Shared/Runtime/Simulation`에 둔다. 예측과 서버가 같은 결과를 내야 하기 때문이다. 경로를 시드로 고르는 난수(`DropPlanner`)와 문 상호작용 규칙(`DoorRules`, Client는 같은 규칙의 복사본과 일치 테스트)은 서버·Client 쪽에 두고 Shared에 넣지 않는다. 문 상호작용 거리·각도 상수는 두 규칙 복사본이 같이 읽으므로 Shared 상수로 둔다(`MovementTuning.DoorInteractRange`·`DoorInteractHalfAngle`). 낙하 피해처럼 서버만 쓰는 규칙의 상수는 Shared에 두지 않는다(`CombatRules.FallDamage*`).
 
+예외 4(Phase 13): 건설 격자 좌표·슬롯 키·조각 모양(상자·경사면)을 계산하는 `BuildGrid`, 채집 대상 상자 목록(`GameMap.Harvestables`), 이동 충돌 후보를 모으는 규칙(`CollisionWorld`, 서버와 예측이 같은 집합·같은 순서를 써야 함)은 이동 충돌의 일부라 `Shared/Runtime/Simulation`에 둔다. 배치 검증·자원·지지·붕괴·관심 영역·채집 피해 같은 규칙은 서버에만 둔다(Client는 미리보기에 필요한 격자 수학만 쓴다).
+
 ## 5. 기존 구조를 먼저 확인한다
 
 코드를 변경하기 전에 관련 코드를 먼저 읽는다.
