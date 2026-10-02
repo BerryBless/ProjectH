@@ -90,10 +90,13 @@ public class BuildPlacementTests
     {
         PlayerEntity p = Ready(1, Builder);
         _h.Join(2, new Vector3(-6f, 0f, -6f));
+        // A roof needs something under its eaves (D12): a wall already standing there.
+        int before = type == BuildPieceType.Roof ? 1 : 0;
+        if (type == BuildPieceType.Roof) _h.AddPiece(new BuildPieceShape(BuildPieceType.Wall, C, 0, C, 1));
         BuildResult result = Build(p, Request(type, C, 0, C, rotation));
         Assert.Equal(BuildResultCode.Ok, result.Code);
         Assert.NotEqual(0u, result.PieceId);
-        Assert.Equal(1, _h.Match.BuildPieces);
+        Assert.Equal(before + 1, _h.Match.BuildPieces);
         Assert.Equal(90, p.Inventory.Resource(BuildMaterialType.Wood));
         Assert.Equal(1, _h.Match.BuildResults(BuildResultCode.Ok));
         foreach (int peer in new[] { 1, 2 })
@@ -230,6 +233,7 @@ public class BuildPlacementTests
     public void AFloorAndTheRoofBelowIt_ShareTheirSlab()
     {
         PlayerEntity p = Ready(1, Builder);
+        _h.AddPiece(new BuildPieceShape(BuildPieceType.Wall, C, 0, C, 1));
         Assert.Equal(BuildResultCode.Ok, Build(p, Request(BuildPieceType.Roof, C, 0, C)).Code);
         _h.Ticks(3);
         Assert.Equal(BuildResultCode.Occupied, Build(p, Request(BuildPieceType.Floor, C, 1, C)).Code);

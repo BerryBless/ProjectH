@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using LiteNetLib;
 using ProjectH.Server.Game;
+using ProjectH.Server.Game.Build;
 using ProjectH.Server.Game.Items;
 using ProjectH.Shared.Protocol;
 using ProjectH.Shared.Simulation;
@@ -89,4 +90,18 @@ internal sealed class SandboxHarness
     }
 
     public void Clear() => Packets.Clear();
+
+    // A piece put straight into the world (no request, no event), with its support edges, as a placement would.
+    public uint AddPiece(BuildPieceShape shape, BuildMaterialType material = BuildMaterialType.Wood, uint createdTick = 0, ushort owner = 99) =>
+        AddPiece(Match, shape, material, createdTick, owner);
+
+    public static uint AddPiece(Match match, BuildPieceShape shape, BuildMaterialType material = BuildMaterialType.Wood, uint createdTick = 0,
+        ushort owner = 99)
+    {
+        uint id = match.Build.Add(shape, material, owner, createdTick, BuildSupport.IsGrounded(shape, GameMap.Terrain, GameMap.Boxes));
+        Assert.NotEqual(0u, id);
+        match.Build.TryGetSlot(id, out int slot);
+        match.Support.Add(slot, shape);
+        return id;
+    }
 }

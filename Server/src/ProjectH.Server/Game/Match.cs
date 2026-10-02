@@ -79,6 +79,9 @@ public sealed class Match
     // Phase 13 D10, D13: the pieces of this match and this tick's building events.
     private readonly BuildWorld _build;
     private readonly BuildReplication _replication;
+    // Phase 13 D12: which pieces hold each other up (lattice edges), and the former neighbours of a destroyed piece.
+    private readonly BuildSupport _support;
+    private readonly int[] _supportStarts = new int[BuildSupport.MaxNeighbours];
     private readonly long[] _buildResults = new long[(int)BuildResultCode.BudgetFull + 1];
     private readonly BuildCatalogData _buildCatalogWire;
     // Participants who left during the current match, recorded when they left (they are no longer in _players).
@@ -127,6 +130,7 @@ public sealed class Match
         _harvest = new HarvestWorld(_building);
         _build = new BuildWorld(_building);
         _replication = new BuildReplication(_build, _building, options.MaxPlayers);
+        _support = new BuildSupport(_build.Capacity);
         _buildCatalogWire = BuildCatalogWire(_building);
         _loadout = loadout ?? StartingLoadout.Empty;
         string? loadoutError = _loadout.Validate(data);
@@ -206,8 +210,11 @@ public sealed class Match
     // without a result (a sequence already processed).
     public long BuildResults(BuildResultCode code) => _buildResults[(int)code];
     public long BuildDuplicates { get; private set; }
-    // Phase 13 D18: pieces destroyed (by damage or, Phase 13 D12, collapse) since this match object was made.
+    // Phase 13 D18: pieces destroyed (by damage or, Phase 13 D12, collapse) since this match object was made, and of
+    // those the ones that collapsed.
     public long PiecesDestroyed { get; private set; }
+    public long PiecesCollapsed { get; private set; }
+    internal BuildSupport Support => _support;
     public int BuildPieces => _build.Count;
     public long EnvironmentDestroyed => _harvest.DestroyedTotal;
     // Phase 12 D12: moves faster than their mode allows since this match object was made (should stay 0).
@@ -512,14 +519,19 @@ public sealed class Match
             CutsAPlayer(shape))
             return BuildResultCode.Blocked;
 
+        // D12: on the ground or a map box, or held by a standing piece.
+        bool grounded = BuildSupport.IsGrounded(shape, GameMap.Terrain, GameMap.Boxes);
+        if (!grounded && !_support.HasNeighbour(shape)) return BuildResultCode.Unsupported;
+
         int cost = _building.Material(material).ResourceCost;
         int have = player.Inventory.Resource(material);
         if (have < cost) return BuildResultCode.NoResource;
 
         player.Inventory.SetResource(material, have - cost);
-        id = _build.Add(shape, material, player.EntityId, tick, grounded: false);
+        id = _build.Add(shape, material, player.EntityId, tick, grounded);
         if (id == 0) return BuildResultCode.BudgetFull;   // unreachable: the budget was checked
         _build.TryGetSlot(id, out int slot);
+        _support.Add(slot, shape);
         _replication.Placed(Record(_build.At(slot)));
         return BuildResultCode.Ok;
     }
@@ -581,6 +593,7 @@ public sealed class Match
     private void ClearBuilds()
     {
         _build.Clear();
+        _support.Clear();
         _replication.Reset();
         foreach (var p in _players)
         {
@@ -795,12 +808,32 @@ public sealed class Match
     }
 
     // Phase 13 D11: a piece leaves the world now (moves and shots of the rest of this tick no longer meet it) and every
-    // client hears of it at the end of the tick.
+    // client hears of it at the end of the tick. D12: then whatever it held up and nothing else holds collapses in this
+    // same tick, in the same BuildEvents (request §80).
     private void DestroyPiece(int slot)
+    {
+        int starts = _support.Neighbours(slot, _supportStarts);
+        RemovePiece(slot);
+        ReadOnlySpan<int> fallen = _support.Unsupported(new ReadOnlySpan<int>(_supportStarts, 0, starts), _build);
+        for (int i = 0; i < fallen.Length; i++)
+        {
+            RemovePiece(fallen[i]);
+            PiecesCollapsed++;
+        }
+    }
+
+    // Test seam: a piece destroyed as if its health reached 0 (support and events included).
+    internal void DestroyPiece(uint id)
+    {
+        if (_build.TryGetSlot(id, out int slot)) DestroyPiece(slot);
+    }
+
+    private void RemovePiece(int slot)
     {
         ref BuildPiece piece = ref _build.At(slot);
         uint id = piece.Id;
         _replication.Destroyed(slot, id, piece.Shape);
+        _support.Remove(slot);
         _build.Remove(id);
         PiecesDestroyed++;
     }
