@@ -229,15 +229,17 @@ public sealed class NetworkListener : INetEventListener
             case PacketId.PlayerInput:
                 // The Input channel is shared by all peers and drops the oldest message when full,
                 // so one peer must not be able to fill it: inputs before Join and inputs above the
-                // per-peer rate are rejected here and count toward the bad-packet kick.
+                // per-peer rate are rejected here. Before Join counts toward the bad-packet kick.
                 if (peer.Tag is not PeerState inputState || !inputState.JoinRequested)
                 {
                     OnBadPacket(peer, BadPacketReason.InputBeforeJoin);
                     break;
                 }
-                if (!inputState.TryCountInputPacket(Environment.TickCount64, _options.MaxInputPacketsPerSecond))
+                // Server review M5: over the rate is dropped and counted (Health inputRate) but never kicks: a bad link
+                // delivers seconds of a normal player's input at once, and the bucket already keeps the channel fair.
+                if (!inputState.TryCountInputPacket(Environment.TickCount64, _options.MaxInputPacketsPerSecond, _options.InputBurst))
                 {
-                    OnBadPacket(peer, BadPacketReason.InputRate);
+                    _health.AddBadPacket(BadPacketReason.InputRate);
                     break;
                 }
                 if (PlayerInputPacket.TryRead(ref packet, out var input))

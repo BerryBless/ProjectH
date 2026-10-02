@@ -58,8 +58,10 @@ public sealed class ServerOptions
     public int InputChannelCapacity => MaxPlayers * InputBufferPerPlayer;
     public byte SnapshotHz => (byte)(SimHz / SnapshotEveryTicks);
     // The client sends at most one input packet per simulation step; 2x leaves room for bursts
-    // after network jitter. Anything above is flooding and counts as bad packets.
+    // after network jitter. Server review M5, L5: a token bucket of InputBurst (one second of input) refilled at
+    // MaxInputPacketsPerSecond; anything above is dropped and counted (inputRate), never kicked.
     public int MaxInputPacketsPerSecond => SimHz * 2;
+    public int InputBurst => SimHz;
 
     public string? Validate()
     {

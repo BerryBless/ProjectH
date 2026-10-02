@@ -12,7 +12,7 @@ public enum BadPacketReason
     Malformed,        // a known id whose body does not parse
     InputBeforeJoin,
     DuplicateJoin,
-    InputRate,        // above ServerOptions.MaxInputPacketsPerSecond
+    InputRate,        // above ServerOptions.MaxInputPacketsPerSecond (dropped, never kicks: server review M5)
     WrongDirection,   // a server-to-client packet id
     HandlerException, // the receive handler threw (a server bug, counted against the peer)
     BuildRate,        // Phase 13 D8: above the building catalog's maxRequestsPerSecond

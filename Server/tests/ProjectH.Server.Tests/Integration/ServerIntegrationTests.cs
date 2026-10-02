@@ -139,9 +139,10 @@ public sealed class ServerIntegrationTests : IDisposable
     }
 
     [Fact]
-    public void InputFlood_IsCapped_AndFlooderKicked()
+    public void InputFlood_IsCapped_AndTheVictimsInputsGetThrough()
     {
-        // _server: Input channel capacity 4 * 8 = 32, per-peer cap SimHz * 2 = 60 packets/s.
+        // _server: Input channel capacity 4 * 8 = 32, per-peer bucket of SimHz = 30 refilled at SimHz * 2 = 60 packets/s.
+        // Server review M5: the flood is dropped and counted (inputRate), and no longer kicks the flooder.
         using var flooder = Join(_server, "flooder");
         using var victim = Join(_server, "victim");
 
@@ -158,9 +159,11 @@ public sealed class ServerIntegrationTests : IDisposable
             Pump.Until(() => false, 33, flooder, victim);
         }
 
-        Assert.True(Pump.Until(() => flooder.Disconnected, 3000, flooder, victim), "flooder kicked");
-        Assert.True(Pump.Until(() => victim.LastAckInputSeq == victimInputs, 3000, victim), "victim's latest input processed");
+        Assert.True(Pump.Until(() => victim.LastAckInputSeq == victimInputs, 3000, victim, flooder), "victim's latest input processed");
         Assert.False(victim.Disconnected, "victim kicked");
+        Assert.False(flooder.Disconnected, "flooder kicked");
+        Assert.True(_server.Health.BadPackets(ProjectH.Server.Diagnostics.BadPacketReason.InputRate) > victimInputs * 25, "flood counted");
+        Assert.Equal(0, _server.Health.Kicks(DisconnectCode.Kicked));
     }
 
     [Fact]

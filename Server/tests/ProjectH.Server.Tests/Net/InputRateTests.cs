@@ -1,0 +1,95 @@
+using System;
+using System.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
+using ProjectH.Server.Diagnostics;
+using ProjectH.Server.Net;
+using ProjectH.Server.Tests.Integration;
+using ProjectH.Shared.Protocol;
+using Xunit;
+using static ProjectH.Server.Tests.Integration.HardeningIntegrationTests;
+
+namespace ProjectH.Server.Tests.Net;
+
+// Server review M5, L5: inputs over the rate are dropped and counted (inputRate) but never kick, and the rate is a token
+// bucket (SimHz * 2 per second, burst SimHz) instead of a fixed one-second window.
+public class InputRateTests
+{
+    [Fact]
+    public void TheBucket_StartsFull_AtAnyClock()
+    {
+        var state = new PeerState("p");
+        for (int i = 0; i < 30; i++) Assert.True(state.TryCountInputPacket(0, 60, 30), $"input {i + 1}");
+        Assert.False(state.TryCountInputPacket(0, 60, 30));
+    }
+
+    [Fact]
+    public void TheBucket_RefillsAtTheRate_UpToTheBurst()
+    {
+        var state = new PeerState("p");
+        for (int i = 0; i < 30; i++) state.TryCountInputPacket(5000, 60, 30);
+        Assert.False(state.TryCountInputPacket(5000, 60, 30));
+        Assert.False(state.TryCountInputPacket(5016, 60, 30));   // 60 per second: one every 16.7 ms
+        Assert.True(state.TryCountInputPacket(5017, 60, 30));
+        Assert.False(state.TryCountInputPacket(5017, 60, 30));
+
+        // A fixed window allowed 2 x 60 back to back across its edge; the bucket allows the burst, then the rate.
+        int taken = 0;
+        for (int i = 0; i < 200; i++) if (state.TryCountInputPacket(10_000, 60, 30)) taken++;
+        Assert.Equal(30, taken);
+    }
+
+    [Fact]
+    public void ANormalFlow_WithTwoBurstsOfSeventy_IsNeverKicked()
+    {
+        using GameLoop server = StartServer();
+        using var a = Join(server, "a");
+        Flow(a, 30);
+        for (int i = 0; i < 70; i++) a.SendMove(0f, 0f, 0f);   // a link that held two seconds of input
+        Flow(a, 30);
+        for (int i = 0; i < 70; i++) a.SendMove(0f, 0f, 0f);
+        Flow(a, 30);
+
+        Pump.Until(() => false, 200, a);
+        Assert.Equal(0, server.Health.Kicks(DisconnectCode.Kicked));
+        Assert.False(a.Disconnected);
+        Assert.True(Pump.Until(() => server.Health.BadPackets(BadPacketReason.InputRate) >= 40, 3000, a), "dropped and counted");
+    }
+
+    [Fact]
+    public void ASustainedFlood_IsDropped_AndCounted_ButNotKicked()
+    {
+        using GameLoop server = StartServer();
+        using var a = Join(server, "a");
+        var clock = Stopwatch.StartNew();
+        while (clock.ElapsedMilliseconds < 2000)
+        {
+            for (int i = 0; i < 4; i++) a.SendMove(0f, 0f, 0f);   // about 120 per second
+            Pump.Until(() => false, 33, a);
+        }
+        Pump.Until(() => false, 200, a);
+        Assert.Equal(0, server.Health.Kicks(DisconnectCode.Kicked));
+        Assert.False(a.Disconnected);
+        Assert.True(Pump.Until(() => server.Health.BadPackets(BadPacketReason.InputRate) >= 60, 3000, a), "dropped and counted");
+    }
+
+    [Fact]
+    public void TwentyMalformedInputs_StillKick()
+    {
+        using GameLoop server = StartServer();
+        using var a = Join(server, "a");
+        for (int i = 0; i < 20; i++) a.SendRaw(new byte[] { (byte)PacketId.PlayerInput, 0 });
+        Assert.True(Pump.Until(() => a.Disconnected, 3000, a), "kicked");
+        Assert.Equal(DisconnectCode.Kicked, a.DisconnectCode);
+        Assert.Equal(20, server.Health.BadPackets(BadPacketReason.Malformed));
+    }
+
+    // One input per tick for the given number of ticks.
+    private static void Flow(HeadlessClient client, int ticks)
+    {
+        for (int i = 0; i < ticks; i++)
+        {
+            client.SendMove(0f, 0f, 0f);
+            Pump.Until(() => false, 33, client);
+        }
+    }
+}
