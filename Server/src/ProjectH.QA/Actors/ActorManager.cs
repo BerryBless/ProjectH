@@ -17,6 +17,8 @@ public sealed class ActorManager : IAsyncDisposable
     private readonly Action<string> _log;
     private readonly int _seed;
     private ActorPump? _pump;
+    // For readers on other threads (the UI inspector): replaced on every create, never mutated (Volatile).
+    private IQaActor[] _snapshot = Array.Empty<IQaActor>();
 
     // factory (alias, type) → actor: tests pass MockActors; null = HeadlessActors on one pump thread.
     public ActorManager(int seed, Action<string> log, Func<string, string, IQaActor>? factory = null)
@@ -42,6 +44,7 @@ public sealed class ActorManager : IAsyncDisposable
     }
 
     public int Count => _actors.Count;
+    public IReadOnlyList<IQaActor> Snapshot => Volatile.Read(ref _snapshot);
     public IEnumerable<IQaActor> All => _actors.Values;
 
     public bool TryGet(string alias, out IQaActor actor) => _actors.TryGetValue(alias, out actor!);
@@ -71,6 +74,7 @@ public sealed class ActorManager : IAsyncDisposable
             actor = headless;
         }
         _actors.Add(alias, actor);
+        Volatile.Write(ref _snapshot, _actors.Values.ToArray());
         return actor;
     }
 
@@ -91,5 +95,6 @@ public sealed class ActorManager : IAsyncDisposable
     {
         await StopAsync().ConfigureAwait(false);
         _actors.Clear();
+        Volatile.Write(ref _snapshot, Array.Empty<IQaActor>());
     }
 }

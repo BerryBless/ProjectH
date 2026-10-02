@@ -14,6 +14,16 @@
     <InternalsVisibleTo Include="ProjectH.QA.Tests" />
   </ItemGroup>
 
+  <!-- QA-2 D19: the web UI (Kestrel + Minimal API) from the shared framework, not a NuGet package. The static files are
+       plain HTML/CSS/JS copied next to the binaries (no npm, no bundler). -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\ProjectH.Bots\ProjectH.Bots.csproj" />
     <ProjectReference Include="..\ProjectH.Shared\ProjectH.Shared.csproj" />

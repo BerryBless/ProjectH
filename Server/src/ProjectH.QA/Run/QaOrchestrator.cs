@@ -17,6 +17,50 @@ public sealed class QaRunOptions
     public Func<Uri, IQaServerClient>? ServerClientFactory { get; init; }
     public Func<string, string, IQaActor>? ActorFactory { get; init; }
     public IRunControl? Control { get; init; }
+    // UI (QA-2). Log lines by category (QA, Server, Actor, Network, Assertion); null = console only (CLI).
+    public Action<string, string>? LogSink { get; init; }
+    public Action<StepResult>? OnStepStarted { get; init; }
+    public Action<StepResult>? OnStepFinished { get; init; }
+    // The live run for the inspector (D22): set once the server answers and actors exist, null when cleanup starts.
+    public Action<LiveRun?>? OnLive { get; init; }
+    public int StartAtStep { get; init; }
+    public bool DebugRun { get; init; }
+    public bool UnsavedText { get; init; }
+}
+
+// What the UI inspector may touch from its HTTP threads: the QA URL (it builds its own client) and the actors'
+// published snapshot (ActorManager.Snapshot + immutable ActorState). Nothing else of the run.
+public sealed record LiveRun(string RunId, Uri QaUrl, ActorManager Actors);
+
+// The scenario timeout counts running time only: while the gate holds the run (pause, breakpoint, held failure) the
+// deadline is disarmed and re-armed with what was left. Used only from the run flow (IRunControl.PausedChanged).
+internal sealed class PausableDeadline
+{
+    private readonly CancellationTokenSource _cts;
+    private readonly Stopwatch _since = Stopwatch.StartNew();
+    private TimeSpan _remaining;
+
+    public PausableDeadline(CancellationTokenSource cts, TimeSpan timeout)
+    {
+        _cts = cts;
+        _remaining = timeout;
+        cts.CancelAfter(timeout);
+    }
+
+    public void SetPaused(bool paused)
+    {
+        if (_cts.IsCancellationRequested) return;
+        if (paused)
+        {
+            _remaining -= _since.Elapsed;
+            _cts.CancelAfter(Timeout.InfiniteTimeSpan);
+        }
+        else
+        {
+            _since.Restart();
+            _cts.CancelAfter(_remaining > TimeSpan.Zero ? _remaining : TimeSpan.Zero);
+        }
+    }
 }
 
 // One scenario run end to end: server (launch or attach) → actors → steps → state dump → cleanup → report.
@@ -66,10 +110,18 @@ public sealed class QaOrchestrator
         void Log(string line)
         {
             if (_options.Verbose) _out.WriteLine("   " + line);
+            _options.LogSink?.Invoke("QA", line);
+        }
+
+        void ActorLog(string line)
+        {
+            if (_options.Verbose) _out.WriteLine("   " + line);
+            _options.LogSink?.Invoke("Actor", line);
         }
 
         bool attach = _options.AttachUrl != null || string.Equals(scenario.Server.Mode, ServerSpec.Attach, StringComparison.OrdinalIgnoreCase);
         report.ServerMode = attach ? ServerSpec.Attach : ServerSpec.Launch;
+        report.UnsavedText = _options.UnsavedText;
         Func<Uri, IQaServerClient> clientFactory = _options.ServerClientFactory ?? (uri => new QaServerClient(uri));
         ServerProcessManager? process = null;
         IQaServerClient? client = null;
@@ -98,7 +150,16 @@ public sealed class QaOrchestrator
             {
                 string dll = _options.ServerDll ?? ServerLocator.FindServerDll(_options.RepoRoot)
                     ?? throw new QaToolException($"ProjectH.Server.dll not found under {Path.Combine(_options.RepoRoot, "Server", "src", "ProjectH.Server", "bin")}. Build first: dotnet build Server/ProjectH.Server.slnx (or pass --server-dll).");
-                process = new ServerProcessManager(_options.Verbose ? line => _out.WriteLine("   [server] " + line) : null);
+                Action<string>? serverLog = null;
+                if (_options.Verbose || _options.LogSink != null)
+                {
+                    serverLog = line =>
+                    {
+                        if (_options.Verbose) _out.WriteLine("   [server] " + line);
+                        _options.LogSink?.Invoke("Server", line);
+                    };
+                }
+                process = new ServerProcessManager(serverLog);
                 report.ServerArguments = ServerProcessManager.BuildArguments(dll, seed, scenario.Server.Options);
                 (gamePort, int qaPort) = await process.StartAsync(dll, seed, scenario.Server.Options, clientFactory, userToken).ConfigureAwait(false);
                 report.ServerPid = process.Pid;
@@ -115,7 +176,7 @@ public sealed class QaOrchestrator
             var events = new EventCursor(client);
             if (attach) await events.SkipExistingAsync(userToken).ConfigureAwait(false);
 
-            actors = new ActorManager(seed, Log, _options.ActorFactory);
+            actors = new ActorManager(seed, ActorLog, _options.ActorFactory);
             run = new RunContext(report.RunId, seed, client, actors, _markers, scenario.Variables, Log)
             {
                 Events = events,
@@ -125,11 +186,32 @@ public sealed class QaOrchestrator
             };
             foreach (ActorSpec a in scenario.Actors) await actors.CreateAsync(a.Id, a.Type, userToken).ConfigureAwait(false);
             await TryMarkAsync(client, $"QA run {report.RunId} start: {scenario.Name} seed {seed}", report.RunId).ConfigureAwait(false);
+            _options.OnLive?.Invoke(new LiveRun(report.RunId, qaUrl, actors));
 
             using var scenarioCts = CancellationTokenSource.CreateLinkedTokenSource(userToken);
-            scenarioCts.CancelAfter(TimeSpan.FromSeconds(scenario.TimeoutSeconds));
-            var runner = new ScenarioRunner(_registry, _options.Control ?? new RunGate(honorBreakpoints: false), PrintStep);
-            report.Status = await runner.RunAsync(scenario, run, report, userToken, scenarioCts.Token).ConfigureAwait(false);
+            var deadline = new PausableDeadline(scenarioCts, TimeSpan.FromSeconds(scenario.TimeoutSeconds));
+            IRunControl control = _options.Control ?? new RunGate(honorBreakpoints: false);
+            // Chained: the UI session listens too (it set its own handler before the run).
+            Action<bool>? listener = control.PausedChanged;
+            control.PausedChanged = paused =>
+            {
+                deadline.SetPaused(paused);
+                listener?.Invoke(paused);
+            };
+            var runner = new ScenarioRunner(_registry, control, PrintStep, new RunnerOptions
+            {
+                StartAtStep = _options.StartAtStep,
+                DebugRun = _options.DebugRun,
+                OnStepStarted = _options.OnStepStarted,
+            });
+            try
+            {
+                report.Status = await runner.RunAsync(scenario, run, report, userToken, scenarioCts.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                control.PausedChanged = listener;
+            }
         }
         catch (OperationCanceledException) when (userToken.IsCancellationRequested)
         {
@@ -158,6 +240,7 @@ public sealed class QaOrchestrator
         }
         finally
         {
+            _options.OnLive?.Invoke(null);
             // State at the failure (request §103-104), before anything is closed.
             if (report.Status != RunStatus.Passed && actors != null) report.StateDump = await DumpAsync(client, actors).ConfigureAwait(false);
             if (client != null)
@@ -279,18 +362,36 @@ public sealed class QaOrchestrator
 
     private void PrintStep(StepResult r)
     {
-        _out.WriteLine(r.Line());
+        _options.OnStepFinished?.Invoke(r);
+        var lines = new List<string> { r.Line() };
         if (r.Status is StepStatus.Failed or StepStatus.Error)
         {
-            if (r.Message != null) _out.WriteLine($"   {r.Message}");
-            if (r.Expected != null) _out.WriteLine($"   Expected: {r.Expected}");
-            if (r.Actual != null) _out.WriteLine($"   Actual:   {r.Actual}");
+            if (r.Message != null) lines.Add($"   {r.Message}");
+            if (r.Expected != null) lines.Add($"   Expected: {r.Expected}");
+            if (r.Actual != null) lines.Add($"   Actual:   {r.Actual}");
         }
-        else if (_options.Verbose && r.Message != null)
+        else if ((_options.Verbose || _options.LogSink != null) && r.Message != null)
         {
-            _out.WriteLine($"   {r.Message}");
+            lines.Add($"   {r.Message}");
         }
+        if (_options.LogSink != null)
+        {
+            string category = LogCategory(r.Action);
+            foreach (string line in lines) _options.LogSink(category, line);
+            return;
+        }
+        foreach (string line in lines) _out.WriteLine(line);
     }
+
+    // D21 categories for step lines.
+    public static string LogCategory(string action) => action switch
+    {
+        "assert" or "waitFor" or "save" or "waitForEvent" => "Assertion",
+        "connect" or "disconnect" or "reconnect" or "connectAll" or "disconnectAll" or "pauseInput" or "resumeInput" => "Network",
+        "moveTo" or "moveVector" or "look" or "aim" or "fire" or "stopFire" or "press" or "release" or "switchWeapon" or "jump"
+            or "sprint" or "crouch" or "build" or "spawnActors" => "Actor",
+        _ => "QA",
+    };
 
     private void PrintSummary(RunReport r)
     {

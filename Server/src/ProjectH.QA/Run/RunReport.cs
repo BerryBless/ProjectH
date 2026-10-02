@@ -18,10 +18,13 @@ public enum StepStatus
     Error,
     Cancelled,
     Skipped,
+    Running,     // UI only: the step is executing now
 }
 
 public sealed class StepResult
 {
+    // Retries of this step after a held failure (D23 Retry Failed Step); 0 = ran once.
+    public int Attempts { get; set; }
     public int Index { get; init; }
     public string Id { get; init; } = string.Empty;
     public string Action { get; init; } = string.Empty;
@@ -45,6 +48,7 @@ public sealed class StepResult
         StepStatus.Error => "ERROR",
         StepStatus.Cancelled => "CANCELLED",
         StepStatus.Pending => "PENDING",
+        StepStatus.Running => "RUNNING",
         _ => "SKIPPED",
     };
 }
@@ -104,6 +108,10 @@ public sealed class RunReport
     // QA-4 fills these (manual checks D16, Unity screenshots D15).
     public List<JsonElement> ManualChecks { get; } = new();
     public List<string> Screenshots { get; } = new();
+    // D24 Debug Run: server state around each step (bounded by RunnerOptions.MaxDebugSnapshots).
+    public List<DebugSnapshot> DebugSnapshots { get; } = new();
+    // The scenario ran from unsaved editor text (UI), so ScenarioFile may differ from what ran.
+    public bool UnsavedText { get; set; }
     public Dictionary<string, JsonElement> Variables { get; } = new();
     public string? ToolError { get; set; }
     public string? ReportDirectory { get; set; }
@@ -114,4 +122,14 @@ public sealed class RunReport
         RunStatus.Error => 2,
         _ => 1,
     };
+}
+
+public sealed class DebugSnapshot
+{
+    public int StepIndex { get; init; }
+    public string StepId { get; init; } = string.Empty;
+    public string When { get; init; } = string.Empty;   // before / after
+    public System.Text.Json.JsonElement? Match { get; set; }
+    public System.Text.Json.JsonElement? Players { get; set; }
+    public string? Error { get; set; }
 }

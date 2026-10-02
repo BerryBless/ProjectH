@@ -85,6 +85,42 @@ public class CliTests : IDisposable
     }
 
     [Fact]
+    public async Task ANameThatIsBothSuiteAndCategoryMustBeChosen()
+    {
+        const string ok = """{ "schemaVersion": 1, "name": "ok", "steps": [ { "action": "wait", "milliseconds": 1 } ] }""";
+        Write("QA/Scenarios/Smoke/a.json", ok);
+        Directory.CreateDirectory(Path.Combine(_root, "QA", "Scenarios", "Other"));
+        Write("QA/Scenarios/Other/b.json", ok);
+        Write("QA/Scenarios/Other/c.json", ok);
+        Write("QA/Suites/smoke.json", """{ "scenarios": [ "Smoke/a.json", "Other" ] }""");
+
+        (int exit, string output) = await Cli("validate", "smoke");
+        Assert.Equal(2, exit);
+        Assert.Contains("both a suite and a category", output);
+        Assert.Contains("'suite:smoke'", output);
+        Assert.Contains("'category:Smoke'", output);
+
+        (exit, output) = await Cli("validate", "suite:smoke");
+        Assert.Equal(0, exit);
+        Assert.StartsWith("suite smoke: 3 scenarios", output);
+
+        (exit, output) = await Cli("validate", "category:smoke");
+        Assert.Equal(0, exit);
+        Assert.StartsWith("category Smoke: 1 scenario" + Environment.NewLine, output);
+
+        (exit, output) = await Cli("validate", "Other");
+        Assert.Equal(0, exit);
+        Assert.StartsWith("category Other: 2 scenarios", output);
+
+        (exit, output) = await Cli("validate", "Smoke/a.json");
+        Assert.Equal(0, exit);
+        Assert.StartsWith("file Smoke/a.json: 1 scenario", output);
+
+        Assert.Equal(2, (await Cli("validate", "suite:nope")).Exit);
+        Assert.Equal(2, (await Cli("validate", "category:Nope")).Exit);
+    }
+
+    [Fact]
     public async Task UnknownTargetAndBadOptionsAreExitTwo()
     {
         Assert.Equal(2, (await Cli("run", "NoSuchThing")).Exit);

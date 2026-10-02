@@ -18,6 +18,8 @@ public sealed record QaResult(int Status, object Body)
 }
 
 public sealed record QaOk(bool Ok, object? Result);
+// QA-3: the match history writer as the QA tool sees it (server.dbQueueLength and friends).
+public sealed record QaDbStatus(bool Enabled, long Saved, long Failed, long Discarded, long Dropped, int QueueLength);
 public sealed record QaError(bool Ok, string Error);
 
 // The game loop's view during one QA tick. One instance, reused every tick, game loop thread only.
@@ -99,6 +101,11 @@ public sealed class QaControl
     internal QaMetrics Metrics { get; }
 
     internal void Bind(GameLoop loop) => _loop = loop;
+
+    // QA-3: set once at construction by QaSetup (null in tests without a writer). Called on any thread.
+    public Func<QaDbStatus>? Database { get; set; }
+    // QA-3: connections open now (the game loop's gauge; any thread).
+    public int Peers => _loop?.Health.Peers ?? 0;
 
     // HTTP threads. 503 when the queue is full; 504 when the game loop did not take the item in time (it is dropped then,
     // so it never runs). An item already running is awaited for one more timeout: it ends within its tick.

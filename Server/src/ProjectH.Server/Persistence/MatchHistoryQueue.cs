@@ -25,6 +25,8 @@ public sealed class MatchHistoryQueue
 
     public ChannelReader<MatchRecord> Reader => _channel.Reader;
     public long Dropped => Interlocked.Read(ref _dropped);
+    // QA-3: records waiting for the writer (any thread; the bounded channel counts under its own lock).
+    public int Count => _channel.Reader.CanCount ? _channel.Reader.Count : -1;
 
     // Game loop thread. False = full or completed: the record is dropped and counted.
     public bool TryEnqueue(MatchRecord record)
