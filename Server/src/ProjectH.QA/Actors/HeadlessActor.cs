@@ -436,6 +436,31 @@ public sealed class HeadlessActor : IQaActor
         return _buildLast;
     }
 
+    // Stress abuse brains (D38 groupInvalidPackets): bytes as they are on this connection, now (BotConnection.SendRaw,
+    // reliable). False when not connected. Counted in RawPacketsSent like sendInvalidPackets.
+    internal bool BrainSendRaw(byte[] packet)
+    {
+        BotConnection? c = _connection;
+        if (c == null || _closed || !c.Connected || c.Disconnected || !c.SendRaw(packet)) return false;
+        _rawSent++;
+        return true;
+    }
+
+    // Stress abuse brains (D38 groupBuildSpam): a build request sent at once, without the aim ticks and spacing of the
+    // build queue (a client that ignores the build rules). Takes the next request sequence, so the server's answers are
+    // counted by code like every other build result. Returns the sequence, or -1 when not connected.
+    internal int BrainSendBuildNow(BuildPieceType piece, BuildMaterialType material, byte x, byte y, byte z, byte rotation)
+    {
+        BotConnection? c = _connection;
+        if (c == null || _closed || !c.Connected || c.Disconnected) return -1;
+        var request = new BuildRequest
+        {
+            Sequence = ++_buildSequence, Piece = (byte)piece, Material = (byte)material, X = x, Y = y, Z = z, Rotation = rotation,
+        };
+        c.SendBuild(request);
+        return request.Sequence;
+    }
+
     // The server's answer to the request with this sequence, among the latest ActorState.MaxBuildResults.
     internal bool TryBuildResult(int sequence, out BuildResultInfo result)
     {

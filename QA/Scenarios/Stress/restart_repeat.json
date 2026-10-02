@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 1,
+  "name": "Stress Restart Repeat",
+  "description": "Request §65 (its own suite, not gameplay): the server process restarted ${restarts} times in a row with the same clients. Each cycle: restartServer (POST /qa/server/stop = the Ctrl+C path, wait for the exit, then a new process with the same arguments and seed on new free ports), every client connects again (a restart keeps no match state: they are new players on the new server), everyone walks for ${runSeconds} s while one phase measures the new process (start memory, tick, CPU). Judged per cycle: a clean exit (exit code 0, not killed), all ${players} back in, no tick failure; the restart and start times are saved (restart_NN.exit.exitMs, restart_NN.start.startMs). DevRespawn. No hard limit (D42).",
+  "tags": [
+    "stress",
+    "server",
+    "restart",
+    "slow"
+  ],
+  "stress": true,
+  "seed": 9600,
+  "timeoutSeconds": 900,
+  "server": {
+    "mode": "launch",
+    "options": {
+      "Server:MaxPlayers": "100",
+      "Server:DevRespawn": "true"
+    }
+  },
+  "variables": {
+    "players": 20,
+    "restarts": 5,
+    "runSeconds": 10
+  },
+  "actors": [],
+  "steps": [
+    {
+      "id": "spawn",
+      "phase": "arrange",
+      "action": "spawnActors",
+      "count": "${players}",
+      "prefix": "bot"
+    },
+    {
+      "id": "join_first",
+      "action": "connectAll",
+      "prefix": "bot",
+      "timeoutMilliseconds": 60000
+    },
+    {
+      "id": "sessions_first",
+      "action": "waitFor",
+      "condition": "server.activeSessions",
+      "equals": "${players}",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "groups",
+      "action": "actorGroup",
+      "prefix": "bot",
+      "groups": [
+        {
+          "name": "all",
+          "rest": true
+        }
+      ]
+    },
+    {
+      "id": "walk",
+      "action": "groupMove",
+      "group": "all",
+      "pattern": "mixed",
+      "radius": 60
+    },
+    {
+      "id": "run_00",
+      "phase": "act",
+      "action": "measure",
+      "name": "run_00",
+      "seconds": "${runSeconds}",
+      "saveAs": "run_00"
+    },
+    {
+      "id": "restart_01",
+      "phase": "act",
+      "action": "restartServer",
+      "saveAs": "restart_01",
+      "description": "restart 1: graceful stop, then a new process (same arguments and seed, new ports)"
+    },
+    {
+      "id": "exit_ok_01",
+      "phase": "assert",
+      "assert": "var.restart_01.exit.exitCode",
+      "equals": 0
+    },
+    {
+      "id": "clean_stop_01",
+      "assert": "var.restart_01.exit.killed",
+      "equals": false
+    },
+    {
+      "id": "rejoin_01",
+      "phase": "act",
+      "action": "connectAll",
+      "prefix": "bot",
+      "timeoutMilliseconds": 60000
+    },
+    {
+      "id": "sessions_01",
+      "action": "waitFor",
+      "condition": "server.activeSessions",
+      "equals": "${players}",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "run_01",
+      "action": "measure",
+      "name": "run_01",
+      "seconds": "${runSeconds}",
+      "saveAs": "run_01"
+    },
+    {
+      "id": "no_failure_01",
+      "phase": "assert",
+      "assert": "var.run_01.tickFailures",
+      "equals": 0
+    },
+    {
+      "id": "restart_02",
+      "phase": "act",
+      "action": "restartServer",
+      "saveAs": "restart_02",
+      "description": "restart 2: graceful stop, then a new process (same arguments and seed, new ports)"
+    },
+    {
+      "id": "exit_ok_02",
+      "phase": "assert",
+      "assert": "var.restart_02.exit.exitCode",
+      "equals": 0
+    },
+    {
+      "id": "clean_stop_02",
+      "assert": "var.restart_02.exit.killed",
+      "equals": false
+    },
+    {
+      "id": "rejoin_02",
+      "phase": "act",
+      "action": "connectAll",
+      "prefix": "bot",
+      "timeoutMilliseconds": 60000
+    },
+    {
+      "id": "sessions_02",
+      "action": "waitFor",
+      "condition": "server.activeSessions",
+      "equals": "${players}",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "run_02",
+      "action": "measure",
+      "name": "run_02",
+      "seconds": "${runSeconds}",
+      "saveAs": "run_02"
+    },
+    {
+      "id": "no_failure_02",
+      "phase": "assert",
+      "assert": "var.run_02.tickFailures",
+      "equals": 0
+    },
+    {
+      "id": "restart_03",
+      "phase": "act",
+      "action": "restartServer",
+      "saveAs": "restart_03",
+      "description": "restart 3: graceful stop, then a new process (same arguments and seed, new ports)"
+    },
+    {
+      "id": "exit_ok_03",
+      "phase": "assert",
+      "assert": "var.restart_03.exit.exitCode",
+      "equals": 0
+    },
+    {
+      "id": "clean_stop_03",
+      "assert": "var.restart_03.exit.killed",
+      "equals": false
+    },
+    {
+      "id": "rejoin_03",
+      "phase": "act",
+      "action": "connectAll",
+      "prefix": "bot",
+      "timeoutMilliseconds": 60000
+    },
+    {
+      "id": "sessions_03",
+      "action": "waitFor",
+      "condition": "server.activeSessions",
+      "equals": "${players}",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "run_03",
+      "action": "measure",
+      "name": "run_03",
+      "seconds": "${runSeconds}",
+      "saveAs": "run_03"
+    },
+    {
+      "id": "no_failure_03",
+      "phase": "assert",
+      "assert": "var.run_03.tickFailures",
+      "equals": 0
+    },
+    {
+      "id": "restart_04",
+      "phase": "act",
+      "action": "restartServer",
+      "saveAs": "restart_04",
+      "description": "restart 4: graceful stop, then a new process (same arguments and seed, new ports)"
+    },
+    {
+      "id": "exit_ok_04",
+      "phase": "assert",
+      "assert": "var.restart_04.exit.exitCode",
+      "equals": 0
+    },
+    {
+      "id": "clean_stop_04",
+      "assert": "var.restart_04.exit.killed",
+      "equals": false
+    },
+    {
+      "id": "rejoin_04",
+      "phase": "act",
+      "action": "connectAll",
+      "prefix": "bot",
+      "timeoutMilliseconds": 60000
+    },
+    {
+      "id": "sessions_04",
+      "action": "waitFor",
+      "condition": "server.activeSessions",
+      "equals": "${players}",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "run_04",
+      "action": "measure",
+      "name": "run_04",
+      "seconds": "${runSeconds}",
+      "saveAs": "run_04"
+    },
+    {
+      "id": "no_failure_04",
+      "phase": "assert",
+      "assert": "var.run_04.tickFailures",
+      "equals": 0
+    },
+    {
+      "id": "restart_05",
+      "phase": "act",
+      "action": "restartServer",
+      "saveAs": "restart_05",
+      "description": "restart 5: graceful stop, then a new process (same arguments and seed, new ports)"
+    },
+    {
+      "id": "exit_ok_05",
+      "phase": "assert",
+      "assert": "var.restart_05.exit.exitCode",
+      "equals": 0
+    },
+    {
+      "id": "clean_stop_05",
+      "assert": "var.restart_05.exit.killed",
+      "equals": false
+    },
+    {
+      "id": "rejoin_05",
+      "phase": "act",
+      "action": "connectAll",
+      "prefix": "bot",
+      "timeoutMilliseconds": 60000
+    },
+    {
+      "id": "sessions_05",
+      "action": "waitFor",
+      "condition": "server.activeSessions",
+      "equals": "${players}",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "run_05",
+      "action": "measure",
+      "name": "run_05",
+      "seconds": "${runSeconds}",
+      "saveAs": "run_05"
+    },
+    {
+      "id": "no_failure_05",
+      "phase": "assert",
+      "assert": "var.run_05.tickFailures",
+      "equals": 0
+    },
+    {
+      "id": "running",
+      "phase": "assert",
+      "assert": "server.running",
+      "equals": true
+    },
+    {
+      "id": "stop",
+      "phase": "act",
+      "action": "stopGroup",
+      "group": "all"
+    },
+    {
+      "id": "leave",
+      "action": "disconnectAll",
+      "prefix": "bot"
+    },
+    {
+      "id": "all_gone",
+      "phase": "assert",
+      "action": "waitFor",
+      "condition": "server.activeSessions",
+      "equals": 0,
+      "timeoutMilliseconds": 10000
+    }
+  ]
+}

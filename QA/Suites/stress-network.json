@@ -1,5 +1,14 @@
 {
   "name": "stress-network",
-  "description": "Stress test network workloads (request §33-46). Phase A has the reconnect churn (25 / 50 / 100 players, 20 cycles each, about 9 minutes estimated) and the mixed match's high-ping group; phase B adds lag compensation by ping group, join ramp / spike, disconnect spike, invalid packets and the mixed network faults.",
-  "scenarios": [ "Stress/reconnect_churn.json" ]
+  "description": "Stress test network workloads (request §18-19, §33-46): the reconnect churn at 25 / 50 / 100 players (20 cycles each), lag compensation by ping group at 50, the join ramp to 100 players at 5 / 10 / 20 per second, the join spike of 100, the disconnect spike of 50, invalid packets from 10 % abusers (5/s and 50/s) and the mixed network faults at 50. About 25 minutes (estimated from the single runs of 2026-10-02).",
+  "scenarios": [
+    "Stress/reconnect_churn.json",
+    { "path": "Stress/lag_compensation.json", "parameterSet": 2 },
+    "Stress/join_ramp.json",
+    { "path": "Stress/join_spike.json", "parameterSet": 2 },
+    { "path": "Stress/disconnect_spike.json", "parameterSet": 1 },
+    { "path": "Stress/invalid_packets.json", "parameterSet": 1 },
+    { "path": "Stress/invalid_packets.json", "parameterSet": 2 },
+    { "path": "Stress/network_fault_mixed.json", "parameterSet": 1 }
+  ]
 }

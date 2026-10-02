@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "name": "Stress Hotspot vs Distributed",
+  "description": "Request §56-58: the same players and the same workload, once spread over the map and once packed into one POI. Parameter set 1 'distributed': fights on spots 12 m apart within 70 m of the map centre, walkers within 60 m. Parameter set 2 'hotspot': the same groups within ${radius} m of Crossroads (the central POI, 0,0), fight spots ${spacing} m apart and pairs ${pairDistance} m apart, so everyone is in everyone's snapshot, line of fire and interest cells. Groups: ${combatPercent} % fight in pairs (real shots), ${buildPercent} % build on the free sites nearest the centre (1/s, recycling; Server:BuildInfiniteResources=true as building.json), the rest walk with some sprint. Run the file to get both sets and the batch comparison (QA/Reports/batch-<id>/summary.html); the difference is the cost of density. DevRespawn. No hard limit (D42).",
+  "tags": ["stress", "server", "combat", "movement", "quick"],
+  "stress": true,
+  "seed": 9500,
+  "timeoutSeconds": 900,
+  "server": { "mode": "launch", "options": { "Server:MaxPlayers": "100", "Server:DevRespawn": "true", "Server:BuildInfiniteResources": "true" } },
+  "variables": { "players": 50, "layout": "distributed", "radius": 70, "spacing": 12, "pairDistance": 10, "moveRadius": 60, "combatPercent": 40, "buildPercent": 10, "warmupSeconds": 10, "steadySeconds": 60, "cooldownSeconds": 5 },
+  "parameters": [
+    { "layout": "distributed", "radius": 70, "spacing": 12, "pairDistance": 10, "moveRadius": 60 },
+    { "layout": "hotspot", "radius": 20, "spacing": 4, "pairDistance": 6, "moveRadius": 20 }
+  ],
+  "actors": [],
+  "steps": [
+    { "id": "spawn", "phase": "arrange", "action": "spawnActors", "count": "${players}", "prefix": "bot" },
+    { "id": "join_all", "action": "connectAll", "prefix": "bot", "timeoutMilliseconds": 60000 },
+    { "id": "sessions", "action": "waitFor", "condition": "server.activeSessions", "equals": "${players}", "timeoutMilliseconds": 10000 },
+    { "id": "groups", "action": "actorGroup", "prefix": "bot", "groups": [ { "name": "combat", "percent": "${combatPercent}" }, { "name": "builders", "percent": "${buildPercent}" }, { "name": "walkers", "rest": true } ] },
+    { "id": "fight", "action": "groupCombat", "group": "combat", "pairing": "pairs", "center": "Crossroads", "radius": "${radius}", "spacing": "${spacing}", "pairDistance": "${pairDistance}" },
+    { "id": "build", "action": "groupBuild", "group": "builders", "center": "Crossroads", "ratePerSecond": 1, "recycle": true },
+    { "id": "walk", "action": "groupMove", "group": "walkers", "pattern": "mixed", "center": "Crossroads", "radius": "${moveRadius}", "sprintPercent": 30 },
+    { "id": "mark_warmup", "phase": "act", "action": "mark", "text": "warmup_start ${layout} players=${players}" },
+    { "id": "warmup", "action": "measure", "name": "warmup", "seconds": "${warmupSeconds}" },
+    { "id": "mark_measure", "action": "mark", "text": "measurement_start" },
+    { "id": "steady", "action": "measure", "name": "steady", "seconds": "${steadySeconds}", "saveAs": "steady" },
+    { "id": "mark_measure_end", "action": "mark", "text": "measurement_end" },
+    { "id": "running", "phase": "assert", "assert": "server.running", "equals": true },
+    { "id": "all_still_here", "assert": "server.activeSessions", "equals": "${players}" },
+    { "id": "players_kept", "assert": "var.steady.playersMin", "equals": "${players}" },
+    { "id": "shots_landed", "assert": "group.combat.hitsLanded", "greaterThan": 0 },
+    { "id": "pieces_placed", "assert": "group.builders.buildResults.Ok", "greaterThan": 0 },
+    { "id": "no_stall", "assert": "var.steady.stalls", "equals": 0 },
+    { "id": "no_tick_failure", "assert": "var.steady.tickFailures", "equals": 0 },
+    { "id": "mark_cooldown", "phase": "act", "action": "mark", "text": "cooldown" },
+    { "id": "stop", "action": "stopGroup", "group": "all" },
+    { "id": "leave", "action": "disconnectAll", "prefix": "bot" },
+    { "id": "cooldown", "action": "measure", "name": "cooldown", "seconds": "${cooldownSeconds}" },
+    { "id": "all_gone", "phase": "assert", "action": "waitFor", "condition": "server.activeSessions", "equals": 0, "timeoutMilliseconds": 10000 }
+  ]
+}

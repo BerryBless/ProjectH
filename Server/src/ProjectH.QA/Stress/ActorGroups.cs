@@ -38,7 +38,7 @@ public sealed class GroupStats
     public long CommandFailures;
     public long Rearms;               // respawned unarmed members given their weapon again
     public long Deaths;
-    public long Refills;              // reserve ammo topped up (long runs)               // members seen alive, then dead (combat groups, 250 ms polling)
+    public long Refills;              // reserve ammo topped up (long runs)
     public long ChurnCycles;
     public long Disconnects;
     public long Reconnects;
@@ -48,6 +48,22 @@ public sealed class GroupStats
     public long Duplicates;           // a DevPlayerId the server listed twice after a reconnect
     public long FaultsSet;
     public long WorkloadFailures;     // a background workload that ended on an error (not stopped): stopGroup fails
+    // Phase B. Loot brains (pump thread): items that went away after the member went for them, Drop presses, Medkit /
+    // Shield Cell presses.
+    public long LootPickups;
+    public long LootDrops;
+    public long LootUses;
+    // groupConnect (join ramp / spike workload): joined, failed (closed or not joined in time), time from the connect
+    // command to the first snapshot.
+    public long Connects;
+    public long ConnectFailures;
+    public long ConnectMsTotal;
+    public long ConnectMsMax;
+    // Abuse brains (pump thread) and their rejoin workload: invalid packets or spam requests sent, kicks seen
+    // (DisconnectCode Kicked), connections opened again after a kick or another server close.
+    public long AbuseSent;
+    public long Kicks;
+    public long Rejoins;
     private string? _lastFailure;
 
     public string? LastFailure
@@ -99,6 +115,16 @@ public sealed class GroupStats
             reconnectMsMax = Interlocked.Read(ref ReconnectMsMax),
             duplicates = Interlocked.Read(ref Duplicates),
             faultsSet = Interlocked.Read(ref FaultsSet),
+            lootPickups = Interlocked.Read(ref LootPickups),
+            lootDrops = Interlocked.Read(ref LootDrops),
+            lootUses = Interlocked.Read(ref LootUses),
+            connects = Interlocked.Read(ref Connects),
+            connectFailures = Interlocked.Read(ref ConnectFailures),
+            connectMsAvg = Interlocked.Read(ref Connects) > 0 ? Math.Round((double)Interlocked.Read(ref ConnectMsTotal) / Interlocked.Read(ref Connects), 1) : 0,
+            connectMsMax = Interlocked.Read(ref ConnectMsMax),
+            abuseSent = Interlocked.Read(ref AbuseSent),
+            kicks = Interlocked.Read(ref Kicks),
+            rejoins = Interlocked.Read(ref Rejoins),
             workloadFailures = Interlocked.Read(ref WorkloadFailures),
             errorCount = Interlocked.Read(ref _errorCount),
             errors,
@@ -211,6 +237,14 @@ public sealed class GroupRegistry
             pressesSent = g.Members.Sum(m => m.State.PressesSent),
             hitsLanded = g.Members.Sum(m => (long)m.State.HitsLanded),
             damageTaken = g.Members.Sum(m => (long)m.State.DamageTaken),
+            // Round trip of the members' connections now (LiteNetLib's value; 0 for members not connected).
+            rttMsAvg = Math.Round(g.Members.Where(m => m.State.Connected).Select(m => (double)m.State.RttMs).DefaultIfEmpty(0).Average(), 1),
+            rttMsMax = g.Members.Where(m => m.State.Connected).Select(m => m.State.RttMs).DefaultIfEmpty(0).Max(),
+            // Health of the living members as their own snapshots show it (zone damage sends no DamageTaken; this sees it).
+            healthMin = g.Members.Where(m => m.State.Joined && m.State.Alive).Select(m => (int)m.State.Health).DefaultIfEmpty(0).Min(),
+            healthAvg = Math.Round(g.Members.Where(m => m.State.Joined && m.State.Alive).Select(m => (double)m.State.Health).DefaultIfEmpty(0).Average(), 1),
+            // Members whose last connection the server closed with Kicked (abuse groups).
+            kicked = g.Members.Count(m => m.State.Disconnected && m.State.DisconnectCode == "Kicked"),
             buildResults = BuildCodes(g.Members),
             // The run's build sites (shared by every build group): free = nobody holds it, shared = holders beyond one.
             buildSites = _sitePool == null ? null : new { total = _sitePool.Count, free = _sitePool.Free, shared = _sitePool.Shared },

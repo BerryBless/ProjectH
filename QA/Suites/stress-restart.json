@@ -1,0 +1,5 @@
+{
+  "name": "stress-restart",
+  "description": "Request §65: the server process restarted five times in a row with 20 clients reconnecting each time (clean exit, every client back, each new process measured). Not gameplay; kept out of stress-full. About 1 minute 10 s (measured on 2026-10-02).",
+  "scenarios": [ "Stress/restart_repeat.json" ]
+}

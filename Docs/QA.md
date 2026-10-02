@@ -4,7 +4,7 @@ QA Tool은 서버를 띄우고 Headless Client(Actor)를 실제 게임 프로토
 
 - 요청: `Docs/requests/2026-10-02-qa-scenario-orchestrator-request.md`. § 번호는 이 요청서 기준이다.
 - 설계: `Docs/specs/2026-10-02-qa-tool-design.md`. D 번호는 이 설계서의 결정이다.
-- 현재 범위: QA-1(MVP), QA-2(Web UI, 아래 "Web UI"), QA-3(Fault Injection, 아래 "Fault Injection"), QA-4(Unity Client 자동화·Screenshot·Manual Check, 아래 "Unity Client Actor"와 "Manual Check"), QA-5(Parameter·Repeat·Seed Sweep·Baseline·Recording 재생·Load 시나리오, 아래 "QA-5"), Stress Phase A(측정 구간·Actor Group·Stress 시나리오 8개, 아래 "Stress").
+- 현재 범위: QA-1(MVP), QA-2(Web UI, 아래 "Web UI"), QA-3(Fault Injection, 아래 "Fault Injection"), QA-4(Unity Client 자동화·Screenshot·Manual Check, 아래 "Unity Client Actor"와 "Manual Check"), QA-5(Parameter·Repeat·Seed Sweep·Baseline·Recording 재생·Load 시나리오, 아래 "QA-5"), Stress Phase A(측정 구간·Actor Group·Stress 시나리오 8개)와 Phase B(나머지 §18–49, §54–58, §65 시나리오 18개와 그 도구, 아래 "Stress").
 - Stress 요청: `Docs/requests/2026-10-02-server-stress-test-request.md`. Stress 절의 § 번호는 이 요청서 기준이고, 결정은 설계서 D36–D44다.
 
 ## Architecture
@@ -801,7 +801,7 @@ dotnet run --project Server/src/ProjectH.QA -- convert-recording C:/tmp/run1.jso
 
 ## Stress
 
-서버 Stress Test다(요청 `Docs/requests/2026-10-02-server-stress-test-request.md`, 설계 D36–D44). 새 Framework를 만들지 않고 QA Tool을 넓혔다: 측정 구간 Action(`measure`) 하나, Actor Group Action 몇 개, 시나리오 최상위 `"stress": true`, Report·Batch의 Stress 표. Phase A는 우선순위 시나리오 8개(§108–116)와 그 도구다. 나머지(§18–49의 Lag Compensation별, Build Count, 파괴, Join Ramp·Spike, Invalid Packet, Network Fault Mixed, DB)는 Phase B다.
+서버 Stress Test다(요청 `Docs/requests/2026-10-02-server-stress-test-request.md`, 설계 D36–D44). 새 Framework를 만들지 않고 QA Tool을 넓혔다: 측정 구간 Action(`measure`) 하나, Actor Group Action 몇 개, 시나리오 최상위 `"stress": true`, Report·Batch의 Stress 표. Phase A는 우선순위 시나리오 8개(§108–116)와 그 도구다. Phase B는 나머지 시나리오 18개(§18–49 Lag Compensation별, Turbo Build, Build Count, 파괴, Loot, Zone, Elimination Burst, Join Ramp·Spike, Disconnect Spike, Input Timeout, Invalid Packet, Build Spam, Network Fault Mixed, DB 2개, §56–58 Hotspot 비교, §65 반복 Restart)와 그것에 필요한 Action 5개(`spawnBuildPieces`, `groupFireAt`, `groupConnect`, `groupInvalidPackets`, `groupBuildSpam`)다. 서버 코드는 바꾸지 않았다.
 
 **답하려는 질문**(요청서 첫머리): 몇 명까지 안정적인가, 어떤 Gameplay가 가장 비싼가, Tick이 언제 무너지는가, 무엇이 먼저 병목인가, Churn·장시간에서 누적이 있는가. 판정은 측정값으로만 한다(§122: 측정하지 않은 값을 추측하지 않는다).
 
@@ -854,10 +854,14 @@ Group 행동은 Actor Pump가 Tick마다 실행하는 `ActorBrain`이다. Actor�
 | `groupMove` | `group`, `pattern`(mixed·clockwise·counterClockwise·radial·random, 기본 mixed), `center?`, `radius?`(60), `sprint?`, `sprintPercent?`, `jumpEverySeconds?` | Waypoint를 계속 걷는다. Actor마다 시작 각도와 원 반지름이 달라 한곳에 모이지 않는다. mixed는 번호 순으로 4가지 패턴(§12). 건물 안 Waypoint는 건너뛰고, 제때 못 가거나 Steering이 포기하면 다음으로 간다 |
 | `groupCombat` | `group`, `pairing`(pairs·groups), `groupSize?`(groups일 때 3), `weapon?`(Vesper AR), `ammo?`(300), `burst?`(3), `pauseMs?`(2000), `reloadEvery?`(5), `hitPercent?`(25), `engageRange?`(40), `strafeSeconds?`(1.5), `arrange?`(true), `rearm?`(true), `center?`, `radius?`(70, 0 초과 120 m 이하), `spacing?`(12, 2–50 m), `pairDistance?`(10, 2–50 m), `shield?`(100) | 멤버를 짝(또는 고리)으로 묶어 서로 쏜다. 한 사람이 모두의 목표가 되지 않는다(§17). Arrange: 맵 데이터로 고른 빈 자리(서로 보이고 설 수 있는 곳)에 마주 보게 놓고 무기·탄약·실드를 준다. 행동: 짝을 조준(자기 Snapshot), 멀거나 안 보이면 걸어간다, 좌우 Strafe, `burst`번 단발(무기 Fire Interval 준수) 후 `pauseMs` 쉼, `reloadEvery`번마다 Reload. `hitPercent`만 가슴을, 나머지는 머리 위 3 m를 조준한다(빗나간 탄도 Hitscan·Lag Compensation을 거친다. 사망률을 장시간 버틸 수 있게 낮춘다) |
 | `groupBuild` | `group`, `pieces?`(wall·floor·ramp·roof), `material?`(wood), `ratePerSecond?`(1, 최대 10), `recycle?`(false), `arrange?`(true), `resources?`(500), `center?`, `weapon?`, `ammo?`, `role?` | 멤버마다 자기 Site(맵의 평평하고 빈 3×2 셀, 서로 겹치지 않음. Run의 Site Pool에서 가장 적게 잡힌 가까운 곳을 받는다. 가지 못해 포기한 Site는 Pool에 돌려준다. 모두 잡혀 있으면 함께 쓰고 그 수를 `group.<name>.buildSites.shared`로 보인다)를 가져 그 남쪽 칸에 서서 짓는다. Site당 13조각: 양옆 Ramp, 바닥, 서·동·북 벽 2층, 지붕, 2층 바닥, 남쪽 벽 2층(서버의 시야 검사를 위해 먼 것부터). `recycle`이면 다 지은 Site를 자기 무기로 실제 사격해 1층 조각을 부수고(위층은 서버 지지 규칙으로 붕괴) 다시 짓는다. 4/s 이상은 role `turbo` |
-| `groupLoot` | `group`, `searchRange?`(40), `dropEvery?`(3) | 아는 아이템으로 걸어가 Interact, 몇 번 주울 때마다 Drop, 다쳤으면 Medkit 사용. 없으면 주변을 걷는다 |
+| `groupLoot` | `group`, `searchRange?`(40), `dropEvery?`(3) | 아는 아이템으로 걸어가 Interact, 몇 번 주울 때마다 Drop, Medkit이 있고 체력이 덜 찼거나 Shield Cell이 있고 실드가 덜 찼으면 사용 버튼(4 s에 한 번). 없으면 주변을 걷는다. Phase B: Group 통계에 `lootPickups`(간 아이템이 사라짐), `lootDrops`, `lootUses`(사용 누름. 서버가 거절한 누름도 센다) |
 | `groupRoles` | `group`, `roles: [{role, percent}]`(move·sprint·jump·idle·loot·build·turbo), `switchSeconds?`(20), `center?`, `radius?`, `ratePerSecond?`, `turboRatePerSecond?`, `resources?` | 멤버마다 `switchSeconds`마다 역할을 바꾼다. 역할은 (Seed, 번호, 구간)으로 정해지는 가중 선택이다(§52). 전투는 짝이 필요해서 역할에 없다 |
 | `groupChurn` | `group`, `percent?`(15), `cycleSeconds?`(8), `cycles?`(20), `mode?`(graceful·drop·mixed), `offlineMs?`(500), `reconnectTimeoutMs?`(15000) | Background Workload. 매 Cycle Seed로 고른 비율이 끊기고(mixed는 반은 정상 종료, 반은 끊김 패킷 없이), 서버가 옛 연결을 놓을 때까지 `/qa/players`를 한 번씩 읽어 기다린 뒤 같은 DevPlayerId로 다시 접속한다. 재접속 시간, 실패, 서버 목록의 중복 DevPlayerId를 센다. Proxy Actor는 쓸 수 없다 |
 | `groupNetworkFault` | `group`, `latencyMs?`, `jitterMs?`, `lossPercent?`, `duplicatePercent?`, `direction?` | `proxy: true` Group의 모든 멤버 Proxy에 같은 장애 |
+| `groupFireAt` | `group`, `at`(위치, y를 주면 그 높이), `presses?`(10, 최대 500), `burst?`(3), `slot?`(0) | Phase B: 서서 한 점을 조준하고 무기 Fire Interval을 지키는 단발 `presses`번을 쏜다(필요하면 슬롯 키, 탄창이 비면 Reload). 실제 사격이라 무엇에 맞는지는 서버 Hitscan이 정한다. measure와 함께 돌게 Pump의 Brain으로 쏜다(build_destruction의 Foundation 파괴) |
+| `groupConnect` | `group`, `perSecond?`(0 = 한 번에, 최대 100), `timeoutMs?`(15000) | Phase B: 아직 게임에 없는 멤버를 멤버 순서로 초당 `perSecond`명씩(0이면 한 번에) 접속시키는 Background Workload. Step은 바로 끝나서 뒤의 measure가 Ramp 동안 잰다. 첫 Snapshot까지를 `connects`·`connectMsAvg/Max`로, 닫히거나 시간 안에 Snapshot이 없으면 `connectFailures`로 센다(다시 시도하지 않는다). 접속 전에 준 Brain(groupMove)은 접속 뒤에도 남는다 |
+| `groupInvalidPackets` | `group`, `ratePerSecond?`(5, 최대 200), `kinds?`(unknownId·truncated·garbage, oversized 가능), `rejoin?`(true) | Phase B(D38): 정상 입력을 계속 보내면서 같은 연결로 `sendInvalidPackets`와 같은 바이트를 초당 `ratePerSecond`개(Actor별 Seed, Tick당 최대 20개) 보낸다. 서버는 하나하나 badPackets로 세고 20개에서 그 연결을 Kick한다. `rejoin`이면 Rejoin Workload가 Kick된(서버가 닫은) 멤버를 1 s 뒤 새 플레이어로 다시 접속시킨다. 통계 `abuseSent`, `kicks`, `rejoins`. `inputFlood`는 초당 입력 한도를 보는 것이라 지속 Stream으로 쓰지 않는다(Validation 오류) |
+| `groupBuildSpam` | `group`, `ratePerSecond?`(15, 최대 200), `material?`, `resources?`(500, Arrange giveResource), `rejoin?`(true) | Phase B(D38): Build 모드를 켜고(Q) 조준 Tick·간격 없이 Build Request를 초당 `ratePerSecond`개 바로 보낸다(주변 셀의 무작위 벽·바닥·Ramp, Actor의 요청 번호를 써서 응답이 Code별로 `buildResults`에 쌓인다). 20/s(maxRequestsPerSecond) 넘는 요청은 서버가 Bad Packet(BuildRate)으로 세고 Kick한다. Rejoin은 groupInvalidPackets와 같다 |
 | `stopGroup` | `group`(이름 또는 `all`) | Workload를 끝내고(최대 10 s, 기본 Step Timeout 20 s) 행동을 지운다(멤버는 서서 입력만 보낸다). saveAs = 통계. 그 Group의 Workload가 stop 전에 오류로 끝났으면 실패다(측정 중 일부를 일하지 않았다는 뜻) |
 
 - **새 행동은 옛 Workload를 대신한다**: 행동 Action(groupMove·Combat·Build·Loot·Roles)은 그 Group의 Re-arm Workload를 먼저 끝내고, 새 groupChurn은 옛 Churn을 끝낸다. Churn은 다른 행동과 같이 돈다.
@@ -865,6 +869,19 @@ Group 행동은 Actor Pump가 Tick마다 실행하는 `ActorBrain`이다. Actor�
 - **Workload와 정리**: Re-arm(전투·Recycle 건설)과 Churn은 Runner 쪽 Background Task다. Actor State만 읽고 Actor 명령과 QA 명령만 보낸다(RunContext는 건드리지 않는다). Run당 Workload 최대 64개, Group 최대 32개. Run이 끝나면 Cleanup이 다른 정리보다 먼저 모든 Workload를 끝낸다(Report Cleanup의 `groups` 줄). Ctrl+C·Timeout에도 같다.
 - **Re-arm(Arrange)**: 부활한 멤버의 무기 칸이 비면 무기·탄약(전투 Group은 자기 자리도)을 다시 주고, 예비 탄약이 60발 아래면 채운다. 이 QA 명령은 실제 게임이라면 줍기로 얻는 것을 대신하는 Arrange이고, 측정 구간마다 "Arrange cmds"로 세며 서버 `qaCommandMs`에 들어간다. 피해·사망 자체는 언제나 실제 사격이다(`damagePlayer` 없음).
 - `group.<name>.size·joined·alive·role·workloads·pressesSent·hitsLanded·damageTaken·buildResults.<Code>·stats.<…>`로 검증한다(stats: arrangeCommands, commandFailures, rearms, deaths, refills, churnCycles, disconnects, reconnects, reconnectFailures, reconnectMsAvg/Max, duplicates, faultsSet, errorCount, errors).
+  - Phase B에서 더한 값: `rttMsAvg`·`rttMsMax`(접속 중인 멤버 연결의 RTT), `healthMin`·`healthAvg`(살아 있는 멤버가 자기 Snapshot에서 본 체력. Zone 피해는 DamageTaken 패킷이 없어서 `damageTaken`에 안 잡히고 이것으로 본다), `kicked`(마지막 연결이 Kicked로 닫힌 멤버 수), stats의 `lootPickups·lootDrops·lootUses`, `connects·connectFailures·connectMsAvg/Max`, `abuseSent·kicks·rejoins`.
+- **Phase B Workload**: groupConnect(`connect`)와 Abuse Group의 Rejoin(`rejoin`)도 Re-arm·Churn과 같은 Group Workload다. 같은 상한(Run당 64개)과 정리(stopGroup·Cleanup이 먼저 끝냄)를 따르고, Actor State만 읽고 Actor 명령만 보낸다(Rejoin은 QA 조회도 하지 않는다). 새 행동은 같은 종류의 옛 Workload를 끝내고 시작한다.
+
+### 대량 Build Piece: `spawnBuildPieces` (Phase B, §24–29)
+
+`{ "action": "spawnBuildPieces", "count": 20010, "layout": "field" | "hanging", "center"?: {x,z}, "side"?: 3-10, "material"?: "wood", "parallel"?: 1-16, "saveAs": "b" }`
+
+- 새 서버 경로가 아니다. 조각마다 기존 QA 명령 `spawnBuildPiece`(`/qa/command` 하나)를 보낸다(§24, §122). 동시에 최대 16개(서버가 Tick마다 QA 명령 16개를 실행하고 큐는 64개). 503/504는 두 번 다시 보낸다. Arrange 명령이라 arrange가 아닌 phase에서는 D11 경고다.
+- Layout(`Stress/BuildLayouts.cs`, 순수·결정적)은 Wave의 목록이다. 같은 Wave의 조각은 서로 기대지 않고 앞 Wave의 조각이나 땅에만 기댄다. 그래서 Wave 안은 병렬, Wave 사이는 순서대로 보낸다.
+  - `field`: `center`에 가까운 셀부터 64셀씩 묶어 기둥을 세운다. 기둥은 셀 중심 아래 지형 Level에서 시작하고(그 바닥은 땅에 묻히거나 닿아 Grounded), Level마다 바닥 → 그 남·서쪽 벽, 다음 Level 바닥은 그 벽 위에 선다. 최대 32×32셀 × 16 Level × 3 = 49,152개라 Match 예산(20,000)보다 많다. 거절(Occupied·Unsupported)된 조각은 다시 보내지 않고 다음 조각으로 `count`를 채운다. `BudgetFull`이 오면 멈춘다.
+  - `hanging`: 정확히 `count`개로 된 구조물 하나. 한 셀의 남쪽 벽 기둥(맨 아래 벽 = Foundation, 땅에 닿는 유일한 조각) 위에, 그 아래 가장 높은 땅보다 두 Level 위에서 시작하는 `side`×`side`셀 블록(바닥, 그 위 남·서쪽 벽, 다음 바닥…)을 얹는다. Foundation 말고는 서버의 Grounded 규칙(`BuildSupport.IsGrounded`를 따라 쓴 `BuildLayouts.WouldRest`)으로 땅·맵 상자에 닿지 않는 것을 확인하고, Foundation 남쪽 4 m에 사수가 설 수 있고 Foundation 중심이 보이는 자리만 고른다. 하나라도 거절되면 Step이 실패한다(구조물이 불완전).
+- saveAs: `{requested, placed, serverPieces(/qa/metrics buildPieces), budgetFull, refused{Code: n}, errors(앞 5개), layout, seconds, perSecond, structure?{pieceId(Foundation), foundation{x,y,z}(Foundation 중심), shooter{x,y,z}, side, firstLevel}}`.
+- 서버는 QA 명령마다 Information 로그 한 줄을 쓴다. 그래서 시나리오는 이 Step을 측정 구간 밖에 둔다.
 
 ### 시나리오 (`QA/Scenarios/Stress/`, D44)
 
@@ -881,21 +898,43 @@ Group 행동은 Actor Pump가 Tick마다 실행하는 `ActorBrain`이다. Actor�
 | `final_zone.json` | 54–55, 115 | 반경 25 m에 몰림: 전투 50 %(6 m 짝), 건설 20 %, 나머지 달리기 | DevRespawn, BuildInfiniteResources | 30/40/50 |
 | `soak.json` | 59–64, 116 | mixed 작업을 `soakSeconds`(기본 300) 동안, 10 s Sample. start/soak/end/cooldown 구간 | DevRespawn | 50 (`--set players=`) |
 | `soak_match_reset.json` | 59–64 | 같은 Client로 경기 10번(Start → 30 s → finish → Reset), 경기마다 구간 | 경기, StartCountdownSeconds 3 | 50 |
+| `lag_compensation.json` | 18–19 | 4개 Group(25 %씩)이 각자 Proxy로 0/50/100/200 ms(한 방향, latency_sweep 관례) + 5 ms Jitter, Group마다 맵 사분면에서 짝 전투(60 % 가슴 조준). Group별 hitsLanded·pressesSent·RTT 저장. 0/50/100은 명중 단언, 200은 기록만(왕복이 되감기 창 0.4 s 경계) | DevRespawn | 20/50/100 |
+| `turbo_build.json` | 23 | 75 %가 9/s Turbo 건설(Recycle), 나머지 걷기. RateLimited·Bad Packet 0 단언(한도 안) | DevRespawn, BuildInfiniteResources | 10/25/40 |
+| `build_count.json` | 24–26 | `spawnBuildPieces` field로 1,000/2,500/5,000/10,000/20,010개 → 서 있는 조각 수별 구간. 마지막 세트는 20,000에서 BudgetFull 10개를 확인(실제 상한 = building.json maxBuildPiecesPerMatch). 'empty' 구간(조각 0)과 비교. 50명이 중앙 60 m 안을 걷는다 | DevRespawn | 50 (조각 수가 파라미터) |
+| `build_destruction.json` | 27–29 | `spawnBuildPieces` hanging으로 Foundation 하나에 기댄 100/500/1,000조각 구조물 → 사수 1명이 Kestrel LR로 Foundation을 실제 사격(`groupFireAt`, damageBuild 아님) → 서버가 나머지를 한 Tick에 붕괴. 'collapse' 구간 1 s Sample(시작 = N, 끝 = 0 단언). 관찰자 49명이 20 m 안을 걷는다 | DevRespawn | 50 (조각 수가 파라미터) |
+| `loot.json` | 30 | 모두 줍기 → 2번마다 Drop → 회복 아이템 사용 반복(`groupLoot`). lootPickups·lootDrops·lootUses > 0 | DevRespawn | 25/50/100 |
+| `zone.json` | 31 | 실제 경기(AirDrop 끔). `setZone 2`(반경 70, 2/s) 뒤 50 %는 바깥 고리, 20 %는 안팎을 오가고, 나머지는 안. 바깥은 체력이 줄고 안쪽은 steady 동안 그대로, 아무도 죽지 않음 | 경기, AirDrop false | 25/50/100 |
+| `elimination_burst.json` | 32 | 실제 경기. 생존자 4명은 중앙, 나머지는 55–100 m 고리 → `setZone 4`(반경 20, 10/s) → 바깥 전원이 같은 Zone Tick에 탈락(실제 Zone 경로, killPlayer 없음). 'burst' 1 s Sample로 alive가 players → ≤ players−50 | 경기, AirDrop false, Seed 8600(Zone 중심이 맵 중앙 근처) | 60/80/100 |
+| `join_ramp.json` | 33 | 100명이 초당 5/10/20명 접속(`groupConnect`)하는 동안 'ramp' 1 s Sample, 그 뒤 steady. 접속 시간·실패 | DevRespawn | 100 (속도가 파라미터) |
+| `join_spike.json` | 34 | 50/100명이 한 번에 접속, 'spike' 1 s Sample | DevRespawn | 50/100 |
+| `disconnect_spike.json` | 35 | 전원이 한 번에 나감(Churn 100 % 1 Cycle, mixed/drop/graceful) → 2 s 뒤 같은 DevPlayerId로 돌아옴. 'spike' 1 s Sample, 잔류·중복 0 | DevRespawn, DisconnectTimeoutMs 2000 | 50/100 (+drop, graceful) |
+| `input_timeout.json` | 39 | 42명이 걷는 중 8명(idle-001..008)이 한꺼번에 입력을 멈춤 → 7 s 뒤 서버가 InputTimeout으로 닫음 | DevRespawn, InputTimeoutSeconds 7 | 50 |
+| `invalid_packets.json` | 40–42 | 10 % Abuser가 초당 5/50개 Invalid Packet(Kick → 1 s 뒤 Rejoin), 40 % 짝 전투, 나머지 걷기. 정상 Player Kick·끊김 0 | DevRespawn | 50 (5/s, 50/s), 100 (50/s) |
+| `build_spam.json` | 43 | 10 % Spammer가 15/s 또는 40/s Build Request, 40 % 정상 건설(1/s Recycle), 나머지 걷기. 정상 건설이 계속 놓이고 Kick 0 | DevRespawn, BuildInfiniteResources | 50 (15/s, 40/s) |
+| `network_fault_mixed.json` | 45–46 | 60 % 정상(20 % 짝 전투 + 40 % 역할 전환), 15 % 100 ms, 10 % 200 ms, 10 % 5 % Loss, 5 % 100 ms + 20 ms Jitter + 5 % Loss(Proxy, 한 방향 값). 아무도 끊기지 않음 | DevRespawn | 50/100 |
+| `db_persistence.json` | 47 | 짧은 경기 8번(10 s → forceMatchState finish → 다음), 기록마다 50명 참가자. db.saved = 8, failed·dropped 0, Queue 0으로 비움 | 경기, Persistence:Enabled, ResultSeconds 2, StartCountdownSeconds 3 | 50 (`--set players=100`) |
+| `db_down.json` | 48–49 | 경기 1 저장 → `stopDb` → 2 s 경기 6번(기록이 실패·Queue 거절) → 'outage_tail' → `startDb` → 다음 기록 저장. Queue ≤ 용량, failed > 0, Tick·접속 그대로 | 경기, Persistence:Enabled, QueueCapacity 1 | 50 (`--set players=100`) |
+| `hotspot.json` | 56–58 | 같은 50명·같은 작업(전투 40 %, 건설 10 %, 걷기)을 맵 전체(반경 70) vs Crossroads 20 m 안에. 두 세트 묶음 비교표 | DevRespawn, BuildInfiniteResources | 50 (distributed, hotspot) |
+| `restart_repeat.json` | 65 | 서버 재시작 5번(정상 종료 → 같은 인자로 새 프로세스), 매번 20명 재접속 후 10 s 측정. Exit Code 0, Kill 아님 | DevRespawn | 20 |
 
 - mixed_match의 요청 비율은 겹친다(70 % 이동, 40 % Sprint, 30 % 전투, 20 % 줍기, 20 % 건설 중 10 % Turbo). 여기서는 겹치지 않는 Group으로 나누고, 행동이 겹치는 부분을 덮는다: 이동은 걷기·줍기·전투(Strafe·추격)를 합쳐 70 %를 넘고, Sprint는 sprint 역할·줍기·추격이다. 비율은 변수다.
-- DevRespawn 시나리오에는 Zone 피해가 없다(Zone은 경기 흐름에서만 돈다). Zone 피해·대량 탈락은 경기 시나리오(soak_match_reset)와 Phase B의 elimination burst가 맡는다.
+- DevRespawn 시나리오에는 Zone 피해가 없다(Zone은 경기 흐름에서만 돈다). Zone 피해·대량 탈락은 경기 시나리오(soak_match_reset, zone, elimination_burst)가 맡는다.
+- Phase B의 경기 시나리오(zone, elimination_burst, db_*)는 `Server:AirDrop=false`다. 수송기 탑승자는 Zone 피해를 받지 않고, 내려오는 시간이 실행마다 달라서다. `server.options`에는 변수를 쓸 수 없어서 Countdown·QueueCapacity는 고정값이다.
+- Zone 중심은 Seed로 정해진다. `setZone N` 뒤의 원은 이전 Phase의 목표 원이고 피해는 Phase N의 값이다(`match.zone.targetCenter`가 다음 원의 중심). elimination_burst는 그 원의 중심이 맵 중앙에서 13 m인 Seed 8600을 쓴다(다른 `--seed`면 생존자도 바깥에서 시작할 수 있다).
+- Arrange와 Act의 구분(§122): build_count·build_destruction의 조각, groupBuildSpam의 자원, setZone·forceMatchState(흐름 제어)는 Arrange다. 측정 대상(파괴·탈락·접속·Packet·Build Request·DB 기록)은 실제 입력이나 서버 경로로 일어난다. build_destruction의 Foundation은 실제 사격으로 부서진다(damageBuild를 쓰지 않았다).
 
 ### Suite
 
 | Suite | 내용 | 시간 |
 |---|---|---|
-| `stress-quick` | baseline·movement·combat·building·mixed를 50명, steady 30 s | 4 min 22 s(실측, 5개 PASS) |
-| `stress-gameplay` | movement·combat·building 50명, mixed 50·100명, final_zone 40명, steady 60 s | 약 8–9 min(추정: 각 파일을 따로 잰 시간의 합) |
+| `stress-quick` | baseline·movement·combat·building·mixed를 50명, steady 30 s | 4 min 20 s(실측, 5개 PASS, 2026-10-02 Phase B 코드) |
+| `stress-gameplay` | movement·combat·building 50명, mixed 50·100명, final_zone 40명, loot 50, zone 50, elimination_burst 60, hotspot 두 세트 | 약 20 min(추정: 각 파일을 따로 잰 시간의 합) |
 | `stress-soak` | soak(5분) + soak_match_reset(10경기) | 약 12 min(추정: 따로 잰 5.6 + 6.0 min) |
-| `stress-network` | reconnect_churn 25/50/100(Phase B: Lag별, Join Ramp/Spike, Invalid Packet, Fault Mixed) | 약 9 min(추정: 50명 한 번 2.6 min) |
-| `stress-building` | building 10/25/50, final_zone 50(Phase B: Build Count, 파괴, Spam) | 약 6 min(추정) |
-| `stress-fault` | reconnect_churn 50(Phase B: Disconnect Spike, Input Timeout, DB) | 약 2.6 min(추정: 같은 실행을 따로 잼) |
-| `stress-full` | 모든 Stress 시나리오의 모든 파라미터 세트 | 1시간 이상(추정) |
+| `stress-network` | reconnect_churn 25/50/100, lag_compensation 50, join_ramp 5/10/20 per s, join_spike 100, disconnect_spike 50, invalid_packets 5/s·50/s, network_fault_mixed 50 | 약 25 min(추정) |
+| `stress-building` | building 10/25/50, final_zone 50, turbo_build 40, build_count 1,000–20,000, build_destruction 100/500/1,000, build_spam 15/s·40/s | 약 25 min(추정) |
+| `stress-fault` | reconnect_churn 50, disconnect_spike 50, input_timeout, invalid_packets 50/s, network_fault_mixed 50, db_persistence, db_down(DB 컨테이너가 없으면 SKIPPED) | 약 13 min(추정) |
+| `stress-full` | 모든 Stress 시나리오의 모든 파라미터 세트(restart_repeat 제외) | 여러 시간(추정), nightly |
+| `stress-restart` | restart_repeat(§65: 재시작 5번). Gameplay가 아니라서 따로 둔다 | 1 min 7 s(실측: 파일 단독 실행) |
 
 - Suite 항목은 문자열 경로 말고 `{ "path": "Stress/baseline.json", "parameterSet": 3, "variables": { "steadySeconds": 30 } }`도 된다. 그 세트 하나를 그 변수로 돌린다(CLI의 `--parameter-set`·`--set`이 이긴다). 같은 파일을 다른 옵션으로 여러 번 넣을 수 있다.
 - pre-push에는 넣지 않는다(§97). `stress` Suite와 `full-regression`은 예전 Load 파일 3개만 돈다.
@@ -955,7 +994,106 @@ Baseline Player Count 비교(D40 묶음, steady 30 s, `batch-20261002-202122-417
 - Brain의 선택은 Seed로 정해지지만 세계의 타이밍(Steering, 사망 시점)은 실행마다 조금 다르다.
 - 서버 GC를 강제로 일으킬 수 없다(QA API에 없고, 넣으면 측정이 바뀐다). "GC 뒤 기준선"은 자연 GC 시점에만 보인다.
 
-**Phase B 후보**(요청 §18–49, 이번에 만들지 않음): `lag_compensation`(Ping Group 0/50/100/200), `build_count`(spawnBuildPiece로 1,000–20,000), `build_destruction`(Foundation 파괴 → 대량 붕괴), `loot`, `zone`, `elimination_burst`, `join_ramp`·`join_spike`, `disconnect_spike`, `input_timeout`, `invalid_packets`(90 정상 + 10 악성), `build_spam`, `network_fault_mixed`(60/15/10/10/5 %), `db_persistence`·`db_down`, Hotspot vs Distributed 비교(§56-58), `groupInvalidPackets`·`groupBuildSpam` Action, 100명 할당·GC의 출처 Profiling.
+### 측정 (2026-10-02, Phase B)
+
+- 환경은 Phase A와 같다: i9-14900K(논리 32), Windows 11, .NET 10, **Debug 빌드**, 서버와 QA Tool이 같은 PC·루프백. Git 0d9b96c + 이 작업(dirty). 다른 Agent가 같은 PC에서 일하고 있었을 수 있다. CPU는 32 논리 프로세서 = 100 %, KB = 1024 B UDP payload.
+- 표는 각 시나리오의 판정 구간이다(steady가 없는 것은 그 시나리오의 측정 구간: collapse, burst, ramp, spike, timeout, match_08, outage_tail, run_05). 120 s 이하 구간이라 Tick 백분위는 구간 전체 창의 정확값이다. 모두 PASSED, Stall 0, Tick Failure 0, Crash 없음.
+- "Send KB/s (최대)"의 괄호는 Sample 창(5 s, 1 s Sample 시나리오는 1 s)의 최댓값이다. **1 s Sample의 Send·CPU는 정확하지 않다**: 서버가 초 단위로 남기는 누적값 기록 중 창 안에서 가장 오래된 것부터 계산해서(`Qa/QaObservation`), 1 s 창은 기록 간격에 따라 0이나 실제보다 큰 값이 나올 수 있다(build_destruction 100에서 1 s Send 0 KB/s가 나왔다). 그래서 Burst의 송신량은 구간 평균의 차이로 본다. Tick 값은 Tick마다 기록되므로 1 s Sample도 정확하다.
+- 판정 구간 밖에서 바뀐 것: zone 50은 마지막 파일로 다시 잰 값이다(100명 실행에서 안쪽 Group의 늦은 1명 때문에 warmup을 10 → 15 s로, 평균 체력 비교에 허용 오차 1을 더함). Rejoin Workload를 Group당 하나로 고친 것(같은 Group에 Abuse Action을 두 번 부를 때만 다르다)은 50명 표의 abuse 실행 뒤다. 고친 뒤 invalid_packets 100명과 build_spam 40/s(qa-20261002-225621-e474)를 다시 돌려 PASS를 확인했다.
+
+50명(또는 그 시나리오의 자연 크기):
+
+| 시나리오 | Players | 구간 | Tick p50 | p95 | p99 | max (ms) | 서버 CPU % | Managed 끝/최대 MB | WS 최대 MB | GC 0/1/2 | 할당 MB/s | Send KB/s (최대) | Recv KB/s | R1 p50/p95/p99 ms | Tool CPU % | Report |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| lag_compensation | 50 | steady 60 s | 0.222 | 0.453 | 0.644 | 1.087 | 0.199 | 10.8/10.8 | 72.9 | 0/0/0 | 0.040 | 570.7 (600.7) | 134.8 | 242/534/540 | 0.869 | qa-20261002-223352-e21a |
+| turbo_build (40) | 40 | steady 60 s | 0.240 | 0.674 | 0.801 | 7.731 | 0.230 | 6.2/17.1 | 83.5 | 1/0/0 | 0.082 | 478.1 (514.3) | 108.0 | 105/138/139 | 0.152 | qa-20261002-223517-c88d |
+| build_count 0 pieces | 50 | empty 10 s | 0.151 | 0.290 | 0.658 | 1.473 | 0.266 | 5.8/5.8 | 64.6 | 0/0/0 | 0.016 | 497.6 (496.0) | 134.8 | 91/109/137 | 0.189 | qa-20261002-223640-48d9 |
+| build_count 1,000 | 50 | steady 30 s | 0.244 | 0.418 | 0.504 | 0.957 | 0.225 | 12.0/12.0 | 75.6 | 0/0/0 | 0.002 | 496.3 (500.4) | 134.8 | 91/109/138 | 0.130 | qa-20261002-223640-48d9 |
+| build_count 2,500 | 50 | steady 30 s | 0.265 | 0.466 | 0.617 | 1.272 | 0.152 | 6.4/6.4 | 83.1 | 0/0/0 | 0.002 | 496.8 (501.0) | 134.8 | 90/107/109 | 0.117 | qa-20261002-223735-1ce5 |
+| build_count 5,000 | 50 | steady 30 s | 0.410 | 0.720 | 0.801 | 0.944 | 0.295 | 19.6/19.6 | 85.2 | 0/0/0 | 0.002 | 504.8 (510.7) | 134.8 | 107/138/139 | 0.138 | qa-20261002-223833-fe20 |
+| build_count 10,000 | 50 | steady 30 s | 0.631 | 1.093 | 1.167 | 1.323 | 0.255 | 16.6/16.6 | 91.4 | 0/0/0 | 0.001 | 512.1 (522.1) | 134.8 | 90/108/109 | 0.153 | qa-20261002-223936-6184 |
+| build_count 20,000 (cap) | 50 | steady 30 s | 0.827 | 1.448 | 1.672 | 1.926 | 0.254 | 14.3/14.3 | 96.1 | 0/0/0 | 0.001 | 495.9 (499.2) | 134.8 | 89/108/109 | 0.143 | qa-20261002-215908-ee21 |
+| build_destruction 100 | 50 | collapse 10 s | 0.174 | 0.325 | 0.453 | 2.930 | 0.141 | 7.3/7.3 | 70.5 | 0/0/0 | 0.010 | 500.9 (497.9) | 134.8 | 89/107/109 | 0.218 | qa-20261002-224050-b883 |
+| build_destruction 500 | 50 | collapse 10 s | 0.154 | 0.332 | 0.416 | 2.663 | 0.215 | 9.6/9.6 | 73.8 | 0/0/0 | 0.011 | 508.6 (632.0) | 134.8 | 89/108/109 | 0.160 | qa-20261002-224113-feb9 |
+| build_destruction 1,000 | 50 | collapse 10 s | 0.186 | 0.341 | 0.445 | 3.831 | 0.224 | 12.4/12.4 | 76.9 | 0/0/0 | 0.027 | 519.6 (544.3) | 134.8 | 78/108/109 | 0.146 | qa-20261002-215834-1545 |
+| loot | 50 | steady 60 s | 0.156 | 0.292 | 0.389 | 1.140 | 0.159 | 6.6/6.6 | 64.8 | 0/0/0 | 0.010 | 499.2 (508.5) | 134.8 | 89/107/108 | 0.154 | qa-20261002-220858-725a |
+| zone | 50 | steady 30 s | 0.141 | 0.220 | 0.276 | 0.729 | 0.158 | 7.0/7.0 | 65.7 | 0/0/0 | 0.002 | 495.9 (499.5) | 134.8 | 89/107/108 | 0.119 | qa-20261002-225905-f470 |
+| elimination_burst (60) | 60 | burst 20 s | 0.142 | 0.311 | 0.399 | 1.627 | 0.163 | 8.2/8.2 | 67.6 | 0/0/0 | 0.032 | 710.8 (769.9) | 161.7 | 90/108/109 | 0.131 | qa-20261002-220255-622e |
+| join_ramp 5/s | 5–100 | ramp 25 s | 0.201 | 0.514 | 0.737 | 13.973 | 0.272 | 6.8/6.8 | 66.7 | 0/0/0 | 0.110 | 970.9 (2180.5) | 165.6 | 106/138/140 | 0.263 | qa-20261002-224256-d146 |
+| join_ramp 10/s | 10–100 | ramp 15 s | 0.245 | 0.547 | 1.169 | 11.601 | 0.383 | 6.9/6.9 | 67.0 | 0/0/0 | 0.185 | 1181.0 (2163.2) | 185.9 | 92/136/138 | 0.399 | qa-20261002-224351-fdf9 |
+| join_ramp 20/s | 20–100 | ramp 10 s | 0.271 | 0.614 | 1.183 | 13.743 | 0.369 | 7.0/7.0 | 67.3 | 0/0/0 | 0.282 | 1453.1 (2164.1) | 212.2 | 91/111/136 | 0.388 | qa-20261002-220456-288b |
+| join_ramp steady 100 | 100 | steady 20 s | 0.326 | 0.572 | 0.642 | 0.843 | 0.347 | 7.2/7.2 | 67.4 | 0/0/0 | 0.010 | 1983.6 (1998.3) | 269.5 | 93/137/139 | 0.324 | qa-20261002-220456-288b |
+| join_spike 100 | 100 | spike 10 s | 0.285 | 0.572 | 1.104 | 18.906 | 0.275 | 8.6/8.6 | 67.5 | 0/0/0 | 0.442 | 1983.6 (2164.7) | 269.6 | 91/109/137 | 0.403 | qa-20261002-220536-84da |
+| disconnect_spike mixed | 0–50 | spike 20 s | 0.150 | 0.287 | 0.490 | 1.557 | 0.306 | 7.6/7.6 | 69.4 | 0/0/0 | 0.097 | 478.3 (500.7) | 125.2 | 89/107/109 | 0.277 | qa-20261002-220616-78e2 |
+| disconnect_spike drop | 0–50 | spike 20 s | 0.148 | 0.283 | 0.527 | 1.482 | 0.320 | 7.8/7.8 | 69.1 | 0/0/0 | 0.099 | 499.5 (1000.2) | 126.0 | 93/137/139 | 0.173 | qa-20261002-224436-5f18 |
+| disconnect_spike graceful | 0–50 | spike 20 s | 0.159 | 0.293 | 0.534 | 1.708 | 0.197 | 7.7/7.7 | 70.4 | 0/0/0 | 0.097 | 474.5 (496.5) | 126.1 | 106/138/139 | 0.187 | qa-20261002-224509-527d |
+| input_timeout | 42–50 | timeout 15 s | 0.140 | 0.260 | 0.379 | 2.042 | 0.183 | 6.0/6.0 | 65.0 | 0/0/0 | 0.018 | 415.1 (496.1) | 113.2 | 90/108/109 | 0.156 | qa-20261002-220648-576f |
+| invalid_packets 5/s | 45–50 | steady 60 s | 0.182 | 0.333 | 0.421 | 0.770 | 0.246 | 9.7/9.7 | 72.6 | 0/0/0 | 0.036 | 497.5 (509.3) | 130.9 | 93/137/138 | 0.197 | qa-20261002-221113-d197 |
+| invalid_packets 50/s | 45–49 | steady 60 s | 0.172 | 0.345 | 0.530 | 1.058 | 0.217 | 13.3/13.3 | 75.9 | 0/0/0 | 0.085 | 448.0 (460.8) | 122.7 | 89/107/108 | 0.165 | qa-20261002-224138-d57f |
+| build_spam 15/s | 50 | steady 60 s | 0.283 | 0.683 | 1.018 | 5.676 | 0.231 | 5.1/17.5 | 85.8 | 1/0/0 | 0.196 | 586.3 (637.4) | 135.5 | 90/107/109 | 0.173 | qa-20261002-221507-7a4e |
+| build_spam 40/s | 45–50 | steady 60 s | 0.273 | 0.665 | 0.987 | 2.958 | 0.216 | 6.3/17.6 | 86.6 | 1/0/0 | 0.173 | 540.7 (601.5) | 126.7 | 92/137/139 | 0.119 | qa-20261002-221624-34bc |
+| network_fault_mixed | 50 | steady 60 s | 0.174 | 0.310 | 0.403 | 1.025 | 0.189 | 7.6/7.6 | 70.3 | 0/0/0 | 0.011 | 510.0 (518.6) | 133.9 | 136/518/536 | 0.475 | qa-20261002-221742-9a19 |
+| hotspot: distributed | 50 | steady 60 s | 0.257 | 0.450 | 0.644 | 1.535 | 0.224 | 8.3/8.3 | 72.0 | 0/0/0 | 0.015 | 545.6 (573.1) | 134.8 | 107/138/139 | 0.170 | qa-20261002-221900-7907 |
+| hotspot: hotspot | 50 | steady 60 s | 0.242 | 0.441 | 0.638 | 1.023 | 0.214 | 8.9/8.9 | 72.6 | 0/0/0 | 0.019 | 544.9 (558.7) | 134.8 | 92/135/138 | 0.156 | qa-20261002-222018-d072 |
+| db_persistence (match_08) | 50 | match_08 10 s | 0.147 | 0.267 | 0.377 | 0.626 | 0.181 | 10.0/10.0 | 93.2 | 0/0/0 | 0.022 | 497.7 (496.0) | 134.8 | 110/138/139 | 0.131 | qa-20261002-222426-2d50 |
+| db_down outage_tail | 50 | outage_tail 10 s | 0.150 | 0.271 | 0.406 | 1.112 | 0.131 | 7.3/7.3 | 98.2 | 0/0/0 | 0.210 | 515.3 (879.1) | 134.8 | 92/136/138 | 0.097 | qa-20261002-222633-6416 |
+| restart_repeat (20, run_05) | 20 | run_05 10 s | 0.080 | 0.138 | 0.397 | 1.107 | 0.144 | 4.5/4.5 | 59.2 | 0/0/0 | 0.012 | 84.1 (84.7) | 53.9 | 106/137/138 | 0.058 | qa-20261002-222136-549e |
+
+100명(실행한 것만):
+
+| 시나리오 | Players | 구간 | Tick p50 | p95 | p99 | max (ms) | 서버 CPU % | Managed 끝/최대 MB | WS 최대 MB | GC 0/1/2 | 할당 MB/s | Send KB/s (최대) | Recv KB/s | R1 p50/p95/p99 ms | Tool CPU % | Report |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| lag_compensation | 100 | steady 60 s | 0.499 | 0.801 | 0.953 | 1.493 | 0.490 | 28.0/32.8 | 99.9 | 4/3/1 | 0.850 | 2255.4 (2326.6) | 269.5 | 276/534/538 | 2.238 | qa-20261002-224634-f583 |
+| loot | 100 | steady 60 s | 0.309 | 0.571 | 0.714 | 2.870 | 0.320 | 10.3/10.3 | 68.5 | 0/0/0 | 0.018 | 1993.4 (2012.0) | 269.5 | 91/123/138 | 0.269 | qa-20261002-224800-8f93 |
+| zone | 100 | steady 30 s | 0.282 | 0.420 | 0.534 | 0.769 | 0.229 | 12.1/12.1 | 70.5 | 0/0/0 | 0.006 | 1985.8 (1983.7) | 269.5 | 90/108/136 | 0.227 | qa-20261002-225802-8638 |
+| elimination_burst | 100 | burst 20 s | 0.228 | 0.529 | 0.605 | 2.598 | 0.260 | 12.9/12.9 | 72.5 | 0/0/0 | 0.083 | 1987.1 (2173.0) | 269.5 | 92/134/138 | 0.287 | qa-20261002-225015-599b |
+| invalid_packets 50/s (10 abusers) | 90 | steady 60 s | 0.296 | 0.676 | 1.299 | 4.886 | 0.332 | 21.3/26.2 | 98.8 | 4/2/1 | 1.202 | 1749.5 (1792.2) | 245.4 | 108/139/167 | 0.288 | qa-20261002-225112-aa09 |
+| network_fault_mixed | 100 | steady 60 s | 0.327 | 0.612 | 0.934 | 2.056 | 0.303 | 9.6/23.5 | 91.1 | 2/1/0 | 0.311 | 2040.7 (2056.3) | 267.5 | 108/532/564 | 0.853 | qa-20261002-225230-bfc2 |
+| disconnect_spike mixed | 0–100 | spike 20 s | 0.254 | 0.391 | 0.529 | 3.829 | 0.299 | 13.5/13.5 | 74.1 | 0/0/0 | 0.244 | 1916.3 (1988.9) | 252.1 | 90/108/137 | 0.248 | qa-20261002-225349-ae8d |
+| build_destruction 1,000 (99 observers) | 100 | collapse 10 s | 0.280 | 0.661 | 0.742 | 3.663 | 0.276 | 15.4/15.4 | 79.8 | 0/0/0 | 0.028 | 2034.5 (1992.3) | 269.5 | 107/138/167 | 0.301 | qa-20261002-225421-1f58 |
+| build_count 20,000 (cap) | 100 | steady 30 s | 1.509 | 2.484 | 2.687 | 3.014 | 0.417 | 22.8/22.8 | 96.6 | 0/0/0 | 0.002 | 1988.4 (1992.2) | 269.5 | 106/138/139 | 0.208 | qa-20261002-225447-333b |
+| build_count 0 pieces | 100 | empty 10 s | 0.298 | 0.538 | 0.737 | 1.283 | 0.299 | 8.6/8.6 | 67.1 | 0/0/0 | 0.036 | 1990.2 (1983.6) | 269.5 | 106/137/139 | 0.252 | qa-20261002-225447-333b |
+| db_persistence (match_08) | 100 | match_08 10 s | 0.291 | 0.496 | 0.559 | 0.616 | 0.389 | 12.2/12.2 | 102.1 | 0/0/0 | 0.046 | 1983.7 (1998.5) | 269.5 | 106/138/139 | 0.291 | qa-20261002-222806-5f02 |
+
+작업량과 결과(같은 실행, 실측):
+- **build_count**: 조각 배치 속도 472–480 조각/s(QA 명령 16개 동시, 서버가 Tick당 16개 = 480/s가 상한), 20,010 요청 → 20,000 서 있음 + BudgetFull 10(**실제 상한 = building.json maxBuildPiecesPerMatch 20,000**). 20,000개에 41.8 s. 50명에서 Tick p50 0.15(조각 0) → 0.24(1,000) → 0.27(2,500) → 0.41(5,000) → 0.63(10,000) → 0.83 ms(20,000), p99 0.66 → 1.67 ms. 100명은 0.30 → 1.51 ms(p99 2.69, max 3.01). Working Set 64.6 → 96.1 MB(50명). 구간 GC 0, 할당 0.001–0.002 MB/s, Send는 그대로였다(추정: 조각은 배치될 때 한 번 복제되고 서 있는 동안은 보내지 않는 것으로 보인다. 복제 코드로 확인하지 않았다).
+- **build_destruction**: 100/500/1,000조각 구조물이 Foundation 한 발(Kestrel LR 실제 사격)로 모두 무너졌다(구간 시작 = N, 끝 = 0, damageBuild 미사용). 붕괴 Tick이 든 1 s Sample의 Tick max: 2.93(100), 2.66(500), 3.83 ms(1,000), 100명 관찰 1,000조각 3.66 ms. 구간 GC 0. 1,000조각의 구간 평균 Send는 붕괴 전 5 s 495.9 → 붕괴 구간 10 s 519.6 KB/s(차이로 약 240 KB가 더 나갔다).
+- **elimination_burst**: 60명 중 50명이 한 1 s Sample 안에 탈락(60 → 10, 그 뒤 6 s에 걸쳐 6명 더), 그 Sample의 Tick max 1.63 ms. 100명은 100 → 8(92명) 한 Sample에, Tick max 2.60 ms. 경기는 생존자로 계속됐다. 실제 Zone 피해 경로(setZone은 Arrange, killPlayer·damagePlayer 없음).
+- **join_ramp / join_spike**: 100명 접속, 실패 0. 접속(명령 → 첫 Snapshot) 평균 130–134 ms, 최대 593–660 ms(5/10/20 per s 모두 비슷). 100명 동시 접속 첫 1 s의 Tick max 18.9 ms(이번 Stress 전체에서 가장 큰 단일 Tick, 예산 33 ms 안), Ramp는 11.6–14.0 ms.
+- **disconnect_spike**: 50명 전원 이탈·복귀 실패 0, 중복 0, 잔류 0(mixed 재접속 평균 135 ms, 최대 389 ms; graceful 91 ms). 100명 mixed Tick max 3.83 ms.
+- **input_timeout**: 8명이 7 s 뒤 같은 1 s 안에 InputTimeout으로 닫혔다(그 Sample Tick max 2.04 ms). 나머지 42명 그대로.
+- **lag_compensation**(Proxy 한 방향 0/50/100/200 ms + 5 ms Jitter, RTT 29/133/224/422 ms): HitConfirmed / 누름(사격·Reload·슬롯 키 포함, warmup부터) = 50명 259/1021, 118/1202, 134/1062, 102/1076; 100명 638/1800, 518/1889, 419/2003, 380/1973. 200 ms Group도 맞혔다. 비율은 두 실행 모두 0 ms Group이 가장 높다(50명 약 25 %, 그 밖 9.5–13 %). Ping 순서대로 낮아진 것은 100명 실행뿐이다(50명에서는 100 ms Group이 50 ms Group보다 높았다).
+- **invalid_packets**: 50명 중 5명이 5/s → 60 s 구간 badPackets 1,370, Kick 80, Rejoin 75; 50/s → 보낸 5,724, Kick 270, Rejoin 265. 100명(10명 50/s) → 보낸 11,441, Kick 540, Rejoin 530, 이때 Tick p99 1.30·max 4.89 ms, GC 4/2/1(할당 출처는 재지 않았다). 표의 Players가 90인 것은 Abuser가 접속 뒤 0.4 s 안에 Kick되고 1 s 뒤 다시 들어와서 5 s Sample 시점에 거의 잡히지 않기 때문이다(Kick·Rejoin 수로 접속은 확인된다). 정상 Player의 Kick·끊김 0.
+- **build_spam**: 15/s(Network 한도 20/s 아래)는 RateLimited가 **0**이었다(OutOfRange 1,807·Occupied 3,300·Ok 51). 서버 코드로 확인: `Match.ProcessBuildRequests`(`Server/src/ProjectH.Server/Game/Match.cs` 536–538행)는 거절된 요청 뒤 `continue`로 다음 요청을 같은 Tick에 처리하고, 최소 간격(`NextBuildTick`)은 배치된(Ok) 요청 뒤에만 건다. 그래서 거절되는 Spam은 8칸 Queue를 채우지 않는다. 40/s는 BuildRate Bad Packet 3,333으로 Kick 180·Rejoin 175, RateLimited 1,523. 두 경우 모두 정상 건설 Group은 계속 놓았다(Ok 716/721, Kick 0).
+- **loot**: 50명 60 s + warmup에 줍기 1,721, Drop 848, 사용 누름 14(100명: 3,411 / 1,666 / 12). 사용이 적은 이유는 재지 않았다(추정: 회복 아이템이 드물고 체력·실드가 이미 차 있는 경우가 많다).
+- **zone**(50명): 바깥 Group 평균 체력 53, 안팎 92, 안쪽 96.7(steady 동안 그대로). 100명도 같은 판정 통과.
+- **network_fault_mixed**: Group RTT 정상 29, 100 ms 236, 200 ms 431, 5 % Loss 65, 복합 280 ms. 아무도 끊기지 않았다. R1 p95 518 ms(50명)는 지연 Group이 끌어올린 값이다.
+- **hotspot vs distributed**(50명, 같은 작업): Tick p95 0.441 vs 0.450, Send 545 vs 546 KB/s — 측정으로 차이가 없다.
+- **db_persistence**: 8경기 기록(50명·100명 참가) 모두 저장, failed 0, dropped 0, Queue 최대 0, 경기 구간 Tick p95 0.26–0.32 ms(50명). 경기 사이 Managed는 GC로 내려갔다(17.0 → 5.0 MB).
+- **db_down**(QueueCapacity 1): DB 정지 중 6경기 → failed 4 + dropped 1(Queue가 차서 거절) + 진행 중 1(뒤에 failed 5). Queue 최대 1(용량). 정지 중 Tick p95 0.26–0.29 ms(DB 있을 때와 같은 범위), Tick Failure·Stall 0, 접속 그대로. `startDb` 뒤 다음 경기 기록이 저장됐다(saved 1 → 2, 서버 재시작 없음). 50명·100명 같은 결과.
+- **restart_repeat**(20명): 5번 모두 Exit Code 0(Kill 아님), 종료 117–138 ms, 시작 258–265 ms, 새 프로세스마다 Working Set 59 MB·Managed 4.5 MB(누적 없음).
+
+**측정으로 확인된 것**
+- **서 있는 조각 수가 Tick을 가장 크게 올린다.** 50명에서 0 → 20,000조각에 p50이 0.15 → 0.83 ms(5.5배), 100명에서 0.30 → 1.51 ms. 할당·GC·Send는 늘지 않는다. 원인 분석(이동 충돌 후보 수집인지, 다른 것인지)은 이번에 재지 않았다(Profiling 후보). Match 예산 20,000이 상한이라 그 이상은 시험할 수 없다.
+- **가장 큰 단일 Tick은 100명 동시 접속(18.9 ms)과 접속 Ramp(11.6–14.0 ms)다.** 30 Hz 예산(33 ms) 안이고 D42 경고는 없었다.
+- **대량 붕괴와 대량 탈락은 한 Tick에 몰려도 싸다**: 1,000조각 붕괴 3.8 ms, 92명 동시 탈락 2.6 ms.
+- **Abuse는 격리된다**: Invalid Packet·Build Spam Client는 Kick되고, 정상 Client는 끊기지 않고 건설·사격을 계속했다. 100명 50/s Invalid Packet 실행은 할당 1.2 MB/s·Gen2 1번이었다(그 실행의 Rejoin은 530번이다. 할당이 거기서 나오는지는 재지 않았다).
+- **DB 장애가 Game Loop에 닿지 않는다**: Queue가 용량에서 거절하고, 재시도는 기록마다 3번에서 끝나며(failed 증가로 확인), Tick·접속은 그대로, DB가 돌아오면 다음 기록부터 저장된다.
+- **밀도(Hotspot)는 50명에서 비용 차이를 만들지 않았다.**
+
+**알려진 제한**(Phase A 제한에 더해)
+- 1 s Sample의 Send·CPU는 부정확하다(위). Burst 송신량은 구간 평균 차이로만 말한다.
+- lag_compensation의 명중 수는 Group 크기·사망·Strafe가 섞인 값이다. 되감기 정확도 자체가 아니라 같은 조건 비교용이다.
+- zone·elimination_burst는 Seed 8600의 Zone 중심을 쓴다. build_destruction의 구조물은 맵 중앙(Crossroads 광장)에 선다.
+- build_spam 15/s는 거절이 빨라 Queue 경로(RateLimited)를 거의 지나지 않는다. RateLimited는 40/s에서만 보였다.
+- input_timeout의 침묵 Client 8명, db_down의 QueueCapacity 1 등 서버 설정은 `server.options`에 고정이다(변수를 쓸 수 없다).
+
+**Regression**(§125, §79)
+- 새 시나리오 18개는 이번이 첫 실행이라 비교할 이전 값이 없다(history에 첫 줄이 생겼다).
+- HeadlessActor·LootBrain을 바꾼 뒤 `suite:stress-quick`을 다시 돌렸다(5/5 PASS, 4 min 20 s, Baseline Warning 없음). steady 30 s 값(Phase A 표는 60 s라 같은 조건이 아니다): baseline p95 0.207(Phase A 0.185), movement 0.236(0.211), combat 0.294(0.285), building 0.554(0.569), mixed 0.414(0.390) ms. 같은 크기의 흔들림이고 Regression으로 판단하지 않는다.
+- Warning 1건: build_spam 40/s 재실행(qa-20261002-225621-e474)에서 `stress.managedMB (steady) 6.253 → 16.427 (+162.7 %)` Baseline Warning. 그 시나리오는 구간 안에 GC가 한 번 일어나 Managed 끝값이 GC 시점에 따라 크게 달라진다(첫 실행도 6.3/17.6 MB 끝/최대). 실패가 아니고 GC 시점 차이로 본다(§136).
+
+**다음 후보**: 조각 수에 따른 Tick 증가의 원인 Profiling(이동 충돌·관심 영역 계산 중 어느 것인지), 100명 전투·Rejoin의 할당 출처, 동시 접속 첫 Tick 18.9 ms의 내역, 30분 이상 Soak, Release 빌드로 같은 표 다시 재기.
 
 ## Adding New Actions
 
@@ -965,6 +1103,7 @@ Baseline Player Count 비교(D40 묶음, steady 30 s, `batch-20261002-202122-417
    - `Actions/ServerCommandActions.cs`: 서버 명령
    - `Actions/FaultActions.cs`: 장애 주입(QA-3)
    - `Actions/StressActions.cs`: 측정 구간(`measure`)과 Actor Group(Stress). Group 행동은 `Stress/Brains.cs`의 `ActorBrain`이다(Pump Thread에서 Tick마다 의도를 정한다)
+   - `Actions/StressPhaseBActions.cs`: Stress Phase B(`spawnBuildPieces`, `groupFireAt`, `groupConnect`, `groupInvalidPackets`, `groupBuildSpam`). 조각 Layout은 `Stress/BuildLayouts.cs`
 2. **`ActionSpec`을 채운다.** Validator와 QA-2 Editor가 이것을 읽는다.
 
 | 필드 | 의미 |

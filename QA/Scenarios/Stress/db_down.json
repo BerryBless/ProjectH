@@ -1,0 +1,448 @@
+{
+  "schemaVersion": 1,
+  "name": "Stress DB Down",
+  "description": "Request §48-49: MySQL goes down while ${players} players keep playing short matches, then comes back. Match 1 is saved (the writer works). stopDb (docker stop of projecth-mysql), then six matches of ${outageMatchSeconds} s end during the outage: each record gets at most MaxAttempts (3) tries, each on a new connection, 1 s and 2 s apart, then counts as failed and is lost; the queue between the game loop and the writer is set to Persistence:QueueCapacity = ${queueCapacity} so records arriving faster than the writer gives up are rejected and counted (dropped) instead of piling up. Judged: the queue never holds more than its capacity, failures are counted (no endless retry), memory and the tick stay as before (each outage phase records them; no tick failure, no stall), every player stays connected and matches keep starting; after startDb the next match's record is saved without restarting the server. Needs the project's MySQL container (docker compose start mysql; SKIPPED when it is not running; cleanup starts the container again if this run stopped it). Persistence:Enabled=true. No hard limit (D42).",
+  "tags": [
+    "stress",
+    "server",
+    "db",
+    "persistence",
+    "faults",
+    "slow"
+  ],
+  "stress": true,
+  "seed": 9800,
+  "timeoutSeconds": 900,
+  "server": {
+    "mode": "launch",
+    "options": {
+      "Server:MaxPlayers": "100",
+      "Server:AirDrop": "false",
+      "Server:StartCountdownSeconds": "3",
+      "Server:ResultSeconds": "2",
+      "Persistence:Enabled": "true",
+      "Persistence:QueueCapacity": "1"
+    }
+  },
+  "variables": {
+    "players": 50,
+    "matchSeconds": 8,
+    "outageMatchSeconds": 2,
+    "tailSeconds": 10,
+    "queueCapacity": 1,
+    "queueCapacityPlusOne": 2
+  },
+  "actors": [],
+  "steps": [
+    {
+      "id": "db_up",
+      "phase": "arrange",
+      "action": "waitDbHealthy",
+      "description": "the DB container is up (skips the scenario without Docker or with the container stopped)"
+    },
+    {
+      "id": "spawn",
+      "action": "spawnActors",
+      "count": "${players}",
+      "prefix": "bot"
+    },
+    {
+      "id": "join_all",
+      "action": "connectAll",
+      "prefix": "bot",
+      "timeoutMilliseconds": 60000
+    },
+    {
+      "id": "sessions",
+      "action": "waitFor",
+      "condition": "server.activeSessions",
+      "equals": "${players}",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "db_enabled",
+      "assert": "server.metrics.db.enabled",
+      "equals": true
+    },
+    {
+      "id": "groups",
+      "action": "actorGroup",
+      "prefix": "bot",
+      "groups": [
+        {
+          "name": "all",
+          "rest": true
+        }
+      ]
+    },
+    {
+      "id": "walk",
+      "action": "groupMove",
+      "group": "all",
+      "pattern": "mixed",
+      "radius": 60
+    },
+    {
+      "id": "m01_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 1 running"
+    },
+    {
+      "id": "m01",
+      "action": "measure",
+      "name": "match_01",
+      "seconds": "${matchSeconds}",
+      "saveAs": "match_01"
+    },
+    {
+      "id": "m01_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 1 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m01_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "first_saved",
+      "phase": "assert",
+      "action": "waitFor",
+      "condition": "server.metrics.db.saved",
+      "equals": 1,
+      "timeoutMilliseconds": 30000,
+      "description": "the writer works before the outage"
+    },
+    {
+      "id": "db_stop",
+      "phase": "act",
+      "action": "stopDb",
+      "description": "MySQL goes down (docker stop); cleanup starts it again if this run stopped it"
+    },
+    {
+      "id": "m02_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 2 running"
+    },
+    {
+      "id": "m02",
+      "action": "measure",
+      "name": "outage_02",
+      "seconds": "${outageMatchSeconds}",
+      "saveAs": "outage_02"
+    },
+    {
+      "id": "m02_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 2 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m02_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "m03_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 3 running"
+    },
+    {
+      "id": "m03",
+      "action": "measure",
+      "name": "outage_03",
+      "seconds": "${outageMatchSeconds}",
+      "saveAs": "outage_03"
+    },
+    {
+      "id": "m03_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 3 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m03_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "m04_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 4 running"
+    },
+    {
+      "id": "m04",
+      "action": "measure",
+      "name": "outage_04",
+      "seconds": "${outageMatchSeconds}",
+      "saveAs": "outage_04"
+    },
+    {
+      "id": "m04_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 4 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m04_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "m05_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 5 running"
+    },
+    {
+      "id": "m05",
+      "action": "measure",
+      "name": "outage_05",
+      "seconds": "${outageMatchSeconds}",
+      "saveAs": "outage_05"
+    },
+    {
+      "id": "m05_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 5 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m05_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "m06_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 6 running"
+    },
+    {
+      "id": "m06",
+      "action": "measure",
+      "name": "outage_06",
+      "seconds": "${outageMatchSeconds}",
+      "saveAs": "outage_06"
+    },
+    {
+      "id": "m06_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 6 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m06_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "m07_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 7 running"
+    },
+    {
+      "id": "m07",
+      "action": "measure",
+      "name": "outage_07",
+      "seconds": "${outageMatchSeconds}",
+      "saveAs": "outage_07"
+    },
+    {
+      "id": "m07_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 7 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m07_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "outage_tail",
+      "phase": "act",
+      "action": "measure",
+      "name": "outage_tail",
+      "seconds": "${tailSeconds}",
+      "sampleSeconds": 1,
+      "saveAs": "outage_tail"
+    },
+    {
+      "id": "failed_during_outage",
+      "phase": "assert",
+      "assert": "server.metrics.db.failed",
+      "greaterThan": 0
+    },
+    {
+      "id": "db_during_outage",
+      "action": "save",
+      "path": "server.metrics.db",
+      "saveAs": "dbDuringOutage"
+    },
+    {
+      "id": "queue_bounded",
+      "assert": "server.metrics.dbQueueLength",
+      "lessThan": "${queueCapacityPlusOne}"
+    },
+    {
+      "id": "tick_ok_outage",
+      "assert": "server.metrics.health.tickFailures",
+      "equals": 0
+    },
+    {
+      "id": "stall_ok_outage",
+      "assert": "server.metrics.health.stalls",
+      "equals": 0
+    },
+    {
+      "id": "all_in_outage",
+      "assert": "server.activeSessions",
+      "equals": "${players}"
+    },
+    {
+      "id": "db_start",
+      "phase": "act",
+      "action": "startDb",
+      "description": "MySQL back (docker start, then healthy)"
+    },
+    {
+      "id": "saved_before_recovery",
+      "action": "save",
+      "path": "server.metrics.db.saved",
+      "saveAs": "savedBefore"
+    },
+    {
+      "id": "m08_playing",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 30000,
+      "description": "match 8 running"
+    },
+    {
+      "id": "m08",
+      "action": "measure",
+      "name": "recovered_08",
+      "seconds": "${matchSeconds}",
+      "saveAs": "recovered_08"
+    },
+    {
+      "id": "m08_finish",
+      "phase": "arrange",
+      "action": "forceMatchState",
+      "state": "finish",
+      "description": "end match 8 (flow control): its record goes to the writer"
+    },
+    {
+      "id": "m08_over",
+      "phase": "act",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": false,
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "saved_again",
+      "phase": "assert",
+      "action": "waitFor",
+      "condition": "server.metrics.db.saved",
+      "greaterThan": "${savedBefore}",
+      "timeoutMilliseconds": 40000,
+      "description": "the writer recovers by itself (a new connection per attempt), no server restart"
+    },
+    {
+      "id": "db_after",
+      "action": "save",
+      "path": "server.metrics.db",
+      "saveAs": "dbAfter"
+    },
+    {
+      "id": "running",
+      "assert": "server.running",
+      "equals": true
+    },
+    {
+      "id": "all_still_here",
+      "assert": "server.activeSessions",
+      "equals": "${players}"
+    },
+    {
+      "id": "no_tick_failure",
+      "assert": "server.metrics.health.tickFailures",
+      "equals": 0
+    },
+    {
+      "id": "no_stall",
+      "assert": "server.metrics.health.stalls",
+      "equals": 0
+    },
+    {
+      "id": "stop",
+      "phase": "act",
+      "action": "stopGroup",
+      "group": "all"
+    },
+    {
+      "id": "leave",
+      "action": "disconnectAll",
+      "prefix": "bot"
+    }
+  ]
+}
