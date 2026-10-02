@@ -79,6 +79,43 @@ public sealed class GameLoopPeerTests
         Assert.Equal(1, loop.Health.Kicks(DisconnectCode.Congested));
     }
 
+    // Server review M7: a player whose own tick throws is closed with ServerError and counted; the match is not reset and
+    // the other player's ticks go on.
+    [Fact]
+    public void APlayerWhoseTickThrows_IsClosedWithServerError_WithoutAMatchReset()
+    {
+        using var host = new PeerHost();
+        NetPeer badPeer = host.AcceptPeer();
+        NetPeer goodPeer = host.AcceptPeer();
+        var bad = new PeerState("bad");
+        var good = new PeerState("good");
+        badPeer.Tag = bad;
+        goodPeer.Tag = good;
+        using var loop = new GameLoop(new ServerOptions { Port = 0, MaxPlayers = 4, InputTimeoutSeconds = 0 }, TestGameData.Create(), NullLogger.Instance);
+        var control = loop.Channels.Control.Writer;
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.Connected, 1, badPeer, "bad")));
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.JoinRequested, 1, badPeer, null)));
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.Connected, 2, goodPeer, "good")));
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.JoinRequested, 2, goodPeer, null)));
+        loop.RunTickGuarded();
+        Assert.True(loop.Match.TryGetPlayer(1, out var player));
+
+        loop.Match.FaultEntityId = player.EntityId;
+        uint tick = loop.Match.ServerTick;
+        for (int i = 0; i < 10; i++) loop.RunTickGuarded();
+
+        Assert.Equal(DisconnectCode.ServerError, bad.CloseCode);
+        Assert.Equal(DisconnectCode.None, good.CloseCode);
+        Assert.False(loop.Match.TryGetPlayer(1, out _));
+        Assert.True(loop.Match.TryGetPlayer(2, out _));
+        Assert.Equal(tick + 10, loop.Match.ServerTick);
+        Assert.Equal(1, loop.Health.PlayerFailures);
+        Assert.Equal(1, loop.Health.Kicks(DisconnectCode.ServerError));
+        Assert.Equal(0, loop.Health.TickFailures);
+        Assert.Equal(0, loop.Health.MatchResets);
+        Assert.Equal(1, loop.Health.Peers);
+    }
+
     [Fact]
     public void ProtocolMtu_FitsMaxPacketSizeInOneSequencedPacket()
     {

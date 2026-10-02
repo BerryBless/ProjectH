@@ -84,6 +84,7 @@ public sealed class GameLoop : IDisposable
     // The sink error a reset took from the match it threw away, until the next stats line logs it (D6).
     private Exception? _carriedSinkError;
     private long _loopFailuresSinceStats;
+    private long _playerFailuresSinceStats;   // server review M7: the first player failure of an interval is logged
     private bool _spawnEncodeFailureLogged;   // Phase 11: the first PlayerSpawned encode failure was logged
     private readonly Action? _onFatal;
     private readonly TimeProvider _time;
@@ -126,6 +127,7 @@ public sealed class GameLoop : IDisposable
         _inputTimeoutTicks = (long)options.InputTimeoutSeconds * options.SimHz;
         _congestedTicks = (long)CongestedSeconds * options.SimHz;
         _buildBacklog = BuildBacklog;
+        _playerFailed = OnPlayerFailed;
         _statsQueries = statsQueries ?? new StatsQueryQueue();
         _health.StatsQueries = () => _statsQueries.Counts;
         _listener = new NetworkListener(options, _channels, _stats, _health, _statsQueries, logger, data.Building.MaxRequestsPerSecond);
@@ -150,8 +152,34 @@ public sealed class GameLoop : IDisposable
         _buildRejects = code => _match.BuildResults(code);
     }
 
+    // Server review M7: made once (NewMatch runs again on every reset).
+    private readonly Action<int, Exception> _playerFailed;
+
     private Match NewMatch() => new(_options, _data, SendToPeer, _loadout, dropPoints: _dropPoints, matchSink: _matchSink,
-        graceExpired: OnGraceExpired, movementAnomaly: _health.AddMovementAnomaly, sendBuild: SendToPeerBuild, buildBacklog: _buildBacklog);
+        graceExpired: OnGraceExpired, movementAnomaly: _health.AddMovementAnomaly, sendBuild: SendToPeerBuild, buildBacklog: _buildBacklog,
+        playerFailed: _playerFailed);
+
+    // Server review M7: Match took a player whose own tick threw out of the match. Its connection is closed with ServerError
+    // (the client may reconnect and join as a new player) and forgotten here at once, without calling back into Match (it
+    // is mid-tick). A graced player (NoPeer) has no connection. Counted every time, logged once per interval.
+    private void OnPlayerFailed(int peerId, Exception error)
+    {
+        _health.AddPlayerFailure();
+        if (++_playerFailuresSinceStats == 1)
+        {
+            try
+            {
+                _logger.LogError(error, "A player's tick failed; peer {PeerId} left the match and is closed with ServerError (first of this interval)", peerId);
+            }
+            catch
+            {
+                // The failure is counted; a throwing logger must not stop the close below.
+            }
+        }
+        if (peerId == PlayerEntity.NoPeer || !_peers.Remove(peerId, out NetPeer? peer)) return;
+        _health.AddKick(DisconnectCode.ServerError);
+        NetworkListener.Close(peer, DisconnectCode.ServerError);
+    }
 
     // D2, D9: a graced player left without resuming (at most MaxPlayers per round, so logging each is cheap).
     private void OnGraceExpired(string devPlayerId)
@@ -668,6 +696,7 @@ public sealed class GameLoop : IDisposable
             _match.MatchSinkFailures);
         _exceptionsSinceStats = 0;
         _loopFailuresSinceStats = 0;
+        _playerFailuresSinceStats = 0;
         _listener.ResetLogLimits();
     }
 
@@ -687,7 +716,7 @@ public sealed class GameLoop : IDisposable
             "badPackets unknownId={BadUnknown} malformed={BadMalformed} beforeJoin={BadBeforeJoin} duplicateJoin={BadDuplicate} " +
             "inputRate={BadRate} wrongDirection={BadDirection} handlerException={BadHandler} buildRate={BadBuildRate} " +
             "tickFailures={TickFailures} loopFailures={LoopFailures} matchResets={Resets} stalls={Stalls} movementAnomalies={MovementAnomalies} " +
-            "networkErrors={NetworkErrors} " +
+            "networkErrors={NetworkErrors} playerFailures={PlayerFailures} " +
             "build pieces={BuildPieces} cells={BuildCells} requests={BuildRequests} accepted={BuildAccepted} destroyed={BuildDestroyed} " +
             "collapsed={BuildCollapsed} duplicates={BuildDuplicates} eventPackets={BuildEventPackets} syncPackets={BuildSyncPackets} " +
             "buildRejects noResource={RejectNoResource} outOfRange={RejectRange} blocked={RejectBlocked} unsupported={RejectUnsupported} " +
@@ -706,7 +735,7 @@ public sealed class GameLoop : IDisposable
             h.BadPackets(BadPacketReason.DuplicateJoin), h.BadPackets(BadPacketReason.InputRate), h.BadPackets(BadPacketReason.WrongDirection),
             h.BadPackets(BadPacketReason.HandlerException), h.BadPackets(BadPacketReason.BuildRate),
             h.TickFailures, h.LoopFailures, h.MatchResets, h.Stalls, h.MovementAnomalies,
-            h.NetworkErrors,
+            h.NetworkErrors, h.PlayerFailures,
             b.Pieces, b.Cells, b.Requests, b.Accepted, b.Destroyed, b.Collapsed, b.Duplicates, b.EventPackets, b.SyncPackets,
             h.BuildRejects(BuildResultCode.NoResource), h.BuildRejects(BuildResultCode.OutOfRange), h.BuildRejects(BuildResultCode.Blocked),
             h.BuildRejects(BuildResultCode.Unsupported), h.BuildRejects(BuildResultCode.Occupied), h.BuildRejects(BuildResultCode.RateLimited),

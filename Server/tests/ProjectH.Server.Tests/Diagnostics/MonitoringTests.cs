@@ -46,6 +46,7 @@ public class MonitoringTests
         loop.StatsQueries.AddLimited();
         loop.StatsQueries.AddLimited();
         loop.Health.AddNetworkError();
+        loop.Health.AddPlayerFailure();
         loop.Health.AddConnectRateReject();
         loop.Health.AddConnectRateReject();
         loop.RunTickGuarded();
@@ -72,6 +73,7 @@ public class MonitoringTests
                      "db saved=3 failed=1 discarded=2 dropped=4",
                      "stats requests=0 limited=2 busy=0 unavailable=0 undelivered=0",
                      "networkErrors=1",   // server review M1
+                     "playerFailures=1",   // server review M7
                  })
         {
             Assert.Contains(item, line);
@@ -99,6 +101,7 @@ public class MonitoringTests
         health.AddBuildInboxDrop();
         health.AddBuildInboxDrop();
         health.AddNetworkError();
+        health.AddPlayerFailure();
         health.AddConnectRateReject();
         health.SetBuild(new BuildCounts(7, 3, 8, 5, 2, 10, 4, 1, 9, 2, 0, 0, 6), code => code == BuildResultCode.Occupied ? 2 : 0);
 
@@ -135,6 +138,7 @@ public class MonitoringTests
         Assert.Contains(("projecth.build.inbox_drops", 2L, ""), seen);
         Assert.Contains(("projecth.harvest.hits", 9L, ""), seen);
         Assert.Contains(("projecth.network_errors", 1L, ""), seen);   // server review M1
+        Assert.Contains(("projecth.player_failures", 1L, ""), seen);   // server review M7
         Assert.Contains(("projecth.rejects", 1L, "reason=ConnectRate"), seen);   // server review M2
         Assert.Contains(("projecth.stats_queries", 6L, "result=requests"), seen);
         Assert.Contains(("projecth.stats_queries", 2L, "result=limited"), seen);

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Threading;
 using LiteNetLib;
 using ProjectH.Server.Diagnostics;
 using ProjectH.Server.Game.Build;
@@ -58,6 +59,14 @@ public sealed class Match
     private readonly Action<string>? _graceExpired;
     // Phase 12 D12: told of every move faster than its mode allows (a simulation bug; GameLoop counts it). Must not block.
     private readonly Action? _movementAnomaly;
+    // Server review M7: told of every player whose own part of the tick threw, after that player left the match (the peer
+    // id, NoPeer for a graced player, and the exception). Called on the game loop thread; GameLoop counts, logs and closes
+    // the connection. Must not call back into this match.
+    private readonly Action<int, Exception>? _playerFailed;
+    // Server review M7 (game loop thread only): the players whose tick threw in this tick's player loop. Made once with
+    // MaxPlayers room (one entry per player at most, so Add never grows it); cleared at the start of every player loop
+    // and after the failed players left.
+    private readonly List<(PlayerEntity Player, Exception Error)> _failedPlayers;
     // Phase 12 D4, D5: matches start aboard the drop transport. The route is valid while _hasRoute: from such a match's
     // start to the round reset.
     private readonly bool _airDrop;
@@ -117,8 +126,11 @@ public sealed class Match
     // buildBacklog: final review A4, a peer's queued reliable packets on the building channel (null = none).
     public Match(ServerOptions options, GameData data, SendPacket send, StartingLoadout? loadout = null, LootPoint[]? lootPoints = null,
         Vector3[]? dropPoints = null, Action<MatchRecord>? matchSink = null, Action<string>? graceExpired = null,
-        Action? movementAnomaly = null, SendPacket? sendBuild = null, Func<int, int>? buildBacklog = null)
+        Action? movementAnomaly = null, SendPacket? sendBuild = null, Func<int, int>? buildBacklog = null,
+        Action<int, Exception>? playerFailed = null)
     {
+        _playerFailed = playerFailed;
+        _failedPlayers = new List<(PlayerEntity, Exception)>(options.MaxPlayers);
         _buildBacklog = buildBacklog;
         _matchSink = matchSink;
         _graceExpired = graceExpired;
@@ -214,6 +226,10 @@ public sealed class Match
     internal bool HasRoute => _hasRoute;
     internal DropRoute Route => _route;
     internal DoorSet Doors => _doors;
+    // Test seam (server review M7): the player loop throws for the player with this entity id (0 = none; ids start at 1).
+    // Volatile: a test may set it while the loop thread ticks.
+    internal int FaultEntityId { get => Volatile.Read(ref _faultEntityId); set => Volatile.Write(ref _faultEntityId, value); }
+    private int _faultEntityId;
     // Phase 13 test seams: the harvestables' state and the building numbers.
     internal HarvestWorld Harvest => _harvest;
     internal BuildingCatalog Building => _building;
@@ -428,29 +444,23 @@ public sealed class Match
         // fastest defence, request §117). Placement uses each player's last input (its aim) and position.
         ProcessBuildRequests(now);
 
+        // Server review M7: each player's part is isolated. A player whose part throws (a bad state that would throw every
+        // tick) is taken out after the loop, alone; the others move and the tick goes on. A failure outside this loop
+        // still fails the whole tick (GameLoop's reset path).
+        _failedPlayers.Clear();
         foreach (var player in _players)
         {
-            InputButtons previous = player.LastInput.Buttons;   // final review A5: the last real input's buttons
-            bool sent = TakeInput(player, out InputCommand input);
-            // D9: a dead player's input is still taken and acked (LastProcessedSeq) but moves and fires nothing.
-            // A player killed earlier in this loop is already dead here.
-            if (!player.Alive) continue;
-
-            // Phase 12 D5: a rider is placed on the route at the tick being simulated (now + 1, the tick its snapshot
-            // reports) and may jump. Everyone else steps with the same boxes and terrain as client prediction
-            // (LocalPlayerPredictor), so predictions match.
-            if (_hasRoute && DropTransport.Ride(ref player.State, input, _route, now + 1)) player.Sprinting = false;
-            else if (!Move(player, input)) continue;   // the landing killed it
-            WeaponRules.UpdateReload(player, now);
-            // Only an input the client really sent can act: the missed-input repeat copies the last input's
-            // buttons and must never invent a switch, reload or shot. Phase 12 D12: and only in a mode that allows
-            // actions (after this tick's move).
-            if (sent && ActionsAllowed(player.State.Mode)) ProcessActions(player, input, previous, now);
-            // Gated, the fire button's held state still follows the input: landing with Fire held must not fire a
-            // semi-automatic weapon without a new press (the client's WeaponState does the same).
-            else if (sent) player.FireHeld = (input.Buttons & InputButtons.Fire) != 0;
-            ConsumableRules.Complete(player, _items, now);   // step 9: every tick, input or not
+            try
+            {
+                TickPlayer(player, now);
+            }
+            catch (Exception ex)
+            {
+                _failedPlayers.Add((player, ex));
+            }
         }
+        // Before the collapse and the finish check: the failed player's leave is an elimination of this tick.
+        if (_failedPlayers.Count > 0) RemoveFailedPlayers();
         // Final review A2: one support search for every piece destroyed this tick.
         CollapseUnsupported();
 
@@ -469,6 +479,52 @@ public sealed class Match
         // ServerTick N shows exactly the positions recorded at N, which is what ViewTick refers to.
         foreach (var player in _players) player.History.Record(ServerTick, player.State.Position, player.State.Mode);
         if (ServerTick % (uint)_snapshotEveryTicks == 0) SendSnapshots();
+    }
+
+    // One player's part of the tick: input, move, reload, actions, consumable (server review M7: Tick isolates it).
+    private void TickPlayer(PlayerEntity player, uint now)
+    {
+        if (player.EntityId == FaultEntityId) throw new InvalidOperationException("test fault");
+        InputButtons previous = player.LastInput.Buttons;   // final review A5: the last real input's buttons
+        bool sent = TakeInput(player, out InputCommand input);
+        // D9: a dead player's input is still taken and acked (LastProcessedSeq) but moves and fires nothing.
+        // A player killed earlier in this loop is already dead here.
+        if (!player.Alive) return;
+
+        // Phase 12 D5: a rider is placed on the route at the tick being simulated (now + 1, the tick its snapshot
+        // reports) and may jump. Everyone else steps with the same boxes and terrain as client prediction
+        // (LocalPlayerPredictor), so predictions match.
+        if (_hasRoute && DropTransport.Ride(ref player.State, input, _route, now + 1)) player.Sprinting = false;
+        else if (!Move(player, input)) return;   // the landing killed it
+        WeaponRules.UpdateReload(player, now);
+        // Only an input the client really sent can act: the missed-input repeat copies the last input's
+        // buttons and must never invent a switch, reload or shot. Phase 12 D12: and only in a mode that allows
+        // actions (after this tick's move).
+        if (sent && ActionsAllowed(player.State.Mode)) ProcessActions(player, input, previous, now);
+        // Gated, the fire button's held state still follows the input: landing with Fire held must not fire a
+        // semi-automatic weapon without a new press (the client's WeaponState does the same).
+        else if (sent) player.FireHeld = (input.Buttons & InputButtons.Fire) != 0;
+        ConsumableRules.Complete(player, _items, now);   // step 9: every tick, input or not
+    }
+
+    // Server review M7: the failed players leave (a connected one through Leave, a graced one directly), then GameLoop
+    // is told, even when the leave itself throws (that exception then fails the tick as before).
+    private void RemoveFailedPlayers()
+    {
+        foreach ((PlayerEntity player, Exception error) in _failedPlayers)
+        {
+            int peerId = player.PeerId;
+            try
+            {
+                if (peerId != PlayerEntity.NoPeer) Leave(peerId);
+                else RemovePlayer(player);
+            }
+            finally
+            {
+                _playerFailed?.Invoke(peerId, error);
+            }
+        }
+        _failedPlayers.Clear();
     }
 
     // One Step and the Phase 12 checks of its result: the movement self-check (D12) and fall damage (D10). Returns false
