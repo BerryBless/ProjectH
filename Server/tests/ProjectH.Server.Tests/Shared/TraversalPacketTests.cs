@@ -248,7 +248,7 @@ public class TraversalPacketTests
     public void TheCrouchButton_GoesThrough_AndUnknownBitsDoNot()
     {
         var packet = new PlayerInputPacket { Count = 1 };
-        packet.Set(0, new InputCommand { Seq = 1, Buttons = InputButtons.Crouch | (InputButtons)0x1000 | (InputButtons)0x8000 });
+        packet.Set(0, new InputCommand { Seq = 1, Buttons = InputButtons.Crouch | (InputButtons)0x4000 | (InputButtons)0x8000 });   // Phase 13: 0x1000 and 0x2000 are tools
         var writer = new PacketWriter(_buffer);
         PlayerInputPacket.Write(ref writer, packet);
         var reader = ReaderAfterId(writer.Length, PacketId.PlayerInput);

@@ -47,6 +47,38 @@ public sealed class GameLoopPeerTests
         Assert.Equal("new", still.DevPlayerId);
     }
 
+    // Phase 13 final review A4: a joined peer whose reliable queues stay over MaxReliableBacklog for CongestedSeconds is
+    // closed with Congested (counted); a dip below the limit starts the count over.
+    [Fact]
+    public void APeerBackedUpForTenSeconds_IsClosedAsCongested()
+    {
+        using var host = new PeerHost();
+        NetPeer peer = host.AcceptPeer();
+        var state = new PeerState("slow");
+        peer.Tag = state;
+        var options = new ServerOptions { Port = 0, MaxPlayers = 4, InputTimeoutSeconds = 0 };
+        using var loop = new GameLoop(options, TestGameData.Create(), NullLogger.Instance);
+        var control = loop.Channels.Control.Writer;
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.Connected, 3, peer, "slow")));
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.JoinRequested, 3, peer, null)));
+        loop.RunTick();
+        Assert.True(loop.Match.TryGetPlayer(3, out _));   // that tick read the real queues of both channels
+
+        int queued = GameLoop.MaxReliableBacklog / 2 + 1;   // per channel: both together are over the limit
+        loop.QueueProbe = (_, _) => queued;
+        long limit = (long)GameLoop.CongestedSeconds * options.SimHz;
+        for (long i = 0; i < limit - 1; i++) loop.RunTick();
+        queued = 0;                                         // one tick below: the count starts over
+        loop.RunTick();
+        queued = GameLoop.MaxReliableBacklog / 2 + 1;
+        for (long i = 0; i < limit; i++) loop.RunTick();
+        Assert.True(loop.Match.TryGetPlayer(3, out _));
+        loop.RunTick();
+        Assert.False(loop.Match.TryGetPlayer(3, out _));
+        Assert.Equal(DisconnectCode.Congested, state.CloseCode);
+        Assert.Equal(1, loop.Health.Kicks(DisconnectCode.Congested));
+    }
+
     [Fact]
     public void ProtocolMtu_FitsMaxPacketSizeInOneSequencedPacket()
     {
@@ -68,7 +100,8 @@ public sealed class GameLoopPeerTests
 
         public PeerHost(int mtuOverride = 0)
         {
-            _server = new NetManager(_listener, null) { MtuOverride = mtuOverride };
+            // The game's channels, like GameLoop's own NetManager (the loop asks the peers for their channel-1 queue).
+            _server = new NetManager(_listener, null) { MtuOverride = mtuOverride, ChannelsCount = ProtocolConstants.ChannelCount };
             _listener.ConnectionRequestEvent += request => request.Accept();
             _listener.PeerConnectedEvent += peer => _connected.Add(peer);
             _server.Start(0);
@@ -76,7 +109,7 @@ public sealed class GameLoopPeerTests
 
         public NetPeer AcceptPeer()
         {
-            var client = new NetManager(new EventBasedNetListener(), null);
+            var client = new NetManager(new EventBasedNetListener(), null) { ChannelsCount = ProtocolConstants.ChannelCount };
             client.Start();
             _clients.Add(client);
             int expected = _connected.Count + 1;

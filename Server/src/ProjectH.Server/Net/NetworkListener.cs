@@ -26,6 +26,7 @@ public sealed class NetworkListener : INetEventListener
         new[] { (byte)DisconnectCode.JoinTimeout },
         new[] { (byte)DisconnectCode.InputTimeout },
         new[] { (byte)DisconnectCode.ServerError },
+        new[] { (byte)DisconnectCode.Congested },
     };
 
     private readonly ServerOptions _options;
@@ -40,9 +41,13 @@ public sealed class NetworkListener : INetEventListener
     // accepts no new connection. Written by the game loop or the host's thread, read on LiteNetLib's thread.
     private volatile bool _stopping;
 
+    // Phase 13 D8: build requests a peer may send per second (building.json); more are invalid packets.
+    private readonly int _maxBuildRequestsPerSecond;
+
     public NetworkListener(ServerOptions options, InboundChannels channels, ServerStats stats, HealthCounters health,
-        StatsQueryQueue statsQueries, ILogger logger)
+        StatsQueryQueue statsQueries, ILogger logger, int maxBuildRequestsPerSecond = 20)
     {
+        _maxBuildRequestsPerSecond = maxBuildRequestsPerSecond;
         _options = options;
         _channels = channels;
         _stats = stats;
@@ -216,6 +221,24 @@ public sealed class NetworkListener : INetEventListener
                 }
                 if (PlayerInputPacket.TryRead(ref packet, out var input))
                     _channels.Input.Writer.TryWrite(new InputMessage(peer.Id, peer, input));
+                else
+                    OnBadPacket(peer, BadPacketReason.Malformed);
+                break;
+
+            case PacketId.BuildRequest:
+                // Phase 13 D8: only from a joined connection (like input). The game loop queues it per player.
+                if (peer.Tag is not PeerState buildState || !buildState.JoinRequested)
+                {
+                    OnBadPacket(peer, BadPacketReason.InputBeforeJoin);
+                    break;
+                }
+                if (!buildState.TryCountBuildRequest(Environment.TickCount64, _maxBuildRequestsPerSecond))
+                {
+                    OnBadPacket(peer, BadPacketReason.BuildRate);
+                    break;
+                }
+                if (BuildRequest.TryRead(ref packet, out var build))
+                    _channels.Build.Writer.TryWrite(new BuildMessage(peer.Id, peer, build));
                 else
                     OnBadPacket(peer, BadPacketReason.Malformed);
                 break;

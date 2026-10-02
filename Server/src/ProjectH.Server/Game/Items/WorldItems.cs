@@ -26,6 +26,8 @@ public sealed class WorldItems
     private ulong _nextOrder;
 
     public int Count => _count;
+    // Phase 13 final review C: how many of them are Material items (the touch pickup skips its scan without any).
+    public int MaterialCount { get; private set; }
 
     // index 0..Count-1
     public ref readonly WorldItem this[int index] => ref _items[index];
@@ -57,6 +59,7 @@ public sealed class WorldItems
             SpawnPoint = spawnPoint,
             Order = _nextOrder++,
         };
+        if (kind == ItemKind.Material) MaterialCount++;
         _count++;
         return true;
     }
@@ -72,6 +75,7 @@ public sealed class WorldItems
 
     public void RemoveAt(int index)
     {
+        if (_items[index].Data.Kind == ItemKind.Material) MaterialCount--;
         _count--;
         _items[index] = _items[_count];
         _items[_count] = default;
@@ -84,7 +88,8 @@ public sealed class WorldItems
 
     // D8: the item nearest to feet (3D distance) among those within horizontalRange on the ground plane
     // and verticalRange up or down, or -1. Ties go to the lower ItemId, so the result does not depend on
-    // the storage order (the client prompt applies the same rule to its own list).
+    // the storage order (the client prompt applies the same rule to its own list). Phase 13 D15: never a Material
+    // item (those are picked up on touch).
     public int FindNearest(Vector3 feet, float horizontalRange, float verticalRange)
     {
         int best = -1;
@@ -92,6 +97,7 @@ public sealed class WorldItems
         float rangeSq = horizontalRange * horizontalRange;
         for (int i = 0; i < _count; i++)
         {
+            if (_items[i].Data.Kind == ItemKind.Material) continue;
             Vector3 d = _items[i].Data.Position - feet;
             float horizontalSq = d.X * d.X + d.Z * d.Z;
             if (horizontalSq > rangeSq || d.Y > verticalRange || d.Y < -verticalRange) continue;

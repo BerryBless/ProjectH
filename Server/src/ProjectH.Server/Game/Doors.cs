@@ -23,7 +23,8 @@ public sealed class DoorSet
     // Bit i = GameMap.Doors[i] is open (the DoorStates packet).
     public byte OpenMask { get; private set; }
 
-    // What every move, shot and drop of this match collides with.
+    // What every shot and drop of this match collides with. Phase 13 D3: moves gather their own world around the
+    // character (CollisionWorld), with the doors' OpenMask.
     public ReadOnlySpan<Box> World => new(_world, 0, _length);
 
     public bool IsOpen(int door) => (OpenMask & (1 << door)) != 0;
@@ -35,13 +36,14 @@ public sealed class DoorSet
         return slot >= 0 && worldIndex < _length ? _doorOfSlot[slot] : -1;
     }
 
-    // D9: the door a step was stopped by: the box that stopped it, or when both sweeps were stopped and that box is no door,
-    // the Z sweep's (a sprint into a doorway a little off-centre meets the jamb on one axis and the door on the other).
-    // -1 = no door. The client's PredictedDoors.DoorBlocking is the same.
+    // D9: the door a step was stopped by: the collider that stopped it, or when that is no door, the Z sweep's (a sprint
+    // into a doorway a little off-centre meets the jamb on one axis and the door on the other). -1 = no door. Phase 13 D3:
+    // the step names colliders by kind and id (CollisionWorld), so a door is Door i wherever it was gathered. The client's
+    // PredictedDoors.DoorBlocking is the same.
     public int DoorBlocking(in StepResult step)
     {
-        int door = DoorAt(step.BlockedBy);
-        return door >= 0 || step.BlockedByZ < 0 ? door : DoorAt(step.BlockedByZ);
+        if (step.BlockedBy.Kind == ColliderKind.Door) return (int)step.BlockedBy.Id;
+        return step.BlockedByZ.Kind == ColliderKind.Door ? (int)step.BlockedByZ.Id : -1;
     }
 
     public void Set(int door, bool open)

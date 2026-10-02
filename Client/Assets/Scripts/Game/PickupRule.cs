@@ -18,6 +18,8 @@ namespace ProjectH.Client.Game
             float bestDistance = 0f;
             for (int i = 0; i < items.Count; i++)
             {
+                // Phase 13 D15: resources are picked up on touch, never with E.
+                if (items[i].Kind == ProjectH.Shared.Protocol.ItemKind.Material) continue;
                 Vector3 d = items[i].Position - feet;
                 float horizontalSq = d.X * d.X + d.Z * d.Z;
                 if (horizontalSq > Range * Range || d.Y > Height || d.Y < -Height) continue;

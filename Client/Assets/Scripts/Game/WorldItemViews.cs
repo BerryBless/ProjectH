@@ -25,6 +25,7 @@ namespace ProjectH.Client.Game
         private readonly Material _ammoMaterial;
         private readonly Material _medkitMaterial;
         private readonly Material _shieldCellMaterial;
+        private readonly Material _resourceMaterial;
         private int _freeCount;
         private int _created;
 
@@ -39,6 +40,7 @@ namespace ProjectH.Client.Game
             _ammoMaterial = new Material(template) { color = new Color(0.95f, 0.85f, 0.3f) };
             _medkitMaterial = new Material(template) { color = new Color(0.95f, 0.3f, 0.3f) };
             _shieldCellMaterial = new Material(template) { color = new Color(0.3f, 0.85f, 1f) };
+            _resourceMaterial = new Material(template) { color = new Color(0.55f, 0.4f, 0.25f) };   // Phase 13 D15
         }
 
         public WorldItemList Items => _items;
@@ -94,6 +96,7 @@ namespace ProjectH.Client.Game
             if (_ammoMaterial != null) Object.Destroy(_ammoMaterial);
             if (_medkitMaterial != null) Object.Destroy(_medkitMaterial);
             if (_shieldCellMaterial != null) Object.Destroy(_shieldCellMaterial);
+            if (_resourceMaterial != null) Object.Destroy(_resourceMaterial);
         }
 
         private void Dress(Transform view, in WorldItemData item)
@@ -111,6 +114,11 @@ namespace ProjectH.Client.Game
                     filter.sharedMesh = _cylinder;
                     renderer.sharedMaterial = _ammoMaterial;
                     view.localScale = new Vector3(0.25f, 0.15f, 0.25f);
+                    break;
+                case ItemKind.Material:
+                    filter.sharedMesh = _cube;
+                    renderer.sharedMaterial = _resourceMaterial;
+                    view.localScale = new Vector3(0.4f, 0.25f, 0.4f);
                     break;
                 default:
                     filter.sharedMesh = _sphere;

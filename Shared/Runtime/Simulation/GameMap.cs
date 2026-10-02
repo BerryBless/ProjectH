@@ -4,6 +4,33 @@ using System.Numerics;
 
 namespace ProjectH.Shared.Simulation
 {
+    // Phase 13 D6: what a harvestable map object is. Values are stable (the map data and tests name them).
+    public enum HarvestKind : byte
+    {
+        Tree = 0,    // Wood
+        Rock = 1,    // Stone
+        Wreck = 2,   // Metal
+        Crate = 3,   // Wood (a wooden crate of the earlier map)
+    }
+
+    // Phase 13 D6: one harvestable object: a solid box like the map's boxes while it stands, gone (from movement, shots
+    // and the client's view) once the server destroys it. Its id is its index in GameMap.Harvestables.
+    public readonly struct Harvestable
+    {
+        public readonly Box Bounds;
+        public readonly HarvestKind Kind;
+
+        public Harvestable(Box bounds, HarvestKind kind)
+        {
+            Bounds = bounds;
+            Kind = kind;
+        }
+
+        // The resource it gives (request §14).
+        public BuildMaterialType Material =>
+            Kind == HarvestKind.Rock ? BuildMaterialType.Stone : Kind == HarvestKind.Wreck ? BuildMaterialType.Metal : BuildMaterialType.Wood;
+    }
+
     // Phase 6 map (D1-D7): 160 x 160 m inside the outer walls, terrain with hills and a plateau, four POIs and open
     // ground with cover. Client prediction and the authoritative server move against exactly these boxes and this
     // terrain (game-core-rules §4). Layout rules are checked by GameMapTests: boxes stand on flat terrain, no two
@@ -24,9 +51,12 @@ namespace ProjectH.Shared.Simulation
         // Phase 12 D9: a door fills its gap: DoorWidth wide, the wall's height, DoorThickness thick, centred in the wall.
         public const float DoorThickness = 0.2f;
         public const int DoorCount = 5;
+        // Phase 13 D6: at most 64 harvestables, so one ulong holds which are destroyed (HarvestStates).
+        public const int MaxHarvestables = 64;
 
         private static readonly Box[] s_boxes;
         private static readonly Box[] s_doors;
+        private static readonly Harvestable[] s_harvestables;
 
         // Static constructor: the hills must exist before the terrain is built from them (field initializers would run
         // in textual order).
@@ -61,8 +91,8 @@ namespace ProjectH.Shared.Simulation
             AddHouse(boxes, doors, 46f, 50f, 16f, 12f, doorSouth: true, doorNorth: true);
             boxes.Add(Box.FromCenterSize(new Vector3(36f, 0.5f, 40f), new Vector3(2f, 1f, 2f)));     // low crate (climbable)
             boxes.Add(Box.FromCenterSize(new Vector3(57f, 0.5f, 40f), new Vector3(2f, 1f, 2f)));     // low crate (climbable)
-            boxes.Add(Box.FromCenterSize(new Vector3(58f, 0.75f, 60f), new Vector3(2f, 1.5f, 2f)));  // high crate
             boxes.Add(Box.FromCenterSize(new Vector3(34f, 0.75f, 60f), new Vector3(2f, 1.5f, 2f)));  // high crate
+            // Phase 13 D6: the other high crate (58, 60) is a harvestable now (below).
 
             // Stonefield (ruins, south-west): roofless broken walls, pillars and a two-step platform.
             boxes.Add(Box.FromCenterSize(new Vector3(-56f, 1.5f, -42f), new Vector3(6f, WallHeight, WallThickness)));
@@ -89,14 +119,49 @@ namespace ProjectH.Shared.Simulation
             boxes.Add(Box.FromCenterSize(new Vector3(26f, 1.5f, 0f), new Vector3(WallThickness, WallHeight, 5f)));
             boxes.Add(Box.FromCenterSize(new Vector3(-26f, 1.5f, 0f), new Vector3(WallThickness, WallHeight, 5f)));
             boxes.Add(Box.FromCenterSize(new Vector3(0f, 0.5f, 22f), new Vector3(2f, 1f, 2f)));
-            boxes.Add(Box.FromCenterSize(new Vector3(8f, 0.5f, -24f), new Vector3(2f, 1f, 2f)));
             boxes.Add(Box.FromCenterSize(new Vector3(0f, 1.5f, 70f), new Vector3(6f, WallHeight, WallThickness)));
-            boxes.Add(Box.FromCenterSize(new Vector3(70f, 0.75f, -10f), new Vector3(2f, 1.5f, 2f)));
-            boxes.Add(Box.FromCenterSize(new Vector3(-70f, 0.75f, 20f), new Vector3(2f, 1.5f, 2f)));
             boxes.Add(Box.FromCenterSize(new Vector3(20f, 1.5f, -66f), new Vector3(WallThickness, WallHeight, 6f)));
 
             s_boxes = boxes.ToArray();
             s_doors = doors.ToArray();
+            s_harvestables = BuildHarvestables();
+        }
+
+        // Phase 13 D6: 41 harvestables on flat ground, clear of the boxes, the doors, the loot and drop points and the plaza
+        // (HarvestableMapTests). Trees and rocks are new; four crates without a loot point on top (the high crate at
+        // Gearworks and three open-ground crates) moved here from the boxes. Never reorder: the index is the id.
+        private static Harvestable[] BuildHarvestables()
+        {
+            var list = new List<Harvestable>(MaxHarvestables);
+            // Trees, a 1 x 4 x 1 m trunk: north-west woods, east woods, south-east, west, and a few strays.
+            float[] trees =
+            {
+                -36f, 64f, -30f, 59f, -24f, 66f, -44f, 70f, -56f, 74f, -20f, 74f,
+                40f, 30f, 46f, 25f, 52f, 32f, 60f, 28f, 66f, 34f, 72f, 26f,
+                48f, -68f, 56f, -73f, 62f, -66f,
+                -70f, -26f, -62f, -22f, -54f, -30f, -44f, -24f,
+                -20f, -72f, 12f, -74f, 30f, 66f, 64f, 74f,
+            };
+            for (int i = 0; i < trees.Length; i += 2) list.Add(OnGround(HarvestKind.Tree, trees[i], trees[i + 1], new Vector3(1f, 4f, 1f)));
+            // Rocks, 2 x 1.2 x 2 m: by the ruins, the Lookout and the hills.
+            float[] rocks = { -60f, -36f, -72f, -52f, -32f, -58f, 24f, -58f, 70f, -52f, 64f, -60f, -30f, -16f, 30f, 24f };
+            for (int i = 0; i < rocks.Length; i += 2) list.Add(OnGround(HarvestKind.Rock, rocks[i], rocks[i + 1], new Vector3(2f, 1.2f, 2f)));
+            // Wrecks, 3 x 1.5 x 2 m.
+            float[] wrecks = { 28f, 44f, 24f, 10f, -40f, 28f, -66f, 28f, -8f, -26f, 18f, 62f };
+            for (int i = 0; i < wrecks.Length; i += 2) list.Add(OnGround(HarvestKind.Wreck, wrecks[i], wrecks[i + 1], new Vector3(3f, 1.5f, 2f)));
+            // The crates (same boxes as before Phase 13).
+            list.Add(new Harvestable(Box.FromCenterSize(new Vector3(58f, 0.75f, 60f), new Vector3(2f, 1.5f, 2f)), HarvestKind.Crate));
+            list.Add(new Harvestable(Box.FromCenterSize(new Vector3(8f, 0.5f, -24f), new Vector3(2f, 1f, 2f)), HarvestKind.Crate));
+            list.Add(new Harvestable(Box.FromCenterSize(new Vector3(70f, 0.75f, -10f), new Vector3(2f, 1.5f, 2f)), HarvestKind.Crate));
+            list.Add(new Harvestable(Box.FromCenterSize(new Vector3(-70f, 0.75f, 20f), new Vector3(2f, 1.5f, 2f)), HarvestKind.Crate));
+            return list.ToArray();
+        }
+
+        // A harvestable standing on the terrain at (x, z) (flat there: HarvestableMapTests).
+        private static Harvestable OnGround(HarvestKind kind, float x, float z, Vector3 size)
+        {
+            float ground = Terrain.Height(x, z);
+            return new Harvestable(Box.FromCenterSize(new Vector3(x, ground + size.Y * 0.5f, z), size), kind);
         }
 
         public static ReadOnlySpan<Box> Boxes => s_boxes;
@@ -104,6 +169,10 @@ namespace ProjectH.Shared.Simulation
         // Phase 12 D9: the doors, in the order above (the three Rustvale houses: south, south, north; then Gearworks: north, south). Not part of
         // Boxes: a door is open or closed, and only the closed ones join the collision world (DoorStates bit i = Doors[i]).
         public static ReadOnlySpan<Box> Doors => s_doors;
+
+        // Phase 13 D6: the harvestable objects in a fixed order (id = index). Not part of Boxes: a destroyed one leaves the
+        // collision world (CollisionWorld.Gather skips it).
+        public static ReadOnlySpan<Harvestable> Harvestables => s_harvestables;
 
         public static HeightField Terrain { get; }
 

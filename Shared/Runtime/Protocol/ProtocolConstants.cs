@@ -12,7 +12,10 @@ namespace ProjectH.Shared.Protocol
         // 9: Phase 11 game UI (StatsRequest/StatsResponse, the player's name in PlayerSpawned).
         // 10: Phase 12 deployment and traversal (movement modes in the snapshot flags, a 14-byte self block, the Crouch
         //     button, TransportRoute, DoorStates, the mode in PlayerRespawned, the cause in PlayerDied; movement changed).
-        public const ushort ProtocolVersion = 10;
+        // 11: Phase 13 harvesting and building (the tool in the snapshot flags and the self block, two tool buttons, the
+        //     build and harvest packets, the Material world item, LiteNetLib channel 1; movement collides with pieces,
+        //     harvestables and slopes).
+        public const ushort ProtocolVersion = 11;
 
         public const int MaxDevPlayerIdBytes = 32;
 
@@ -61,6 +64,13 @@ namespace ProjectH.Shared.Protocol
         }
 
         public const int MaxInputsPerPacket = 3;
+
+        // Phase 13 D13: LiteNetLib channels. Everything before Phase 13 uses channel 0; the building stream (BuildRequest,
+        // BuildResult, BuildEvents, BuildSync, BuildInterest) has channel 1 to itself, so a burst of building never queues
+        // ahead of a death or a hit on channel 0's ReliableOrdered window. Server, client and bots set ChannelCount.
+        public const byte ReliableChannel = 0;
+        public const byte BuildChannel = 1;
+        public const int ChannelCount = 2;
 
         // LiteNetLib does not fragment Unreliable/Sequenced packets, so one snapshot packet must fit one datagram (a snapshot is up to MaxSnapshotParts packets).
         public const int MaxPacketSize = 1200;

@@ -46,7 +46,8 @@ namespace ProjectH.Shared.Protocol
         private const ushort KnownButtons = (ushort)(InputButtons.Jump | InputButtons.Sprint | InputButtons.Fire |
                                                      InputButtons.Reload | InputButtons.Slot1 | InputButtons.Slot2 |
                                                      InputButtons.Slot3 | InputButtons.Interact | InputButtons.Drop |
-                                                     InputButtons.UseMedkit | InputButtons.UseShieldCell | InputButtons.Crouch);
+                                                     InputButtons.UseMedkit | InputButtons.UseShieldCell | InputButtons.Crouch |
+                                                     InputButtons.ToolHarvest | InputButtons.ToolBuild);
 
         public byte Count;
         public InputCommand Input0;

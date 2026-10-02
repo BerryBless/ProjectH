@@ -197,8 +197,9 @@ public class PacketTests
         Assert.True(PlayerInputPacket.TryRead(ref reader, out var read));
         Assert.Equal(InputButtons.Jump | InputButtons.Sprint | InputButtons.Fire | InputButtons.Reload |
                      InputButtons.Slot1 | InputButtons.Slot2 | InputButtons.Slot3 | InputButtons.Interact |
-                     InputButtons.Drop | InputButtons.UseMedkit | InputButtons.UseShieldCell | InputButtons.Crouch, read.Get(0).Buttons);
-        Assert.Equal(0x0FFF, (int)read.Get(0).Buttons);   // Phase 12: Crouch (2048) is known
+                     InputButtons.Drop | InputButtons.UseMedkit | InputButtons.UseShieldCell | InputButtons.Crouch |
+                     InputButtons.ToolHarvest | InputButtons.ToolBuild, read.Get(0).Buttons);
+        Assert.Equal(0x3FFF, (int)read.Get(0).Buttons);   // Phase 13: ToolHarvest (4096) and ToolBuild (8192) are known
     }
 
     [Fact]

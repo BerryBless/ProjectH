@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Text;
 using LiteNetLib;
 using ProjectH.Shared.Protocol;
+using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Client.UI
 {
@@ -30,6 +31,8 @@ namespace ProjectH.Client.UI
         public const string HintGlide = "[Space] 글라이더 펼치기";
         public const string HintDoorOpen = "[E] 문 열기";
         public const string HintDoorClose = "[E] 문 닫기";
+        // Phase 13 D16: the build mode keys.
+        public const string BuildKeys = "[Z] 벽  [X] 바닥  [V] 경사로  [B] 지붕  [T] 재료  [R] 회전  [Q] 나가기";
         public const string Connecting = "접속하는 중...";
         public const string StatsLoading = "불러오는 중...";
         public const string StatsNoAnswer = "응답 없음";
@@ -74,6 +77,7 @@ namespace ProjectH.Client.UI
                 case DisconnectCode.JoinTimeout: return "경기 참가가 늦어 연결이 끊겼습니다.";
                 case DisconnectCode.InputTimeout: return "입력이 오래 없어 연결이 끊겼습니다.";
                 case DisconnectCode.ServerError: return "서버 오류로 경기가 초기화되었습니다.";
+                case DisconnectCode.Congested: return "연결이 너무 느려 끊겼습니다.";
                 default: return "서버가 연결을 끊었습니다.";
             }
         }
@@ -232,6 +236,71 @@ namespace ProjectH.Client.UI
                 ? Int(hours) + ":" + Two(minutes) + ":" + Two(seconds)
                 : Int(minutes) + ":" + Two(seconds);
         }
+
+        // ---- Building (Phase 13 D16) ----
+
+        // Constant names: no allocation.
+        public static string PieceName(BuildPieceType piece)
+        {
+            switch (piece)
+            {
+                case BuildPieceType.Wall: return "벽";
+                case BuildPieceType.Floor: return "바닥";
+                case BuildPieceType.Ramp: return "경사로";
+                default: return "지붕";
+            }
+        }
+
+        public static string MaterialName(BuildMaterialType material)
+        {
+            switch (material)
+            {
+                case BuildMaterialType.Wood: return "나무";
+                case BuildMaterialType.Stone: return "돌";
+                default: return "금속";
+            }
+        }
+
+        public static string ToolName(ToolKind tool)
+        {
+            switch (tool)
+            {
+                case ToolKind.Harvest: return "채집";
+                case ToolKind.Build: return "건축";
+                default: return "무기";
+            }
+        }
+
+        // The resources line (the server's numbers minus pending placements). Rebuilt only when a number changes.
+        public static string ResourcesLine(int wood, int stone, int metal) =>
+            "나무 " + Int(wood) + "   돌 " + Int(stone) + "   금속 " + Int(metal);
+
+        // Build mode: the chosen piece and material.
+        public static string BuildModeLine(BuildPieceType piece, BuildMaterialType material) =>
+            "건축: " + PieceName(piece) + " · " + MaterialName(material);
+
+        // A refused placement (BuildResult). Constants; null for Ok.
+        public static string BuildRefusal(BuildResultCode code)
+        {
+            switch (code)
+            {
+                case BuildResultCode.Ok: return null;
+                case BuildResultCode.NoResource: return "자원이 부족합니다";
+                case BuildResultCode.OutOfRange: return "너무 멉니다";
+                case BuildResultCode.Blocked: return "막혀 있습니다";
+                case BuildResultCode.Unsupported: return "받쳐 줄 구조물이 없습니다";
+                case BuildResultCode.Occupied: return "이미 지어져 있습니다";
+                case BuildResultCode.RateLimited: return "너무 빠릅니다";
+                case BuildResultCode.BudgetFull: return "더 지을 수 없습니다";
+                default: return "지을 수 없습니다";
+            }
+        }
+
+        // F1: the tool, the selection, the stored and shown pieces, refusals and requests per second.
+        public static string BuildDebugLine(ToolKind tool, BuildPieceType piece, BuildMaterialType material, int stored, int drawn,
+            int ignored, int sent, int refused, BuildResultCode lastRefusal, int requestsPerSecond) =>
+            "도구 " + ToolName(tool) + "   " + PieceName(piece) + "/" + MaterialName(material) + "   구조물 " + Int(stored) + " (표시 " + Int(drawn) +
+            ", 무시 " + Int(ignored) + ")   요청 " + Int(sent) + " (" + Int(requestsPerSecond) + "/s)   거절 " + Int(refused) + " " + lastRefusal;
 
         // ---- Debug line (D4, F1) ----
 

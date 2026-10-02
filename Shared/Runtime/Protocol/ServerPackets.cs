@@ -144,13 +144,17 @@ namespace ProjectH.Shared.Protocol
     // Phase 12 D11: plus the movement state only the owner needs for prediction (the mode, sprint and exhaustion are in
     // its entity's flags, the position and VelocityY in the entity). Energy is the exact value (MoveState.EnergySpent);
     // the horizontal velocity is quantized like the entity's VelocityY.
+    // Phase 13 D5: the owner's tool rides in the weapon slot byte's top two bits (still 14 bytes).
     public struct SnapshotSelf
     {
         public const int Size = 14;
+        private const int ToolShift = 6;
+        private const byte SlotMask = 0x3F;
 
         public byte Health;
         public byte Shield;
-        public byte WeaponSlot;             // loadout index: 0 = Slot1, 1 = Slot2
+        public byte WeaponSlot;             // loadout index: 0 = Slot1, 1 = Slot2 (bits 0-5 on the wire)
+        public ToolKind Tool;               // Phase 13: bits 6-7 of the weapon slot byte
         public byte Ammo;                   // rounds in the current weapon's magazine
         public ushort ReloadRemainingTicks; // 0 = not reloading; at least 1 while a reload is running
         public ushort Energy;               // hundredths, 0..MoveState.MaxEnergyHundredths
@@ -162,7 +166,7 @@ namespace ProjectH.Shared.Protocol
         {
             writer.WriteByte(s.Health);
             writer.WriteByte(s.Shield);
-            writer.WriteByte(s.WeaponSlot);
+            writer.WriteByte((byte)((s.WeaponSlot & SlotMask) | ((int)s.Tool << ToolShift)));
             writer.WriteByte(s.Ammo);
             writer.WriteUInt16(s.ReloadRemainingTicks);
             writer.WriteUInt16(s.Energy);
@@ -178,7 +182,10 @@ namespace ProjectH.Shared.Protocol
             if (reader.Remaining < Size) return false;
             reader.TryReadByte(out s.Health);
             reader.TryReadByte(out s.Shield);
-            reader.TryReadByte(out s.WeaponSlot);
+            reader.TryReadByte(out byte slotAndTool);
+            s.WeaponSlot = (byte)(slotAndTool & SlotMask);
+            int tool = slotAndTool >> ToolShift;
+            s.Tool = (ToolKind)tool;
             reader.TryReadByte(out s.Ammo);
             reader.TryReadUInt16(out s.ReloadRemainingTicks);
             reader.TryReadUInt16(out s.Energy);
@@ -187,7 +194,7 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadByte(out s.ModeTicks);
             reader.TryReadByte(out s.EnergyDelayTicks);
             s.HorizontalVelocity = new Vector2(SnapshotEntity.FromFixed(velocityX), SnapshotEntity.FromFixed(velocityZ));
-            return s.Energy <= MoveState.MaxEnergyHundredths;
+            return s.Energy <= MoveState.MaxEnergyHundredths && tool <= (int)ToolKind.Build;
         }
     }
 
@@ -196,7 +203,7 @@ namespace ProjectH.Shared.Protocol
     // step (about 0.002 m per axis), well inside the client's reconcile tolerance (0.01 m). Values outside the range
     // are clamped; non-finite values are written as 0.
     // Phase 12 D11: Flags bit 0 alive, bits 1-3 the MovementMode, bit 4 sprinting, bit 5 exhausted (the owner's prediction
-    // needs it; others may show it). Bits 6-7 are 0.
+    // needs it; others may show it). Phase 13 D5: bits 6-7 the tool in hand (others see a pickaxe or a build plan).
     public struct SnapshotEntity
     {
         public const int Size = 13; // id 2 + position 3 x 2 + velocityY 2 + yaw 2 + flags 1
@@ -205,6 +212,8 @@ namespace ProjectH.Shared.Protocol
         public const byte ModeMask = 0x0E;
         public const byte SprintingFlag = 16;
         public const byte ExhaustedFlag = 32;
+        public const int ToolShift = 6;
+        public const byte ToolMask = 0xC0;
         public const float FixedScale = 256f;
         public const float YawScale = 65536f / 360f;
 
@@ -218,6 +227,16 @@ namespace ProjectH.Shared.Protocol
         public bool IsSprinting => (Flags & SprintingFlag) != 0;
         public bool IsExhausted => (Flags & ExhaustedFlag) != 0;
 
+        // Phase 13: the tool in the flags. 3 (a bad packet) reads as Weapon.
+        public ToolKind Tool
+        {
+            get
+            {
+                int tool = (Flags & ToolMask) >> ToolShift;
+                return tool <= (int)ToolKind.Build ? (ToolKind)tool : ToolKind.Weapon;
+            }
+        }
+
         // The mode in the flags. A value above Transport (a bad packet) reads as Ground.
         public MovementMode Mode
         {
@@ -228,9 +247,10 @@ namespace ProjectH.Shared.Protocol
             }
         }
 
-        public static byte MakeFlags(bool alive, MovementMode mode, bool sprinting, bool exhausted)
+        public static byte MakeFlags(bool alive, MovementMode mode, bool sprinting, bool exhausted, ToolKind tool = ToolKind.Weapon)
         {
             int flags = ((int)mode << ModeShift) & ModeMask;
+            flags |= ((int)tool << ToolShift) & ToolMask;
             if (alive) flags |= AliveFlag;
             if (sprinting) flags |= SprintingFlag;
             if (exhausted) flags |= ExhaustedFlag;

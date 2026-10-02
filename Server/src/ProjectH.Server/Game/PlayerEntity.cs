@@ -1,3 +1,4 @@
+using ProjectH.Server.Game.Build;
 using ProjectH.Server.Game.Combat;
 using ProjectH.Server.Game.Items;
 using ProjectH.Shared.Simulation;
@@ -59,6 +60,31 @@ public sealed class PlayerEntity
     public uint ReloadEndTick;
     // Fire bit of the previous input the client sent: a semi-automatic weapon fires on the press only.
     public bool FireHeld;
+    // Phase 13 D7: the tick the harvest tool can swing again (held Fire swings at the cooldown).
+    public uint NextSwingTick;
+    // Phase 13 D8: build requests waiting for the game loop (BuildRequestQueue.Capacity at most), the newest sequence
+    // processed (older or equal ones are dropped: a replay or a duplicate), and the tick it may place again.
+    public readonly BuildRequestQueue BuildQueue = new();
+    public ushort LastBuildSequence;
+    public bool HasBuildSequence;
+    public uint NextBuildTick;
+    // Phase 13 D14: the interest cells this player's client keeps (the last BuildInterest), the ones still to sync, and
+    // where the sync of the current one stands (its build column, the last piece id sent there). 0 cells = not yet told.
+    public ulong InterestCells;
+    public ulong SyncPending;
+    public int SyncCell = -1;
+    public int SyncColumn;
+    public uint SyncAfterId;
+
+    // A join, a resume or a round reset: the client starts from nothing and the window is sent again.
+    public void ResetInterest()
+    {
+        InterestCells = 0;
+        SyncPending = 0;
+        SyncCell = -1;
+        SyncColumn = 0;
+        SyncAfterId = 0;
+    }
 
     // Feet position at the end of each recent tick, for rewinding this player as a target (D6).
     public readonly PositionHistory History = new();

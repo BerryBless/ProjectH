@@ -21,7 +21,7 @@ public sealed class HeadlessClient : IDisposable
 
     public HeadlessClient()
     {
-        _net = new NetManager(_listener, null) { UnsyncedEvents = false };
+        _net = new NetManager(_listener, null) { UnsyncedEvents = false, ChannelsCount = ProtocolConstants.ChannelCount };
         _listener.PeerConnectedEvent += _ => Connected = true;
         _listener.PeerDisconnectedEvent += (_, info) =>
         {
@@ -81,6 +81,9 @@ public sealed class HeadlessClient : IDisposable
     public List<StatsResponse> StatsResponses { get; } = new();
     // Phase 12: every TransportRoute in arrival order.
     public List<DropRoute> TransportRoutes { get; } = new();
+    // Phase 13: build results, and every building packet with the channel it came on.
+    public List<BuildResult> BuildResults { get; } = new();
+    public List<(PacketId Id, byte Channel)> BuildPackets { get; } = new();
 
     public void Connect(int port, string devPlayerId, ushort protocolVersion = ProtocolConstants.ProtocolVersion)
     {
@@ -126,6 +129,14 @@ public sealed class HeadlessClient : IDisposable
     }
 
     public void SendRaw(byte[] data) => _peer.Send(data, DeliveryMethod.ReliableOrdered);
+
+    // Phase 13 D8: a build request on the building channel.
+    public void SendBuild(in BuildRequest request)
+    {
+        var writer = new PacketWriter(_buffer);
+        BuildRequest.Write(ref writer, request);
+        _peer.Send(writer.WrittenSpan, ProtocolConstants.BuildChannel, DeliveryMethod.ReliableOrdered);
+    }
 
     public void SendStatsRequest()
     {
@@ -236,6 +247,16 @@ public sealed class HeadlessClient : IDisposable
                 break;
             case PacketId.TransportRoute:
                 if (TransportRoutePacket.TryRead(ref r, out var route)) TransportRoutes.Add(route);
+                break;
+            case PacketId.BuildResult:
+                BuildPackets.Add((id, channel));
+                if (BuildResult.TryRead(ref r, out var built)) BuildResults.Add(built);
+                break;
+            case PacketId.BuildEvents:
+            case PacketId.BuildSync:
+            case PacketId.BuildInterest:
+            case PacketId.BuildCatalog:
+                BuildPackets.Add((id, channel));
                 break;
         }
     }

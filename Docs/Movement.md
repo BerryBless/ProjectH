@@ -154,6 +154,15 @@ Jump 비트가 켜진 입력(Client는 누른 Step에만 싣는다)이고, 땅 �
 | `Glide` | 14 + 5 = 19 m/s |
 | `Transport` | 0 (`Ride`가 놓는다) |
 
+### 건설 조각과 충돌 후보 (Phase 13 D2, D3)
+
+- 이동 한 번의 충돌 세계는 `CollisionWorld.Gather`가 모은다. 순서는 맵 상자, 닫힌 문, 서 있는 채집 대상, 조각(id 순서)이다. 조각은 발이 있는 칸 ±1칸, 층 ±2층에서 최대 225개다(`GatherRadius` 6 m 안의 맵 상자도 같은 방식으로 거른다). 서버와 Client 예측이 같은 순서로 모으므로 같은 결과가 나온다.
+- 경사로와 지붕은 지형처럼 다룬다: 발 아래 높이는 발자국 범위의 가장 높은 표면이다. 오르는 중이면(이번 이동 × 0.6 + 탐침 안) 그 높이로 올린다. 올린 몸이 머리 위 조각(박스나 판)에 들어가면 올리지 않고 그 Tick의 이동을 되돌리며, 머리 위 조각이 막은 것으로 센다. 최종 리뷰 B11: 대각선 이동이면 되돌리기 전에 X만, 그다음 Z만 움직여 본다(그 축만의 위치에서 다시 올림 검사). 되면 그 축만 움직이고 막힌 축의 속도를 지운다. 들어 올림이 막혔으므로 `BlockedBy`가 비어 있으면 어느 축이 움직였든 머리 위 조각을 넣는다. Z가 막혔으면(X만 움직였거나 둘 다 안 됨) `BlockedByZ`가 비어 있을 때 그것도 채운다. 둘 다 안 되면 그 자리에 둔다. 그래서 머리 높이 선을 따라 비스듬히 걸어도 멈추지 않는다. 서버와 예측이 같은 Shared 코드다. 표면 아래 0.25 m 판은 옆에서 들어오는 것과 아래에서 올라가는 것을 막는다(천장).
+- 계단 오르기 0.1 m(`MovementTuning.StepUpHeight`): 땅에 있을 때 앞 상자의 윗면이 발보다 0.1 m 안이면 올라선다. 경사로 끝과 바닥·벽 윗면 사이 이음매에서 걸리지 않게 한다.
+- 맞닿은 상자에서 밀어내기: 겹친 상자에서 가장 짧게 밀되, 원래 겹치지 않았던 다른 상자로 들어가는 쪽은 고르지 않는다(없으면 가장 짧은 쪽). 두 번 돈다. 벽이 이어진 줄, 지붕이 걸친 집에서 캐릭터가 벽 속으로 밀려 들어가지 않는다(`PieceCollisionTests`의 무작위 1000건 이상).
+- 슬라이드는 경사로에서 경사 가속을 받지 않는다(지형 기울기만 쓴다). 글라이더 자동 전개의 지면 거리는 모은 층(±2) 안의 조각만 본다. 2층보다 더 아래의 조각은 무시한다(문서화된 한계). 후보 조각이 상한을 넘으면 id가 낮은 쪽을 남긴다.
+- 받은 적 없는 조각(관심 창 밖, 아직 Sync 전)은 예측에 없다. 그 경우 서버가 막고 Client는 보정을 받는다.
+
 ## 수송기
 
 - **경로(`DropPlanner.Plan`, 서버 전용, spec과 다른 점 1·2):** 시드(`SpawnSeed + 판 번호`)로 방향을 하나 굴려, 맵 중심을 지나는 직선을 만든다. 양 끝은 그 방향의 외곽벽에서 경로를 따라 밖으로 20 m인 지점이다. 그래서 길이는 방향에 따라 200 m(축 방향, 10초)에서 약 266 m(대각선, 2 × (중심에서 모서리까지 113 m + 20 m), 400 Tick = 약 13.3초)까지다(`DeploymentMovementTests.TheRouteLength_IsTwoHundredToAbout266Metres`가 시드 5,000개로 잰다). 고도 90 m, 속도 20 m/s이고 시작 Tick은 경기를 시작하는 Tick + 1이다. 시드 난수는 Shared에 두지 않아(`game-core-rules` 4절) Shared에는 경로 값(`DropRoute`)과 위치 계산(`PositionAt`)만 있다. 경로는 `TransportRoute`로 한 번 보낸다(경기 시작, Join·Resume).
@@ -175,4 +184,5 @@ Jump 비트가 켜진 입력(Client는 누른 Step에만 싣는다)이고, 땅 �
 - `Game/HitBoxModeTests`: 웅크린 대상의 1.2 m, 웅크린 사수의 눈 1.0 m, 기록의 모드
 - `Game/DoorTests`: 문 5개, 충돌 세계와 Client `PredictedDoors`의 일치(모든 마스크), E 규칙, Client 복사본(`DoorRule`)과의 일치, 밀치기(문틀 쪽 대각선 포함), 닫기 조건(Vault 남은 경로 포함), 총알, `DoorStates` 전송, 경기 시작 때 닫힘
 - `Shared/TraversalPacketTests`: `TransportRoute`·`DoorStates`·Self·Flags·`PlayerRespawned`·`PlayerDied`·`Crouch` 비트, 범위 밖 값 거절
+- Phase 13: `Shared/BuildGridTests`, `Shared/CollisionWorldTests`, `Shared/PieceCollisionTests`(맞닿은 조각, 경사로·지붕 위 걷기, 이음매, 천장). Client EditMode `MovementPredictionTests`에 조각 위 예측 일치 3개가 더해졌다.
 - Client EditMode `MovementPredictionTests`(`Client/Assets/Tests/EditMode`): 서버와 같은 Tick을 되풀이하는 복제본(`Ride` 또는 `Step`, 문)과 예측이 모드마다 같다(달리기·웅크리기·슬라이드·Hurdle·탑승·낙하·글라이드·문). 두 Tick마다 복제본의 상태를 실제 Snapshot 쓰기·읽기(양자화)로 `Reconcile`에 넣고, 일치하면 보정이 한 번도 없어야 한다. 순수 계산만 써서 Unity 밖에서도 돈다.

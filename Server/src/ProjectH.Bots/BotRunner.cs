@@ -20,6 +20,8 @@ public sealed class BotRunner : IDisposable
     private readonly Action<string> _log;
     private readonly BotConnection[] _connections;
     private readonly BotBrain[] _brains;
+    // Phase 13 D17: each bot's building, on top of its brain.
+    private readonly BotBuilder[] _builders;
     private readonly bool[] _disconnectLogged;   // each bot's disconnect is logged once, when Step first sees it
     // Phase 10 D11, per bot: when the next attempt is due (NaN = none), when the drop that started the cycle was seen,
     // attempts started since the bot last joined, and whether the current connection was ever established (a first
@@ -53,6 +55,7 @@ public sealed class BotRunner : IDisposable
         _log = log;
         _connections = new BotConnection[options.Count];
         _brains = new BotBrain[options.Count];
+        _builders = new BotBuilder[options.Count];
         _disconnectLogged = new bool[options.Count];
         _reconnectAt = new double[options.Count];
         Array.Fill(_reconnectAt, double.NaN);
@@ -63,6 +66,7 @@ public sealed class BotRunner : IDisposable
         {
             _connections[i] = new BotConnection();
             _brains[i] = new BotBrain(unchecked(options.Seed + i));
+            _builders[i] = new BotBuilder(unchecked(options.Seed + 7919 * (i + 1)), options.BuildSpam);
         }
     }
 
@@ -70,6 +74,7 @@ public sealed class BotRunner : IDisposable
     public long Reconnects => _reconnects;
     public BotConnection Connection(int index) => _connections[index];
     public BotBrain Brain(int index) => _brains[index];
+    public BotBuilder Builder(int index) => _builders[index];
 
     public void Step()
     {
@@ -105,7 +110,14 @@ public sealed class BotRunner : IDisposable
                 }
                 continue;
             }
-            if (_brains[i].Tick(connection.View, now, out var command)) connection.SendInput(command);
+            if (_brains[i].Tick(connection.View, now, out var command))
+            {
+                BuildRequest request = default;
+                bool build = _options.Build && _builders[i].Tick(connection.View, now, _brains[i].Target, ref command, out request);
+                connection.SendInput(command);
+                // After the input that carries the aim, so the server places with it (it uses the last input's aim).
+                if (build) connection.SendBuild(request);
+            }
         }
 
         _loopSamples[_loopNext] = (_clock.Elapsed.TotalSeconds - start) * 1000.0;
@@ -143,6 +155,7 @@ public sealed class BotRunner : IDisposable
         old.Dispose();
         _connections[i] = new BotConnection(reconnect: true);
         _brains[i] = new BotBrain(unchecked(_options.Seed + i));
+        _builders[i] = new BotBuilder(unchecked(_options.Seed + 7919 * (i + 1)), _options.BuildSpam);
         _disconnectLogged[i] = false;
         _established[i] = false;
         _reconnects++;
@@ -196,6 +209,7 @@ public sealed class BotRunner : IDisposable
     {
         int connected = 0, joined = 0, alive = 0;
         long inputs = _retiredInputs, packets = _retiredPackets, bytes = _retiredBytes;
+        long builds = 0, accepted = 0, refused = 0, pieces = 0;
         string match = "none";
         for (int i = 0; i < _connections.Length; i++)
         {
@@ -207,10 +221,15 @@ public sealed class BotRunner : IDisposable
             inputs += c.InputsSent;
             packets += c.PacketsIn;
             bytes += c.BytesIn;
+            builds += c.BuildsSent;
+            accepted += c.View.BuildResults[0];
+            for (int code = 1; code < c.View.BuildResults.Length; code++) refused += c.View.BuildResults[code];
+            pieces = Math.Max(pieces, c.View.Pieces.Count);
         }
         _log($"Bots connected={connected}/{_connections.Length} joined={joined} alive={alive} match={match} " +
              $"inputs/s={(inputs - _lastInputs) / seconds:F0} pktIn/s={(packets - _lastPackets) / seconds:F0} " +
-             $"bytesIn/s={(bytes - _lastBytes) / seconds:F0} loopMs p95={LoopP95():F2} reconnects={_reconnects}");
+             $"bytesIn/s={(bytes - _lastBytes) / seconds:F0} loopMs p95={LoopP95():F2} reconnects={_reconnects} " +
+             $"builds sent={builds} accepted={accepted} refused={refused} piecesSeen={pieces}");
         _lastInputs = inputs;
         _lastPackets = packets;
         _lastBytes = bytes;

@@ -1,7 +1,7 @@
 # Networking
 
 Transport: LiteNetLib 2.1.4 (UDP). 프레이밍 `[PacketId: byte][payload]`, little-endian, 수기 직렬화(`PacketWriter`/`PacketReader`).
-`ProtocolVersion`(현재 10. Phase 12: 이동 모드를 Snapshot Entity의 `Flags`에 싣고, 수신자 블록(Self)이 6B에서 14B가 됐고, `Crouch` 버튼, 새 패킷 `TransportRoute`·`DoorStates`, `PlayerRespawned.Mode`, `PlayerDied.Cause`가 생겼다. 이동 규칙도 바뀌었다("투입과 문 (Phase 12)", `Movement.md`). Phase 11: 전적 패킷 `StatsRequest`/`StatsResponse`가 생겼고 `PlayerSpawned`에 이름(`Name`)이 들어갔다("전적 조회 (Phase 11 D8)"). Phase 10: 서버가 끊을 때 이유 코드(`DisconnectCode`)를 보내고 `JoinResult.Resumed`가 생겼다("끊기와 재접속 (Phase 10)"). 패킷 형식은 같다. Phase 8: Snapshot을 여러 패킷으로 나누고 엔티티를 양자화했다("Snapshot 분할과 양자화"). Phase 6: 지형과 새 맵 박스로 이동 결과가 바뀌었다. 패킷 형식은 같다. Phase 3에서 입력 명령·Snapshot 형식이 바뀌고 전투 패킷이 생겼고, Phase 4에서 Buttons가 2B가 되고 무기 카탈로그에 탄약 종류가, 아이템 패킷 6종이 생겼고, Phase 5에서 경기 패킷 3종(`MatchState`, `ZoneState`, `MatchResult`)과 `PlayerDied`의 Placement가 생겼다) 불일치 연결은 접속 단계(`OnConnectionRequest`)에서 `RejectReason.VersionMismatch`로 거절된다. 그 외 거절 사유: `ServerFull`(연결 수 ≥ MaxPlayers), `BadRequest`(연결 데이터 없음·파싱 실패·DevPlayerId가 이름 규칙에 어긋남. 아래 "Validation"). Client는 거절 사유를 끊김 화면이 한국어로 보여 준다(`UiText.Reject`).
+`ProtocolVersion`(현재 11. Phase 13: 건설 패킷 6종과 채집 패킷 3종(`PacketId` 26–34), 건설 전용 채널 1, 입력 버튼 `ToolHarvest`·`ToolBuild`, Snapshot의 도구(Self 무기 칸 바이트의 위 2비트, Entity `Flags` bit6–7), 아이템 종류 `Material`이 생겼다("건설과 채집 (Phase 13)", `Building.md`). Phase 12: 이동 모드를 Snapshot Entity의 `Flags`에 싣고, 수신자 블록(Self)이 6B에서 14B가 됐고, `Crouch` 버튼, 새 패킷 `TransportRoute`·`DoorStates`, `PlayerRespawned.Mode`, `PlayerDied.Cause`가 생겼다. 이동 규칙도 바뀌었다("투입과 문 (Phase 12)", `Movement.md`). Phase 11: 전적 패킷 `StatsRequest`/`StatsResponse`가 생겼고 `PlayerSpawned`에 이름(`Name`)이 들어갔다("전적 조회 (Phase 11 D8)"). Phase 10: 서버가 끊을 때 이유 코드(`DisconnectCode`)를 보내고 `JoinResult.Resumed`가 생겼다("끊기와 재접속 (Phase 10)"). 패킷 형식은 같다. Phase 8: Snapshot을 여러 패킷으로 나누고 엔티티를 양자화했다("Snapshot 분할과 양자화"). Phase 6: 지형과 새 맵 박스로 이동 결과가 바뀌었다. 패킷 형식은 같다. Phase 3에서 입력 명령·Snapshot 형식이 바뀌고 전투 패킷이 생겼고, Phase 4에서 Buttons가 2B가 되고 무기 카탈로그에 탄약 종류가, 아이템 패킷 6종이 생겼고, Phase 5에서 경기 패킷 3종(`MatchState`, `ZoneState`, `MatchResult`)과 `PlayerDied`의 Placement가 생겼다) 불일치 연결은 접속 단계(`OnConnectionRequest`)에서 `RejectReason.VersionMismatch`로 거절된다. 그 외 거절 사유: `ServerFull`(연결 수 ≥ MaxPlayers), `BadRequest`(연결 데이터 없음·파싱 실패·DevPlayerId가 이름 규칙에 어긋남. 아래 "Validation"). Client는 거절 사유를 끊김 화면이 한국어로 보여 준다(`UiText.Reject`).
 
 ## MTU
 
@@ -36,6 +36,10 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
 | ZoneState | S→C(전원, 단계가 바뀐 Tick 끝)·Join | ReliableOrdered | Phase(0 = Zone 없음), From(X, Z, Radius), To(X, Z, Radius), ShrinkStartTick, ShrinkEndTick, DamagePerSecond u16. 36B |
 | MatchResult | S→C(접속 중인 참가자 본인) | ReliableOrdered | WinnerId(0 = 없음), Placement, Kills, Participants. 6B |
 | StatsRequest | C→S | ReliableOrdered | 없음(PacketId만). Join을 요청한 연결만, 연결당 2초에 한 번. 본문이 있으면 잘못된 패킷 |
+| BuildCatalog | S→C | ReliableOrdered(채널 1) | Phase 13. Join·Resume 때 1회, 건설 채널의 첫 패킷(reset Sync 바로 앞, 최종 리뷰 A3). 49B. 내용은 `Building.md` "네트워크" |
+| ResourcesState · HarvestHit · HarvestStates | S→C | ReliableOrdered(채널 0) | Phase 13. 자원 7B(본인, 바뀐 Tick 끝·Join·Resume), 채집 타격 18B(휘두른 사람), 부서진 채집 대상 마스크 9B(바뀐 Tick 끝·Join·Resume) |
+| BuildRequest | C→S | ReliableOrdered(채널 1) | Phase 13. 9B. Join한 연결만, 연결당 초당 20개 |
+| BuildResult · BuildEvents · BuildSync · BuildInterest | S→C | ReliableOrdered(채널 1) | Phase 13. 8B, 헤더 8B + 기록(Placed 14B, Health 6B, Destroyed 4B), 헤더 7B + 조각 16B × 최대 74(1191B), 9B. `Building.md` "네트워크" |
 | StatsResponse | S→C(요청한 사람) | ReliableOrdered | Status(0 Ok, 1 NoRecord, 2 Unavailable, 3 Busy), 요약(Matches, Wins, Kills, Deaths, Damage, SurvivalSeconds, 각 u32, 서버가 자른다), Count 0–10, 행(EndedUnixSeconds u32, Round u32, Players, Placement(0 = 순위 없음), Kills u16, Damage u32, SurvivalMs u32 = 20B) × Count, 최신순. Ok가 아니면 요약 0, 행 없음. 최대 227B |
 
 - Snapshot 헤더 13B(`Part`, `PartCount` 포함) + 수신자 블록 14B = 27B(Phase 12. 그 전에는 블록 6B로 19B), 엔티티 13B(Phase 12에서도 그대로. 이동 모드는 빈 `Flags` 비트에 넣었다). LiteNetLib은 Sequenced 패킷을 분할하지 않으므로 패킷 하나가 `MaxPacketSize` 1200B 이내여야 한다 → 패킷당 최대 90명 = 27 + 13 × 90 = 1197B(`PacketTests`가 고정, 3B 여유), 50명 = 27 + 13 × 50 = 677B(Phase 7의 1167B에서 -42.0 %. Phase 8~11은 669B). 수신자 블록을 읽을 때 기력이 가득(10000)보다 크면 헤더 읽기가 실패한다(범위 밖 블록 거절). 한 경기 최대 100명(`MaxSnapshotEntities`), Snapshot은 최대 2패킷(`MaxSnapshotParts`), `MaxPlayers ≤ 100`(기본 16, 시작 시 검증). 서버는 payload를 한 번 쓰고 수신자마다 AckInputSeq와 수신자 블록만 덮어쓴다(`WorldSnapshotHeader.PatchRecipient`).
@@ -49,6 +53,8 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
   |---|---|---|---|
   | 0–10 | 1–1024 | Jump, Sprint, Fire, Reload, Slot1–3, Interact, Drop, UseMedkit, UseShieldCell | Phase 4까지 |
   | 11 | 2048 | `Crouch` | Phase 12. 누르고 있는 상태(토글은 Client가 만든다). 뛰어내리기·글라이더·Vault는 Jump, 문은 Interact를 다시 쓴다 |
+  | 12 | 4096 | `ToolHarvest` | Phase 13. F(누름). 알려진 비트는 0x3FFF가 된다 |
+  | 13 | 8192 | `ToolBuild` | Phase 13. Q(누름). 건축 모드에서는 Fire가 배치 대신 아무것도 쏘지 않고, 배치는 `BuildRequest`로 간다 |
 - 이 표의 패킷 크기(`ItemCatalog` 219B, `WorldItems` 952B, `ItemSpawned` 20B, `InventoryState` 22B, 입력 패킷 92B, `MatchState` 11B, `ZoneState` 36B, `MatchResult` 6B, `StatsResponse` 227B 등)는 모두 PacketId 1B를 포함한 전체 바이트 수다. 새 패킷은 모두 1200B 이하다(`ItemPacketTests`, `MatchPacketTests`가 고정). Snapshot 크기는 위 Snapshot 항목을 본다(Phase 7까지는 50명 1167B, v7은 669B, v10은 677B). Phase 12의 `TransportRoute` 29B, `DoorStates` 2B, `PlayerRespawned` 20B, `PlayerDied` 7B도 `TraversalPacketTests`·`MatchPacketTests`가 고정한다. Zone 원은 Snapshot에 싣지 않는다(시작·끝 값과 Tick으로 양쪽이 같은 식으로 보간한다).
 - Client가 "누구를 맞혔다"고 보내는 필드는 없다. 명중은 서버가 조준 방향으로 판정한다.
 - Join 결과: Resumed는 끊겼던 참가자가 같은 Entity로 돌아온 것이다("끊기와 재접속"). 늦은 합류와 같은 전체 상태가 이어진다. MatchFull이면 응답만 보내고, 그 연결은 Join한 것으로 치지 않는다. 1초 뒤(응답이 먼저 나가도록) 코드 없이(`None`) 끊는다. Client는 Join 실패를 받으면 자동 재접속을 멈춘다(Phase 10). 이미 참가한 peer의 중복 Join은 서버 Match에 도달하지 않는다(아래 Validation).
@@ -75,6 +81,7 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
 | 3 | `JoinTimeout` | 연결하고 Join하지 않음 | 안 한다 |
 | 4 | `InputTimeout` | Join하고 입력을 보내지 않음 | 안 한다 |
 | 5 | `ServerError` | Tick이 계속 실패해 경기를 초기화함. 또는 서버 Control 채널이 가득 차 연결·Join을 받지 못함 | 한다 |
+| 6 | `Congested` | (Phase 13 최종 리뷰) Join한 연결의 신뢰 대기열(채널 0 + 1)이 512개를 넘은 채 10초 지남. 연결이 게임 트래픽을 받지 못한다. Client 문구 "연결이 너무 느려 끊겼습니다." | 안 한다 |
 
 **재접속 표(Shared `DisconnectCodes.ShouldReconnect(remoteClose, code, networkLoss)`, Client와 봇이 같이 쓴다):**
 
@@ -201,6 +208,19 @@ Step 순서:
 - **재접속과 Ack 0:** Resume이나 늦은 합류의 첫 Snapshot은 Ack가 0이다. 이미 예측하고 있어도 서버의 모드가 예측과 다르면(공중에서 돌아온 경우) 서버 상태로 맞춘다. 같으면 무시한다(Phase 3의 규칙). 끊긴 동안 서버는 빈 입력으로 이동을 이어 가므로(0.5초 뒤 정지, 탑승자는 구간 끝에서 강제로 뛰어내림) 서버의 모드가 앞서 있을 수 있다.
 - **재접속 때 전송:** `TransportRoute`(공중 투입 경기 중일 때), `DoorStates`는 접속 순서에 들어 있다. 모드와 Self는 다음 Snapshot이 알려 준다.
 
+## 건설과 채집 (Phase 13)
+
+설계 근거: `Docs/specs/2026-10-02-phase13-harvesting-building-design.md` D5–D8, D13–D15. 규칙과 패킷의 자세한 내용은 `Building.md`다.
+
+- **채널:** `ProtocolConstants.ChannelCount` = 2. 채널 0(`ReliableChannel`)은 지금까지의 모든 패킷이고, 채널 1(`BuildChannel`)은 `BuildRequest`와 건설 스트림(`BuildResult`, `BuildEvents`, `BuildSync`, `BuildInterest`)만이다. 서버·Client·봇·테스트 Client가 모두 `ChannelsCount = 2`로 연다. 건설 스트림이 커져도 채널 0의 이벤트와 Snapshot이 기다리지 않는다.
+- **Snapshot은 그대로다:** Entity 13B, Self 14B. 도구는 빈 비트에 넣었다. 건설 상태는 Snapshot에 싣지 않는다.
+- **요청 검사(수신 스레드):** Join 전 요청은 `InputBeforeJoin`, 본문이 틀리면 `Malformed`, 연결당 초당 20개를 넘으면 `BuildRate`(잘못된 패킷, 고정 1초 창). 통과한 요청은 유한 채널(`InboundChannels.Build`)로 Game Loop에 가고, 플레이어마다 큐 8개다(가득 차면 `RateLimited`로 답한다).
+- **받는 쪽:** `BuildStore`가 id로 적용한다(중복·늦은 이벤트 무시, 관심 칸 밖 조각은 저장하지 않음). reset Sync를 받으면 모두 버린다(Join·Resume·라운드).
+- **카탈로그 채널(최종 리뷰 A3):** `BuildCatalog`는 채널 1로, Join·Resume의 reset Sync 바로 앞에 간다. 두 채널은 서로 순서를 지키지 않으므로, 같은 채널의 첫 패킷이어야 관심 칸 크기를 모른 채 `BuildInterest`·조각을 읽는 일이 없다. 그래서 접속 순서 4·5번의 채널 0 목록에는 `BuildCatalog`가 없다.
+- **밀린 건설 채널(최종 리뷰 A4):** 건설 채널의 신뢰 대기열이 32개를 넘은 연결은 그 Tick의 `BuildSync`를 건너뛴다. 사건·창·결과는 계속 간다. 오래 밀리면 `Congested`로 끊는다(위 표).
+- **누르는 키(최종 리뷰 A5):** 서버는 E(Interact), G(Drop), F(ToolHarvest), Q(ToolBuild), 1–3(Slot), R(Reload)을 직전 실제 입력에 없던 때만 처리한다. 키를 쥔 채 보내는 수정 Client도 줍기·버리기·문·도구 전환을 Tick마다 되풀이하지 못한다. Client와 봇은 이미 누름을 한 입력에만 싣는다(`LocalPlayerPredictor`의 queued 버튼). Fire·회복·점프·달리기·웅크리기는 쥔 상태 그대로다.
+- **Fuzz:** 새 파서 9개 모두 `ProtocolFuzzTests`에 들어 있다.
+
 ## 전적 조회 (Phase 11 D8)
 
 설계 근거: `Docs/specs/2026-10-01-phase11-game-ui-design.md` D8, 5절. Game Loop는 DB를 기다리지 않는다.
@@ -219,7 +239,7 @@ Step 순서:
 - Join은 연결당 한 번만 처리한다. 두 번째부터는 잘못된 패킷으로 세고 Match에 전달하지 않는다(Control 채널 이벤트 ≤ 3/연결 유지).
 - Join하지 않은 peer의 PlayerInput은 거절(잘못된 패킷). peer별 입력 패킷은 초당 `SimHz * 2`개(기본 60)까지만 받고 초과분은 잘못된 패킷으로 센다(고정 1초 창).
 - 알 수 없는 PacketId, 클라이언트가 보낼 수 없는 PacketId(서버→클라이언트 패킷), 잘리거나 개수가 범위 밖인 PlayerInput → drop하고 잘못된 패킷으로 센다. 연결별 `BadPacketDisconnectThreshold`(20) 이상이면 `Kicked` 코드로 끊는다(Warning 로그).
-- 잘못된 패킷은 이유별로 센다(`BadPacketReason` 7가지, Health 줄과 Meter): `UnknownId`(빈 패킷·모르는 첫 바이트), `Malformed`(아는 Id인데 본문이 틀림), `InputBeforeJoin`, `DuplicateJoin`, `InputRate`(초당 상한 초과), `WrongDirection`(서버→Client 패킷 Id), `HandlerException`(받기 핸들러가 던진 예외).
+- 잘못된 패킷은 이유별로 센다(`BadPacketReason` 8가지, Health 줄과 Meter. Phase 13: `BuildRate` = 연결당 초당 건설 요청 상한 초과): `UnknownId`(빈 패킷·모르는 첫 바이트), `Malformed`(아는 Id인데 본문이 틀림), `InputBeforeJoin`, `DuplicateJoin`, `InputRate`(초당 상한 초과), `WrongDirection`(서버→Client 패킷 Id), `HandlerException`(받기 핸들러가 던진 예외).
 - 받기 핸들러(`OnNetworkReceive`)는 try/catch로 감싼다. 예외는 그 peer의 잘못된 패킷(`HandlerException`)으로 세고 통계 주기마다 첫 하나만 로그(Error)로 남긴다. LiteNetLib 스레드는 모든 연결을 맡으므로 한 패킷이 그 스레드를 흔들지 못한다.
 - `StatsRequest`: 본문이 있으면 `Malformed`(잘못된 패킷). Join이 성공하지 않은 연결의 요청이나 연결당 2초 안의 요청은 잘못된 패킷이 아니라 `limited`로만 센다(Kick 없음).
 - 연결 요청의 DevPlayerId(이름)는 1–32바이트의 올바른 UTF-8이고 제어 문자(C0, DEL, C1), 서식 문자(폭 0 문자, 방향 제어, BOM), 줄·문단 구분자가 없어야 한다. 아니면 `BadRequest`로 거절한다. 규칙은 Shared `ProtocolConstants.IsValidPlayerName` 하나이고 `ConnectRequestData.TryRead`가 검사한다(타이틀과 봇도 같은 규칙을 쓴다). 깨진 바이트는 대체 문자(3바이트)로 읽혀 32바이트를 넘을 수 있고, 그러면 그 이름을 `PlayerSpawned`에 못 써 다른 Client가 그 플레이어를 못 본다(Phase 11). `Match`는 그래도 넘친 `PlayerSpawned`를 보내지 않고 센다(`Server.md`).

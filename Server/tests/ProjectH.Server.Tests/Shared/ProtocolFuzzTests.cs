@@ -24,7 +24,7 @@ public class ProtocolFuzzTests
             int length = n % 100 == 0 ? random.Next(buffer.Length + 1) : random.Next(65);
             random.NextBytes(buffer.AsSpan(0, length));
             // Half of them start with a valid packet id, so the body parsers also see plausible headers.
-            if (length > 0 && random.Next(2) == 0) buffer[0] = (byte)random.Next(1, (int)PacketId.DoorStates + 1);
+            if (length > 0 && random.Next(2) == 0) buffer[0] = (byte)random.Next(1, (int)PacketId.HarvestStates + 1);
             ReadOnlySpan<byte> data = buffer.AsSpan(0, length);
 
             serverParsed += ServerSide(data);
@@ -47,6 +47,10 @@ public class ProtocolFuzzTests
         if (r.TryReadPacketId(out PacketId id) && id == PacketId.PlayerInput && PlayerInputPacket.TryRead(ref r, out _)) ok++;
         r = new PacketReader(data);
         if (PlayerInputPacket.TryRead(ref r, out _)) ok++;
+        r = new PacketReader(data);
+        if (r.TryReadPacketId(out PacketId buildId) && buildId == PacketId.BuildRequest && BuildRequest.TryRead(ref r, out _)) ok++;   // Phase 13
+        r = new PacketReader(data);
+        if (BuildRequest.TryRead(ref r, out _)) ok++;
         DisconnectCodes.Read(data);   // must not throw; not counted (any first byte 1-5 "parses")
         return ok;
     }
@@ -109,6 +113,34 @@ public class ProtocolFuzzTests
         if (TransportRoutePacket.TryRead(ref r, out _)) ok++;   // Phase 12
         r = new PacketReader(data);
         if (DoorStatesPacket.TryRead(ref r, out _)) ok++;
+        r = new PacketReader(data);
+        if (ResourcesState.TryRead(ref r, out _)) ok++;   // Phase 13
+        r = new PacketReader(data);
+        if (HarvestHit.TryRead(ref r, out _)) ok++;
+        r = new PacketReader(data);
+        if (HarvestStatesPacket.TryRead(ref r, out _)) ok++;
+        r = new PacketReader(data);
+        if (BuildResult.TryRead(ref r, out _)) ok++;
+        r = new PacketReader(data);
+        if (BuildCatalogPacket.TryRead(ref r, out _)) ok++;
+        r = new PacketReader(data);
+        if (BuildInterestPacket.TryRead(ref r, out _)) ok++;
+        r = new PacketReader(data);
+        if (BuildEventsPacket.TryReadHeader(ref r, out _, out int placed, out int health, out int destroyed))
+        {
+            ok++;
+            for (int i = 0; i < placed && BuildPieceRecord.TryReadPlaced(ref r, out _); i++) ok++;
+            for (int i = 0; i < health && BuildEventsPacket.TryReadHealth(ref r, out _, out _); i++) ok++;
+            for (int i = 0; i < destroyed && BuildEventsPacket.TryReadDestroyed(ref r, out _); i++) ok++;
+        }
+        r = new PacketReader(data);
+        if (BuildSyncPacket.TryReadHeader(ref r, out _, out _, out int synced))
+        {
+            ok++;
+            for (int i = 0; i < synced && BuildPieceRecord.TryReadSync(ref r, out _); i++) ok++;
+        }
+        r = new PacketReader(data);
+        if (BuildPieceRecord.TryReadSync(ref r, out _)) ok++;
         return ok;
     }
 }

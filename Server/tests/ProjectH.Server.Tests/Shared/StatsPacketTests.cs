@@ -50,7 +50,7 @@ public class StatsPacketTests
         var reader = new PacketReader(new byte[] { 23 });
         Assert.True(reader.TryReadPacketId(out PacketId id));
         Assert.Equal(PacketId.StatsResponse, id);
-        reader = new PacketReader(new byte[] { 26 });   // Phase 12 added 24 and 25
+        reader = new PacketReader(new byte[] { 35 });   // Phase 12 added 24 and 25, Phase 13 26-34
         Assert.False(reader.TryReadPacketId(out _));
     }
 

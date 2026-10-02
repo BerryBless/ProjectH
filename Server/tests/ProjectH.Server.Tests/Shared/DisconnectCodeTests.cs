@@ -12,7 +12,7 @@ public class DisconnectCodeTests
     public void Read_EmptyOrUnknownData_IsNone()
     {
         Assert.Equal(DisconnectCode.None, DisconnectCodes.Read(ReadOnlySpan<byte>.Empty));
-        Assert.Equal(DisconnectCode.None, DisconnectCodes.Read(new byte[] { 6 }));
+        Assert.Equal(DisconnectCode.None, DisconnectCodes.Read(new byte[] { 7 }));   // 6 is Congested (Phase 13 final review A4)
         Assert.Equal(DisconnectCode.None, DisconnectCodes.Read(new byte[] { 255 }));
     }
 
@@ -22,6 +22,7 @@ public class DisconnectCodeTests
     [InlineData(DisconnectCode.JoinTimeout)]
     [InlineData(DisconnectCode.InputTimeout)]
     [InlineData(DisconnectCode.ServerError)]
+    [InlineData(DisconnectCode.Congested)]
     public void Read_KnownCodes_RoundTrip(DisconnectCode code)
     {
         Assert.Equal(code, DisconnectCodes.Read(new[] { (byte)code }));
@@ -36,6 +37,7 @@ public class DisconnectCodeTests
     [InlineData(true, DisconnectCode.Kicked, false, false)]
     [InlineData(true, DisconnectCode.JoinTimeout, false, false)]
     [InlineData(true, DisconnectCode.InputTimeout, false, false)]
+    [InlineData(true, DisconnectCode.Congested, false, false)]   // the link would be as slow again
     [InlineData(true, DisconnectCode.None, false, false)]
     [InlineData(false, DisconnectCode.None, true, true)]    // Timeout, ConnectionFailed, unreachable
     [InlineData(false, DisconnectCode.None, false, false)]  // Disconnect() called locally, or rejected

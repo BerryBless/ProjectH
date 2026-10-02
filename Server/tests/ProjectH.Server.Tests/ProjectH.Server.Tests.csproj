@@ -38,6 +38,10 @@
     <Compile Include="..\..\..\Client\Assets\Scripts\Game\DoorRule.cs" Link="ClientCopies\DoorRule.cs" />
     <!-- Phase 12 final review: the client's predicted door world, compared with the server's DoorSet (DoorTests). -->
     <Compile Include="..\..\..\Client\Assets\Scripts\Game\PredictedDoors.cs" Link="ClientCopies\PredictedDoors.cs" />
+    <!-- Phase 13 D5: the client's copy of the tool rule, compared with the server's HarvestRules.SelectTool (ToolTests). -->
+    <Compile Include="..\..\..\Client\Assets\Scripts\Game\Build\ToolState.cs" Link="ClientCopies\ToolState.cs" />
+    <!-- Phase 13 D13, D14: the client's build store, fed the server's real building stream (BuildReplicationTests). -->
+    <Compile Include="..\..\..\Client\Assets\Scripts\Game\Build\BuildStore.cs" Link="ClientCopies\BuildStore.cs" />
   </ItemGroup>
 
 </Project>

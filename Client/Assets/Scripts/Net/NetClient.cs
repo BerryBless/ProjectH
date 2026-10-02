@@ -43,6 +43,7 @@ namespace ProjectH.Client.Net
                 DisconnectTimeout = 5000,   // default PingInterval (1000 ms) stays below a quarter of this
                 IPv6Enabled = false,
                 MtuOverride = ProtocolConstants.Mtu,   // same value as the server so both sides agree on datagram size
+                ChannelsCount = ProtocolConstants.ChannelCount,   // Phase 13 D13: channel 1 is the building stream
             };
             _defaultReconnectDelay = _net.ReconnectDelay;
             _defaultMaxConnectAttempts = _net.MaxConnectAttempts;
@@ -78,6 +79,20 @@ namespace ProjectH.Client.Net
         // Phase 12 D5, D9: the drop transport route, and which doors are open.
         public event Action<DropRoute> TransportRouteReceived;
         public event Action<byte> DoorStatesReceived;
+        // Phase 13 D6: which harvestables are destroyed.
+        public event Action<ulong> HarvestStatesReceived;
+        // Phase 13 D4, D7, D13-D15: the building numbers, our resources, our harvest hits, and the building stream (channel
+        // 1): a request's result, pieces placed or synced (with the stream's version), health, destroyed, a reset sync, the
+        // interest window. Structs, so raising them does not allocate (the catalog is allocated once per join).
+        public event Action<BuildCatalogData> BuildCatalogReceived;
+        public event Action<ResourcesState> ResourcesReceived;
+        public event Action<HarvestHit> HarvestHitReceived;
+        public event Action<BuildResult> BuildResultReceived;
+        public event Action<BuildPieceRecord, uint> BuildPieceReceived;
+        public event Action<uint, ushort, uint> BuildHealthReceived;
+        public event Action<uint, uint> BuildDestroyedReceived;
+        public event Action<uint> BuildResetReceived;
+        public event Action<ulong> BuildInterestReceived;
 
         public ClientState State { get; private set; } = ClientState.Disconnected;
         public string LastError { get; private set; }
@@ -153,6 +168,16 @@ namespace ProjectH.Client.Net
         public void Disconnect()
         {
             if (_server != null) _net.DisconnectPeer(_server);
+        }
+
+        // Phase 13 D8: one placement on the building channel. False when not joined.
+        public bool SendBuild(in BuildRequest request)
+        {
+            if (State != ClientState.Joined) return false;
+            var writer = new PacketWriter(_sendBuffer);
+            BuildRequest.Write(ref writer, request);
+            _server.Send(writer.WrittenSpan, ProtocolConstants.BuildChannel, DeliveryMethod.ReliableOrdered);
+            return true;
         }
 
         // Phase 11 D8: asks for this player's statistics; the answer comes as StatsReceived. False when not joined.
@@ -239,6 +264,7 @@ namespace ProjectH.Client.Net
                 case DisconnectCode.JoinTimeout: return "Join timed out";
                 case DisconnectCode.InputTimeout: return "Disconnected: no input for too long";
                 case DisconnectCode.ServerError: return "Server error: the match was reset";
+                case DisconnectCode.Congested: return "Disconnected: the connection was too slow";
                 default: return "Disconnected";
             }
         }
@@ -355,6 +381,59 @@ namespace ProjectH.Client.Net
 
                 case PacketId.DoorStates:
                     if (DoorStatesPacket.TryRead(ref packet, out byte doors)) DoorStatesReceived?.Invoke(doors);
+                    break;
+
+                case PacketId.HarvestStates:
+                    if (HarvestStatesPacket.TryRead(ref packet, out ulong destroyed)) HarvestStatesReceived?.Invoke(destroyed);
+                    break;
+
+                case PacketId.BuildCatalog:
+                    if (BuildCatalogPacket.TryRead(ref packet, out var buildCatalog)) BuildCatalogReceived?.Invoke(buildCatalog);
+                    break;
+
+                case PacketId.ResourcesState:
+                    if (ResourcesState.TryRead(ref packet, out var resources)) ResourcesReceived?.Invoke(resources);
+                    break;
+
+                case PacketId.HarvestHit:
+                    if (HarvestHit.TryRead(ref packet, out var harvestHit)) HarvestHitReceived?.Invoke(harvestHit);
+                    break;
+
+                case PacketId.BuildResult:
+                    if (BuildResult.TryRead(ref packet, out var buildResult)) BuildResultReceived?.Invoke(buildResult);
+                    break;
+
+                case PacketId.BuildEvents:
+                    if (!BuildEventsPacket.TryReadHeader(ref packet, out uint version, out int placed, out int health, out int gone)) return;
+                    for (int i = 0; i < placed; i++)
+                    {
+                        if (!BuildPieceRecord.TryReadPlaced(ref packet, out var piece)) return;
+                        BuildPieceReceived?.Invoke(piece, version);
+                    }
+                    for (int i = 0; i < health; i++)
+                    {
+                        if (!BuildEventsPacket.TryReadHealth(ref packet, out uint pieceId, out ushort pieceDamage)) return;
+                        BuildHealthReceived?.Invoke(pieceId, pieceDamage, version);
+                    }
+                    for (int i = 0; i < gone; i++)
+                    {
+                        if (!BuildEventsPacket.TryReadDestroyed(ref packet, out uint goneId)) return;
+                        BuildDestroyedReceived?.Invoke(goneId, version);
+                    }
+                    break;
+
+                case PacketId.BuildSync:
+                    if (!BuildSyncPacket.TryReadHeader(ref packet, out uint syncVersion, out bool reset, out int synced)) return;
+                    if (reset) BuildResetReceived?.Invoke(syncVersion);
+                    for (int i = 0; i < synced; i++)
+                    {
+                        if (!BuildPieceRecord.TryReadSync(ref packet, out var piece)) return;
+                        BuildPieceReceived?.Invoke(piece, syncVersion);
+                    }
+                    break;
+
+                case PacketId.BuildInterest:
+                    if (BuildInterestPacket.TryRead(ref packet, out ulong cells)) BuildInterestReceived?.Invoke(cells);
                     break;
             }
         }

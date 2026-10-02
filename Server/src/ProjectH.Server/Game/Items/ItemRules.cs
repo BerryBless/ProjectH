@@ -17,6 +17,10 @@ public static class ItemRules
     public const float DeathDropRadius = 1f;   // D12: a dead player's items lie on a 1 m circle
     // Knee height of the "is a box in the way" ray: sees 1 m boxes, passes over the box being stood on.
     private const float BlockCheckHeight = 0.5f;
+    // Phase 13 D15: a Material item (a dead player's resources) is picked up by walking within this distance (across the
+    // ground; up or down PickupHeight), checked every MaterialPickupEveryTicks ticks. E never picks one.
+    public const float MaterialPickupRange = 1.5f;
+    public const int MaterialPickupEveryTicks = 3;
 
     // How many more of this ammo type or consumable the inventory can hold (D3, D9). Weapons have no stack.
     public static int Room(Inventory inventory, ItemCatalog items, ItemKind kind, byte defId)
@@ -31,7 +35,7 @@ public static class ItemRules
                 int have = consumable == ConsumableType.Medkit ? inventory.Medkits : inventory.ShieldCells;
                 return Math.Max(0, items.Consumable(consumable).MaxStack - have);
             default:
-                return 0;
+                return 0;   // weapons have no stack; Material's room is the building catalog's (Match.PickUpMaterials)
         }
     }
 
@@ -41,6 +45,16 @@ public static class ItemRules
         {
             var type = (AmmoType)defId;
             inventory.SetAmmo(type, inventory.GetAmmo(type) + amount);
+        }
+        else if (kind == ItemKind.Material)
+        {
+            // Phase 13 D15: explicit, so a Material never falls through to the consumables below.
+            var material = (BuildMaterialType)(defId - 1);
+            inventory.SetResource(material, inventory.Resource(material) + amount);
+        }
+        else if (kind != ItemKind.Consumable)
+        {
+            return;
         }
         else if ((ConsumableType)defId == ConsumableType.Medkit)
         {
@@ -63,8 +77,10 @@ public static class ItemRules
     // box the offset would end inside), then under the feet. Always on the ground there: the terrain, or the
     // highest box top at or below the feet (Phase 6 D11). Items do not fall later, so a drop in mid-air or over a
     // box edge must land now, where a player can reach it. Only boxes block: the terrain never blocks a walk, so a
-    // drop up a slope lands on the slope ahead (Phase 6 spec interpretation 4).
-    public static Vector3 DropPosition(Vector3 feet, Vector3 offset, ReadOnlySpan<Box> world, HeightField terrain)
+    // drop up a slope lands on the slope ahead (Phase 6 spec interpretation 4). Phase 13 final review B10: slopes (ramps
+    // and roofs, gathered around the feet) are ground too, up to where a walk from the feet could climb (MaxSlope).
+    public static Vector3 DropPosition(Vector3 feet, Vector3 offset, ReadOnlySpan<Box> world, HeightField terrain,
+        ReadOnlySpan<Slope> slopes = default)
     {
         Vector3 p = feet + offset;
         float distance = offset.Length();
@@ -73,14 +89,14 @@ public static class ItemRules
             Vector3 origin = feet + new Vector3(0f, BlockCheckHeight, 0f);
             if (HitScan.TraceBoxes(origin, offset / distance, distance, world) < distance) p = feet;
         }
-        p.Y = GroundHeight(p.X, p.Z, feet.Y, world, terrain);
+        p.Y = GroundHeight(p, feet, world, terrain, slopes);
         // In mid-air next to a box the knee-height ray can pass over the box, and its top is above the feet
         // so it is not ground: the point would lie inside the box. Then under the feet, which are never
         // inside a box (the character box cannot overlap one).
         if (InsideAnyBox(p, world))
         {
             p = feet;
-            p.Y = GroundHeight(p.X, p.Z, feet.Y, world, terrain);
+            p.Y = GroundHeight(p, feet, world, terrain, slopes);
         }
         return p;
     }
@@ -98,10 +114,21 @@ public static class ItemRules
         return false;
     }
 
-    // The terrain height there, or a higher box top at or below the feet.
-    private static float GroundHeight(float x, float z, float feetY, ReadOnlySpan<Box> world, HeightField terrain)
+    // The terrain height there, or a higher box top at or below the feet, or a higher slope surface a walk from the feet
+    // could climb onto.
+    private static float GroundHeight(Vector3 p, Vector3 feet, ReadOnlySpan<Box> world, HeightField terrain, ReadOnlySpan<Slope> slopes)
     {
+        float x = p.X;
+        float z = p.Z;
+        float feetY = feet.Y;
         float ground = terrain.Height(x, z);
+        float dx = x - feet.X;
+        float dz = z - feet.Z;
+        float climb = feetY + MathF.Sqrt(dx * dx + dz * dz) * MoveSettings.MaxSlope + MoveSettings.GroundProbe;
+        for (int i = 0; i < slopes.Length; i++)
+        {
+            if (slopes[i].Range(x, z, x, z, out _, out float high, out _) && high <= climb && high > ground) ground = high;
+        }
         for (int i = 0; i < world.Length; i++)
         {
             ref readonly Box b = ref world[i];

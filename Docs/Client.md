@@ -35,6 +35,11 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
 | `Game/PlayerPose` | 모드마다 캡슐을 어떻게 그리는지(몸 높이, 기울기, 엎드림, 날개, 숨김, 맞는 높이)를 정하는 순수 계산. UnityEngine이 없고 EditMode 테스트가 Unity 밖에서도 돈다 |
 | `Game/TransportView` | 수송기 상자 하나(4 × 2 × 14 m, Collider 없음). `DropRoute.PositionAt`으로 경로 시작부터 끝 Tick까지만 보이고, 서버와 같은 식이다. 그리는 Tick은 렌더 Tick이고, 내가 타고 있는 동안만 내 예측 Tick(`LocalPlayerPredictor.RenderTick`, 첫 Ack 전에는 최신 Snapshot Tick)이다. 그래야 수송기, 내 탑승 위치, 카메라가 같이 움직인다. 판이 `WaitingForPlayers`·`Starting`으로 돌아가면 지운다. 탑승자의 발보다 2.5 m 위에 그린다. Dispose가 오브젝트와 Material을 파괴한다 |
 | `Game/DoorViews` | `GameMap.Doors`마다 갈색 상자 하나. `PredictedDoors.Version`이 바뀔 때만 켜고 끈다(닫혀 있으면 보인다). Collider가 있어 카메라와 조준 광선을 막는다(서버 사격이 닫힌 문에서 멈추는 것과 같다) |
+| `Game/Build/ToolState` | 도구 예측(서버 `HarvestRules.SelectTool`의 복사본, 서버 테스트가 소스 링크로 비교). 입력마다 Step, Snapshot Self의 도구가 다르면 Ack에서 다시 계산. 무기는 도구가 무기일 때만 Step한다 |
+| `Game/Build/BuildTargeting`, `BuildController`, `BuildStore` | 순수 코드(UnityEngine 없음). 미리보기 격자 계산과 선택(조각·재료·회전), Turbo, 요청 번호·대기(최대 8, 1초), 판정(사거리·자리·자원). `BuildStore`는 확정 조각(id로 적용, 관심 칸 마스크)과 예측 충돌용 `PieceGrid` |
+| `Game/Build/PieceMeshes`, `BuildPieceViews`, `BuildPreview`, `BuildPieceLook` | 조각 Mesh 3개(상자, 경사로 판, 지붕 사각뿔)를 코드로 한 번 만든다. 조각 뷰는 뿌리(전체 크기 Collider: 카메라·조준 광선이 멈춘다)와 몸(건설 높이로 줄여 그림), 종류별 풀(최대 256), Material 9개(재료 3 × 손상 3단계). 손상 단계는 지금까지 자란 체력 대비 피해라 피해 없는 짓는 중 조각은 Healthy로 보인다. 바뀐 조각과 짓는 중인 조각만 다시 그린다. 미리보기 유령 4개와 대기 8개는 `Sprites/Default` 반투명이고 Collider가 없다 |
+| `Game/Build/HarvestEffects`, `BuildHud`, `BuildAudio` | 약점 표시(맞으면 커진다, 4초), 부서질 때 연기, 내 휘두르기. HUD: 자원 줄(대기 비용을 뺀 값), 건축 줄과 키 안내, 거절 안내(1.5초). `BuildAudio`는 소리 자리(아직 클립 없음, 횟수만 센다) |
+| `Game/HarvestableViews` | `GameMap.Harvestables`마다 상자 하나(종류별 Material 4개, Collider). `HarvestStates`가 바뀔 때만 켜고 끈다 |
 | `Camera/ShoulderCamera`, `ShoulderCameraMath` | 오른쪽 어깨 카메라, 우클릭 ADS(거리 3.5→1.6 m, 오른쪽 0.55→0.65 m, FOV 60→42, 감도 ×0.6), 두 단계 SphereCast(반경 0.2 m) 충돌. 1단계(머리 기준점 → 어깨점)는 부딪힌 거리에서 0.02 m(`ShoulderClearance`) 덜 나가 2단계가 벽에 붙은 채 시작하지 않게 한다. 계산은 `ShoulderCameraMath` 순수 함수. Phase 12: 모드마다 목표(기준 높이·거리·FOV, `CameraTargets`)를 정하고(`TargetsFor`) 현재 값이 `ModeSharpness` 5로 부드럽게 따라간다("이동과 투입") |
 | `UI/UiFlow`, `UiText`, `KillFeedModel` | 순수 코드(UnityEngine 없음). `UiFlow`: 화면 상태 기계(D3)와 전적 창의 대기(`StatsWait`). `UiText`: 한국어 문구와 이름·포트·주소 검사. `KillFeedModel`: 5칸 링, 줄마다 6초. 서버 테스트 프로젝트가 소스 링크로 시험한다(`Server/tests/ProjectH.Server.Tests/ClientUi`) |
 | `UI/UiFont`, `UiFactory` | `UiFont`: 모든 UI 글자의 글꼴 하나(D2, 아래 "글꼴"). `UiFactory`: Canvas·`CanvasScaler`(1920 × 1080 기준, 가로·세로 0.5)·패널·글자·버튼·입력칸(Legacy `InputField`) 생성 도우미, `EventSystem` 생성 |
@@ -91,6 +96,19 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
   - 수송기 경로: "수송기 (x, z) → (x, z)"(지도 UI가 없어 경로를 알 곳이다). 경로를 받은 뒤부터 보인다.
 - **원격 자세(`PlayerPose`):** 원격 캐릭터의 Snapshot 모드와 달리는 중 플래그로 정한다. 모드·달리기·기력 소진은 보간 샘플마다 저장하고(`RemotePlayerInterpolator`), 그리는 Tick 이하의 가장 새 샘플 것을 쓴다. 서버 `PositionHistory.Sample`과 같은 규칙이라 그려진 위치·자세·조준 Collider 높이가 서버가 되감은 Tick의 모드와 맞는다(최종 검토 A1). 웅크리기는 짧은 캡슐, 슬라이드는 짧은 캡슐이 뒤로 기운다, Vault는 앞으로 기운다, 자유 낙하는 엎드린다, 글라이더는 머리 위 납작한 상자(날개), 수송기는 숨긴다, 달리기는 앞으로 약간 기운다. 조준 광선용 Collider의 높이는 서버의 맞는 높이(웅크리기·슬라이드 1.2 m)와 같다. 내 캐릭터도 같은 자세 함수를 쓰고(예측 모드), 수송기는 탑승 중에는 내 몸을 그리지 않는다.
 - **수송기 상자와 문:** `TransportView`가 경로를 한 번 받아 렌더 Tick마다 위치를 계산한다. `DoorViews`는 `PredictedDoors`에 맞춰 닫힌 문만 보인다.
+
+## 채집과 건설 (Phase 13)
+
+`Building.md`가 규칙이다. Client 쪽:
+
+- **조작:** F 채집 도구, Q 건축 모드(다시 누르면 이전 도구), 1–3 무기. 건축 모드에서 Z 벽, X 바닥, V 경사로, B 지붕(누르면 건축 모드로 들어간다), T 재료(나무 → 돌 → 금속), R 회전(재장전 대신), 좌클릭 배치(누르고 있으면 Turbo).
+- **예측:** 도구는 입력마다 예측한다(`ToolState`). 이동은 확정 조각과 충돌한다(`LocalPlayerPredictor.Pieces = BuildStore.Grid`). 대기 중인 배치는 그리기만 하고 충돌하지 않는다. 받아들여진 배치는 확정 조각이 도착할 때까지(최대 1초 시간 초과) 대기로 계속 보인다. 요청은 초당 20개까지만 보낸다(`BuildController.MaxRequestsPerSecond`).
+- **HUD:** 오른쪽 아래 "나무 n   돌 n   금속 n"(서버 값 − 대기 비용), 건축 모드에서 "건축: 벽 · 나무"와 키 안내, 거절 이유("자원이 부족합니다" 등, `UiText.BuildRefusal`).
+- **카탈로그:** `BuildCatalog`는 건설 채널(1)의 첫 패킷으로 온다(최종 리뷰 A3). 받는 순서대로 적용하므로 Client 코드는 바뀌지 않았다. `BuildStore.MaxPieces`(20,000)는 기본 경기 상한이고 카탈로그에서 받지 않는다(충돌 격자를 한 번 잡는다). 넘는 조각은 저장하지 않고 `Ignored`로 센다. `BuildStore.Reset`은 Version과 `Ignored`도 0으로 되돌린다.
+- **끊김 문구:** `Congested`(6)는 "연결이 너무 느려 끊겼습니다."이고 자동 재접속하지 않는다(`Networking.md`).
+- **소리:** `BuildAudio.Play`는 자리만 있고 아무것도 하지 않는다(읽지 않던 횟수를 지웠다). 클립이 생기면 이 클래스만 바꾼다.
+- **F1:** 건설 줄 "도구 · 조각/재료 · 구조물 n(표시 n, 무시 n) · 요청 n(n/s) · 거절 n 코드"(0.25초마다, 바뀔 때만). 요청 §190에 따라 Development Build와 Editor에서만 보인다(`Debug.isDebugBuild`). 다른 F1 줄은 전과 같다.
+- **Lifetime:** `PieceMeshes`, `BuildPieceViews`, `BuildPreview`, `HarvestEffects`, `BuildHud`는 `Awake`에서 만들고 `OnDestroy`에서 해제한다. 이벤트 구독이 9개 늘었다(`BuildCatalogReceived`, `ResourcesReceived`, `BuildResultReceived`, `BuildPieceReceived`, `BuildHealthReceived`, `BuildDestroyedReceived`, `BuildResetReceived`, `BuildInterestReceived`, `HarvestHitReceived`). 연결이 끊기면(`ClearMatchState`) 조각·유령·효과를 모두 치운다.
 
 ## 화면과 흐름 (Phase 11)
 
@@ -216,6 +234,22 @@ stateDiagram-v2
 10. **원격 자세와 결과:** Player 2가 웅크리면 Player 1 화면에서 짧은 캡슐로 보인다. 머리 높이(1.5 m)를 쏘면 빗나간다. 낙하로 죽으면 Kill Feed가 "낙하 ▸ 이름", 결과 화면이 "탈락 원인: 낙하"다.
 11. Console에 `error`·`Exception`이 없다. F1의 "보정" 값이 평소 0.00 m이고, 문을 밀치는 순간만 잠깐 커질 수 있다(D9).
 
+## Unity 확인 순서 (Phase 13)
+
+사용자가 Editor에서 한다. 서버를 `dotnet run --project Server/src/ProjectH.Server -- --Persistence:Enabled=false --Server:AirDrop=false`로 띄우고 Play한다(자원을 모으려면 그대로, 빨리 보려면 `--Server:BuildInfiniteResources=true`를 더한다). Player 2도 켠다.
+
+1. **채집:** F를 누르고 나무를 친다. 오른쪽 아래 나무 숫자가 오르고 노란 약점이 생긴다. 약점을 치면 더 많이 오르고 약점이 옮겨 간다. 계속 치면 나무가 연기와 함께 사라진다. 바위는 돌, 잔해는 금속을 준다.
+2. **미리보기 위치:** Q로 건축 모드. 파란 반투명 벽이 바라보는 칸 가장자리에 붙는다. 몸을 돌리면 90°마다 옮겨 간다. 아래를 보면 바닥이 발밑, 위를 보면(피치 -20° 이하, 카메라 한계 -30° 안쪽) 한 층 위. 자원이 없으면 주황, 이미 있는 자리는 빨강.
+3. **벽·바닥 연결:** 벽 네 개로 칸을 두르고 그 위에 바닥을 얹는다. 벽 위에 정확히 맞는다.
+4. **경사로 이동:** V로 경사로를 짓고 걸어 올라간다. 끝에서 바닥으로 걸림 없이 넘어간다. 달리며 Turbo로 경사로를 이어 지으면 계속 올라간다(경사로 중간을 넘으면 다음 층을 겨눈다).
+5. **지붕 충돌:** B로 지붕을 짓고 위를 걷는다. 아래에서 점프하면 천장에 머리가 막힌다.
+6. **재료 차이:** T로 돌·금속을 고른다. 색이 다르고 짓는 속도(높이가 자라는 시간)가 다르다(1.5·3·5초).
+7. **Turbo 느낌:** 좌클릭을 누른 채 돌면 벽이 이어 지어진다. 가만히 누르고 있으면 한 번만 지어진다. 흰 대기 표시가 잠깐 보였다가 확정 조각으로 바뀐다.
+8. **무기 ↔ 건축 전환:** 1을 누르면 무기, Q로 다시 건축. 건축 모드에서 R은 재장전이 아니라 회전이다.
+9. **구조물 파괴:** 무기나 채집 도구로 벽을 친다. 손상되면 어두워지고 붉어진다. 부서지면 연기와 함께 사라진다. 바닥을 받치던 벽들을 부수면 바닥이 같이 무너진다.
+10. **Player 2:** 같은 조각이 보이고 그 위를 걷는다. 멀리(관심 칸 3칸 넘게, 60–80 m) 가면 조각이 사라지고 돌아오면 다시 보인다.
+11. Console에 `error`·`Exception`이 없다. F1의 건설 줄에서 거절 수와 요청/s가 보이고, 이동 줄의 "보정"이 조각 위에서도 평소 0.00 m다.
+
 ## 자동 검사
 
 EditMode 테스트: `Assets/Tests/EditMode`(`LocalPlayerPredictorTests`, `MapPredictionTests`, `MovementPredictionTests`, `PlayerPoseTests`, `RemotePlayerInterpolatorTests`, `ShoulderCameraMathTests`, `AimSolverTests`, `WeaponStateTests`, `RingCursorTests`, `PickupRuleTests`, `WorldItemListTests`, `InventoryHudTextTests`, `ZoneMathTests`, `MatchHudTextTests`, `SpectatorTargetsTests`, `PoiLookupTests`, `TerrainMeshTests`. Phase 12 끝에서 모두 146개). Phase 12가 바꾼 범위(`LocalPlayerPredictorTests` 20, `MapPredictionTests` 5, `MovementPredictionTests` 11, `PlayerPoseTests` 5, `ShoulderCameraMathTests` 11, `MatchHudTextTests`·`InventoryHudTextTests` 10, 그리고 최종 검토에서 더한 `RemotePlayerInterpolatorTests`·`WeaponStateTests`)는 저장소 밖의 `EditTests` 도구가 Unity 밖 NUnit으로 돌린다. 모두 99개다. 이 코드는 Unity의 관리 코드 멤버(`Vector2/3`, `Mathf`, `Quaternion` 필드)만 쓰고 Physics·GameObject·`Quaternion.Euler` 같은 네이티브 호출이 없어서 `UnityEngine.CoreModule.dll`만 참조해 돈다. View·HUD 클래스는 테스트가 없다. 컴파일은 `UnityCompile` 도구가, 동작은 위 "Unity 확인 순서 (Phase 12)"가 본다.
@@ -230,3 +264,5 @@ Phase 11의 순수 코드 `UI/UiFlow.cs`, `UiText.cs`, `KillFeedModel.cs`는 서
 "C:/Program Files/Unity/Hub/Editor/6000.3.24f1/Editor/Unity.exe" -batchmode -nographics -projectPath Client -runTests -testPlatform EditMode -testResults _workspace/editmode-results.xml -logFile _workspace/unity-tests.log
 ```
 (Editor가 프로젝트를 열고 있지 않을 때)
+
+Phase 13: EditMode에 `ToolStateTests`, `BuildTargetingTests`, `BuildStoreTests`, `BuildControllerTests`, `BuildPieceLookTests`가 더해졌다(모두 순수 코드라 `EditTests` 도구로도 돈다). `MovementPredictionTests`에 조각 위 일치 3개가 더해졌다. 조각 뷰·유령·효과·HUD는 위 "Unity 확인 순서 (Phase 13)"가 본다.

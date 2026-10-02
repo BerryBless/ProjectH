@@ -30,7 +30,8 @@ namespace ProjectH.Client.Game
         public byte OpenMask { get; private set; }
         // Changes whenever OpenMask does (door views follow it).
         public int Version { get; private set; }
-        // What the local prediction moves against.
+        // The map boxes and the closed doors in the server's DoorSet order (DoorTests compares the two). Phase 13 D3: the
+        // prediction gathers its world around the character from OpenMask instead (LocalPlayerPredictor).
         public ReadOnlySpan<Box> World => new ReadOnlySpan<Box>(_world, 0, _length);
 
         public bool IsOpen(int door) => (OpenMask & (1 << door)) != 0;
@@ -42,12 +43,12 @@ namespace ProjectH.Client.Game
             return slot >= 0 && worldIndex < _length ? _doorOfSlot[slot] : -1;
         }
 
-        // The door a step was stopped by, the same rule as the server's DoorSet.DoorBlocking: the box that stopped it, or
-        // when that is no door, the Z sweep's. -1 = no door.
+        // The door a step was stopped by, the same rule as the server's DoorSet.DoorBlocking: the collider that stopped it,
+        // or when that is no door, the Z sweep's. -1 = no door. Phase 13 D3: colliders are named by kind and id.
         public int DoorBlocking(in StepResult step)
         {
-            int door = DoorAt(step.BlockedBy);
-            return door >= 0 || step.BlockedByZ < 0 ? door : DoorAt(step.BlockedByZ);
+            if (step.BlockedBy.Kind == ColliderKind.Door) return (int)step.BlockedBy.Id;
+            return step.BlockedByZ.Kind == ColliderKind.Door ? (int)step.BlockedByZ.Id : -1;
         }
 
         // DoorStates: the server's word replaces every prediction.

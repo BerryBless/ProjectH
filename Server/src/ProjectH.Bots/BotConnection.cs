@@ -22,7 +22,8 @@ public sealed class BotConnection : IDisposable
     // it fails within its slot instead of after LiteNetLib's default 5.5 s. Each attempt is a new BotConnection.
     public BotConnection(bool reconnect = false)
     {
-        _net = new NetManager(_listener) { UnsyncedEvents = false, AutoRecycle = true };
+        // Phase 13 D13: the same channels as the server (channel 1: building).
+        _net = new NetManager(_listener) { UnsyncedEvents = false, AutoRecycle = true, ChannelsCount = ProtocolConstants.ChannelCount };
         if (reconnect)
         {
             _net.ReconnectDelay = DisconnectCodes.ReconnectRequestIntervalMs;
@@ -56,6 +57,8 @@ public sealed class BotConnection : IDisposable
     public long PacketsIn { get; private set; }
     public long BytesIn { get; private set; }
     public long InputsSent { get; private set; }
+    // Phase 13 D17: build requests sent (on the building channel).
+    public long BuildsSent { get; private set; }
 
     public void Connect(string host, int port, string devPlayerId)
     {
@@ -93,6 +96,16 @@ public sealed class BotConnection : IDisposable
         PlayerInputPacket.Write(ref writer, packet);
         _peer.Send(writer.WrittenSpan, DeliveryMethod.Unreliable);
         InputsSent++;
+    }
+
+    // Phase 13 D8: one build request on the building channel (ReliableOrdered; the server answers there too).
+    public void SendBuild(in BuildRequest request)
+    {
+        if (_peer == null || !Connected || Disconnected) return;
+        var writer = new PacketWriter(_buffer);
+        BuildRequest.Write(ref writer, request);
+        _peer.Send(writer.WrittenSpan, ProtocolConstants.BuildChannel, DeliveryMethod.ReliableOrdered);
+        BuildsSent++;
     }
 
     public void Dispose() => _net.Stop();
@@ -188,6 +201,34 @@ public sealed class BotConnection : IDisposable
                     view.Route = route;
                     view.HasRoute = true;
                 }
+                break;
+            // Phase 13 D17.
+            case PacketId.DamageTaken:
+                if (DamageTaken.TryRead(ref r, out var damage)) view.ApplyDamage(damage);
+                break;
+            case PacketId.BuildCatalog:
+                if (BuildCatalogPacket.TryRead(ref r, out var buildCatalog)) view.BuildCatalog = buildCatalog;
+                break;
+            case PacketId.ResourcesState:
+                if (ResourcesState.TryRead(ref r, out var resources)) view.Resources = resources;
+                break;
+            case PacketId.BuildResult:
+                if (BuildResult.TryRead(ref r, out var built)) view.BuildResults[(int)built.Code]++;
+                break;
+            case PacketId.BuildSync:
+                if (!BuildSyncPacket.TryReadHeader(ref r, out _, out bool reset, out int synced)) return;
+                if (reset) view.Pieces.Clear();
+                for (int i = 0; i < synced && BuildPieceRecord.TryReadSync(ref r, out var piece); i++) view.AddPiece(piece.Id);
+                break;
+            case PacketId.BuildEvents:
+                if (!BuildEventsPacket.TryReadHeader(ref r, out _, out int placed, out int health, out int destroyed)) return;
+                for (int i = 0; i < placed && BuildPieceRecord.TryReadPlaced(ref r, out var piece); i++) view.AddPiece(piece.Id);
+                for (int i = 0; i < health && BuildEventsPacket.TryReadHealth(ref r, out _, out _); i++) { }
+                for (int i = 0; i < destroyed && BuildEventsPacket.TryReadDestroyed(ref r, out uint gone); i++) view.Pieces.Remove(gone);
+                break;
+            case PacketId.BuildInterest:
+                // The window moved: what we keep is not worth tracking per cell for a bot; the next syncs bring it back.
+                if (BuildInterestPacket.TryRead(ref r, out _)) view.Pieces.Clear();
                 break;
         }
     }

@@ -27,6 +27,15 @@ namespace ProjectH.Client.Input
         private readonly InputAction _debugToggle;
         private readonly InputAction _crouchToggle;
         private readonly InputAction _crouchHold;
+        // Phase 13 D16: Q build mode, F the harvest tool; in build mode Z wall, X floor, V ramp, B roof, T material (R
+        // rotates instead of reloading: GameClient decides).
+        private readonly InputAction _toolBuild;
+        private readonly InputAction _toolHarvest;
+        private readonly InputAction _pieceWall;
+        private readonly InputAction _pieceFloor;
+        private readonly InputAction _pieceRamp;
+        private readonly InputAction _pieceRoof;
+        private readonly InputAction _material;
         // Phase 12 D7: C turns crouch on and off; a jump or a sprint press turns it off again.
         private bool _crouchToggled;
 
@@ -59,6 +68,13 @@ namespace ProjectH.Client.Input
             // Phase 12 D7: C toggles crouch, Ctrl holds it (the Crouch button is sent as held either way).
             _crouchToggle = new InputAction("CrouchToggle", InputActionType.Button, "<Keyboard>/c");
             _crouchHold = new InputAction("CrouchHold", InputActionType.Button, "<Keyboard>/leftCtrl");
+            _toolBuild = new InputAction("ToolBuild", InputActionType.Button, "<Keyboard>/q");
+            _toolHarvest = new InputAction("ToolHarvest", InputActionType.Button, "<Keyboard>/f");
+            _pieceWall = new InputAction("PieceWall", InputActionType.Button, "<Keyboard>/z");
+            _pieceFloor = new InputAction("PieceFloor", InputActionType.Button, "<Keyboard>/x");
+            _pieceRamp = new InputAction("PieceRamp", InputActionType.Button, "<Keyboard>/v");
+            _pieceRoof = new InputAction("PieceRoof", InputActionType.Button, "<Keyboard>/b");
+            _material = new InputAction("Material", InputActionType.Button, "<Keyboard>/t");
 
             _move.Enable();
             _look.Enable();
@@ -78,6 +94,13 @@ namespace ProjectH.Client.Input
             _debugToggle.Enable();
             _crouchToggle.Enable();
             _crouchHold.Enable();
+            _toolBuild.Enable();
+            _toolHarvest.Enable();
+            _pieceWall.Enable();
+            _pieceFloor.Enable();
+            _pieceRamp.Enable();
+            _pieceRoof.Enable();
+            _material.Enable();
         }
 
         public Vector2 Move => _move.ReadValue<Vector2>();
@@ -93,6 +116,14 @@ namespace ProjectH.Client.Input
 
         // A respawn or a death starts standing.
         public void ResetCrouch() => _crouchToggled = false;
+
+        // Phase 13 D16: this frame's piece key (Z X V B), or -1; T this frame. Read by GameClient once per frame.
+        public int PiecePressed =>
+            _pieceWall.WasPressedThisFrame() ? (int)BuildPieceType.Wall :
+            _pieceFloor.WasPressedThisFrame() ? (int)BuildPieceType.Floor :
+            _pieceRamp.WasPressedThisFrame() ? (int)BuildPieceType.Ramp :
+            _pieceRoof.WasPressedThisFrame() ? (int)BuildPieceType.Roof : -1;
+        public bool MaterialPressed => _material.WasPressedThisFrame();
 
         // Jump, Reload, Slot1-3, Interact, Drop and the two heal presses since the last simulation step that
         // used them. Rendering runs
@@ -118,6 +149,8 @@ namespace ProjectH.Client.Input
             if (_drop.WasPressedThisFrame()) QueuedButtons |= InputButtons.Drop;
             if (_useMedkit.WasPressedThisFrame()) QueuedButtons |= InputButtons.UseMedkit;
             if (_useShieldCell.WasPressedThisFrame()) QueuedButtons |= InputButtons.UseShieldCell;
+            if (_toolBuild.WasPressedThisFrame()) QueuedButtons |= InputButtons.ToolBuild;       // Phase 13 D5
+            if (_toolHarvest.WasPressedThisFrame()) QueuedButtons |= InputButtons.ToolHarvest;
         }
 
         public void Dispose()
@@ -140,6 +173,13 @@ namespace ProjectH.Client.Input
             _debugToggle.Dispose();
             _crouchToggle.Dispose();
             _crouchHold.Dispose();
+            _toolBuild.Dispose();
+            _toolHarvest.Dispose();
+            _pieceWall.Dispose();
+            _pieceFloor.Dispose();
+            _pieceRamp.Dispose();
+            _pieceRoof.Dispose();
+            _material.Dispose();
         }
     }
 }

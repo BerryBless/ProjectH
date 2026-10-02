@@ -30,6 +30,11 @@ public sealed class GameLoop : IDisposable
     private static readonly TimeSpan ResetWindow = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan ThreadJoinTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan ShutdownNoticeTimeout = TimeSpan.FromSeconds(1);
+    // Phase 13 final review A4: a joined connection whose reliable queues (channels 0 and 1) hold more than this many
+    // packets for CongestedSeconds in a row is closed with Congested: its link cannot take the game's traffic, and the
+    // queue (LiteNetLib memory) would only grow.
+    public const int MaxReliableBacklog = 512;
+    public const int CongestedSeconds = 10;
 
     private readonly ServerOptions _options;
     private readonly ILogger _logger;
@@ -49,6 +54,8 @@ public sealed class GameLoop : IDisposable
     private readonly StatsQueryQueue _statsQueries;
     private readonly byte[] _statsReplyBuffer = new byte[StatsResponse.MaxSize];
     private Match _match;
+    // Phase 13 D18: the current match's refusals by reason, for HealthCounters (one delegate, made once).
+    private readonly Func<ProjectH.Shared.Protocol.BuildResultCode, long> _buildRejects;
     // Removed on Disconnected messages and by the stale-peer sweep; never outlives the connection.
     private readonly Dictionary<int, NetPeer> _peers = new();
     private readonly List<int> _stalePeers = new();
@@ -58,6 +65,10 @@ public sealed class GameLoop : IDisposable
     private long _loopTick;
     private readonly long _joinTimeoutTicks;
     private readonly long _inputTimeoutTicks;   // 0 = off
+    private readonly long _congestedTicks;
+    // Final review A4: Match asks this (one delegate, made once) for a peer's building-channel backlog.
+    private readonly Func<int, int> _buildBacklog;
+    private volatile Func<NetPeer, byte, int>? _queueProbe;
     private readonly CancellationTokenSource _stop = new();
     private Thread? _thread;
     private int _stopping;   // Stop runs once (Interlocked), even when Dispose calls it again while it runs
@@ -110,12 +121,14 @@ public sealed class GameLoop : IDisposable
         _onFatal = onFatal;
         _time = time ?? TimeProvider.System;
         _failuresBeforeReset = options.SimHz * FailingSecondsBeforeReset;
-        _channels = new InboundChannels(options, _stats);
+        _channels = new InboundChannels(options, _stats, _health.AddBuildInboxDrop);
         _joinTimeoutTicks = (long)options.JoinTimeoutSeconds * options.SimHz;
         _inputTimeoutTicks = (long)options.InputTimeoutSeconds * options.SimHz;
+        _congestedTicks = (long)CongestedSeconds * options.SimHz;
+        _buildBacklog = BuildBacklog;
         _statsQueries = statsQueries ?? new StatsQueryQueue();
         _health.StatsQueries = () => _statsQueries.Counts;
-        _listener = new NetworkListener(options, _channels, _stats, _health, _statsQueries, logger);
+        _listener = new NetworkListener(options, _channels, _stats, _health, _statsQueries, logger, data.Building.MaxRequestsPerSecond);
         _net = new NetManager(_listener, null)
         {
             UnsyncedEvents = true,
@@ -127,15 +140,18 @@ public sealed class GameLoop : IDisposable
             PingInterval = Math.Min(1000, options.DisconnectTimeoutMs / 4),
             // Snapshots are sent Sequenced (never fragmented) and can be MaxPacketSize bytes.
             MtuOverride = ProtocolConstants.Mtu,
+            // Phase 13 D13: channel 0 as before, channel 1 the building stream.
+            ChannelsCount = ProtocolConstants.ChannelCount,
             UnconnectedMessagesEnabled = false,
             IPv6Enabled = false,
         };
         _listener.Manager = _net;
         _match = NewMatch();
+        _buildRejects = code => _match.BuildResults(code);
     }
 
     private Match NewMatch() => new(_options, _data, SendToPeer, _loadout, dropPoints: _dropPoints, matchSink: _matchSink,
-        graceExpired: OnGraceExpired, movementAnomaly: _health.AddMovementAnomaly);
+        graceExpired: OnGraceExpired, movementAnomaly: _health.AddMovementAnomaly, sendBuild: SendToPeerBuild, buildBacklog: _buildBacklog);
 
     // D2, D9: a graced player left without resuming (at most MaxPlayers per round, so logging each is cheap).
     private void OnGraceExpired(string devPlayerId)
@@ -154,6 +170,8 @@ public sealed class GameLoop : IDisposable
     internal Action? TickFaultHook { get => _tickFaultHook; set => _tickFaultHook = value; }
     internal Action? RemoveFaultHook { get => _removeFaultHook; set => _removeFaultHook = value; }
     internal Action? LoopFaultHook { get => _loopFaultHook; set => _loopFaultHook = value; }
+    // Test seam (final review A4): the reliable packets queued for a peer on a channel; null = LiteNetLib's count.
+    internal Func<NetPeer, byte, int>? QueueProbe { get => _queueProbe; set => _queueProbe = value; }
     // Ticks run so far; readable from any thread (tests).
     internal long LoopTicks => Interlocked.Read(ref _loopTick);
     public HealthCounters Health => _health;
@@ -174,6 +192,9 @@ public sealed class GameLoop : IDisposable
         _thread.Start();
         _logger.LogInformation("Server listening on UDP {Port} (SimHz {SimHz}, SnapshotHz {SnapshotHz}, MaxPlayers {MaxPlayers})",
             _net.LocalPort, _options.SimHz, _options.SnapshotHz, _options.MaxPlayers);
+        // Phase 13 final review C: a load-test switch must never go unnoticed on a real server.
+        if (_options.BuildInfiniteResources)
+            _logger.LogWarning("Server:BuildInfiniteResources is on: building costs no resources (load tests only)");
     }
 
     public void Stop() => Stop(ThreadJoinTimeout);
@@ -348,6 +369,8 @@ public sealed class GameLoop : IDisposable
         }
 
         _health.AddMatchReset();
+        // Final review B12: the thrown-away match's building totals stay in the counters (they never go back).
+        _health.CarryBuildTotals();
         // The old match's unlogged sink failure would go with it; LogPeriodic logs it with the next stats line.
         _carriedSinkError ??= _match.TakeSinkError();
         try
@@ -381,10 +404,12 @@ public sealed class GameLoop : IDisposable
         Interlocked.Increment(ref _loopTick);   // read by tests from another thread (LoopTicks)
         DrainControl();
         DrainInput();
+        DrainBuild();
         SweepPeers();
         SendStatsReplies();
         _match.Tick();
         _health.SetGauges(_peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State);
+        _health.SetBuild(_match.BuildCounts(), _buildRejects);
     }
 
     private void DrainControl()
@@ -431,6 +456,18 @@ public sealed class GameLoop : IDisposable
                 ((PeerState)peer.Tag).LastInputTick = _loopTick;
                 _match.EnqueueInput(message.PeerId, message.Packet);
             }
+        }
+    }
+
+    // Phase 13 D8: build requests, bounded per tick like inputs (the channel holds at most this many).
+    private void DrainBuild()
+    {
+        var reader = _channels.Build.Reader;
+        int budget = _options.MaxPlayers * Game.Build.BuildRequestQueue.Capacity;
+        while (budget-- > 0 && reader.TryRead(out BuildMessage message))
+        {
+            if (_peers.TryGetValue(message.PeerId, out var peer) && ReferenceEquals(peer, message.Peer))
+                _match.EnqueueBuild(message.PeerId, message.Request);
         }
     }
 
@@ -489,6 +526,10 @@ public sealed class GameLoop : IDisposable
             {
                 _timedOut.Add((pair.Key, DisconnectCode.InputTimeout));
             }
+            else if (Congested(peer, state))
+            {
+                _timedOut.Add((pair.Key, DisconnectCode.Congested));
+            }
         }
         foreach (int peerId in _stalePeers) RemovePeer(peerId);
         _stalePeers.Clear();
@@ -510,6 +551,26 @@ public sealed class GameLoop : IDisposable
         }
         _timedOut.Clear();
     }
+
+    // Final review A4: the peer's reliable queues (both channels) have held more than MaxReliableBacklog packets for
+    // CongestedSeconds in a row. Two queue reads per joined peer per tick; no allocation.
+    private bool Congested(NetPeer peer, PeerState state)
+    {
+        int queued = Queued(peer, ProtocolConstants.ReliableChannel) + Queued(peer, ProtocolConstants.BuildChannel);
+        if (queued <= MaxReliableBacklog)
+        {
+            state.CongestedSinceTick = -1;
+            return false;
+        }
+        if (state.CongestedSinceTick < 0) state.CongestedSinceTick = _loopTick;
+        return _loopTick - state.CongestedSinceTick >= _congestedTicks;
+    }
+
+    private int Queued(NetPeer peer, byte channel) =>
+        _queueProbe is { } probe ? probe(peer, channel) : peer.GetPacketsCountInReliableQueue(channel, ordered: true);
+
+    // Final review A4: Match's question, a peer's building-channel backlog (0 for a peer not here).
+    private int BuildBacklog(int peerId) => _peers.TryGetValue(peerId, out NetPeer? peer) ? Queued(peer, ProtocolConstants.BuildChannel) : 0;
 
     // Phase 10 D2: a connection the server did not close itself (a client quit, crash or network loss) may keep its
     // character for the reconnect grace; Match decides whether the player qualifies.
@@ -550,6 +611,14 @@ public sealed class GameLoop : IDisposable
         if (!_peers.TryGetValue(peerId, out var peer)) return;
         // NetPeer.Send is thread-safe and copies the data into LiteNetLib's own packet.
         peer.Send(data, method);
+        _stats.AddOut(data.Length);
+    }
+
+    // Phase 13 D13: the building stream on its own channel.
+    private void SendToPeerBuild(int peerId, ReadOnlySpan<byte> data, DeliveryMethod method)
+    {
+        if (!_peers.TryGetValue(peerId, out var peer)) return;
+        peer.Send(data, ProtocolConstants.BuildChannel, method);
         _stats.AddOut(data.Length);
     }
 
@@ -603,6 +672,7 @@ public sealed class GameLoop : IDisposable
     private void LogHealth()
     {
         HealthCounters h = _health;
+        BuildCounts b = h.Build;
         PersistenceCounts db = h.Persistence?.Invoke() ?? default;
         StatsQueryCounts sq = h.StatsQueries?.Invoke() ?? default;
         _logger.LogInformation(
@@ -610,10 +680,16 @@ public sealed class GameLoop : IDisposable
             "connections={Connections} joins={Joins} resumed={Resumed} graceStarts={GraceStarts} graceExpiries={GraceExpiries} " +
             "disconnects timeout={DisconnectTimeouts} other={DisconnectOthers} " +
             "rejects full={RejectFull} badRequest={RejectBad} version={RejectVersion} " +
-            "kicks kicked={KickBad} joinTimeout={KickJoin} inputTimeout={KickInput} serverError={KickError} " +
+            "kicks kicked={KickBad} joinTimeout={KickJoin} inputTimeout={KickInput} serverError={KickError} congested={KickCongested} " +
             "badPackets unknownId={BadUnknown} malformed={BadMalformed} beforeJoin={BadBeforeJoin} duplicateJoin={BadDuplicate} " +
-            "inputRate={BadRate} wrongDirection={BadDirection} handlerException={BadHandler} " +
+            "inputRate={BadRate} wrongDirection={BadDirection} handlerException={BadHandler} buildRate={BadBuildRate} " +
             "tickFailures={TickFailures} loopFailures={LoopFailures} matchResets={Resets} stalls={Stalls} movementAnomalies={MovementAnomalies} " +
+            "build pieces={BuildPieces} cells={BuildCells} requests={BuildRequests} accepted={BuildAccepted} destroyed={BuildDestroyed} " +
+            "collapsed={BuildCollapsed} duplicates={BuildDuplicates} eventPackets={BuildEventPackets} syncPackets={BuildSyncPackets} " +
+            "buildRejects noResource={RejectNoResource} outOfRange={RejectRange} blocked={RejectBlocked} unsupported={RejectUnsupported} " +
+            "occupied={RejectOccupied} rateLimited={RejectRate} invalidState={RejectState} invalidRequest={RejectRequest} budgetFull={RejectBudget} " +
+            "harvest hits={HarvestHits} envDestroyed={HarvestDestroyed} syncDeferred={BuildSyncDeferred} " +
+            "buildInboxDrops={BuildInboxDrops} " +
             "db saved={DbSaved} failed={DbFailed} discarded={DbDiscarded} dropped={DbDropped} " +
             "stats requests={StatsRequests} limited={StatsLimited} busy={StatsBusy} unavailable={StatsUnavailable} undelivered={StatsUndelivered}",
             _peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State, _match.Flow.Round,
@@ -621,10 +697,17 @@ public sealed class GameLoop : IDisposable
             h.DisconnectTimeouts, h.DisconnectOthers,
             h.Rejects(RejectReason.ServerFull), h.Rejects(RejectReason.BadRequest), h.Rejects(RejectReason.VersionMismatch),
             h.Kicks(DisconnectCode.Kicked), h.Kicks(DisconnectCode.JoinTimeout), h.Kicks(DisconnectCode.InputTimeout), h.Kicks(DisconnectCode.ServerError),
+            h.Kicks(DisconnectCode.Congested),
             h.BadPackets(BadPacketReason.UnknownId), h.BadPackets(BadPacketReason.Malformed), h.BadPackets(BadPacketReason.InputBeforeJoin),
             h.BadPackets(BadPacketReason.DuplicateJoin), h.BadPackets(BadPacketReason.InputRate), h.BadPackets(BadPacketReason.WrongDirection),
-            h.BadPackets(BadPacketReason.HandlerException),
+            h.BadPackets(BadPacketReason.HandlerException), h.BadPackets(BadPacketReason.BuildRate),
             h.TickFailures, h.LoopFailures, h.MatchResets, h.Stalls, h.MovementAnomalies,
+            b.Pieces, b.Cells, b.Requests, b.Accepted, b.Destroyed, b.Collapsed, b.Duplicates, b.EventPackets, b.SyncPackets,
+            h.BuildRejects(BuildResultCode.NoResource), h.BuildRejects(BuildResultCode.OutOfRange), h.BuildRejects(BuildResultCode.Blocked),
+            h.BuildRejects(BuildResultCode.Unsupported), h.BuildRejects(BuildResultCode.Occupied), h.BuildRejects(BuildResultCode.RateLimited),
+            h.BuildRejects(BuildResultCode.InvalidState), h.BuildRejects(BuildResultCode.InvalidRequest), h.BuildRejects(BuildResultCode.BudgetFull),
+            b.HarvestHits, b.EnvironmentDestroyed, b.SyncDeferred,
+            h.BuildInboxDrops,
             db.Saved, db.Failed, db.Discarded, db.Dropped,
             sq.Requests, sq.Limited, sq.Busy, sq.Unavailable, sq.Undelivered);
     }

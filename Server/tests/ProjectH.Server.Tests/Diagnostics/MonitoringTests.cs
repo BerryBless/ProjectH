@@ -59,9 +59,13 @@ public class MonitoringTests
                      "peers=0", "players=0", "graced=0", "match=WaitingForPlayers#1",
                      "connections=", "joins=", "resumed=", "graceStarts=", "graceExpiries=0", "disconnects timeout=", "other=",
                      "rejects full=1", "badRequest=0", "version=0",
-                     "kicks kicked=0", "joinTimeout=0", "inputTimeout=1", "serverError=0",
+                     "kicks kicked=0", "joinTimeout=0", "inputTimeout=1", "serverError=0", "congested=0",   // Phase 13 final review A4
                      "badPackets unknownId=0", "malformed=", "beforeJoin=", "duplicateJoin=", "inputRate=", "wrongDirection=1", "handlerException=",
                      "tickFailures=0", "loopFailures=0", "matchResets=0", "stalls=0", "movementAnomalies=0",
+                     "buildRate=0",   // Phase 13 D8
+                     "build pieces=0 cells=0 requests=0 accepted=0 destroyed=0 collapsed=0 duplicates=0", // Phase 13 D18
+                     "buildRejects noResource=0 outOfRange=0 blocked=0 unsupported=0 occupied=0 rateLimited=0 invalidState=0 invalidRequest=0 budgetFull=0",
+                     "harvest hits=0 envDestroyed=0", "syncDeferred=0", "buildInboxDrops=0",
                      "db saved=3 failed=1 discarded=2 dropped=4",
                      "stats requests=0 limited=2 busy=0 unavailable=0 undelivered=0",
                  })
@@ -88,6 +92,9 @@ public class MonitoringTests
         health.SetGauges(peers: 3, players: 2, graced: 1, MatchFlowState.Playing);
         health.AddGraceExpiry();
         health.AddMovementAnomaly();
+        health.AddBuildInboxDrop();
+        health.AddBuildInboxDrop();
+        health.SetBuild(new BuildCounts(7, 3, 8, 5, 2, 10, 4, 1, 9, 2, 0, 0, 6), code => code == BuildResultCode.Occupied ? 2 : 0);
 
         using var meter = new ServerMeter(health);
         var seen = new List<(string Name, long Value, string Tags)>();
@@ -113,6 +120,14 @@ public class MonitoringTests
         Assert.Contains(("projecth.match_state", (long)MatchFlowState.Playing, ""), seen);
         Assert.Contains(("projecth.grace_expiries", 1L, ""), seen);
         Assert.Contains(("projecth.movement_anomalies", 1L, ""), seen);   // Phase 12 D12
+        Assert.Contains(("projecth.build.pieces", 7L, ""), seen);         // Phase 13 D18
+        Assert.Contains(("projecth.build.cells", 3L, ""), seen);
+        Assert.Contains(("projecth.build.requests", 5L, "result=Ok"), seen);
+        Assert.Contains(("projecth.build.requests", 2L, "result=Occupied"), seen);
+        Assert.Contains(("projecth.build.destroyed", 4L, "cause=collapse"), seen);
+        Assert.Contains(("projecth.build.destroyed", 6L, "cause=damage"), seen);
+        Assert.Contains(("projecth.build.inbox_drops", 2L, ""), seen);
+        Assert.Contains(("projecth.harvest.hits", 9L, ""), seen);
         Assert.Contains(("projecth.stats_queries", 6L, "result=requests"), seen);
         Assert.Contains(("projecth.stats_queries", 2L, "result=limited"), seen);
         Assert.Contains(("projecth.stats_queries", 1L, "result=busy"), seen);
@@ -120,7 +135,29 @@ public class MonitoringTests
         Assert.Contains(("projecth.stats_queries", 4L, "result=undelivered"), seen);
         // B7: a shutdown is not a kick, so it has no series.
         Assert.DoesNotContain(seen, s => s.Name == "projecth.kicks" && s.Tags.Contains(nameof(DisconnectCode.ServerShutdown)));
-        Assert.Equal(4, seen.Count(s => s.Name == "projecth.kicks"));
+        Assert.Equal(5, seen.Count(s => s.Name == "projecth.kicks"));   // Phase 13 final review A4: Congested
+        Assert.Contains(("projecth.kicks", 0L, "code=Congested"), seen);
+    }
+
+    // Final review B12: a match reset starts the match's numbers over; the counters carry the old ones, so they never go
+    // back. The gauges (pieces, cells) are the new match's.
+    [Fact]
+    public void BuildCounters_SurviveAMatchReset()
+    {
+        var health = new HealthCounters();
+        health.SetBuild(new BuildCounts(7, 3, 8, 5, 2, 10, 4, 1, 9, 2, 6, 11, 6, 1), code => code == BuildResultCode.Occupied ? 2 : 0);
+        health.CarryBuildTotals();
+        health.SetBuild(new BuildCounts(1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0), code => code == BuildResultCode.Occupied ? 1 : 0);
+        BuildCounts b = health.Build;
+        Assert.Equal(1, b.Pieces);
+        Assert.Equal(1, b.Cells);
+        Assert.Equal(9, b.Requests);
+        Assert.Equal(6, b.Accepted);
+        Assert.Equal(10, b.Destroyed);
+        Assert.Equal(10, b.HarvestHits);
+        Assert.Equal(12, b.SyncPackets);
+        Assert.Equal(1, b.SyncDeferred);
+        Assert.Equal(3, health.BuildRejects(BuildResultCode.Occupied));
     }
 
     [Fact]

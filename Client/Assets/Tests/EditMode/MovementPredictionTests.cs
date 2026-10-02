@@ -26,6 +26,9 @@ namespace ProjectH.Client.Tests
             public bool HasRoute;
             public DropRoute Route;
             public readonly PredictedDoors Doors = new PredictedDoors();   // only its server state is used
+            // Phase 13 D3: the server gathers its world around the character before each step (Match.Move); so do these.
+            public readonly CollisionWorld World = new CollisionWorld();
+            public PieceGrid Pieces;
 
             public void Run(in InputCommand input)
             {
@@ -35,9 +38,10 @@ namespace ProjectH.Client.Tests
                     Sprinting = false;
                     return;
                 }
-                MovementSimulation.Step(ref State, input, Step, Doors.World, GameMap.Terrain, out StepResult result);
+                World.Gather(State.Position, Doors.OpenMask, 0UL, Pieces);
+                MovementSimulation.Step(ref State, input, Step, World, GameMap.Terrain, out StepResult result);
                 Sprinting = result.Sprinting;
-                if (result.Charging && result.BlockedBy >= 0)
+                if (result.Charging && !result.BlockedBy.IsNone)
                 {
                     int door = Doors.DoorBlocking(result);
                     if (door >= 0) Doors.ApplyServer((byte)(Doors.OpenMask | (1 << door)));
@@ -301,6 +305,63 @@ namespace ProjectH.Client.Tests
             Vector3 feet = predictor.PredictedPosition;
             predictor.SetAim(1, feet + new Vector3(0f, AimSolver.CrouchEyeHeight, 10f), 0f, 0f, 0f);
             Assert.AreEqual(0f, predictor.InputAt(2).AimPitch, 1e-3f);
+        }
+
+        // ---- Phase 13 D2, D3: moving on building pieces ----
+
+        // The server and the prediction both know these pieces (the predictor's Pieces is the client's store of confirmed
+        // pieces; here the same grid), so they gather the same world and agree with no correction. Plaza cell 16:
+        // x 0..5, z 0..5.
+        private void Pieces(params BuildPieceShape[] shapes)
+        {
+            var grid = new PieceGrid(64);
+            for (int i = 0; i < shapes.Length; i++) Assert.IsTrue(grid.TryAdd((uint)(i + 1), shapes[i], out _));
+            _server.Pieces = grid;
+            _predictor.Pieces = grid;
+        }
+
+        private static BuildPieceShape Shape(BuildPieceType type, int x, int y, int z, int rotation = 0)
+        {
+            Assert.IsTrue(BuildGrid.TryNormalize(type, x, y, z, rotation, out BuildPieceShape shape));
+            return shape;
+        }
+
+        [Test]
+        public void UpARampOntoAFloor_AndBackDown_Agrees()
+        {
+            Start(At(2.5f, -3f));
+            Pieces(Shape(BuildPieceType.Ramp, 16, 0, 16, 0), Shape(BuildPieceType.Floor, 16, 1, 17));
+            Frames(55, Vector2.up, 0f);
+            Assert.AreEqual(3f, _predictor.PredictedPosition.y, 1e-4f);
+            AssertAgrees("up the ramp");
+            Frames(40, Vector2.up, 180f, InputButtons.Sprint);
+            Assert.AreEqual(0f, _predictor.PredictedPosition.y, 1e-4f);
+            AssertAgrees("down the ramp");
+        }
+
+        [Test]
+        public void SprintingUpARampOntoARoof_AndJumpingOnIt_Agrees()
+        {
+            Start(At(2.5f, -8f));
+            Pieces(Shape(BuildPieceType.Ramp, 16, 0, 15, 0), Shape(BuildPieceType.Wall, 16, 0, 16, 0), Shape(BuildPieceType.Wall, 16, 0, 16, 1),
+                Shape(BuildPieceType.Wall, 16, 0, 16, 2), Shape(BuildPieceType.Wall, 16, 0, 16, 3), Shape(BuildPieceType.Roof, 16, 0, 16));
+            Frames(46, Vector2.up, 0f, InputButtons.Sprint);
+            Assert.Greater(_predictor.PredictedPosition.y, 4f);
+            Frame(Vector2.up, 0f, InputButtons.None, InputButtons.Jump);
+            Frames(30, Vector2.up, 20f);
+            AssertAgrees("roof");
+        }
+
+        [Test]
+        public void PressingAlongAWallLine_AndInsideABox_Agrees()
+        {
+            Start(At(-13f, -0.6f, 90f));
+            Pieces(Shape(BuildPieceType.Wall, 13, 0, 16, 0), Shape(BuildPieceType.Wall, 14, 0, 16, 0), Shape(BuildPieceType.Wall, 15, 0, 16, 0),
+                Shape(BuildPieceType.Wall, 16, 0, 16, 0), Shape(BuildPieceType.Wall, 16, 0, 16, 1), Shape(BuildPieceType.Wall, 16, 0, 16, 2),
+                Shape(BuildPieceType.Wall, 16, 0, 16, 3), Shape(BuildPieceType.Floor, 16, 1, 16));
+            Frames(140, new Vector2(-1f, 1f), 90f);   // forward +X, strafing into the wall line
+            Assert.Greater(_predictor.PredictedPosition.x, 0f);
+            AssertAgrees("wall line");
         }
     }
 }

@@ -1,0 +1,19 @@
+{
+  // Phase 13 D4: building materials, resources, the harvest tool, harvestable objects, placement limits and the build
+  // interest window. Names follow the request (§7, §18, §57, §130). Validated at startup (BuildingCatalog).
+  "materials": [
+    { "type": "Wood", "resourceCost": 10, "maxHealth": 150, "initialHealthRatio": 0.3, "constructionSeconds": 1.5, "structureDamageMultiplier": 1.0, "harvestToolDamageMultiplier": 1.0 },
+    { "type": "Stone", "resourceCost": 10, "maxHealth": 240, "initialHealthRatio": 0.3, "constructionSeconds": 3.0, "structureDamageMultiplier": 1.0, "harvestToolDamageMultiplier": 1.0 },
+    { "type": "Metal", "resourceCost": 10, "maxHealth": 360, "initialHealthRatio": 0.3, "constructionSeconds": 5.0, "structureDamageMultiplier": 1.0, "harvestToolDamageMultiplier": 1.0 }
+  ],
+  "maxResource": 500,
+  "harvestTool": { "range": 2.5, "cooldownSeconds": 0.4, "environmentDamage": 25, "structureDamage": 50, "weakPointRadius": 0.4, "weakPointMultiplier": 2 },
+  "harvestables": [
+    { "kind": "Tree", "health": 150, "baseResourcePerHit": 6, "destroyBonus": 10 },
+    { "kind": "Crate", "health": 100, "baseResourcePerHit": 6, "destroyBonus": 10 },
+    { "kind": "Rock", "health": 200, "baseResourcePerHit": 5, "destroyBonus": 10 },
+    { "kind": "Wreck", "health": 250, "baseResourcePerHit": 4, "destroyBonus": 10 }
+  ],
+  "build": { "range": 7.0, "viewAngleDegrees": 75, "minimumBuildInterval": 0.1, "maxBuildPiecesPerMatch": 20000, "maxBuildPiecesPerPlayer": 500, "maxRequestsPerSecond": 20 },
+  "interest": { "cellSize": 20, "radius": 2, "keepMargin": 1 }
+}

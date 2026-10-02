@@ -76,6 +76,7 @@ public class MatchTests
     {
         _match.TryJoin(1, "a");
 
+        PacketReader reader0;
         var toPeer = _sent.Where(s => s.PeerId == 1).ToList();
         Assert.Equal(PacketId.JoinMatchResponse, toPeer[0].Id);
         Assert.Equal(PacketId.WeaponCatalog, toPeer[1].Id);
@@ -85,6 +86,26 @@ public class MatchTests
         Assert.Equal(PacketId.WorldItems, toPeer[3].Id);   // 17 loot points: one chunk
         Assert.Equal(PacketId.InventoryState, toPeer[4].Id);
         Assert.Equal(PacketId.PlayerSpawned, toPeer[5].Id);
+        // Phase 13 D4, final review A3: the building catalog goes on the building channel, right before the reset sync
+        // (this match sends both channels through one delegate).
+        int catalog = toPeer.FindIndex(s => s.Id == PacketId.BuildCatalog);
+        Assert.True(catalog > 5);
+        Assert.Equal(PacketId.BuildSync, toPeer[catalog + 1].Id);
+        reader0 = new PacketReader(toPeer[catalog].Data);
+        reader0.TryReadPacketId(out _);
+        Assert.True(BuildCatalogPacket.TryRead(ref reader0, out BuildCatalogData building));
+        Assert.Equal(10, building.ResourceCost[0]);
+        // Placement is free with BuildInfiniteResources, so the catalog says so (else the client's preview shows
+        // NoResource and never sends).
+        var free = new List<Sent>();
+        var infinite = new Match(new ServerOptions { MaxPlayers = 3, DevRespawn = true, BuildInfiniteResources = true }, TestGameData.Create(),
+            (peer, data, method) => free.Add(new Sent(peer, data.ToArray(), method)));
+        infinite.TryJoin(1, "a");
+        reader0 = new PacketReader(free.First(s => s.Id == PacketId.BuildCatalog).Data);
+        reader0.TryReadPacketId(out _);
+        Assert.True(BuildCatalogPacket.TryRead(ref reader0, out BuildCatalogData freeCatalog));
+        Assert.All(freeCatalog.ResourceCost, cost => Assert.Equal(0, cost));
+        Assert.Equal(building.MaxHealth, freeCatalog.MaxHealth);
 
         var reader = new PacketReader(toPeer[1].Data);
         reader.TryReadPacketId(out _);

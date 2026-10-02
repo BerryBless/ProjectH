@@ -1,6 +1,7 @@
 using System;
 using ProjectH.Server.Game.Combat;
 using ProjectH.Shared.Protocol;
+using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Server.Game.Items;
 
@@ -39,6 +40,30 @@ public sealed class Inventory
     // Match sends one InventoryState at the end of a tick in which it was set, then clears it (D14).
     public bool Changed;
 
+    // Phase 13 D5: the tool in hand (the snapshot carries it), and the one before build mode (Q goes back to it).
+    public ToolKind Tool;
+    public ToolKind PreviousTool;
+    // Phase 13 D15: wood, stone and metal (index = BuildMaterialType), 0..BuildingCatalog.MaxResource. Match sends one
+    // ResourcesState at the end of a tick in which ResourcesChanged was set, then clears it.
+    private readonly int[] _resources = new int[3];
+    public bool ResourcesChanged;
+
+    public int Resource(BuildMaterialType material) => _resources[(int)material];
+
+    public void SetResource(BuildMaterialType material, int amount)
+    {
+        if (_resources[(int)material] == amount) return;
+        _resources[(int)material] = amount;
+        ResourcesChanged = true;
+    }
+
+    public ResourcesState ResourcesToWire() => new()
+    {
+        Wood = (ushort)Math.Clamp(_resources[0], 0, ushort.MaxValue),
+        Stone = (ushort)Math.Clamp(_resources[1], 0, ushort.MaxValue),
+        Metal = (ushort)Math.Clamp(_resources[2], 0, ushort.MaxValue),
+    };
+
     public ref HeldWeapon Current => ref Slots[CurrentSlot];
 
     public int GetAmmo(AmmoType type) => _ammo[(int)type - 1];
@@ -56,6 +81,11 @@ public sealed class Inventory
         Using = ConsumableType.None;
         UseEndTick = 0;
         Changed = true;
+        // Phase 13: a new life starts with the weapons out and no resources.
+        Tool = ToolKind.Weapon;
+        PreviousTool = ToolKind.Weapon;
+        Array.Clear(_resources);
+        ResourcesChanged = true;
     }
 
     // now = the current server tick; the client counts the rest of a running use down from it.

@@ -5,6 +5,7 @@
 ```bash
 dotnet run --project Server/src/ProjectH.Server
 dotnet run --project Server/src/ProjectH.Server -- --Server:AirDrop=false   # Phase 12: 수송기 없이 땅에서 시작(비교용)
+dotnet run --project Server/src/ProjectH.Server -- --Server:BuildInfiniteResources=true   # Phase 13: 건설 비용 0(부하 테스트)
 dotnet test Server/ProjectH.Server.slnx
 ```
 
@@ -32,11 +33,13 @@ MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 �
 | ZoneSeed | 1 | ≥ 0. Zone 중심 난수 시드. 경기마다 `ZoneSeed + 판 번호` |
 | SpawnSeed | 1 | ≥ 0. 투입 지점 섞기 시드. 경기마다 `SpawnSeed + 판 번호`. `AirDrop`이면 수송기 경로의 시드이기도 하다 |
 | AirDrop | true | Phase 12: 경기가 수송기에서 시작한다(`BattleRoyale.md` "공중 투입". Zone 시계는 경로가 끝나는 Tick에 시작). false면 Phase 6의 투입 지점에서 땅으로 시작한다(Phase 5–11 규칙 테스트와 Phase 11과의 부하 비교용). `DevRespawn`이 true면 이 값과 상관없이 땅에서 시작한다 |
+| BuildInfiniteResources | false | Phase 13: true면 건설에 자원이 들지 않는다(부하 테스트용, `Building.md` "자원"). 운영은 false |
 | ReconnectGraceSeconds | 10 | 0–60, 0 = 끔. 경기 중 끊긴 참가자가 캐릭터를 지키는 시간(`Networking.md` "끊기와 재접속") |
 | JoinTimeoutSeconds | 5 | 1–60. 연결한 뒤 Join해야 하는 시간. 넘으면 `JoinTimeout`으로 끊는다 |
 | InputTimeoutSeconds | 10 | 0 = 끔, 아니면 2–300이고 `InputTimeoutSeconds × 1000 ≥ DisconnectTimeoutMs + 2000`(기본 5000이면 7 이상, 최솟값 500이면 3 이상). Join한 peer가 입력을 보내야 하는 간격. 넘으면 `InputTimeout`으로 끊는다. LiteNetLib Timeout보다 먼저 오면 네트워크 끊김이 서버 끊기로 보여 유예를 잃으므로 이 조건을 둔다 |
 
-데이터 파일: `Server/src/ProjectH.Server/weapons.json`, `items.json`, `loot.json`, `zones.json`(출력 폴더로 복사). 시작 시 `GameData.LoadDirectory`가 넷을 읽고 검증한다.
+데이터 파일: `Server/src/ProjectH.Server/weapons.json`, `items.json`, `loot.json`, `zones.json`, `building.json`(Phase 13, 출력 폴더로 복사). 시작 시 `GameData.LoadDirectory`가 다섯을 읽고 검증한다.
+- `building.json`(`BuildingCatalog`, Phase 13): 재료 Wood·Stone·Metal 각 1개(비용·최대 체력·처음 체력 비율·건설 초·피해 배율), 최대 자원, 채집 도구(사거리·간격·피해·약점 반지름·배율), 채집 대상 4종(체력·한 번 양·부술 때 추가), 건설(사거리, 시야각, 최소 간격, 경기·플레이어 조각 상한, 초당 요청 상한 1–1000), 관심 영역(칸 크기는 건설 칸의 배수이고 맵을 64칸 이하로 나눔, 반지름, 여유). 칸 크기는 20·40·80·160 m만 된다. 파일이 없거나 틀리면 서버가 시작하지 않는다. 코드 안의 같은 값(`BuildingCatalog.DefaultJson`, 파일과 같음을 `BuildingCatalogTests`가 고정)은 파일 없이 만드는 테스트용 `GameData`만 쓴다.
 - `weapons.json`(`WeaponCatalog`): 무기 1–8개, Id 1–255·이름 중복 없음, 이름 1–16 UTF-8 바이트, damage 1–65535, magazineSize 1–255, fireIntervalSeconds·reloadSeconds > 0이고 Tick으로 바꿔 65535 이하, range > 0, spread·recoil ≥ 0, ammoType Light·Medium·Heavy, 모두 유한.
 - `items.json`(`ItemCatalog`): 등급 정확히 5개(이름 중복 없음, 배율 0 초과 10 이하), 탄약 Light·Medium·Heavy 각 1개(max 1–65535, pickupAmount 1–max), 소모품 Medkit·ShieldCell 각 1개(useSeconds > 0, heal·shield ≥ 0이고 합 > 0, maxStack 1–255). 이름은 1–16 UTF-8 바이트이고 목록 안에서 중복 없음.
 - `loot.json`(`LootTable`): rarityWeights에 5개 등급 이름이 모두 있고 가중치 1–1,000,000, 표 1개 이상, 표마다 항목 1개 이상, kind(Weapon, Ammo, Medkit, ShieldCell) 중복 없음, 가중치 1–1,000,000. Shared `LootPoints`가 쓰는 표 이름이 모두 있어야 한다.
@@ -125,9 +128,13 @@ Health peers players graced match=<State>#<Round>
   connections joins resumed graceStarts graceExpiries
   disconnects timeout other
   rejects full badRequest version
-  kicks kicked joinTimeout inputTimeout serverError
+  kicks kicked joinTimeout inputTimeout serverError congested
   badPackets unknownId malformed beforeJoin duplicateJoin inputRate wrongDirection handlerException
   tickFailures loopFailures matchResets stalls movementAnomalies
+  build pieces cells requests accepted destroyed collapsed duplicates eventPackets syncPackets
+  buildRejects noResource outOfRange blocked unsupported occupied rateLimited invalidState invalidRequest budgetFull
+  harvest hits envDestroyed syncDeferred
+  buildInboxDrops
   db saved failed discarded dropped
   stats requests limited busy unavailable undelivered
 ```
@@ -135,10 +142,17 @@ Health peers players graced match=<State>#<Round>
 - `peers`: 열린 연결 수. `players`: 경기의 플레이어 수(유예 중 포함). `graced`: 재접속을 기다리는 플레이어 수.
 - `joins`·`resumed`: 새 Join과 Resume 수. `graceStarts`: 유예가 시작된 수. `graceExpiries`: Resume 없이 유예가 끝난 수(시간 초과, 유예 중 사망, 판 재시작). 만료마다 DevPlayerId를 넣은 Information 로그가 하나 남는다. 경기 초기화가 버린 유예 캐릭터는 세지 않는다.
 - `disconnects timeout`·`other`: 끊긴 연결 수(LiteNetLib 사유가 `Timeout`인지 아닌지).
-- `rejects`: 연결 요청 거절(이유별). 종료 중의 거절도 `full`로 센다. `kicks`: 서버가 끊은 수(코드별. `kicked`는 잘못된 패킷 때문에 끊은 수, `serverError`는 경기 초기화와 Control 채널이 가득 차서 끊은 수). 종료(`ServerShutdown`)와 Join 거절 뒤의 끊기는 Kick이 아니라 세지 않는다.
+- `rejects`: 연결 요청 거절(이유별). 종료 중의 거절도 `full`로 센다. `kicks`: 서버가 끊은 수(코드별. `kicked`는 잘못된 패킷 때문에 끊은 수, `serverError`는 경기 초기화와 Control 채널이 가득 차서 끊은 수, `congested`는 아래 "밀린 연결"로 끊은 수). 종료(`ServerShutdown`)와 Join 거절 뒤의 끊기는 Kick이 아니라 세지 않는다.
+- 밀린 연결(Phase 13 최종 리뷰 A4): `SweepPeers`가 Tick마다 Join한 연결의 신뢰 대기열(LiteNetLib `GetPacketsCountInReliableQueue`, 채널 0 + 1)을 읽는다. 512개(`GameLoop.MaxReliableBacklog`)를 넘은 채 10초(`CongestedSeconds`)가 지나면 `Congested`로 끊는다. 한 번이라도 그 아래로 내려가면 다시 센다(`PeerState.CongestedSinceTick`, Game Loop만 쓴다). 링크가 게임 트래픽을 받지 못하는 연결이 LiteNetLib 메모리를 끝없이 키우지 않게 한다. Match는 GameLoop가 한 번 만든 질의 delegate로 건설 채널 대기열만 읽어, 32개를 넘은 연결의 그 Tick `BuildSync`를 건너뛴다(`syncDeferred`).
 - `badPackets` 7개 항목: 잘못된 패킷(이유별, `Networking.md` "Validation").
 - `tickFailures`·`loopFailures`·`matchResets`: 예외 복구 카운터. `stalls`: Watchdog이 센 멈춤.
-- `movementAnomalies`(Phase 12 D12): 한 Tick의 이동이 그 모드의 최대 속도 × dt × 1.5를 넘은 수(`MovementLimits`, `Movement.md` "이동 이상 검사"). 서버가 이동을 입력만으로 직접 계산하므로 치트가 아니라 시뮬레이션 버그를 알리는 값이다. 정상이면 언제나 0이다.
+- `movementAnomalies`(Phase 12 D12): 한 Tick의 이동이 그 모드의 최대 속도 × dt × 1.5를 넘은 수(`MovementLimits`, `Movement.md` "이동 이상 검사"). 서버가 이동을 입력만으로 직접 계산하므로 치트가 아니라 시뮬레이션 버그를 알리는 값이다. 정상이면 언제나 0이다. Phase 13: 건설 조각 안에서 시작한 이동(머리를 가로질러 지은 경사로가 한 번에 2 m 넘게 들어 올리는 경우 등)은 조각이 민 것이라 세지 않는다. 맵 상자·문·채집 대상 안에서 시작한 이동은 그대로 센다.
+- `build`(Phase 13): `pieces`·`cells`는 지금 서 있는 조각 수와 조각이 있는 건설 칸 수(공간 색인), 나머지는 누적이다. `requests`는 Game Loop가 처리한 요청, `accepted`는 지어진 수, `destroyed`는 부서진 조각(붕괴 포함), `collapsed`는 그중 지지를 잃어 무너진 수, `duplicates`는 이미 본 번호라 버린 요청, `eventPackets`·`syncPackets`는 보낸 건설 패킷 수다. `buildRejects`는 거절 코드별 수다. `badPackets`에는 `buildRate`(연결당 초당 상한 초과)가 더해졌다.
+- `harvest`(Phase 13): 채집 타격 수(`hits`)와 부서진 채집 대상 수(`envDestroyed`). `syncDeferred`: 건설 채널이 밀려 Sync를 건너뛴 (연결, Tick) 수. Meter는 `projecth.build.sync_deferred`.
+- 경기 초기화(Phase 13 최종 리뷰 B12): `build`·`harvest`의 누적 값은 새 `Match`에서 0부터 다시 세지만, `HealthCounters`가 버린 경기의 합계를 기준값으로 들고 더하므로 Health 줄과 Meter의 값은 줄지 않는다. `pieces`·`cells`는 지금 값이다.
+- 시작할 때 `Server:BuildInfiniteResources`가 켜져 있으면 Warning 로그를 남긴다(부하 측정 전용).
+- `buildRejects`의 `rateLimited`(Phase 13): 플레이어 큐(8개)가 가득 차 버린 요청도 센다(`requests`에도 들어간다).
+- `buildInboxDrops`(Phase 13): 수신 스레드에서 Game Loop로 가는 유한 채널(`InboundChannels.Build`)이 넘쳐 버린 요청 수. 정상이면 0이다. Meter는 `projecth.build.inbox_drops`.
 - `db`: `MatchHistoryWriter`의 `Saved`·`Failed`·`Discarded`와 큐의 `Dropped`(`Database.md`).
 - `stats`(Phase 11, 전적 조회): `requests`는 요청 채널에 받아들인 요청 수. `limited`는 답 없이 버린 요청(Join이 성공하지 않은 연결이거나 같은 연결의 앞 요청 뒤 2초 안). `busy`·`unavailable`은 그 상태로 답한 수(`busy`: 요청 채널이 가득 참, `unavailable`: Persistence 꺼짐·큐에서 5초 넘게 기다림(조회하지 않음)·DB 실패·3초 초과). `undelivered`는 나가지 못한 답(응답 채널이 가득 참, 또는 요청한 연결이 이미 없음). `Networking.md` "전적 조회".
 
@@ -159,6 +173,11 @@ dotnet-counters monitor -n ProjectH.Server --counters ProjectH.Server
 | `projecth.bad_packets` | Counter | `reason` = `BadPacketReason` 7가지 |
 | `projecth.tick_failures`, `projecth.loop_failures`, `projecth.match_resets`, `projecth.stalls` | Counter | |
 | `projecth.movement_anomalies` | Counter | Phase 12. 정상이면 0 |
+| `projecth.build.pieces`, `projecth.build.cells` | Gauge | Phase 13. 서 있는 조각, 조각이 있는 건설 칸 |
+| `projecth.build.requests` | Counter | `result` = `Ok` / 거절 코드 이름 9개 / `Duplicate` |
+| `projecth.build.destroyed` | Counter | `cause` = `damage` / `collapse` |
+| `projecth.build.inbox_drops` | Counter | Phase 13. 건설 입력 채널이 넘쳐 버린 요청 |
+| `projecth.harvest.hits`, `projecth.harvest.destroyed` | Counter | Phase 13 |
 | `projecth.db_records` | Counter | `result` = `saved` / `failed` / `discarded` / `dropped` |
 | `projecth.stats_queries` | Counter | `result` = `requests` / `limited` / `busy` / `unavailable` / `undelivered` |
 
