@@ -91,7 +91,10 @@ public static class ScenarioLoader
                             string type = ReadString(a, "type", actorErrors) ?? ActorSpec.HeadlessClient;
                             foreach (string e in actorErrors) errors.Add($"actors[{i}]: {e}");
                             if (string.IsNullOrEmpty(id)) errors.Add($"actors[{i}]: 'id' is required.");
-                            else actors.Add(new ActorSpec(id, type));
+                            int actorErrorsBefore = actorErrors.Count;
+                            bool proxy = ReadActorNetwork(a, actorErrors);
+                            foreach (string e in actorErrors.Skip(actorErrorsBefore)) errors.Add($"actors[{i}]: {e}");
+                            if (!string.IsNullOrEmpty(id)) actors.Add(new ActorSpec(id, type) { Proxy = proxy });
                         }
                         i++;
                     }
@@ -226,6 +229,26 @@ public static class ScenarioLoader
             Description = ReadString(s, "description", errors),
             Params = parameters,
         };
+    }
+
+    // An actor's `"network": { "proxy": true }` (QA-3). Only `proxy` is known; anything else is an error so a typo does
+    // not silently run without the proxy.
+    private static bool ReadActorNetwork(JsonElement actor, List<string> errors)
+    {
+        if (!actor.TryGetProperty("network", out JsonElement n) || n.ValueKind == JsonValueKind.Null) return false;
+        if (n.ValueKind != JsonValueKind.Object)
+        {
+            errors.Add("'network' must be an object like { \"proxy\": true }.");
+            return false;
+        }
+        bool proxy = false;
+        foreach (JsonProperty p in n.EnumerateObject())
+        {
+            if (p.Name != "proxy") errors.Add($"Unknown 'network' field '{p.Name}' (known: proxy).");
+            else if (p.Value.ValueKind is JsonValueKind.True or JsonValueKind.False) proxy = p.Value.GetBoolean();
+            else errors.Add("'network.proxy' must be true or false.");
+        }
+        return proxy;
     }
 
     private static string? ReadString(JsonElement e, string name, List<string> errors)

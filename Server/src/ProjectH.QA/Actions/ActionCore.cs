@@ -23,6 +23,10 @@ public sealed class ActionSpec
     // D11: a server QA command (Arrange tool); ArrangeOnly ones warn outside the arrange phase.
     public bool ServerCommand { get; init; }
     public bool ArrangeOnly { get; init; }
+    // QA-3: the step's actor must have `"network": { "proxy": true }` (network fault steps).
+    public bool NeedsProxy { get; init; }
+    // QA-3: controls the launched server process; a validation error in an attach scenario.
+    public bool LaunchOnly { get; init; }
     // Default step timeout when the step gives none (ms). Polling actions read their own limit from it (soft) and the
     // runner cancels at it plus a grace (hard).
     public Func<StepDefinition, int>? DefaultTimeout { get; init; }
@@ -61,7 +65,14 @@ public sealed class StepOutcome
     // What saveAs stores (a read value or a command result).
     public JsonElement? Value { get; init; }
 
+    // QA-3: the step could not run for an environment reason that is not a failure of the game (Docker or the DB
+    // container missing, request §76). SkipRest: the remaining steps depend on it and are skipped too.
+    public bool Skipped { get; init; }
+    public bool SkipRest { get; init; }
+
     public static StepOutcome Pass(string? message = null, JsonElement? value = null) => new() { Passed = true, Message = message, Value = value };
+
+    public static StepOutcome Skip(string reason, bool skipRest) => new() { Passed = true, Skipped = true, SkipRest = skipRest, Message = reason };
 
     public static StepOutcome Fail(string message, string? expected = null, string? actual = null) =>
         new() { Passed = false, Message = message, Expected = expected, Actual = actual };
@@ -84,6 +95,7 @@ public sealed class ActionRegistry
         FlowActions.Register(registry);
         ActorActions.Register(registry);
         ServerCommandActions.Register(registry);
+        FaultActions.Register(registry);
         return registry;
     }
 }

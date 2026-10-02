@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "name": "Latency And Loss Combat",
+  "description": "Request §73: B plays through its fault proxy with 200 ms latency each way (RTT about 400 ms) and 10% packet loss each way, and fights. A stands still. B's shots still land (lag compensation rewinds A to B's ViewTick, and inputs are sent with redundancy). The connection survives: B never disconnects, never reconnects, and the server starts no reconnect grace.",
+  "tags": ["network", "combat", "faults"],
+  "seed": 7301,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB", "network": { "proxy": true } } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Combat_A" },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": "QA_Combat_B" },
+    { "id": "a_health", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "a_shield", "action": "setShield", "actor": "playerA", "value": 0 },
+    { "id": "b_rifle", "action": "giveWeapon", "actor": "playerB", "weapon": "Vesper AR", "rarity": 0, "select": true },
+    { "id": "b_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerB", "equals": "Vesper AR", "timeoutMilliseconds": 3000 },
+
+    { "id": "b_latency", "phase": "act", "action": "networkFault", "actor": "playerB", "latencyMs": 200, "lossPercent": 10, "direction": "both" },
+    { "id": "b_settle", "action": "wait", "milliseconds": 3000, "description": "LiteNetLib measures the new RTT from its pings" },
+    { "id": "b_rtt", "phase": "assert", "action": "waitFor", "condition": "network.rtt", "actor": "playerB", "greaterThan": 300, "timeoutMilliseconds": 5000 },
+    { "id": "a_hp_before", "action": "save", "path": "player.health", "actor": "playerA", "saveAs": "hpBefore" },
+
+    { "id": "b_fire", "phase": "act", "action": "fire", "actor": "playerB", "target": "playerA", "count": 4, "saveAs": "shots", "description": "4 Vesper AR rounds (4 x 20 cannot kill A)" },
+    { "id": "a_damaged", "phase": "assert", "action": "waitFor", "condition": "player.health", "actor": "playerA", "lessThan": "${hpBefore}", "timeoutMilliseconds": 5000 },
+    { "id": "b_hit_confirmed", "action": "waitFor", "condition": "actor.hitsLanded", "actor": "playerB", "greaterThan": 0, "timeoutMilliseconds": 5000 },
+    { "id": "loss_happened", "assert": "network.proxy.dropped", "actor": "playerB", "greaterThan": 0, "description": "the proxy really dropped datagrams" },
+    { "id": "delay_happened", "assert": "network.proxy.delayed", "actor": "playerB", "greaterThan": 0 },
+    { "id": "b_still_connected", "assert": "network.connected", "actor": "playerB", "equals": true },
+    { "id": "b_one_connection", "assert": "actor.connections", "actor": "playerB", "equals": 1, "description": "no reconnect happened" },
+    { "id": "b_server_connected", "assert": "player.connected", "actor": "playerB", "equals": true },
+    { "id": "no_grace", "assert": "server.metrics.health.graceStarts", "equals": 0 },
+    { "id": "b_clear", "phase": "act", "action": "clearNetworkFault", "actor": "playerB" },
+    { "id": "b_rtt_back", "phase": "assert", "action": "waitFor", "condition": "network.rtt", "actor": "playerB", "lessThan": 100, "timeoutMilliseconds": 8000 }
+  ]
+}

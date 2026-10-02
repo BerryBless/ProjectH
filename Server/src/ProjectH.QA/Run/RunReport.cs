@@ -8,6 +8,7 @@ public enum RunStatus
     Failed,      // a step failed or the scenario timed out (exit 1)
     Cancelled,   // stopped by the user (exit 1)
     Error,       // the tool could not run the scenario (exit 2)
+    Skipped,     // QA-3: a step skipped the rest (no Docker for a DB fault...): exit 0, or 1 with --fail-on-skip
 }
 
 public enum StepStatus
@@ -114,11 +115,14 @@ public sealed class RunReport
     public bool UnsavedText { get; set; }
     public Dictionary<string, JsonElement> Variables { get; } = new();
     public string? ToolError { get; set; }
+    // QA-3: a step skipped the rest of the scenario (e.g. no Docker for a DB fault). The run still passes (exit 0).
+    public string? SkipReason { get; set; }
     public string? ReportDirectory { get; set; }
 
-    public static int ExitCodeFor(RunStatus status) => status switch
+    public static int ExitCodeFor(RunStatus status, bool failOnSkip = false) => status switch
     {
         RunStatus.Passed => 0,
+        RunStatus.Skipped => failOnSkip ? 1 : 0,
         RunStatus.Error => 2,
         _ => 1,
     };

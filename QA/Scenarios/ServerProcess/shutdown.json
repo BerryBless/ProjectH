@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "name": "Server Shutdown",
+  "description": "Request §129: two players in a match, then POST /qa/server/stop (the Ctrl+C / SIGTERM path). Every client gets DisconnectCode.ServerShutdown before the socket closes, and the process exits within the bound: GameLoop join (5 s) + shutdown notice (1 s) + DB drain (Persistence is off here, so 0) + host overhead. Measured about 0.1 s with two clients; the assertion allows 8 s.",
+  "tags": ["server", "faults"],
+  "seed": 1291,
+  "timeoutSeconds": 60,
+  "variables": { "maxExitMs": 8000 },
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+    { "id": "sessions", "assert": "server.activeSessions", "equals": 2 },
+
+    { "id": "stop", "phase": "act", "action": "stopServer", "saveAs": "stop" },
+
+    { "id": "exit_bound", "phase": "assert", "assert": "var.stop.exitMs", "lessThan": "${maxExitMs}" },
+    { "id": "exit_code", "assert": "var.stop.exitCode", "equals": 0 },
+    { "id": "a_told", "action": "waitFor", "condition": "network.disconnectCode", "actor": "playerA", "equals": "ServerShutdown", "timeoutMilliseconds": 3000 },
+    { "id": "b_told", "action": "waitFor", "condition": "network.disconnectCode", "actor": "playerB", "equals": "ServerShutdown", "timeoutMilliseconds": 3000 },
+    { "id": "a_disconnected", "assert": "network.disconnected", "actor": "playerA", "equals": true },
+    { "id": "server_gone", "assert": "server.running", "equals": false }
+  ]
+}

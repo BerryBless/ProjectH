@@ -65,7 +65,7 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
         {
             response = await _http.PostAsJsonAsync("qa/command", body, cts.Token).ConfigureAwait(false);
         }
-        catch (Exception e) when (e is HttpRequestException || (e is OperationCanceledException && !token.IsCancellationRequested))
+        catch (Exception e) when (e is HttpRequestException or ObjectDisposedException || (e is OperationCanceledException && !token.IsCancellationRequested))
         {
             throw new QaApiException($"POST /qa/command {command}: {Describe(e)}", 0, e);
         }
@@ -120,7 +120,7 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
             using HttpResponseMessage response = await _http.PostAsync("qa/server/stop", null, cts.Token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode) throw new QaApiException($"POST /qa/server/stop: HTTP {(int)response.StatusCode}", (int)response.StatusCode);
         }
-        catch (Exception e) when (e is HttpRequestException || (e is OperationCanceledException && !token.IsCancellationRequested))
+        catch (Exception e) when (e is HttpRequestException or ObjectDisposedException || (e is OperationCanceledException && !token.IsCancellationRequested))
         {
             throw new QaApiException($"POST /qa/server/stop: {Describe(e)}", 0, e);
         }
@@ -141,7 +141,7 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
         {
             return await _http.GetAsync(path, linked).ConfigureAwait(false);
         }
-        catch (Exception e) when (e is HttpRequestException || (e is OperationCanceledException && !caller.IsCancellationRequested))
+        catch (Exception e) when (e is HttpRequestException or ObjectDisposedException || (e is OperationCanceledException && !caller.IsCancellationRequested))
         {
             throw new QaApiException($"GET /{path}: {Describe(e)}", 0, e);
         }
@@ -180,5 +180,10 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
         return cts;
     }
 
-    private static string Describe(Exception e) => e is OperationCanceledException ? $"no answer within {RequestTimeout.TotalSeconds:0} s" : e.Message;
+    private static string Describe(Exception e) => e switch
+    {
+        OperationCanceledException => $"no answer within {RequestTimeout.TotalSeconds:0} s",
+        ObjectDisposedException => "this QA client was closed (its server was stopped or replaced by a restart)",
+        _ => e.Message,
+    };
 }

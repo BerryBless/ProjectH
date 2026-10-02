@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ProjectH.QA.Faults;
 
 namespace ProjectH.QA;
 
@@ -17,6 +18,7 @@ public sealed class RunContext
         Actors = actors;
         Markers = markers;
         Log = log;
+        Network = new NetworkFaultHub(seed, log);
         foreach (var pair in scenarioVariables) Variables[pair.Key] = pair.Value;
         Variables["runId"] = JsonPath.From(runId);
         Variables["seed"] = JsonPath.From(seed);
@@ -24,17 +26,34 @@ public sealed class RunContext
 
     public string RunId { get; }
     public int Seed { get; }
-    public IQaServerClient Server { get; }
+    // Replaced by SwitchServer when a scenario restarts the launched server (new process, new ports).
+    public IQaServerClient Server { get; private set; }
     public ActorManager Actors { get; }
     public MarkerStore Markers { get; }
     public Action<string> Log { get; }
     public Dictionary<string, JsonElement> Variables { get; } = new(StringComparer.Ordinal);
-    public EventCursor? Events { get; init; }
+    public EventCursor? Events { get; internal set; }
     // Where actors connect (the launched server's free port, or the attach target).
     public string GameHost { get; init; } = "127.0.0.1";
-    public int GamePort { get; init; }
+    public int GamePort { get; internal set; }
     // Server state polling interval for waitFor / waitForEvent (request §29: configurable, not every frame).
     public int PollIntervalMs { get; init; } = 100;
+    // QA-3 faults. Network: per-actor proxies. Db: docker stop/start. ServerControl: null in attach mode.
+    public NetworkFaultHub Network { get; }
+    public DbFaultHub Db { get; init; } = new();
+    public IServerControl? ServerControl { get; internal set; }
+
+    // After a server restart: the new QA client, a fresh event cursor (event sequence numbers start again) and the new
+    // game port. Actors keep their objects; their next connect goes to the new port.
+    public void SwitchServer(IQaServerClient server, EventCursor? events, int gamePort)
+    {
+        Server = server;
+        Events = events;
+        GamePort = gamePort;
+    }
+
+    // Where an actor's next connection goes: the game server, or a fresh proxy in front of it.
+    public Task<(string Host, int Port)> ConnectTargetAsync(string alias) => Network.PrepareConnectAsync(alias, GameHost, GamePort);
 
     public void SetVariable(string name, JsonElement value)
     {

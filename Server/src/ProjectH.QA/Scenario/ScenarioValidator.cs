@@ -51,6 +51,7 @@ public static partial class ScenarioValidator
                 Error(where, $"Actor type '{a.Type}' is not supported yet (QA-1: {ActorSpec.HeadlessClient}).");
         }
 
+        var proxied = new HashSet<string>(s.Actors.Where(a => a.Proxy).Select(a => a.Id), StringComparer.Ordinal);
         var variables = new HashSet<string>(s.Variables.Keys, StringComparer.Ordinal) { "runId", "seed" };
         foreach (string name in s.Variables.Keys)
         {
@@ -85,6 +86,10 @@ public static partial class ScenarioValidator
             if (spec.Actor == ActorUse.Required && step.Actor == null) Error(where, $"'{spec.Name}' needs 'actor'.");
             if (spec.Actor == ActorUse.None && step.Actor != null) Error(where, $"'{spec.Name}' takes no 'actor'.");
             if (step.Actor != null && !actors.Contains(step.Actor)) Error(where, $"Unknown actor '{step.Actor}'.");
+            if (spec.NeedsProxy && step.Actor != null && actors.Contains(step.Actor) && !proxied.Contains(step.Actor))
+                Error(where, $"'{spec.Name}' needs actor '{step.Actor}' to have \"network\": {{ \"proxy\": true }}.");
+            if (spec.LaunchOnly && string.Equals(s.Server.Mode, ServerSpec.Attach, StringComparison.OrdinalIgnoreCase))
+                Error(where, $"'{spec.Name}' controls the server process: it works only when the tool launches the server (not in attach mode).");
             if (step.Params.TryGetValue("target", out JsonElement target) && target.ValueKind == JsonValueKind.String
                 && !Variables.HasReference(target) && !actors.Contains(target.GetString()!))
                 Error(where, $"Unknown target actor '{target.GetString()}'.");

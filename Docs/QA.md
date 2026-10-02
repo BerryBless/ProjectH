@@ -4,7 +4,7 @@ QA Tool은 서버를 띄우고 Headless Client(Actor)를 실제 게임 프로토
 
 - 요청: `Docs/requests/2026-10-02-qa-scenario-orchestrator-request.md`. § 번호는 이 요청서 기준이다.
 - 설계: `Docs/specs/2026-10-02-qa-tool-design.md`. D 번호는 이 설계서의 결정이다.
-- 현재 범위: QA-1(MVP)과 QA-2(Web UI, 아래 "Web UI"). Fault Injection(QA-3), Unity 자동화·Manual Check(QA-4), Parameter·Repeat·Baseline(QA-5)은 이 문서 기준 아직 없다.
+- 현재 범위: QA-1(MVP), QA-2(Web UI, 아래 "Web UI"), QA-3(Fault Injection, 아래 "Fault Injection"). Unity 자동화·Manual Check(QA-4), Parameter·Repeat·Baseline(QA-5)은 이 문서 기준 아직 없다.
 
 ## Architecture
 
@@ -14,7 +14,8 @@ QA Tool (Server/src/ProjectH.QA, .NET 10 콘솔)
     └ QaOrchestrator: 시나리오 실행 1회 (RunContext: runId, seed, 변수, 취소)
         ├ ScenarioLoader / ScenarioValidator: JSON → DTO (schemaVersion 1)
         ├ ActionRegistry: action 이름 → IScenarioActionHandler
-        ├ ServerProcessManager: launch | attach. QaServerClient (HTTP)
+        ├ LaunchedServer → ServerProcessManager: launch(재시작 가능) | attach. QaServerClient (HTTP)
+        ├ Faults: NetworkFaultHub(Actor별 UdpFaultProxy), DbFaultHub(DockerDbController)
         ├ ActorManager → HeadlessActor (ProjectH.Bots 재사용). 테스트용 MockActor
         ├ AssertionEngine + Comparison: 경로 → 값 → 연산자
         ├ EventCursor: /qa/events 폴링 (필요할 때만)
@@ -167,6 +168,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 - 기본 Step Timeout은 10 s다.
 - 기다리는 Action은 자기 Timeout에 Expected/Actual을 남기고 실패한다. Runner는 Timeout + 2 s에 강제로 취소한다.
 - Actor 명령은 Actor가 적용한 뒤의 상태로만 판정한다(command id). 그래서 앞 Step의 상태로 통과하지 않는다.
+- 장애 주입 Action(`networkFault`, `dropConnection`, `sendInvalidPackets`, `stopServer`, `startDb` 등)은 아래 "Fault Injection"에 있다.
 
 **연결**
 
@@ -250,6 +252,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `actor.<ActorState 필드>` | Actor가 받은 것(Client 시점) | `actor.hitsLanded`, `actor.weaponName`, `actor.position.x` |
 | `event.<Type>` | 이번 실행에서 받은 이벤트 수(최근 200개, `actor`가 있으면 그 플레이어만) | |
 | `var.<name…>` | 변수 | `var.shots.hits` |
+| `network.proxy.<…>` | Actor의 Fault Proxy(QA-3). 지금 연결 시도의 카운터와 설정 | `network.proxy.dropped`, `network.proxy.delayed`, `network.proxy.attempts`, `network.proxy.toServer.latencyMs`, `network.proxy.toClient.blocked`. 손실·중복 설정 경로는 `toServer.packetLossPercent`·`duplicatePercent`다(Step 인자는 `lossPercent`). Proxy가 없으면 `enabled` = false |
 
 - 게임 결과는 `player.*`·`match.*`·`build.*`로 검증한다. 이것은 서버의 권위 있는 상태다(§165). `actor.*`·`network.*`는 Client 쪽 사실(받은 HitConfirmed, RTT 등)이다.
 - **연산자**: `equals`, `notEquals`, `greaterThan`, `lessThan`, `between: [a, b]`(양 끝 포함), `exists: true`, `notExists: true`, `approximately` + `tolerance`(기본 0.01), `contains`(부분 문자열 또는 배열 원소). Step에는 하나만 쓴다.
@@ -265,6 +268,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 - **최대 100명**(Snapshot 한도). 서버 `Server:MaxPlayers`(기본 16)도 함께 올려야 한다.
 - 실행이 끝나면 Pump가 모든 연결을 정상 종료한다.
 - `MockActor`(테스트 프로젝트)는 Runner 단위 테스트용이다(§138).
+- **`"network": { "proxy": true }`**(QA-3): 그 Actor는 자기 UDP Fault Proxy를 거쳐 접속한다(`{ "id": "playerB", "network": { "proxy": true } }`). Network Fault Step(`networkFault` 등)은 이 Actor에만 쓸 수 있다(Validation 오류). 장애를 걸기 전에는 지연·손실이 없다. 다른 키나 bool이 아닌 값은 Validation 오류다.
 
 ## QA Markers
 
@@ -307,6 +311,13 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `Building/support_collapse.json` | 131 | 벽 하나 위 바닥 3개 → 벽 파괴 → 바닥 3개 붕괴(collapsed 3) | ~3 s |
 | `Network/input_timeout.json` | 75 | pauseInput → 연결은 유지된 채 7 s 뒤 서버가 InputTimeout으로 닫음 → Grace 없이 PlayerLeft | ~10 s |
 | `Stress/bots_50.json` | 133–134 | 50 Client가 60 s 경기 → tick p95 < 5 ms(느슨한 기준, 사용자가 조정). 측정값 0.15 ms | ~62 s |
+| `Network/latency_loss_combat.json` | 73 | B가 Proxy로 양방향 200 ms 지연 + 10% 손실(RTT 측정 ≈330 ms) → 정지한 A를 4발 사격 → 4발 모두 명중(서버 피해). B는 끊기지 않고 재접속도 없음(connections 1, graceStarts 0). 장애를 지우면 RTT가 돌아온다 | ~11 s |
+| `Combat/lag_compensation.json` | 119 | B RTT ≈150 ms(양방향 75 ms). A가 B 시야를 가로질러 달리고(≈5 m/s) B가 자기 Client가 본 A 위치를 쏜다 → 5발 중 5발 명중(4발 이상 기준). 대조: RTT ≈650–800 ms(되감기 창 0.4 s 밖)에서는 같은 사격이 1/5만 맞는다(2발 이하 기준) | ~15 s |
+| `Reconnect/network_drop.json` | 74 | A(Proxy)가 알림 없이 끊김(`dropConnection`) → 1 s 뒤 서버는 아직 connected → DisconnectTimeout 뒤 Graced → 새 Proxy로 재접속 → 같은 Entity·체력·실드·무기·Medkit·위치 | ~9 s |
+| `Network/invalid_packet.json` | 127 | 잘못된 패킷 9개(unknownId, truncated, oversized) → badPackets 9, 연결 유지 → garbage 15개 더(합 24 ≥ 20) → A만 Kicked. C의 Input Flood 120개 → C Kicked. 서버 계속 실행, tickFailures 0, B는 계속 Snapshot 수신 | ~3.5 s |
+| `ServerProcess/shutdown.json` | 129 | 2명 접속 중 `stopServer` → 두 Client 모두 `ServerShutdown` 수신, 종료 코드 0, 종료 시간 측정값 ≈0.1 s(기준 8 s) → `server.running` false | ~4 s |
+| `ServerProcess/restart.json` | 78 | 경기 중 `restartServer`(정상 종료 → 같은 인자·Seed로 새 프로세스, 새 Port) → 빈 Match → 두 Actor 재접속(새 플레이어) → 새 경기 Playing → 사격 피해 | ~5 s |
+| `Persistence/db_down.json` | 77, 128 | DB 정상 확인 → `stopDb` → 경기 종료 → 저장 3회 실패 후 `db.failed` +1, saved 그대로, 서버 계속, 다음 경기 시작 → `startDb` → 다음 경기 종료 → `db.saved` +1. Docker나 `projecth-mysql` 컨테이너가 없거나 멈춰 있으면 첫 Step에서 나머지를 SKIPPED로 끝낸다(결과 SKIPPED, 종료 코드 0. `--fail-on-skip`이면 1) | 아래 표 참고 |
 
 **Suite**(`QA/Suites/`)
 
@@ -314,17 +325,14 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 |---|---|---|
 | `smoke` | connect, move_to, basic_hit | ~16 s |
 | `pre-push` | §93: connect, move, shoot, pickup, death, reconnect | ~30 s |
-| `full-regression` | 모든 카테고리. Stress 포함 | ~2.5 min |
+| `full-regression` | 모든 카테고리. Stress, Persistence, ServerProcess 포함 | ~3.5 min |
+| `faults` | QA-3: latency_loss_combat, lag_compensation, network_drop, invalid_packet, input_timeout, shutdown, restart, db_down | ~1 min |
 
 **아직 없는 시나리오와 이유**
 
 | 시나리오 | 이유 |
 |---|---|
-| Lag Compensation(§119) | 지연을 주입할 Proxy가 QA-3이다 |
-| Invalid Packet(§127) | `sendRawPacket`이 QA-3이다(D14) |
-| DB Down(§128) | Docker 제어가 QA-3이다 |
-| Server Shutdown(§129) | 서버 재시작 Action이 QA-3이다 |
-| Persistence | DB를 켠 시나리오는 QA-3에서 한다 |
+| `db_down`의 DB 정지·복구(실제 실행) | 이 개발 PC에는 `projecth-mysql` 컨테이너가 없다. 만드는 일(`docker compose up -d mysql`)은 권한 승인을 받지 못해 하지 않았다. 그래서 실제 실행은 SKIPPED다. 장애 절반(DB 없이 경기 2번 종료 → 각각 failed +1, saved 그대로, 서버 계속, 다음 경기 시작)은 DB가 없는 상태에서 Docker Step을 뺀 사본으로 실행해 확인했다(실패까지 각 ≈9 s). 정지·복구 절반은 Fake로만 확인했다 |
 
 ## CLI
 
@@ -346,7 +354,7 @@ dotnet run --project Server/src/ProjectH.QA -- list
 
 | 형식 | 의미 |
 |---|---|
-| `suite:<name>` | `QA/Suites/<name>.json`에 적힌 시나리오들 |
+| `suite:<name>` | `QA/Suites/<name>.json`에 적힌 시나리오들. Suite 항목은 `QA/Scenarios` 아래에서만 찾는다(저장소 루트는 보지 않는다. `Server`가 소스 폴더 `Server/`를 고르지 않게 하기 위해서다. `..`로 밖에 나갈 수도 없다) |
 | `category:<name>` | `QA/Scenarios/<name>/` 아래 모든 시나리오(대소문자 무시) |
 | `.json` 파일, 폴더 경로 | 그대로 찾고, 다음 `QA/Scenarios` 아래, 다음 저장소 루트 아래에서 찾는다 |
 | 접두어 없는 이름 | 같은 이름의 카테고리나 Suite. **둘 다 있으면 Tool 오류(종료 코드 2)이고, 두 선택지를 보여 준다** |
@@ -363,12 +371,14 @@ dotnet run --project Server/src/ProjectH.QA -- list
 | `--poll-ms N` | waitFor·waitForEvent의 서버 폴링 간격, 20–5000(기본 100) |
 | `--verbose` | Step 상세와 서버 로그를 콘솔에 낸다 |
 | `--repo DIR` | 저장소 루트. 기본은 현재 폴더에서 위로 찾는다 |
+| `--fail-on-skip` | SKIPPED 시나리오를 종료 코드 1로 친다(기본은 0). Docker가 꼭 있어야 하는 CI에서 쓴다 |
 
 - **종료 코드**(D18):
-  - 0: 모두 PASS.
-  - 1: 시나리오 실패, 또는 Ctrl+C로 중지.
+  - 0: 모두 PASS(또는 SKIPPED).
+  - 1: 시나리오 실패, Ctrl+C로 중지, 또는 `--fail-on-skip`일 때 SKIPPED.
   - 2: Tool 오류(잘못된 JSON·Validation 오류, 서버 기동 실패, 내부 예외, 띄운 서버를 끄지 못함, Report를 못 씀).
-  - 여러 시나리오를 실행하면 가장 큰 값을 돌려준다.
+  - 여러 시나리오를 실행하면 가장 큰 값을 돌려준다. 마지막 줄에 결과별 수를 낸다: `8 scenarios: 7 passed, 0 failed, 1 skipped, 0 errors; exit code 0.`
+- **SKIPPED**(QA-3): 환경 때문에 시나리오의 나머지를 할 수 없을 때(예: Docker나 DB 컨테이너가 없음)의 결과다. 실행된 Step은 모두 통과했지만 끝까지 실행된 것은 아니므로 PASSED로 보고하지 않는다. 콘솔 요약 줄, Report 제목, Web UI 배지에 SKIPPED와 이유가 나온다.
 - **Launch 모드**는 서버를 `DOTNET_ENVIRONMENT=Development`로 띄우고, 아래 인자를 준 뒤 시나리오 `server.options`를 붙인다.
   - `--qa-mode --Server:Port=0 --Qa:Port=0 --Persistence:Enabled=false --Server:AirDrop=false --Server:StartCountdownSeconds=1 --Server:ResultSeconds=1 --Server:LootSeed/ZoneSeed/SpawnSeed=<seed>`
   - Ready 조건은 `QA_READY` 줄과 `/qa/health`(20 s 이내)다. 고정 sleep을 쓰지 않는다(§81).
@@ -485,14 +495,125 @@ curl -s http://127.0.0.1:5180/api/run
 
 ## Fault Injection
 
-QA-3에서 한다. 아직 구현하지 않았다. 설계(D13)는 다음과 같다.
-- QA Tool 쪽 UDP Proxy로 Latency·Jitter·Loss·Duplicate·Block을 준다.
-- DB는 Docker 컨테이너를 Stop/Start한다(Docker가 없으면 Skip).
-- 서버 네트워크 코드는 바꾸지 않는다(§72).
+QA-3(D13, D14, §70–78, §119, §127–129). 서버 코드는 바꾸지 않는다(§72). 장애는 Tool 쪽에서 만들고, 결과는 서버의 권위 있는 상태와 QA Metrics로 검증한다.
 
-지금 할 수 있는 장애는 두 가지뿐이다.
-- `disconnect`의 `graceful: false`: Client가 갑자기 사라진다.
-- `pauseInput`: 연결은 살아 있는데 Input이 끊긴다.
+### Network: Actor별 UDP Fault Proxy
+
+```text
+Actor(LiteNetLib) ── 127.0.0.1:<proxy> ── UdpFaultProxy ── upstream socket ── 게임 서버
+```
+
+- `"network": { "proxy": true }`인 Actor만 Proxy를 거친다. 장애를 걸기 전에는 그대로 전달한다(Random도 쓰지 않는다).
+- **연결 시도마다 새 Proxy**를 만든다(connect, reconnect, connectAll). 그래서 재접속은 새 Client Port와 새 upstream endpoint로 서버에 간다. Actor의 장애 설정은 새 Proxy에 그대로 넘어간다(`clearNetworkFault` 전까지 유지). 서버를 재시작한 뒤에는 새 Proxy가 새 게임 Port를 향한다.
+- 방향: `toServer`(Actor → 서버), `toClient`(서버 → Actor), `both`(기본).
+- 지연은 전달 루프 하나가 시각 순서 큐로 보낸다. 일찍 보내지 않는다. 큐는 최대 4096 datagram이고, 넘치면 버리고 `queueFull`로 센다. Jitter는 순서를 바꾼다. 장애를 지울 때 큐에 남은 datagram이 새 datagram보다 늦게 도착할 수 있다(LiteNetLib이 처리한다).
+- 손실·중복·Jitter 결정은 시나리오 Seed와 Actor 이름에서 만든 Seed로 정해진다(§14). 같은 순서의 datagram이면 같은 결정이다.
+- Proxy는 처음 보낸 Client endpoint만 받는다. 다른 로컬 송신자는 `foreign`으로 세고 버린다.
+- Cleanup은 항상 장애를 지우고 모든 Proxy를 닫는다(Report의 `network` 줄).
+
+| Action | 인자 | 동작 |
+|---|---|---|
+| `networkFault` | actor, `latencyMs?`(0–10000), `jitterMs?`(0–10000), `lossPercent?`(0–100), `duplicatePercent?`(0–100), `direction?` | 그 방향의 설정을 바꾼다(안 준 값은 0). Block 상태는 유지한다. saveAs = Proxy 상태 |
+| `clearNetworkFault` | actor | 양방향 장애와 Block을 지운다 |
+| `blockNetwork` / `unblockNetwork` | actor, `direction?` | 모든 datagram을 버린다/되돌린다. 큐에 있던 것도 버린다 |
+| `dropConnection` | actor | 연결을 알림 없이 버린다(`BotConnection.Abort`, 끊김 패킷 없음). Proxy가 없어도 된다. 서버는 DisconnectTimeoutMs(5 s) 뒤에 알아채고 살아 있는 참가자를 Grace한다 |
+
+- 측정(이 PC): 양방향 200 ms일 때 `network.rtt` ≈330 ms(LiteNetLib 값이 천천히 따라온다). 75 ms일 때 ≈130–150 ms. 장애를 지우면 ≈4 s 안에 100 ms 밑으로 돌아온다.
+- **Lag Compensation 판정**: Headless Actor는 마지막 Snapshot의 상대 위치를 조준하고 그 Tick을 ViewTick으로 보낸다. 서버가 그 Tick으로 되감으므로 RTT가 되감기 창(12 Tick = 0.4 s) 안이면 달리는 상대도 결정적으로 맞는다(5/5). 창 밖(양방향 400 ms)에서는 거의 빗나간다(1/5, 달리기 시작 직후의 한 발). 그래서 시나리오는 4/5 이상과 2/5 이하로 판정한다.
+- **주의**: 이 PC에서는 새로 bind한 UDP 소켓이 새 상대에게 보내는 첫 datagram 한두 개가 사라지는 일이 관찰됐다(원인 미확인, Host Firewall 추정). LiteNetLib은 재시도하므로 Actor에는 영향이 없다. 단일 datagram을 보내는 테스트는 먼저 Warm-up을 해야 한다(`UdpFaultProxyTests` 참고).
+
+### Invalid Packet (D14)
+
+| Action | 인자 | 동작 |
+|---|---|---|
+| `sendInvalidPackets` | actor(접속 중), `kinds`: [`unknownId`, `truncated`, `oversized`, `garbage`, `inputFlood`], `count?`(종류마다 1–500, 기본 1) | Actor의 살아 있는 연결로 바이트를 그대로 보낸다(ReliableOrdered라 전부 도착한다). 바이트는 Seed로 정해진다. saveAs = `{sent: {kind: n}, total, handedToConnection}` |
+
+서버가 보는 것(`Net/NetworkListener`)은 다음과 같다.
+- `unknownId`: 첫 바이트 0xFF → UnknownId.
+- `truncated`: PlayerInput에 개수만 있고 내용이 없음 → Malformed.
+- `oversized`: 3600바이트(MaxPacketSize × 3), 불가능한 입력 개수 → Malformed.
+- `garbage`: 무작위 바이트. 첫 바이트는 Client→서버 id가 아니다 → UnknownId 또는 WrongDirection.
+- `inputFlood`: 형식은 맞는 입력(Seq 0이라 적용되지 않음)을 한 Tick에 몰아 보낸다 → 초당 한도(SimHz × 2)를 넘는 것은 InputRate.
+
+나쁜 패킷은 하나하나 `server.metrics.health.badPackets`에 더해진다. 한 연결이 `Server:BadPacketDisconnectThreshold`(20)에 이르면 그 연결만 `Kicked`로 끊긴다(`network.disconnectCode`). Kick 수는 QA Metrics에 없어서 Actor의 DisconnectCode로 확인한다. 전송은 `BotConnection.SendRaw`(Bots에 추가만 한 QA 전용 함수)로 한다.
+
+### Server Process (launch 모드만)
+
+| Action | 결과(saveAs) | 동작 |
+|---|---|---|
+| `stopServer` | `{exited, exitMs, exitCode, killed, message}` | `POST /qa/server/stop`(Ctrl+C·SIGTERM과 같은 경로) 후 프로세스 종료까지 잰다. 10 s 안에 안 끝나면 이 Tool의 자식만 kill하고 실패로 보고한다 |
+| `killServer` | 같음 | 이 Tool이 띄운 프로세스 트리만 kill한다(Crash 시험) |
+| `startServer` | `{gamePort, qaPort, pid, startMs}` | 같은 인자와 Seed로 다시 띄운다(새 빈 Port). 이후 Step과 Actor의 다음 접속은 새 서버로 간다 |
+| `restartServer` | `{exit, start}` | 돌고 있으면 stopServer, 그다음 startServer |
+
+- attach 시나리오에서는 Validation 오류다. `--attach`로 바꾼 실행에서는 Step이 "needs a server the tool launched"로 실패한다.
+- 재시작한 서버에는 Match 상태가 없다. Actor는 `reconnect`(또는 `connect`)로 새 플레이어가 된다.
+- 재시작하면 이벤트 Cursor를 새로 만든다(서버 이벤트 번호가 처음부터 시작한다). `event.*` 수는 지금 서버 것만 센다.
+- 서버 로그는 한 Ring에 이어서 쌓인다. Report의 서버 Cleanup 줄에 시작 횟수가 붙는다.
+- 시나리오가 서버를 멈춘 채 끝나면 Cleanup은 Metrics·이벤트 조회를 건너뛰고 "already exited"로 기록한다.
+- Web UI Inspector는 처음 서버의 QA URL을 계속 본다. 재시작 뒤 Inspector의 서버 값은 갱신되지 않는다.
+- 측정: 피어 2명, Persistence 꺼짐에서 stop 요청부터 종료까지 ≈0.1 s. 상한은 Loop join 5 s + 종료 통지 1 s + DB drain(기본 5 s) + Host 시간이다.
+
+### DB (Docker)
+
+| Action | 인자 | 동작 |
+|---|---|---|
+| `waitDbHealthy` | `container?`(기본 `projecth-mysql`) | 컨테이너가 돌고 있으면 Health가 healthy(Healthcheck가 없으면 running)가 될 때까지 기다린다. 있지만 멈춰 있으면 시작하지 않고 나머지를 SKIPPED로 끝낸다(사용자가 멈춰 둔 DB를 Tool이 켜지 않는다) |
+| `stopDb` | `container?` | 돌고 있으면 `docker stop --time 10`을 하고, 이번 실행이 멈췄다고 기록한다(Cleanup이 다시 시작한다). 이미 멈춰 있으면 아무것도 하지 않고 기록도 하지 않는다 |
+| `startDb` | `container?` | `docker start` 후 healthy까지 기다린다 |
+
+- `docker compose down`, `rm`, `-v`는 절대 쓰지 않는다. `docker inspect`가 돌려준 이름이 정확히 `/<container>`일 때만 다룬다(ID 앞부분 일치는 거부한다).
+- **Docker나 컨테이너가 없으면** 그 Step은 SKIPPED이고 이 시나리오의 나머지 Step도 SKIPPED다(이유가 각 Step과 경고에 남는다). 실행 결과는 SKIPPED(종료 코드 0, `--fail-on-skip`이면 1)이고 요약 줄·Report·Web UI에 `from step NN (id): 이유`가 나온다. DB 장애 뒤의 단언은 DB 장애 없이는 의미가 없기 때문이다.
+- Cleanup은 이번 실행이 멈춘 컨테이너만 자기 Timeout(시작 30 s + healthy 60 s)으로 다시 시작한다(Report의 `db <container>` 줄). 사용자가 일부러 멈춰 둔 컨테이너는 건드리지 않는다.
+- DB 시나리오는 `server.options`에 `"Persistence:Enabled": "true"`를 주고, 첫 Step에서 `waitDbHealthy`로 DB가 떠 있는지 확인한다.
+- 검증 경로: `server.metrics.db.<enabled|saved|failed|discarded|dropped|queueLength>`, `server.metrics.dbQueueLength`.
+- **서버의 실제 정책**(`Persistence/MatchHistoryWriter`): Writer 하나가 경기 기록마다 최대 3번 시도한다(시도마다 새 Connection, 실패 뒤 1 s, 2 s 대기). 모두 실패하면 `failed` +1이고 그 기록은 잃는다(재시도 큐 없음). 게임은 DB를 기다리지 않는다. DB가 돌아오면 다음 기록부터 저장된다(서버 재시작 불필요). 이 PC에서 DB가 없을 때(포트가 닫힘) 경기 종료부터 `failed` +1까지 ≈9 s였다.
+
+## Unity Client (QA-4 명령 수신기, QA-5 입력 녹화)
+
+Client 쪽 세부 사항(스레드, 상태 코드 전체, 녹화 형식)은 `Docs/Client.md`의 "QA 자동화"에 있다. 이 코드는 **Development Build와 Editor에만 있다.** Release 빌드에는 없다.
+
+실행 인자:
+
+| 인자 | Editor 환경 변수 | 뜻 |
+|---|---|---|
+| `-qaPort N` | `PROJECTH_QA_PORT` | `127.0.0.1:N`에 QA HTTP를 연다. 없으면 꺼진다 |
+| `-qaShotDir <dir>` | `PROJECTH_QA_SHOT_DIR` | 스크린샷 폴더. 예: `QA/Reports/<runId>`. 없으면 `persistentDataPath/qa-shots` |
+| `-qaRecord <file>` | `PROJECTH_QA_RECORD` | 입력 녹화 JSON Lines 파일 |
+
+- 환경 변수는 Editor에서만 읽고, 명령줄에 값이 없을 때만 쓴다.
+- Unity/Hub를 시작하기 전에 설정해야 한다.
+- MPPM 복제본도 이 값을 물려받는다. Port는 먼저 연 하나만 쓴다.
+
+예: `ProjectH.exe -qaPort 18777 -qaShotDir QA/Reports/qa-20261002-00142 -autoConnect -port <gamePort> -devId qa1 -screen-fullscreen 0 -screen-width 800 -screen-height 450`
+
+| Method | Path | Body | 응답 |
+|---|---|---|---|
+| GET | `/qa/status` | — | `{ok, devPlayerId, connected, joined, screen, statsOpen, debugVisible, alive, health, fps, frame}` |
+| POST | `/qa/screenshot` | `{"name":"[A-Za-z0-9_-]{1,64}"}` | 파일이 생긴 뒤 `{ok, path}`. Windows 장치 이름(CON, NUL, COM1…)은 400 |
+| POST | `/qa/ui` | `{"command":"openMenu\|closeMenu\|openStats\|closeStats\|toggleDebug"}` | `{ok, command, screen, statsOpen, debugVisible}`. 지금 화면에 맞지 않으면 409이고 아무것도 바뀌지 않는다 |
+
+- 모든 POST에는 `Content-Type: application/json`이 있어야 한다. 없으면 415다(브라우저 CSRF 방지).
+- 그 밖의 오류 코드:
+  - 400: 잘못된 JSON·이름·명령
+  - 403: loopback이 아님
+  - 404, 405(OPTIONS 포함)
+  - 408: Body가 5초 안에 오지 않음
+  - 413: Body가 16 KB를 넘음
+  - 503: 32개 처리 중, 큐가 가득 참, 종료 중
+  - 504: 5초 안에 답이 없음
+- 모든 응답은 `Connection: close`다.
+- Gameplay 입력 명령은 없다(§87). 총격 같은 동작은 Headless Actor로 확인한다.
+- 화면이 잠겨 있거나 창이 그려지지 않으면, 스크린샷 파일은 생겨도 내용이 비어 있을 수 있다. 잠기지 않은 데스크톱에서 확인한다.
+
+녹화 형식(`convert-recording`의 입력):
+
+- BOM 없는 UTF-8 JSON Lines다.
+- 첫 줄은 `{"type":"header","version":1,"simHz":30,"devPlayerId":"qa1"}`다. 한 번도 Spawn하지 않으면 파일이 비어 있다.
+- 이후 Step마다 `{"t","moveX","moveY","yaw","buttons","aimYaw","aimPitch"}` 한 줄이다.
+- `t` = Step 번호 / simHz다. Spawn 전이나 끊긴 동안의 시간은 빠진다. Step 번호는 `round(t*simHz)`로 구한다.
+- `buttons`는 `InputButtons` 비트다. 건설 요청과 접속은 녹화에 없다.
+- 최대 54,000줄이다.
 
 ## Adding New Actions
 
@@ -500,6 +621,7 @@ QA-3에서 한다. 아직 구현하지 않았다. 설계(D13)는 다음과 같�
    - `Actions/FlowActions.cs`: 대기, 검증, 그룹
    - `Actions/ActorActions.cs`: Actor 입력
    - `Actions/ServerCommandActions.cs`: 서버 명령
+   - `Actions/FaultActions.cs`: 장애 주입(QA-3)
 2. **`ActionSpec`을 채운다.** Validator와 QA-2 Editor가 이것을 읽는다.
 
 | 필드 | 의미 |
@@ -512,11 +634,14 @@ QA-3에서 한다. 아직 구현하지 않았다. 설계(D13)는 다음과 같�
 | `DefaultTimeout` | 기본 Timeout |
 | `Check` | 리터럴 값 검사(오류 문자열) |
 | `CreatesActors` | 이 Step이 만드는 Actor |
+| `NeedsProxy` | Actor에 `network.proxy`가 있어야 한다(QA-3) |
+| `LaunchOnly` | attach 시나리오에서 Validation 오류(QA-3) |
 
 3. **Handler 규칙**
    - `StepContext`로 인자를 읽는다(`String/Double/Int/Bool/Position`). 이 함수들이 `${}`를 치환한다.
    - 기다릴 때는 `ctx.TimedOut`을 보고, 자기 Timeout에 `StepOutcome.Fail(message, expected, actual)`을 돌려준다.
    - 잘못된 인자는 `QaStepException`을 던진다(Step 실패). 그 밖의 예외는 Tool 오류(종료 코드 2)가 된다.
+   - 환경 때문에 할 수 없는 Step(예: Docker 없음)은 `StepOutcome.Skip(reason, skipRest)`를 돌려준다. 실패가 아니다.
    - Actor 명령은 `SendAsync` 뒤에 `ActorState.LastCommandId >= command.Id`를 확인하고 상태를 판정한다.
    - 중간에 끝날 수 있는 입력은 `finally`에서 정리한다(`moveTo`, `fire` 참고).
 4. **새 Actor 의도가 필요하면** 다음 순서로 추가한다.

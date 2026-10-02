@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "name": "Lag Compensation",
+  "description": "Request §119: B plays with 75 ms latency each way through its fault proxy (RTT about 150 ms). A runs across B's view 10 m away. B aims at A where B's client sees it (A's position in B's latest snapshot) and fires; each input carries that snapshot's tick as ViewTick. The server rewinds A to ViewTick (PositionHistory, window 12 ticks = 0.4 s), so the shots land although A has moved on by the time they arrive. Without the rewind a target running about 4-6 m/s would be 0.5-1 m away from where B aimed, more than the 0.7 m wide body. The headless client aims at the snapshot position itself (no interpolation), so each shot should hit; the assertion still allows one miss out of 5 (statistical margin: spread and the tick A starts or stops are not modelled). Control half: with RTT about 800 ms, beyond the 0.4 s rewind window, the same shots mostly miss (measured 1 of 5 in every run: the first shot, while A had only just started running; at most 2 allowed), which shows the hits above come from the rewind and not from a slow target.",
+  "tags": ["combat", "network", "faults", "slow"],
+  "seed": 1191,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB", "network": { "proxy": true } } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": -5, "z": -7 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": "QA_Combat_B" },
+    { "id": "a_health", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "a_shield", "action": "setShield", "actor": "playerA", "value": 100 },
+    { "id": "b_rifle", "action": "giveWeapon", "actor": "playerB", "weapon": "Vesper AR", "rarity": 0, "select": true },
+    { "id": "b_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerB", "equals": "Vesper AR", "timeoutMilliseconds": 3000 },
+    { "id": "b_latency", "action": "networkFault", "actor": "playerB", "latencyMs": 75, "direction": "both" },
+    { "id": "b_settle", "action": "wait", "milliseconds": 2000 },
+    { "id": "b_rtt", "action": "waitFor", "condition": "network.rtt", "actor": "playerB", "between": [120, 260], "timeoutMilliseconds": 5000 },
+    { "id": "a_face_north", "action": "look", "actor": "playerA", "yaw": 0 },
+
+    { "id": "a_run", "phase": "act", "action": "moveVector", "actor": "playerA", "y": 1, "description": "A runs along +z, across B's line of fire" },
+    { "id": "a_moving", "action": "waitFor", "condition": "actor.position.z", "actor": "playerA", "greaterThan": -5.5, "timeoutMilliseconds": 3000 },
+    { "id": "b_fire", "action": "fire", "actor": "playerB", "target": "playerA", "count": 5, "saveAs": "shots" },
+    { "id": "a_stop", "action": "moveVector", "actor": "playerA", "x": 0, "y": 0 },
+    { "id": "a_moved", "phase": "assert", "action": "save", "path": "player.position.z", "actor": "playerA", "saveAs": "aZ" },
+    { "id": "a_really_ran", "assert": "var.aZ", "greaterThan": -2, "description": "A crossed several metres while B fired" },
+    { "id": "hits", "action": "waitFor", "condition": "actor.hitsLanded", "actor": "playerB", "greaterThan": 3, "timeoutMilliseconds": 3000, "description": "at least 4 of 5 shots confirmed by the server" },
+    { "id": "a_shield_hit", "assert": "player.shield", "actor": "playerA", "lessThan": 30, "description": "server-side damage: 4 x 20 from 100 shield leaves at most 20" },
+
+    { "id": "b_beyond_window", "phase": "arrange", "action": "networkFault", "actor": "playerB", "latencyMs": 400, "direction": "both", "description": "control: RTT about 800 ms, beyond the 0.4 s rewind window" },
+    { "id": "b_settle_slow", "action": "wait", "milliseconds": 4000 },
+    { "id": "b_rtt_slow", "action": "waitFor", "condition": "network.rtt", "actor": "playerB", "greaterThan": 500, "timeoutMilliseconds": 8000 },
+    { "id": "a_heal", "action": "setShield", "actor": "playerA", "value": 100 },
+    { "id": "a_run_again", "phase": "act", "action": "moveVector", "actor": "playerA", "y": 1 },
+    { "id": "a_moving_again", "action": "waitFor", "condition": "actor.position.z", "actor": "playerA", "greaterThan": "${aZ}", "timeoutMilliseconds": 3000 },
+    { "id": "b_fire_slow", "action": "fire", "actor": "playerB", "target": "playerA", "count": 5 },
+    { "id": "a_stop_again", "action": "moveVector", "actor": "playerA", "x": 0, "y": 0 },
+    { "id": "b_settle_hits", "phase": "assert", "action": "wait", "milliseconds": 2000, "description": "late HitConfirmed packets arrive 400 ms later" },
+    { "id": "control_misses", "assert": "player.shield", "actor": "playerA", "greaterThan": 59, "description": "beyond the window the rewind is clamped to 12 ticks and a running target is mostly missed: at most 2 hits (40) of 5" }
+  ]
+}

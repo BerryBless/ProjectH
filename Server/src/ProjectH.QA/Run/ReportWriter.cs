@@ -28,6 +28,7 @@ public static class ReportWriter
           .Append(".fail{border:2px solid #c62828;padding:8px 12px;background:#fff5f5}.muted{color:#777}</style></head><body>");
 
         sb.Append("<h1><span class=\"badge ").Append(status).Append("\">").Append(status).Append("</span> ").Append(E(r.Scenario)).Append("</h1>");
+        if (r.SkipReason != null) sb.Append("<p class=\"fail\">Skipped ").Append(E(r.SkipReason)).Append("</p>");
         if (r.Description.Length > 0) sb.Append("<p>").Append(E(r.Description)).Append("</p>");
         sb.Append("<table>");
         Row(sb, "Run ID", r.RunId);

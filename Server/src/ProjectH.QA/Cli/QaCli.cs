@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace ProjectH.QA;
 
 // D18 CLI: run / validate / list. Kept out of Program so tests can call it (exit codes, malformed files) without a
-// child process. Exit: 0 all PASS, 1 a scenario failed (or was stopped), 2 a tool error (bad file, server would not
+// child process. Exit: 0 all PASS or SKIPPED (SKIPPED is 1 with --fail-on-skip), 1 a scenario failed (or was stopped), 2 a tool error (bad file, server would not
 // start, internal error); with several scenarios the highest wins.
 public static class QaCli
 {
@@ -22,6 +22,7 @@ public static class QaCli
         "  --report-dir DIR    where QA/Reports/<runId>/ goes (default QA/Reports)\n" +
         "  --poll-ms N         server polling interval for waitFor/waitForEvent, 20-5000 (default 100)\n" +
         "  --verbose           step details and the server's log on the console\n" +
+        "  --fail-on-skip      a SKIPPED scenario (e.g. no Docker for a DB fault) exits 1 instead of 0\n" +
         "  --repo DIR          repository root (default: found from the current directory)\n" +
         "  --port N            ui only: the UI's port on 127.0.0.1, 0-65535 (default 5180; 0 = any free port)";
 
@@ -35,6 +36,7 @@ public static class QaCli
         public string? ReportDir { get; set; }
         public int PollMs { get; set; } = 100;
         public bool Verbose { get; set; }
+        public bool FailOnSkip { get; set; }
         public string? Repo { get; set; }
         public int Port { get; set; } = UiHostOptions.DefaultPort;
     }
@@ -65,6 +67,11 @@ public static class QaCli
             if (a == "--verbose")
             {
                 parsed.Verbose = true;
+                continue;
+            }
+            if (a == "--fail-on-skip")
+            {
+                parsed.FailOnSkip = true;
                 continue;
             }
             if (i + 1 >= args.Length)
@@ -168,6 +175,7 @@ public static class QaCli
         }
 
         int exit = 0;
+        int passed = 0, failed = 0, skipped = 0, errors = 0;
         foreach (string file in files)
         {
             if (token.IsCancellationRequested)
@@ -184,7 +192,11 @@ public static class QaCli
             {
                 output.WriteLine($"{(invalid ? "INVALID" : "OK")} {Relative(root, file)}");
                 foreach (ValidationIssue i in issues) output.WriteLine("   " + i);
-                if (invalid) exit = 2;
+                if (invalid)
+                {
+                    exit = 2;
+                    errors++;
+                }
                 continue;
             }
             foreach (ValidationIssue w in issues) output.WriteLine($"   {w}");
@@ -200,11 +212,24 @@ public static class QaCli
                 Verbose = p.Verbose,
                 ServerClientFactory = serverFactory,
                 ActorFactory = actorFactory,
+                FailOnSkip = p.FailOnSkip,
             };
             RunReport report = await new QaOrchestrator(options, registry, markers, output).RunAsync(load.Scenario!, issues, token).ConfigureAwait(false);
             exit = Math.Max(exit, report.ExitCode);
+            switch (report.Status)
+            {
+                case RunStatus.Passed: passed++; break;
+                case RunStatus.Skipped: skipped++; break;
+                case RunStatus.Error: errors++; break;
+                default: failed++; break;
+            }
         }
-        if (files.Count > 1) output.WriteLine($"{files.Count} scenarios, exit code {exit}.");
+        if (files.Count > 1)
+        {
+            output.WriteLine(p.Command == "run"
+                ? $"{files.Count} scenarios: {passed} passed, {failed} failed, {skipped} skipped, {errors} errors; exit code {exit}."
+                : $"{files.Count} scenarios, exit code {exit}.");
+        }
         return exit;
     }
 
@@ -283,7 +308,7 @@ public static class QaCli
 
 // What `run X` / `validate X` means (D18):
 //  - `suite:<name>`     QA/Suites/<name>.json ({ "scenarios": [ "Smoke/connect.json", "Combat" ] }, entries relative to
-//                       QA/Scenarios, then to the repo root);
+//                       QA/Scenarios only: never the repo root, where "Server" would be the Server/ source folder);
 //  - `category:<name>`  every scenario under QA/Scenarios/<name>;
 //  - a path             a .json file or a directory (as given, under QA/Scenarios, or under the repo root);
 //  - a bare name        the category or the suite of that name. When both exist it is a tool error that names both
@@ -364,7 +389,8 @@ public static class ScenarioCatalog
             foreach (JsonElement e in list.EnumerateArray())
             {
                 if (e.ValueKind != JsonValueKind.String) throw new QaToolException($"Suite {name}: entries must be paths.");
-                if (AddPath(root, e.GetString()!, files) == null) throw new QaToolException($"Suite {name}: '{e.GetString()}' is not a scenario file or directory.");
+                if (AddPath(root, e.GetString()!, files, scenariosOnly: true) == null)
+                    throw new QaToolException($"Suite {name}: '{e.GetString()}' is not a scenario file or directory under QA/Scenarios.");
             }
         }
         catch (JsonException e)
@@ -374,12 +400,15 @@ public static class ScenarioCatalog
         return files;
     }
 
-    // A file or a directory: as given, under QA/Scenarios, under the repo root. Returns its kind, or null.
-    private static string? AddPath(string root, string target, List<string> files)
+    // A file or a directory: as given, under QA/Scenarios, under the repo root (CLI targets). Suite entries
+    // (scenariosOnly): under QA/Scenarios and nowhere else, and they may not climb out of it with "..".
+    private static string? AddPath(string root, string target, List<string> files, bool scenariosOnly = false)
     {
         string scenarios = Path.Combine(root, "QA", "Scenarios");
-        foreach (string candidate in new[] { target, Path.Combine(scenarios, target), Path.Combine(root, target) })
+        string[] candidates = scenariosOnly ? new[] { Path.Combine(scenarios, target) } : new[] { target, Path.Combine(scenarios, target), Path.Combine(root, target) };
+        foreach (string candidate in candidates)
         {
+            if (scenariosOnly && !Path.GetFullPath(candidate).StartsWith(Path.GetFullPath(scenarios) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;
             if (File.Exists(candidate))
             {
                 files.Add(Path.GetFullPath(candidate));

@@ -68,6 +68,8 @@ public sealed record ActorState
     public long PressesSent { get; init; }
     public string HeldButtons { get; init; } = string.Empty;
     public bool InputPaused { get; init; }
+    // Raw (invalid) packets handed to the connection by SendRawCommand over this actor's life.
+    public long RawPacketsSent { get; init; }
     // Build requests: sequences given to the latest BuildCommand (first..last), how many still wait to be sent, and the
     // latest results the server sent back (at most ActorState.MaxBuildResults, oldest dropped).
     public int BuildFirstSequence { get; init; }
@@ -117,6 +119,11 @@ public sealed record PauseInputCommand(bool Paused) : ActorCommand;
 public sealed record BuildCommand(IReadOnlyList<BuildPlan> Pieces) : ActorCommand;
 public readonly record struct BuildPlan(BuildPieceType Piece, BuildMaterialType Material, byte X, byte Y, byte Z, byte Rotation, Vec3 AimAt);
 public readonly record struct BuildResultInfo(int Sequence, string Code, uint PieceId);
+// QA-3 (D14): raw packets sent as they are over the live connection (invalid-packet tests). At most MaxRawPackets.
+public sealed record SendRawCommand(IReadOnlyList<byte[]> Packets) : ActorCommand
+{
+    public const int MaxRawPackets = 2500;
+}
 // Drops the queued timed inputs (presses, holds) and the one in progress; held buttons stay.
 public sealed record ClearInputQueueCommand : ActorCommand;
 // Stop moving, aiming, holding, pressing: the actor stands still (still sending inputs).

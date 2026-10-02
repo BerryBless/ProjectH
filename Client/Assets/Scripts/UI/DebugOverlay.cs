@@ -60,6 +60,8 @@ namespace ProjectH.Client.UI
             _root.SetActive(false);
         }
 
+        public bool Visible => _visible;
+
         public void Toggle()
         {
             if (_root == null) return;

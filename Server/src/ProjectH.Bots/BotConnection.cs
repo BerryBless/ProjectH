@@ -110,6 +110,16 @@ public sealed class BotConnection : IDisposable
 
     public void Dispose() => _net.Stop();
 
+    // QA tool (D14, request §127): send bytes as they are, on the reliable channel so the server receives every one
+    // (fragmented when larger than the MTU). For invalid-packet tests only; the bots never call it. Returns false when
+    // not connected.
+    public bool SendRaw(ReadOnlySpan<byte> data)
+    {
+        if (_peer == null || !Connected || Disconnected || data.Length == 0) return false;
+        _peer.Send(data, DeliveryMethod.ReliableOrdered);
+        return true;
+    }
+
     // QA tool: round trip time of the connection in ms (0 before it connects). Read on the thread that calls Update.
     public int RoundTripTimeMs => _peer?.RoundTripTime ?? 0;
 

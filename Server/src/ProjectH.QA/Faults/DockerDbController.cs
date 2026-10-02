@@ -78,6 +78,13 @@ public sealed partial class DockerDbController
         return result.Ok;
     }
 
+    // Whether the container is running now (name-checked inspect). Result.Ok=false: could not be inspected.
+    public async Task<(DockerCommandResult Result, bool Running)> IsRunningAsync(CancellationToken ct = default)
+    {
+        var (state, running) = await InspectAsync("{{.State.Running}}", QueryTimeout, ct).ConfigureAwait(false);
+        return (state, state.Ok && string.Equals(running, "true", StringComparison.OrdinalIgnoreCase));
+    }
+
     // Stops the container if it is running. Returns the stop result, or the inspect result when it was not running
     // (Ok, nothing recorded) or could not be inspected.
     public async Task<DockerCommandResult> StopAsync(CancellationToken ct = default)

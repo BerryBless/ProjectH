@@ -120,6 +120,43 @@ public class CliTests : IDisposable
         Assert.Equal(2, (await Cli("validate", "category:Nope")).Exit);
     }
 
+    // QA-3: a skipped scenario (here a DB step on a container that cannot exist, so Docker is never changed) is
+    // SKIPPED, exit 0; --fail-on-skip makes it 1. The suite line counts passed / failed / skipped / errors.
+    [Fact]
+    public async Task SkippedScenariosAreReportedAndFailOnSkipIsOptIn()
+    {
+        Write("QA/Scenarios/Smoke/ok.json", """{ "schemaVersion": 1, "name": "ok", "steps": [ { "action": "wait", "milliseconds": 1 } ] }""");
+        Write("QA/Scenarios/Smoke/db.json", """{ "schemaVersion": 1, "name": "db", "steps": [ { "action": "stopDb", "container": "qa-test-no-such-container-7f3c" }, { "action": "wait", "milliseconds": 1 } ] }""");
+
+        (int exit, string output) = await Cli("run", "category:Smoke", "--attach", "http://127.0.0.1:1");
+        Assert.Equal(0, exit);
+        Assert.Contains("== db: SKIPPED (from step 01", output);
+        Assert.Contains("2 scenarios: 1 passed, 0 failed, 1 skipped, 0 errors; exit code 0.", output);
+
+        (exit, output) = await Cli("run", "category:Smoke", "--attach", "http://127.0.0.1:1", "--fail-on-skip");
+        Assert.Equal(1, exit);
+        Assert.Contains("1 skipped", output);
+    }
+
+    // Suite entries resolve under QA/Scenarios only: "Server" must not pick the repository's Server/ folder.
+    [Fact]
+    public async Task SuiteEntriesResolveOnlyUnderQaScenarios()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "Server"));
+        Write("Server/not-a-scenario.json", "{}");
+        Write("QA/Suites/bad.json", """{ "scenarios": [ "Server" ] }""");
+        Write("QA/Suites/escape.json", """{ "scenarios": [ "../../Server" ] }""");
+
+        (int exit, string output) = await Cli("validate", "suite:bad");
+        Assert.Equal(2, exit);
+        Assert.Contains("'Server' is not a scenario file or directory under QA/Scenarios", output);
+        Assert.Equal(2, (await Cli("validate", "suite:escape")).Exit);
+
+        // The CLI's own path rules are unchanged: a path is still looked up under the repo root.
+        (exit, output) = await Cli("validate", "Server/not-a-scenario.json");
+        Assert.StartsWith("file Server/not-a-scenario.json: 1 scenario", output);
+    }
+
     [Fact]
     public async Task UnknownTargetAndBadOptionsAreExitTwo()
     {

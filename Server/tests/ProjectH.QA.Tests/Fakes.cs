@@ -48,6 +48,7 @@ public sealed class MockActor : IQaActor
             ScriptCommand sc when StallScripts => s with { ScriptSteps = s.ScriptSteps + sc.Steps.Count },
             ClearInputQueueCommand => s with { ScriptSteps = 0, BuildsQueued = 0 },
             PauseInputCommand pi => s with { InputPaused = pi.Paused },
+            SendRawCommand raw => s with { RawPacketsSent = s.RawPacketsSent + raw.Packets.Count },
             BuildCommand b => s with
             {
                 BuildFirstSequence = s.BuildLastSequence + 1,

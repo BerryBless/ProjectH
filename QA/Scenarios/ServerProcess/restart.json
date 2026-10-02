@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "name": "Server Restart",
+  "description": "Request §78: a match is running, the development server is restarted (graceful stop, then a new process with the same arguments and seed on new free ports). The actors were told ServerShutdown; they connect again to the new server as new players (a restart keeps no match state), a new match starts and combat works there.",
+  "tags": ["server", "faults", "slow"],
+  "seed": 7801,
+  "timeoutSeconds": 120,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+    { "id": "first_port", "action": "save", "path": "server.health.gamePort", "saveAs": "port1" },
+
+    { "id": "restart", "phase": "act", "action": "restartServer", "saveAs": "restart" },
+
+    { "id": "a_told", "phase": "assert", "action": "waitFor", "condition": "network.disconnectCode", "actor": "playerA", "equals": "ServerShutdown", "timeoutMilliseconds": 3000 },
+    { "id": "new_server_up", "assert": "server.running", "equals": true },
+    { "id": "new_port", "assert": "server.health.gamePort", "notEquals": "${port1}" },
+    { "id": "empty_match", "assert": "match.playerCount", "equals": 0 },
+
+    { "id": "a_reconnect", "phase": "act", "action": "reconnect", "actor": "playerA" },
+    { "id": "b_reconnect", "action": "reconnect", "actor": "playerB" },
+    { "id": "match_again", "phase": "assert", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+    { "id": "a_on_new_server", "assert": "player.connected", "actor": "playerA", "equals": true },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Combat_A" },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": "QA_Combat_B" },
+    { "id": "a_health", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "a_shield", "action": "setShield", "actor": "playerA", "value": 0 },
+    { "id": "b_rifle", "action": "giveWeapon", "actor": "playerB", "weapon": "Vesper AR", "rarity": 0, "select": true },
+    { "id": "b_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerB", "equals": "Vesper AR", "timeoutMilliseconds": 3000 },
+    { "id": "b_fire", "phase": "act", "action": "fire", "actor": "playerB", "target": "playerA", "count": 2 },
+    { "id": "a_damaged", "phase": "assert", "action": "waitFor", "condition": "player.health", "actor": "playerA", "lessThan": 100, "timeoutMilliseconds": 3000 },
+    { "id": "damage_event", "action": "waitForEvent", "event": "PlayerDamaged", "actor": "playerA", "timeoutMilliseconds": 3000 }
+  ]
+}
