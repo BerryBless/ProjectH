@@ -30,6 +30,7 @@ public static class QaCli
         "  --seed-sweep A..B   QA-5: run each scenario once per seed A..B (at most 1000 seeds), in order\n" +
         "  --stop-on-fail      QA-5: stop a repeat / sweep / parameter batch at its first failing run\n" +
         "  --parameter-set N   QA-5: run only the scenario's parameter set N (1-based; the reproduce command)\n" +
+        "  --set name=value    stress: set a scenario variable over its default and the parameter set (repeatable), e.g. --set soakSeconds=1800\n" +
         "  --repo DIR          repository root (default: found from the current directory)\n" +
         "  --port N            ui only: the UI's port on 127.0.0.1, 0-65535 (default 5180; 0 = any free port)";
 
@@ -53,6 +54,8 @@ public static class QaCli
         public (int From, int To)? SeedSweep { get; set; }
         public bool StopOnFail { get; set; }
         public int? ParameterSet { get; set; }
+        // Stress: --set name=value (a number, true/false, or text), applied over the scenario variables and parameters.
+        public Dictionary<string, JsonElement> Set { get; } = new(StringComparer.Ordinal);
         // QA-5 convert-recording (D34).
         public string? Out { get; set; }
         public string Actor { get; set; } = "playerA";
@@ -159,6 +162,26 @@ public static class QaCli
                 case "--out":
                     parsed.Out = value;
                     break;
+                case "--set":
+                {
+                    int eq = value.IndexOf('=');
+                    if (eq <= 0) { error = "--set must be name=value."; return false; }
+                    string name = value[..eq];
+                    string text = value[(eq + 1)..];
+                    JsonElement parsedValue;
+                    try
+                    {
+                        using JsonDocument doc = JsonDocument.Parse(text);
+                        parsedValue = doc.RootElement.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False ? doc.RootElement.Clone() : JsonPath.From(text);
+                    }
+                    catch (JsonException)
+                    {
+                        parsedValue = JsonPath.From(text);
+                    }
+                    if (parsed.Set.Count >= 50) { error = "At most 50 --set values."; return false; }
+                    parsed.Set[name] = parsedValue;
+                    break;
+                }
                 case "--actor":
                     parsed.Actor = value;
                     break;
@@ -224,13 +247,13 @@ public static class QaCli
                 return 2;
         }
 
-        IReadOnlyList<string> files;
+        IReadOnlyList<SelectionItem> files;
         try
         {
             ScenarioSelection selection = ScenarioCatalog.Select(root, p.Target!);
             // First line: what was resolved, so a run never silently covers a different set than meant.
             output.WriteLine(selection.Description);
-            files = selection.Files;
+            files = selection.Items;
         }
         catch (QaToolException e)
         {
@@ -240,9 +263,16 @@ public static class QaCli
 
         int exit = 0;
         int passed = 0, failed = 0, skipped = 0, errors = 0, runs = 0;
-        BatchOptions batchOptions = p.Batch;
-        foreach (string file in files)
+        foreach (SelectionItem item in files)
         {
+            string file = item.File;
+            // A suite entry may pick a parameter set and set variables; the command line wins over it.
+            BatchOptions batchOptions = p.ParameterSet == null && item.ParameterSet != null
+                ? new BatchOptions { Repeat = p.Repeat, SeedSweep = p.SeedSweep, StopOnFail = p.StopOnFail, ParameterSet = item.ParameterSet }
+                : p.Batch;
+            var overrides = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            if (item.Variables is JsonElement entryVariables) foreach (JsonProperty v in entryVariables.EnumerateObject()) overrides[v.Name] = v.Value.Clone();
+            foreach (var pair in p.Set) overrides[pair.Key] = pair.Value;
             if (token.IsCancellationRequested)
             {
                 output.WriteLine("Stopped.");
@@ -252,6 +282,7 @@ public static class QaCli
             var issues = new List<ValidationIssue>();
             foreach (string e in load.Errors) issues.Add(new ValidationIssue(true, "file", e));
             if (load.Scenario != null) issues.AddRange(ScenarioValidator.Validate(load.Scenario, registry, markers));
+            if (load.Scenario != null) issues.AddRange(ScenarioValidator.CheckOverrides(load.Scenario, overrides.Keys));
             bool invalid = issues.Any(i => i.IsError);
             if (p.Command == "validate" || invalid)
             {
@@ -277,6 +308,7 @@ public static class QaCli
             // D31-D32: one run per parameter set and per iteration / seed, one after another.
             int total = BatchPlanner.Count(scenario, batchOptions);
             var summary = new BatchSummary(scenario.Name, Relative(root, file).Replace('\\', '/'));
+            DateTimeOffset batchStarted = DateTimeOffset.Now;
             foreach (PlannedRun planned in BatchPlanner.Plan(scenario, batchOptions, p.Seed))
             {
                 if (token.IsCancellationRequested)
@@ -302,6 +334,7 @@ public static class QaCli
                     Parameters = planned.Parameters,
                     ParameterIndex = planned.ParameterIndex,
                     BatchLabel = total > 1 ? BatchLabel(planned) : null,
+                    VariableOverrides = overrides.Count > 0 ? overrides : null,
                 };
                 RunReport report = await new QaOrchestrator(options, registry, markers, output).RunAsync(scenario, issues, token).ConfigureAwait(false);
                 summary.Add(planned, report);
@@ -330,6 +363,17 @@ public static class QaCli
             if (total > 1)
             {
                 foreach (string line in summary.Lines()) output.WriteLine(line);
+                // D40: the stress comparison of the batch (console + QA/Reports/batch-<id>/summary.html/json).
+                foreach (string line in summary.StressLines()) output.WriteLine(line);
+                try
+                {
+                    string? dir = summary.WriteStressSummary(p.ReportDir ?? Path.Combine(root, "QA", "Reports"), Relative(root, file).Replace('\\', '/'), batchStarted);
+                    if (dir != null) output.WriteLine($"   batch summary: {Path.Combine(dir, "summary.html")}");
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    output.WriteLine($"   batch summary could not be written: {e.Message}");
+                }
             }
             if (token.IsCancellationRequested)
             {
@@ -474,7 +518,18 @@ public static class QaCli
 //  - a bare name        the category or the suite of that name. When both exist it is a tool error that names both
 //                       choices: a run never silently picks one set over the other.
 // The resolution is always described ("suite smoke: 3 scenarios") so the console shows what will run.
-public sealed record ScenarioSelection(string Description, IReadOnlyList<string> Files);
+public sealed record ScenarioSelection(string Description, IReadOnlyList<SelectionItem> Items)
+{
+    public IReadOnlyList<string> Files => Items.Select(i => i.File).ToList();
+}
+
+// One scenario to run. A suite entry may also be an object (stress suites): { "path": "Stress/baseline.json",
+// "parameterSet": 3, "variables": { "steadySeconds": 30 } } runs only that parameter set, with those variables set over
+// the scenario's (and the parameter set's) values. The same file may appear with different options.
+public sealed record SelectionItem(string File, int? ParameterSet = null, JsonElement? Variables = null)
+{
+    public string Key => File.ToLowerInvariant() + "|" + ParameterSet + "|" + (Variables?.GetRawText() ?? string.Empty);
+}
 
 public static class ScenarioCatalog
 {
@@ -490,7 +545,7 @@ public static class ScenarioCatalog
         if (target.StartsWith(SuitePrefix, StringComparison.OrdinalIgnoreCase))
         {
             string name = target[SuitePrefix.Length..];
-            return Done($"suite {name}", Suite(root, name) ?? throw new QaToolException($"No suite '{name}' (QA/Suites/{name}.json)."));
+            return DoneItems($"suite {name}", Suite(root, name) ?? throw new QaToolException($"No suite '{name}' (QA/Suites/{name}.json)."));
         }
         if (target.StartsWith(CategoryPrefix, StringComparison.OrdinalIgnoreCase))
         {
@@ -508,7 +563,7 @@ public static class ScenarioCatalog
             if (category != null && suite)
                 throw new QaToolException($"'{target}' is both a suite and a category. Choose one: '{SuitePrefix}{target}' (QA/Suites/{target}.json) or '{CategoryPrefix}{Path.GetFileName(category)}' (QA/Scenarios/{Path.GetFileName(category)}/).");
             if (category != null) return Done($"category {Path.GetFileName(category)}", Directory(category));
-            if (suite) return Done($"suite {target}", Suite(root, target)!);
+            if (suite) return DoneItems($"suite {target}", Suite(root, target)!);
         }
 
         var files = new List<string>();
@@ -517,9 +572,12 @@ public static class ScenarioCatalog
         return Done($"{kind} {target}", files);
     }
 
-    private static ScenarioSelection Done(string what, List<string> files)
+    private static ScenarioSelection Done(string what, List<string> files) => DoneItems(what, files.Select(f => new SelectionItem(f)).ToList());
+
+    private static ScenarioSelection DoneItems(string what, List<SelectionItem> items)
     {
-        List<string> distinct = files.Distinct(StringComparer.OrdinalIgnoreCase).Take(MaxScenarios).ToList();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        List<SelectionItem> distinct = items.Where(i => seen.Add(i.Key)).Take(MaxScenarios).ToList();
         if (distinct.Count == 0) throw new QaToolException($"No scenarios found for {what}.");
         return new ScenarioSelection($"{what}: {distinct.Count} scenario{(distinct.Count == 1 ? string.Empty : "s")}", distinct);
     }
@@ -536,11 +594,11 @@ public static class ScenarioCatalog
     private static List<string> Directory(string dir) =>
         System.IO.Directory.GetFiles(dir, "*.json", SearchOption.AllDirectories).Select(Path.GetFullPath).OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
 
-    private static List<string>? Suite(string root, string name)
+    private static List<SelectionItem>? Suite(string root, string name)
     {
         string file = SuiteFile(root, name);
         if (name.Length == 0 || name.IndexOfAny(new[] { '/', '\\' }) >= 0 || !File.Exists(file)) return null;
-        var files = new List<string>();
+        var items = new List<SelectionItem>();
         try
         {
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(file), new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
@@ -548,16 +606,53 @@ public static class ScenarioCatalog
                 throw new QaToolException($"Suite {name}: 'scenarios' must be an array.");
             foreach (JsonElement e in list.EnumerateArray())
             {
-                if (e.ValueKind != JsonValueKind.String) throw new QaToolException($"Suite {name}: entries must be paths.");
+                if (e.ValueKind == JsonValueKind.Object)
+                {
+                    items.Add(SuiteItem(root, name, e));
+                    continue;
+                }
+                if (e.ValueKind != JsonValueKind.String) throw new QaToolException($"Suite {name}: entries must be paths or {{ \"path\", \"parameterSet\"?, \"variables\"? }} objects.");
+                var files = new List<string>();
                 if (AddPath(root, e.GetString()!, files, scenariosOnly: true) == null)
                     throw new QaToolException($"Suite {name}: '{e.GetString()}' is not a scenario file or directory under QA/Scenarios.");
+                items.AddRange(files.Select(f => new SelectionItem(f)));
             }
         }
         catch (JsonException e)
         {
             throw new QaToolException($"Suite {name}: malformed JSON: {e.Message}");
         }
-        return files;
+        return items;
+    }
+
+    // { "path": "<file under QA/Scenarios>", "parameterSet"?: N (1-based), "variables"?: { name: value } }.
+    private static SelectionItem SuiteItem(string root, string suite, JsonElement e)
+    {
+        string? path = null;
+        int? set = null;
+        JsonElement? variables = null;
+        foreach (JsonProperty p in e.EnumerateObject())
+        {
+            switch (p.Name)
+            {
+                case "path" when p.Value.ValueKind == JsonValueKind.String:
+                    path = p.Value.GetString();
+                    break;
+                case "parameterSet" when p.Value.ValueKind == JsonValueKind.Number && p.Value.TryGetInt32(out int n) && n >= 1 && n <= ScenarioDefinition.MaxParameterSets:
+                    set = n;
+                    break;
+                case "variables" when p.Value.ValueKind == JsonValueKind.Object:
+                    variables = p.Value.Clone();
+                    break;
+                default:
+                    throw new QaToolException($"Suite {suite}: bad entry field '{p.Name}' (path: string, parameterSet: 1-{ScenarioDefinition.MaxParameterSets}, variables: object).");
+            }
+        }
+        if (path == null) throw new QaToolException($"Suite {suite}: an entry object needs 'path'.");
+        var files = new List<string>();
+        if (AddPath(root, path, files, scenariosOnly: true) != "file")
+            throw new QaToolException($"Suite {suite}: '{path}' is not a scenario file under QA/Scenarios (an entry with options names one file).");
+        return new SelectionItem(files[0], set, variables);
     }
 
     // A file or a directory: as given, under QA/Scenarios, under the repo root (CLI targets). Suite entries

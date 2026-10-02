@@ -115,7 +115,7 @@ public static class FaultActions
             yield return $"{lk.GetArrayLength()} kinds x {perKind} = {lk.GetArrayLength() * perKind} packets: more than {SendRawCommand.MaxRawPackets} in one step.";
     }
 
-    private static bool TryDirection(string? text, out FaultDirection direction)
+    internal static bool TryDirection(string? text, out FaultDirection direction)
     {
         direction = FaultDirection.Both;
         if (string.Equals(text, "both", StringComparison.OrdinalIgnoreCase)) return true;

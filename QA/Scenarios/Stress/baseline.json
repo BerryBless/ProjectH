@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "name": "Stress Baseline (idle players)",
+  "description": "Request §10, §109: what the player count alone costs. N headless clients join and stay idle (they still send their keepalive input every tick, like a real client). Server:DevRespawn (no match flow, nobody dies, the count stays N) and MaxPlayers 100; stress mode turns QA events off. Phases: warmup (JIT, joins settle), steady (the judged phase), cooldown after everyone left. No hard limit (D42): the run fails only on a crash, a hang, lost players, a tick failure or a stall; tickMax above 33 ms is a warning. Player counts are parameters (10/25/50/75/100); durations are variables (--set steadySeconds=120).",
+  "tags": ["stress", "server", "quick"],
+  "stress": true,
+  "seed": 7100,
+  "timeoutSeconds": 900,
+  "server": { "mode": "launch", "options": { "Server:MaxPlayers": "100", "Server:DevRespawn": "true" } },
+  "variables": { "players": 50, "warmupSeconds": 10, "steadySeconds": 60, "cooldownSeconds": 10 },
+  "parameters": [ { "players": 10 }, { "players": 25 }, { "players": 50 }, { "players": 75 }, { "players": 100 } ],
+  "actors": [],
+  "steps": [
+    { "id": "spawn", "phase": "arrange", "action": "spawnActors", "count": "${players}", "prefix": "bot" },
+    { "id": "join_all", "action": "connectAll", "prefix": "bot", "timeoutMilliseconds": 60000 },
+    { "id": "sessions", "action": "waitFor", "condition": "server.activeSessions", "equals": "${players}", "timeoutMilliseconds": 10000 },
+    { "id": "mark_warmup", "phase": "act", "action": "mark", "text": "warmup_start players=${players}" },
+    { "id": "warmup", "action": "measure", "name": "warmup", "seconds": "${warmupSeconds}" },
+    { "id": "mark_measure", "action": "mark", "text": "measurement_start" },
+    { "id": "steady", "action": "measure", "name": "steady", "seconds": "${steadySeconds}", "saveAs": "steady" },
+    { "id": "mark_measure_end", "action": "mark", "text": "measurement_end" },
+    { "id": "running", "phase": "assert", "assert": "server.running", "equals": true },
+    { "id": "all_still_here", "assert": "server.activeSessions", "equals": "${players}" },
+    { "id": "players_kept", "assert": "var.steady.playersMin", "equals": "${players}" },
+    { "id": "no_stall", "assert": "var.steady.stalls", "equals": 0 },
+    { "id": "no_tick_failure", "assert": "var.steady.tickFailures", "equals": 0 },
+    { "id": "mark_cooldown", "phase": "act", "action": "mark", "text": "cooldown" },
+    { "id": "leave", "action": "disconnectAll", "prefix": "bot" },
+    { "id": "cooldown", "action": "measure", "name": "cooldown", "seconds": "${cooldownSeconds}" },
+    { "id": "all_gone", "phase": "assert", "action": "waitFor", "condition": "server.activeSessions", "equals": 0, "timeoutMilliseconds": 10000 }
+  ]
+}

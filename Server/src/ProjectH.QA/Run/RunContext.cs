@@ -53,6 +53,17 @@ public sealed class RunContext
     public List<string> Screenshots { get; } = new();
     public List<ManualCheckRecord> ManualChecks { get; } = new();
     public const int MaxScreenshots = 200;
+    // Stress (D37-D41): the run's actor groups and their workloads, the measure phases (bounded in StressReport), whether
+    // the server's QA events are on (Qa:Events; stall diagnostics read recent events only then), the step running now
+    // and the last metrics sample (for stall and crash records).
+    public GroupRegistry Groups { get; } = new();
+    public StressReport Stress { get; } = new();
+    public bool EventsEnabled { get; init; } = true;
+    public string? CurrentStepId { get; set; }
+    public MeasureSample? LastSample { get; set; }
+    public string? LastPhase { get; set; }
+    // Warnings steps add for the report (stress D41-D42), copied into RunReport.Warnings at the end. Bounded.
+    public BoundedList<string> Warnings { get; } = new(200);
 
     // After a server restart: the new QA client, a fresh event cursor (event sequence numbers start again) and the new
     // game port. Actors keep their objects; their next connect goes to the new port.
@@ -70,6 +81,24 @@ public sealed class RunContext
     {
         if (!Variables.ContainsKey(name) && Variables.Count >= MaxVariables) throw new QaStepException($"Too many variables (max {MaxVariables}).");
         Variables[name] = value.Clone();
+    }
+}
+
+// A list that keeps the first Capacity items and counts the rest (warnings of a long run).
+public sealed class BoundedList<T>
+{
+    private readonly List<T> _items = new();
+
+    public BoundedList(int capacity) => Capacity = capacity;
+
+    public int Capacity { get; }
+    public int Dropped { get; private set; }
+    public IReadOnlyList<T> Items => _items;
+
+    public void Add(T item)
+    {
+        if (_items.Count < Capacity) _items.Add(item);
+        else Dropped++;
     }
 }
 

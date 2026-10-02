@@ -1,0 +1,5 @@
+{
+  "name": "stress-fault",
+  "description": "Stress test faults (request §35-49). Phase A has the reconnect churn at 50 players (half of the leavers drop without a disconnect packet); phase B adds the disconnect spike, input timeouts, invalid packets under load, DB persistence and DB-down under load.",
+  "scenarios": [ { "path": "Stress/reconnect_churn.json", "parameterSet": 2 } ]
+}

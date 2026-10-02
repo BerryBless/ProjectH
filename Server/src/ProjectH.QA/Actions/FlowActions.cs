@@ -96,6 +96,8 @@ public static class FlowActions
     {
         if (s.Params.TryGetValue("milliseconds", out JsonElement ms) && Comparison.TryNumber(ms, out double m)) return (int)Math.Clamp(m, 0, MaxWaitMs);
         if (s.Params.TryGetValue("seconds", out JsonElement sec) && Comparison.TryNumber(sec, out double v)) return (int)Math.Clamp(v * 1000, 0, MaxWaitMs);
+        // A ${variable} duration is known only at run time: the longest wait bounds it (the handler waits the real value).
+        if (s.Params.ContainsKey("milliseconds") || s.Params.ContainsKey("seconds")) return MaxWaitMs;
         return ActionSpec.StandardTimeoutMs;
     }
 

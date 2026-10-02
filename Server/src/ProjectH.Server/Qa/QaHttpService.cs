@@ -165,12 +165,13 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
         });
     }
 
-    private static object Metrics(QaTick t, int windowSeconds)
+    internal static object Metrics(QaTick t, int windowSeconds)
     {
         GameLoop loop = t.Loop;
         Diagnostics.HealthCounters h = loop.Health;
         QaDbStatus? db = t.Qa.Database?.Invoke();
-        QaTickMetrics ticks = t.Qa.Metrics.Snapshot(windowSeconds, loop.Stats.PacketsInTotal, loop.Stats.PacketsOutTotal);
+        QaTickMetrics ticks = t.Qa.Metrics.Snapshot(windowSeconds, QaControl.NetTotals(loop));
+        Game.Match m = t.Match;
         return new
         {
             ok = true,
@@ -184,11 +185,22 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
             qaCommandMs = ticks.QaCommandMs,
             pktInPerSec = ticks.PktInPerSec,
             pktOutPerSec = ticks.PktOutPerSec,
+            bytesInPerSec = ticks.BytesInPerSec,
+            bytesOutPerSec = ticks.BytesOutPerSec,
             cpuPercent = ticks.CpuPercent,
             workingSetMB = Environment.WorkingSet / 1048576.0,
+            // Stress runs (D36): the managed heap, everything allocated and every GC pause since the process started. Read at
+            // query time only; nothing is sampled per tick.
+            managedMB = GC.GetTotalMemory(false) / 1048576.0,
+            allocatedMBTotal = GC.GetTotalAllocatedBytes(false) / 1048576.0,
+            gcPauseMsTotal = GC.GetTotalPauseDuration().TotalMilliseconds,
             gc = new { gen0 = GC.CollectionCount(0), gen1 = GC.CollectionCount(1), gen2 = GC.CollectionCount(2) },
             activeSessions = loop.PeerCount,
-            players = t.Match.PlayerCount,
+            players = m.PlayerCount,
+            // Before the match the connected count, during it the participants still in (MatchState's Alive).
+            alive = (int)m.Flow.ToWire(m.PlayerCount).Alive,
+            buildPieces = m.BuildPieces,
+            stalls = h.Stalls,
             db,
             dbQueueLength = db?.QueueLength ?? 0,
             health = new

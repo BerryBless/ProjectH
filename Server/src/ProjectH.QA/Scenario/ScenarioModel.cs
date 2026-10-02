@@ -33,6 +33,10 @@ public sealed class ScenarioDefinition
     public const int MaxBaselineValues = 50;
     public IReadOnlyList<string> BaselineValues { get; init; } = Array.Empty<string>();
     public double BaselineWarnPercent { get; init; } = DefaultBaselineWarnPercent;
+
+    // Stress D39: headless actors only (no Unity player, screenshot or manual check), the launched server without QA
+    // events (Qa:Events=false unless server.options sets it), and quiet live logs (step lines and warnings).
+    public bool Stress { get; init; }
 }
 
 public sealed class ServerSpec

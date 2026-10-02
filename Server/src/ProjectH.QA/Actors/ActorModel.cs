@@ -43,6 +43,8 @@ public sealed record ActorState
     public int Health { get; init; }
     public int Shield { get; init; }
     public int Ammo { get; init; }
+    // Rounds of the current weapon's ammo type the client holds besides the magazine (stress groups top it up).
+    public int ReserveAmmo { get; init; }
     public int CurrentSlot { get; init; }
     public string Tool { get; init; } = string.Empty;
     public bool HasInventory { get; init; }
@@ -87,6 +89,10 @@ public sealed record ActorState
     public bool PlaybackActive { get; init; }
     public int PlaybackSent { get; init; }
     public bool PlaybackCompleted { get; init; }
+    // Stress (D38): the group behaviour driving this actor (move, combat, build...; null = scenario steps only) and the
+    // build results it received over its life, by BuildResultCode (index = code).
+    public string? Role { get; init; }
+    public IReadOnlyList<long> BuildCodeCounts { get; init; } = Array.Empty<long>();
     // The newest command applied (ActorCommand.Id).
     public long LastCommandId { get; init; }
     // Last exception of this actor's pump work (the pump keeps running).
@@ -144,8 +150,11 @@ public sealed record PlayInputsCommand(IReadOnlyList<RecordedInput> Inputs, doub
     public const double MinSpeed = 0.25;
     public const double MaxSpeed = 4;
 }
-// Stop moving, aiming, holding, pressing: the actor stands still (still sending inputs).
+// Stop moving, aiming, holding, pressing: the actor stands still (still sending inputs). Also ends a group behaviour.
 public sealed record ResetIntentCommand : ActorCommand;
+// Stress (D38): the behaviour that sets this actor's intent every tick from now on (null = none). The brain object is
+// handed over: after this command only the pump thread touches it.
+public sealed record SetBrainCommand(ActorBrain? Brain) : ActorCommand;
 
 public interface IQaActor
 {

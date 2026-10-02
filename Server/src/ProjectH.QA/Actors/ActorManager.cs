@@ -17,6 +17,8 @@ public sealed class ActorManager : IAsyncDisposable
     private readonly Action<string> _log;
     private readonly int _seed;
     private ActorPump? _pump;
+    // D43: input latency of every headless actor of this run (fixed size; read by `measure`).
+    public InputLatencyHistogram Latency { get; } = new();
     // For readers on other threads (the UI inspector): replaced on every create, never mutated (Volatile).
     private IQaActor[] _snapshot = Array.Empty<IQaActor>();
 
@@ -77,7 +79,7 @@ public sealed class ActorManager : IAsyncDisposable
             if (!string.Equals(type, ActorSpec.HeadlessClient, StringComparison.OrdinalIgnoreCase))
                 throw new QaStepException($"Actor type '{type}' is not supported yet (QA-1: HeadlessClient).");
             _pump ??= new ActorPump(_log);
-            var headless = new HeadlessActor(alias, _pump, unchecked(_seed + 7919 * (_actors.Count + 1)));
+            var headless = new HeadlessActor(alias, _pump, unchecked(_seed + 7919 * (_actors.Count + 1)), Latency);
             await _pump.AddAsync(headless, token).ConfigureAwait(false);
             actor = headless;
         }

@@ -123,8 +123,12 @@ public sealed class RunReport
     public JsonElement? Parameters { get; set; }
     public int? ParameterSet { get; set; }
     public string? Batch { get; set; }
+    // Stress: the variables --set or a suite entry set for this run (also merged into Parameters).
+    public JsonElement? Overrides { get; set; }
     // QA-5 D33: the history line and the comparison with the previous PASSED run (null: history off for this run).
     public BaselineReport? Baseline { get; set; }
+    // Stress D37-D41: measure phases, the summary, stalls, a crash (null: no measure step and not a stress scenario).
+    public StressReport? Stress { get; set; }
 
     public static int ExitCodeFor(RunStatus status, bool failOnSkip = false) => status switch
     {

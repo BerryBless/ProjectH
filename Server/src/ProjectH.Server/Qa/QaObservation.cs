@@ -8,7 +8,10 @@ namespace ProjectH.Server.Qa;
 
 public sealed record QaTickMetrics(int WindowSeconds, int Samples, double TickP50Ms, double TickP95Ms, double TickP99Ms, double TickMaxMs,
     double QaCommandMs, double QaCommandP99Ms, double QaCommandMaxMs, double RateSeconds, double PktInPerSec, double PktOutPerSec,
-    double CpuPercent);
+    double CpuPercent, double BytesInPerSec, double BytesOutPerSec);
+
+// The network totals since the start (ServerStats), sampled once per second and at a query.
+public readonly record struct QaNetTotals(long PacketsIn, long PacketsOut, long BytesIn, long BytesOut);
 
 // QA-1 /qa/metrics: the QA module's own rings (TickMetrics is reset by every stats line, so it cannot answer a window).
 // Per tick: the tick's duration and the QA time inside it (§150). Per second: the packet totals and the process CPU time,
@@ -26,8 +29,7 @@ internal sealed class QaMetrics
     // One sample per SimHz ticks, one more than the window so a full window has both ends.
     private const int SecondSlots = QaOptions.MetricsWindowSeconds + 1;
     private readonly long[] _secTimestamp = new long[SecondSlots];
-    private readonly long[] _secPacketsIn = new long[SecondSlots];
-    private readonly long[] _secPacketsOut = new long[SecondSlots];
+    private readonly QaNetTotals[] _secNet = new QaNetTotals[SecondSlots];
     private readonly TimeSpan[] _secCpu = new TimeSpan[SecondSlots];
     private int _secNext;
     private int _secCount;
@@ -53,19 +55,18 @@ internal sealed class QaMetrics
     }
 
     // Every tick; samples once per second of ticks.
-    public void SampleSecond(long packetsIn, long packetsOut)
+    public void SampleSecond(QaNetTotals net)
     {
         if (_ticksToSample-- > 0) return;
         _ticksToSample = _simHz - 1;
         _secTimestamp[_secNext] = Stopwatch.GetTimestamp();
-        _secPacketsIn[_secNext] = packetsIn;
-        _secPacketsOut[_secNext] = packetsOut;
+        _secNet[_secNext] = net;
         _secCpu[_secNext] = Environment.CpuUsage.TotalTime;
         _secNext = (_secNext + 1) % SecondSlots;
         if (_secCount < SecondSlots) _secCount++;
     }
 
-    public QaTickMetrics Snapshot(int windowSeconds, long packetsIn, long packetsOut)
+    public QaTickMetrics Snapshot(int windowSeconds, QaNetTotals net)
     {
         int n = Math.Min(_count, windowSeconds * _simHz);
         double p50 = 0, p95 = 0, p99 = 0, max = 0, qaMean = 0, qaMax = 0, qaP99 = 0;
@@ -87,7 +88,7 @@ internal sealed class QaMetrics
         }
 
         // The oldest per-second sample inside the window (or the oldest there is) against the totals now.
-        double pktIn = 0, pktOut = 0, cpu = 0, seconds = 0;
+        double pktIn = 0, pktOut = 0, bytesIn = 0, bytesOut = 0, cpu = 0, seconds = 0;
         if (_secCount > 0)
         {
             long now = Stopwatch.GetTimestamp();
@@ -105,13 +106,16 @@ internal sealed class QaMetrics
             seconds = Stopwatch.GetElapsedTime(_secTimestamp[pick], now).TotalSeconds;
             if (seconds > 0.001)
             {
-                pktIn = (packetsIn - _secPacketsIn[pick]) / seconds;
-                pktOut = (packetsOut - _secPacketsOut[pick]) / seconds;
+                QaNetTotals then = _secNet[pick];
+                pktIn = (net.PacketsIn - then.PacketsIn) / seconds;
+                pktOut = (net.PacketsOut - then.PacketsOut) / seconds;
+                bytesIn = (net.BytesIn - then.BytesIn) / seconds;
+                bytesOut = (net.BytesOut - then.BytesOut) / seconds;
                 cpu = (Environment.CpuUsage.TotalTime - _secCpu[pick]).TotalSeconds / (seconds * Environment.ProcessorCount) * 100.0;
             }
         }
 
-        return new QaTickMetrics(windowSeconds, n, p50, p95, p99, max, qaMean, qaP99, qaMax, seconds, pktIn, pktOut, cpu);
+        return new QaTickMetrics(windowSeconds, n, p50, p95, p99, max, qaMean, qaP99, qaMax, seconds, pktIn, pktOut, cpu, bytesIn, bytesOut);
     }
 
     private void Copy(double[] ring, int n)

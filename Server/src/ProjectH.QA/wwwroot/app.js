@@ -171,6 +171,7 @@ function renderScenarioFields() {
   field('actors', 'actors', 'json');
   field('parameters', 'parameters', 'json');   // QA-5 D31: one run per entry
   field('baseline', 'baseline', 'json');       // QA-5 D33: { "values": ["savedName"] }
+  field('stress', 'stress', 'json');           // Stress D39: true = headless only, QA events off, quiet live log
 }
 
 function runStepFor(i) {
@@ -480,14 +481,24 @@ function renderBatch(batch) {
   box.replaceChildren();
   box.append(el('div', { text: `${batch.done}/${batch.total} runs: ${batch.passed} passed, ${batch.failed} failed, ${batch.skipped} skipped, ${batch.errors} errors` + (batch.stopOnFail ? '  (stop on fail)' : '') }));
   if (batch.currentParameters && busy()) box.append(el('div', { class: 'muted', text: 'Now: run ' + batch.current + ' ' + batch.currentParameters }));
-  const table = el('table', null, el('tr', null, el('th', { text: '#' }), el('th', { text: 'Iteration' }), el('th', { text: 'Parameters' }),
-    el('th', { text: 'Seed' }), el('th', { text: 'Result' }), el('th', { text: 'Run' })));
+  // Stress D40: the judged phase of each run (players, tick p50/p95/p99/max, CPU, memory, GC, network, DB queue, build).
+  const stress = batch.rows.some((r) => r.stress);
+  const fmt = (v) => (typeof v === 'number' ? (Math.abs(v) >= 100 ? v.toFixed(1) : String(Math.round(v * 1000) / 1000)) : '');
+  const stressHeads = ['Players', 'Tick P50', 'P95', 'P99', 'Max', 'CPU %', 'Managed MB', 'WS MB', 'GC 0/1/2', 'Send KB/s', 'Recv KB/s', 'DB Queue', 'Build', 'Stalls', 'R1 P95'];
+  const stressCells = (x) => !x ? stressHeads.map(() => '') : [String(x.players), fmt(x.tickP50Ms), fmt(x.tickP95Ms), fmt(x.tickP99Ms), fmt(x.tickMaxMs) + (x.ticksExact ? '' : '*'),
+    fmt(x.cpuPercent), fmt(x.managedMB), fmt(x.workingSetMB), x.gen0 + '/' + x.gen1 + '/' + x.gen2, fmt(x.sendKBps), fmt(x.recvKBps), String(x.dbQueueMax),
+    String(x.buildPieces), String(x.stalls), x.inputLatencyP95Ms == null ? 'n/a' : fmt(x.inputLatencyP95Ms)];
+  const heads = [el('th', { text: '#' }), el('th', { text: 'Iteration' }), el('th', { text: 'Parameters' }), el('th', { text: 'Seed' })];
+  if (stress) for (const h of stressHeads) heads.push(el('th', { text: h }));
+  heads.push(el('th', { text: 'Result' }), el('th', { text: 'Run' }));
+  const table = el('table', null, el('tr', null, ...heads));
   for (const r of batch.rows) {
-    table.append(el('tr', null,
-      el('td', { text: String(r.number) }), el('td', { text: r.iteration ? String(r.iteration) : '' }),
-      el('td', { text: r.parameterSet ? '[' + r.parameterSet + '] ' + (r.parameters || '') : '' }), el('td', { text: String(r.seed) }),
-      el('td', { class: 'st ' + r.status, text: r.status }),
-      el('td', null, r.reportUrl ? el('a', { href: r.reportUrl, target: '_blank', rel: 'noopener', text: r.runId }) : el('span', { text: r.runId }))));
+    const cells = [el('td', { text: String(r.number) }), el('td', { text: r.iteration ? String(r.iteration) : '' }),
+      el('td', { text: r.parameterSet ? '[' + r.parameterSet + '] ' + (r.parameters || '') : '' }), el('td', { text: String(r.seed) })];
+    if (stress) for (const c of stressCells(r.stress)) cells.push(el('td', { text: c }));
+    cells.push(el('td', { class: 'st ' + r.status, text: r.status }),
+      el('td', null, r.reportUrl ? el('a', { href: r.reportUrl, target: '_blank', rel: 'noopener', text: r.runId }) : el('span', { text: r.runId })));
+    table.append(el('tr', null, ...cells));
   }
   box.append(table);
   if (batch.summary && batch.summary.length) box.append(el('pre', { text: batch.summary.join('\n') }));
@@ -604,10 +615,10 @@ function describeServer(d) {
   const qa = h.qa || {};
   return [
     `CPU       ${m.cpuPercent !== undefined ? m.cpuPercent.toFixed(1) : '-'} %`,
-    `Memory    ${m.workingSetMB !== undefined ? m.workingSetMB.toFixed(1) : '-'} MB working set   GC ${m.gc ? `${m.gc.gen0}/${m.gc.gen1}/${m.gc.gen2}` : '-'}`,
+    `Memory    ${m.workingSetMB !== undefined ? m.workingSetMB.toFixed(1) : '-'} MB working set   managed ${fmt(m.managedMB)} MB   GC ${m.gc ? `${m.gc.gen0}/${m.gc.gen1}/${m.gc.gen2}` : '-'}   pause ${fmt(m.gcPauseMsTotal)} ms   allocated ${fmt(m.allocatedMBTotal)} MB`,
     `Tick ms   p50 ${fmt(m.tickP50Ms)}  p95 ${fmt(m.tickP95Ms)}  p99 ${fmt(m.tickP99Ms)}  max ${fmt(m.tickMaxMs)}   (window ${t.windowSeconds ?? '-'} s)`,
-    `Packets/s in ${fmt(m.pktInPerSec)}  out ${fmt(m.pktOutPerSec)}   (bytes/s: not reported by /qa/metrics)`,
-    `Sessions  ${m.activeSessions}   players ${m.players}`,
+    `Packets/s in ${fmt(m.pktInPerSec)}  out ${fmt(m.pktOutPerSec)}   KB/s in ${m.bytesInPerSec !== undefined ? fmt(m.bytesInPerSec / 1024) : '-'}  out ${m.bytesOutPerSec !== undefined ? fmt(m.bytesOutPerSec / 1024) : '-'}`,
+    `Sessions  ${m.activeSessions}   players ${m.players}   alive ${m.alive ?? '-'}   build pieces ${m.buildPieces ?? '-'}   stalls ${m.stalls ?? '-'}`,
     `QA queue  command ms ${fmt(m.qaCommandMs)}   rejected ${qa.rejected ?? '-'} timedOut ${qa.timedOut ?? '-'} failed ${qa.failed ?? '-'}`,
     `Health    ${m.health ? JSON.stringify(m.health) : '-'}`,
   ].join('\n');

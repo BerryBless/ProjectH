@@ -1,0 +1,11 @@
+{
+  "name": "stress-quick",
+  "description": "Stress test (request §66-73, §108-113): baseline, movement, combat, building and the mixed match at 50 players with a 30 s steady phase (4 min 22 s measured on 2026-10-02). Each entry runs one parameter set (players 50) with shorter phases. Not in pre-push (§97).",
+  "scenarios": [
+    { "path": "Stress/baseline.json", "parameterSet": 3, "variables": { "steadySeconds": 30 } },
+    { "path": "Stress/movement.json", "parameterSet": 3, "variables": { "steadySeconds": 30 } },
+    { "path": "Stress/combat.json", "parameterSet": 3, "variables": { "steadySeconds": 30 } },
+    { "path": "Stress/building.json", "parameterSet": 3, "variables": { "steadySeconds": 30 } },
+    { "path": "Stress/mixed_match.json", "parameterSet": 1, "variables": { "steadySeconds": 30 } }
+  ]
+}

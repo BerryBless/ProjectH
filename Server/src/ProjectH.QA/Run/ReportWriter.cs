@@ -42,9 +42,12 @@ public static class ReportWriter
         Row(sb, "Server", $"{r.ServerMode} {r.QaUrl} game port {r.GamePort}" + (r.ServerPid != null ? $" pid {r.ServerPid}" : string.Empty));
         Row(sb, "Server version", r.ServerVersion ?? "(unknown)");
         if (r.ParameterSet != null) Row(sb, "Parameters", $"set {r.ParameterSet}: {BatchSummary.Compact(r.Parameters)}");
+        if (r.Overrides != null) Row(sb, "Variables set (--set / suite)", BatchSummary.Compact(r.Overrides));
+        if (r.Stress?.StressMode == true) Row(sb, "Stress mode", "yes (D39: headless only, Qa:Events off unless set, quiet live log)");
         if (r.Batch != null) Row(sb, "Batch", r.Batch);
         sb.Append("</table>");
         if (r.ToolError != null) sb.Append("<div class=\"fail\"><b>Tool error:</b> <pre>").Append(E(r.ToolError)).Append("</pre></div>");
+        if (r.Stress != null) StressReportHtml.Summary(sb, r.Stress);
 
         if (r.Failure != null)
         {
@@ -75,6 +78,7 @@ public static class ReportWriter
             sb.Append("</ul>");
         }
 
+        if (r.Stress != null) StressReportHtml.Details(sb, r.Stress);
         if (r.Baseline != null) Baseline(sb, r.Baseline);
 
         if (r.StateDump != null)

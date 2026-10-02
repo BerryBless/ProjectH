@@ -77,13 +77,29 @@ public sealed class HeadlessActor : IQaActor
     private int _playSent;
     private bool _playCompleted;
 
+    // Stress (D38): the group behaviour that sets this actor's intent every tick (null = scenario steps only). Handed
+    // over by SetBrainCommand and from then on touched by the pump thread only. Kept across connect / disconnect (churn
+    // reconnects an actor without losing its role); ResetIntentCommand and a new SetBrainCommand end it.
+    private ActorBrain? _brain;
+    // D43 R1: when each input was sent (Stopwatch timestamps by Seq % LatencyRing) for the current connection, the
+    // newest Seq sent and the newest acknowledged. Reset with every new connection (Seq starts at 1 again).
+    private const int LatencyRing = 256;
+    private readonly long[] _inputSentAt = new long[LatencyRing];
+    private uint _latencySent;
+    private uint _latencyAcked;
+    private readonly InputLatencyHistogram? _latency;
+    // Build results by code over this actor's life (published as a new array only when a result arrives).
+    private readonly long[] _buildCodeCounts = new long[(int)BuildResultCode.BudgetFull + 1];
+    private long[] _buildCodesPublished = new long[(int)BuildResultCode.BudgetFull + 1];
+
     private ActorState _state;
 
-    internal HeadlessActor(string alias, ActorPump pump, int seed)
+    internal HeadlessActor(string alias, ActorPump pump, int seed, InputLatencyHistogram? latency = null)
     {
         Alias = alias;
         DevPlayerId = ActorManager.DevPlayerIdFor(alias);
         _pump = pump;
+        _latency = latency;
         _rng = new Random(seed);
         _state = new ActorState { Alias = alias, DevPlayerId = DevPlayerId, Status = ActorStatus.Idle };
     }
@@ -104,6 +120,8 @@ public sealed class HeadlessActor : IQaActor
             case ConnectCommand c:
                 CloseConnection(graceful: true, "replaced by a new connection");
                 ResetIntent();
+                _latencySent = 0;
+                _latencyAcked = 0;
                 // Like BotRunner.Reconnect: each attempt is a new connection (its own Seq from 1, as the server
                 // expects after a resume), and a reconnect gets the short connect budget.
                 _connection = new BotConnection(c.Reconnect);
@@ -168,7 +186,11 @@ public sealed class HeadlessActor : IQaActor
                 DropFireSteps();
                 break;
             case ResetIntentCommand:
+                SetBrain(null);
                 ResetIntent();
+                break;
+            case SetBrainCommand b:
+                SetBrain(b.Brain);
                 break;
             case ClearInputQueueCommand:
                 _script.Clear();
@@ -232,14 +254,23 @@ public sealed class HeadlessActor : IQaActor
             BotConnection? c = _connection;
             if (c != null && !_closed && !c.Disconnected) c.Update(elapsedMs);
             if (c != null) TakeBuildResults(c.View);
+            if (c != null && !_closed && !c.Disconnected) TakeAcks(c);
             if (c != null && !_closed && c.Connected && !c.Disconnected && c.View.Joined && c.View.HasSnapshot && !_inputPaused)
             {
                 // Sent every tick even when idle: the server's InputTimeout closes a joined client that goes silent (D8).
                 // pauseInput stops exactly this (and nothing else) to let that timeout happen.
                 _sendBuild = null;
+                if (_playback == null && _brain != null) Think(c.View, now);
                 // A replay advances only here, where an input is really sent: a paused or not yet joined actor does
                 // not "finish" a recording it never sent.
+                long sentBefore = c.InputsSent;
                 c.SendInput(_playback != null ? NextPlaybackInput(c.View) : BuildInput(c.View, now));
+                // The Seq BotConnection gave this input: it numbers inputs from 1 per connection and counts each send.
+                if (c.InputsSent != sentBefore)
+                {
+                    _latencySent = (uint)c.InputsSent;
+                    _inputSentAt[_latencySent % LatencyRing] = System.Diagnostics.Stopwatch.GetTimestamp();
+                }
                 // After the input that carries the aim, like BotRunner: the server places with the last input's aim.
                 if (_sendBuild is BuildRequest request) c.SendBuild(request);
             }
@@ -284,6 +315,138 @@ public sealed class HeadlessActor : IQaActor
         if (graceful) _connection.Dispose();
         else _connection.Abort();
         _closed = true;
+    }
+
+    // A brain that throws is dropped (its error published) so the actor keeps sending plain inputs instead of failing
+    // every tick.
+    private void Think(BotView view, float now)
+    {
+        ActorBrain brain = _brain!;
+        try
+        {
+            brain.Think(this, view, now);
+        }
+        catch (Exception e)
+        {
+            _error = $"{brain.Role} behaviour stopped: {e.GetType().Name}: {e.Message}";
+            _brain = null;
+            ResetIntent();
+        }
+    }
+
+    // The old brain's intent goes with it; the new one sets its own from the next tick.
+    private void SetBrain(ActorBrain? brain)
+    {
+        if (_brain != null)
+        {
+            _brain = null;
+            ResetIntent();
+        }
+        _brain = brain;
+    }
+
+    // D43: every input up to the snapshot's AckInputSeq has been applied by the server. Inputs older than the ring (a
+    // long stall) are skipped rather than mismeasured.
+    private void TakeAcks(BotConnection c)
+    {
+        uint ack = c.View.AckInputSeq;
+        if (_latency == null || ack <= _latencyAcked || ack > _latencySent) return;
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        double rtt = c.RoundTripTimeMs;
+        uint oldest = _latencySent >= LatencyRing ? _latencySent - LatencyRing + 1 : 1;
+        for (uint seq = Math.Max(_latencyAcked + 1, oldest); seq <= ack; seq++)
+        {
+            double ms = System.Diagnostics.Stopwatch.GetElapsedTime(_inputSentAt[seq % LatencyRing], now).TotalMilliseconds;
+            _latency.Record(ms, rtt);
+        }
+        _latencyAcked = ack;
+    }
+
+    // ---- intent for brains (pump thread only, called from ActorBrain.Think) ----
+
+    internal bool ViewAlive => _connection != null && _connection.View.Alive;
+    internal bool MoveActive => _moveTarget != null;
+    internal bool MoveArrived => _moveArrived;
+    internal bool MoveGaveUp => _moveGaveUp;
+    internal Vector3? MoveTarget => _moveTarget;
+    internal bool ScriptIdle => _script.Count == 0 && _currentTicks <= 0 && _pendingRelease <= 0;
+    internal int BuildsQueued => _builds.Count;
+    internal float PumpNow => _pump.Now;
+
+    // A new target restarts steering; the same target keeps it going. Null stops walking.
+    internal void BrainMoveTo(Vector3? target, float tolerance, bool sprint)
+    {
+        _moveSprint = sprint;
+        _moveTolerance = tolerance;
+        if (target == _moveTarget) return;
+        _moveTarget = target;
+        _moveArrived = false;
+        _moveGaveUp = false;
+        if (target != null && _connection != null)
+        {
+            _steering.Reset(_connection.View.MyPosition, target.Value, _pump.Now);
+            _moveDistance = BotAim.HorizontalDistance(_connection.View.MyPosition, target.Value);
+        }
+    }
+
+    // Local move input until changed; (0, 0) stops. Used only while there is no move target.
+    internal void BrainVector(float x, float y)
+    {
+        _vectorX = Math.Clamp(x, -1f, 1f);
+        _vectorY = Math.Clamp(y, -1f, 1f);
+        _vectorTicks = x == 0f && y == 0f ? 0 : -1;
+    }
+
+    internal void BrainAimActor(ushort entity, IQaActor fallback)
+    {
+        _aim = AimMode.Actor;
+        _aimEntity = entity;
+        _aimFallback = fallback;
+    }
+
+    internal void BrainAimPoint(Vector3 point)
+    {
+        _aim = AimMode.Point;
+        _aimPoint = point;
+    }
+
+    internal void BrainClearAim()
+    {
+        _aim = AimMode.None;
+        _aimFallback = null;
+    }
+
+    internal void BrainHold(InputButtons buttons, bool down) => _held = down ? _held | buttons : _held & ~buttons;
+
+    // Timed inputs after the ones already queued (fire presses with the weapon's interval, a jump, a slot key).
+    internal void BrainScript(ReadOnlySpan<InputStep> steps)
+    {
+        if (_script.Count + steps.Length > MaxScriptSteps) return;
+        foreach (InputStep step in steps) _script.Enqueue(step);
+    }
+
+    // One more piece in the build queue (bounded by MaxBuildQueue). Returns the request sequence it will be sent with
+    // (requests go out in queue order), or -1 when the queue is full.
+    internal int BrainBuild(in BuildPlan plan)
+    {
+        if (_builds.Count >= MaxBuildQueue) return -1;
+        if (_builds.Count == 0) _buildFirst = (ushort)(_buildSequence + 1);
+        _builds.Enqueue(plan);
+        _buildLast = (ushort)(_buildSequence + _builds.Count);
+        return _buildLast;
+    }
+
+    // The server's answer to the request with this sequence, among the latest ActorState.MaxBuildResults.
+    internal bool TryBuildResult(int sequence, out BuildResultInfo result)
+    {
+        foreach (BuildResultInfo r in _buildResults)
+        {
+            if (r.Sequence != sequence) continue;
+            result = r;
+            return true;
+        }
+        result = default;
+        return false;
     }
 
     private void ResetIntent()
@@ -369,9 +532,11 @@ public sealed class HeadlessActor : IQaActor
         for (long i = from; i < view.BuildResultCount; i++)
         {
             BuildResult r = view.RecentBuildResults[i % BotView.RecentBuildResultCount];
+            if ((int)r.Code < _buildCodeCounts.Length) _buildCodeCounts[(int)r.Code]++;
             if (_buildResults.Count >= ActorState.MaxBuildResults) _buildResults.Dequeue();
             _buildResults.Enqueue(new BuildResultInfo(r.Sequence, r.Code.ToString(), r.PieceId));
         }
+        if (view.BuildResultCount != _buildResultsSeen) _buildCodesPublished = (long[])_buildCodeCounts.Clone();
         _buildResultsSeen = view.BuildResultCount;
     }
 
@@ -574,6 +739,7 @@ public sealed class HeadlessActor : IQaActor
                 Alias = Alias, DevPlayerId = DevPlayerId, Status = ActorStatus.Idle, LastCommandId = _lastCommandId, Error = _error,
                 InputPaused = _inputPaused, BuildFirstSequence = _buildFirst, BuildLastSequence = _buildLast, BuildsQueued = _builds.Count,
                 PlaybackCommandId = _playCommandId, PlaybackActive = _playback != null, PlaybackSent = _playSent, PlaybackCompleted = _playCompleted,
+                Role = _brain?.Role,
             };
         }
         else
@@ -602,6 +768,7 @@ public sealed class HeadlessActor : IQaActor
                 Health = v.Self.Health,
                 Shield = v.Self.Shield,
                 Ammo = v.Self.Ammo,
+                ReserveAmmo = weapon != null ? v.Reserve(weapon.Value.AmmoType) : 0,
                 CurrentSlot = v.Inventory.CurrentSlot,
                 Tool = v.Self.Tool.ToString(),
                 HasInventory = v.HasInventory,
@@ -636,6 +803,8 @@ public sealed class HeadlessActor : IQaActor
                 PlaybackActive = _playback != null,
                 PlaybackSent = _playSent,
                 PlaybackCompleted = _playCompleted,
+                Role = _brain?.Role,
+                BuildCodeCounts = _buildCodesPublished,
                 Error = _error,
             };
         }

@@ -1,0 +1,8 @@
+{
+  "name": "stress-full",
+  "description": "Every stress test scenario with every parameter set (request §73): baseline, movement and combat at 10/25/50/75/100, building at 10/25/50, the mixed match at 50/100/10/25/75, reconnect churn at 25/50/100, the final zone at 30/40/50, the 5-minute soak and the match reset loop. Well over an hour; nightly. Each file's player counts end with a batch comparison (QA/Reports/batch-<id>/summary.html).",
+  "scenarios": [
+    "Stress/baseline.json", "Stress/movement.json", "Stress/combat.json", "Stress/building.json", "Stress/mixed_match.json",
+    "Stress/reconnect_churn.json", "Stress/final_zone.json", "Stress/soak.json", "Stress/soak_match_reset.json"
+  ]
+}

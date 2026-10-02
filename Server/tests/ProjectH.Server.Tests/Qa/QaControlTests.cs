@@ -144,14 +144,14 @@ public sealed class QaControlTests
         var metrics = new QaMetrics(simHz: 30);
         for (int i = 0; i < 30 * 200; i++) metrics.Record(i < 30 * 195 ? 50.0 : 1.0, 0.1);
         Assert.Equal(30 * QaOptions.MetricsWindowSeconds, metrics.Count);   // never more than the window
-        QaTickMetrics last5 = metrics.Snapshot(5, 0, 0);
+        QaTickMetrics last5 = metrics.Snapshot(5, default);
         Assert.Equal(150, last5.Samples);
         Assert.Equal(1.0, last5.TickMaxMs);
-        QaTickMetrics last10 = metrics.Snapshot(10, 0, 0);
+        QaTickMetrics last10 = metrics.Snapshot(10, default);
         Assert.Equal(300, last10.Samples);
         Assert.Equal(50.0, last10.TickMaxMs);
         Assert.Equal(0.1, last10.QaCommandMs, 6);
-        QaTickMetrics empty = new QaMetrics(30).Snapshot(10, 0, 0);
+        QaTickMetrics empty = new QaMetrics(30).Snapshot(10, default);
         Assert.Equal(0, empty.Samples);
         Assert.False(double.IsNaN(empty.TickP99Ms));
     }

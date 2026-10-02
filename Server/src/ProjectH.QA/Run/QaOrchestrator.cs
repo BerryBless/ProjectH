@@ -43,6 +43,8 @@ public sealed class QaRunOptions
     // QA-5 D33: append the run to <report root>/history (only when reports are written too: tests that write no report
     // never touch a history folder).
     public bool History { get; init; } = true;
+    // Stress: variables set over the scenario and the parameter set (--set, a suite entry's variables). Null = none.
+    public IReadOnlyDictionary<string, JsonElement>? VariableOverrides { get; init; }
 }
 
 // D32: a batch starts several runs within one second. Run ids keep their format (qa-yyyyMMdd-HHmmss-xxxx: the UI and
@@ -79,7 +81,11 @@ internal static class RunIds
 
 // What the UI inspector may touch from its HTTP threads: the QA URL (it builds its own client) and the actors'
 // published snapshot (ActorManager.Snapshot + immutable ActorState). Nothing else of the run.
-public sealed record LiveRun(string RunId, Uri QaUrl, ActorManager Actors);
+public sealed record LiveRun(string RunId, Uri QaUrl, ActorManager Actors)
+{
+    // Stress D39: the inspector reads the server less often (RunSession).
+    public bool Stress { get; init; }
+}
 
 // The scenario timeout counts running time only: while the gate holds the run (pause, breakpoint, held failure) the
 // deadline is disarmed and re-armed with what was left. Used only from the run flow (IRunControl.PausedChanged).
@@ -160,7 +166,8 @@ public sealed class QaOrchestrator
         string reportDir = Path.Combine(reportRoot, report.RunId);
         IRunControl control = _options.Control ?? new RunGate(honorBreakpoints: false) { Prompt = _options.ManualPrompt };
         string batch = _options.BatchLabel != null ? $"  [{_options.BatchLabel}]" : string.Empty;
-        string parameterText = _options.ParameterIndex is int pi ? $"  parameters[{pi + 1}] {BatchSummary.Compact(_options.Parameters)}" : string.Empty;
+        string parameterText = (_options.ParameterIndex is int pi ? $"  parameters[{pi + 1}] {BatchSummary.Compact(_options.Parameters)}" : string.Empty)
+            + (_options.VariableOverrides is { Count: > 0 } vo ? $"  set {BatchSummary.Compact(JsonPath.From(vo))}" : string.Empty);
         _out.WriteLine($"== {scenario.Name}  runId {report.RunId}  seed {seed}{parameterText}{batch}");
 
         // D31: the parameter set is merged over the scenario variables (a parameter wins over a variable of its name).
@@ -169,17 +176,37 @@ public sealed class QaOrchestrator
         {
             foreach (JsonProperty p in set.EnumerateObject()) variables[p.Name] = p.Value;
         }
+        // Stress: --set / a suite entry's variables win over both (recorded with the parameters: a different value is a
+        // different baseline).
+        if (_options.VariableOverrides is { Count: > 0 } overrides)
+        {
+            var merged = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            if (_options.Parameters is JsonElement { ValueKind: JsonValueKind.Object } ps) foreach (JsonProperty p in ps.EnumerateObject()) merged[p.Name] = p.Value;
+            foreach (var pair in overrides)
+            {
+                variables[pair.Key] = pair.Value;
+                merged[pair.Key] = pair.Value;
+            }
+            report.Parameters = JsonPath.From(merged);
+            report.Overrides = JsonPath.From(overrides);
+        }
 
         (report.GitCommit, report.GitDirty, report.GitError) = await GitInfo.ReadAsync(_options.RepoRoot).ConfigureAwait(false);
 
+        // Stress D39: the live logs keep step lines and warnings only (the report's server log ring keeps everything).
+        bool stress = scenario.Stress;
+        bool Quiet(string line) => stress && !IsWarning(line);
+
         void Log(string line)
         {
+            if (Quiet(line)) return;
             if (_options.Verbose) _out.WriteLine("   " + line);
             _options.LogSink?.Invoke("QA", line);
         }
 
         void ActorLog(string line)
         {
+            if (Quiet(line)) return;
             if (_options.Verbose) _out.WriteLine("   " + line);
             _options.LogSink?.Invoke("Actor", line);
         }
@@ -220,11 +247,12 @@ public sealed class QaOrchestrator
                 {
                     serverLog = line =>
                     {
+                        if (Quiet(line)) return;
                         if (_options.Verbose) _out.WriteLine("   [server] " + line);
                         _options.LogSink?.Invoke("Server", line);
                     };
                 }
-                launched = new LaunchedServer(dll, seed, scenario.Server.Options, clientFactory, serverLog, Log);
+                launched = new LaunchedServer(dll, seed, LaunchOptions(scenario), clientFactory, serverLog, Log);
                 report.ServerArguments = launched.Arguments;
                 ProjectH.QA.Faults.ServerStartInfo started = await launched.LaunchAsync(userToken).ConfigureAwait(false);
                 report.ServerPid = started.Pid;
@@ -264,7 +292,10 @@ public sealed class QaOrchestrator
                 GamePort = gamePort,
                 PollIntervalMs = _options.PollMs,
                 Db = new ProjectH.QA.Faults.DbFaultHub(_options.DockerFactory),
+                EventsEnabled = !(launched != null ? LaunchOptions(scenario) : scenario.Server.Options).TryGetValue("Qa:Events", out string? ev)
+                    || !string.Equals(ev, "false", StringComparison.OrdinalIgnoreCase),
             };
+            run.Stress.StressMode = stress;
             if (launched != null)
             {
                 run.ServerControl = launched;
@@ -276,7 +307,7 @@ public sealed class QaOrchestrator
                 if (a.Proxy) run.Network.EnableProxy(a.Id);
             }
             await TryMarkAsync(client, $"QA run {report.RunId} start: {scenario.Name} seed {seed}", report.RunId).ConfigureAwait(false);
-            _options.OnLive?.Invoke(new LiveRun(report.RunId, qaUrl, actors));
+            _options.OnLive?.Invoke(new LiveRun(report.RunId, qaUrl, actors) { Stress = stress });
 
             using var scenarioCts = CancellationTokenSource.CreateLinkedTokenSource(userToken);
             var deadline = new PausableDeadline(scenarioCts, TimeSpan.FromSeconds(scenario.TimeoutSeconds));
@@ -330,6 +361,31 @@ public sealed class QaOrchestrator
         finally
         {
             _options.OnLive?.Invoke(null);
+            // Stress D38: group workloads (re-arm, churn) first, before anything they use is closed.
+            if (run != null && run.Groups.WorkloadCount > 0)
+            {
+                bool groupsStopped = await run.Groups.StopAsync(null, GroupRegistry.StopTimeout).ConfigureAwait(false);
+                report.Cleanup.Add(new CleanupResult("groups", groupsStopped, groupsStopped ? "group workloads stopped" : "a group workload did not stop in time"));
+            }
+            // A workload that ended on an error is a warning even when no stopGroup step looked at it.
+            if (run != null)
+            {
+                foreach (ActorGroup g in run.Groups.All.Where(g => Interlocked.Read(ref g.Stats.WorkloadFailures) > 0))
+                    report.Warnings.Add($"Stress: a workload of group '{g.Name}' ended with an error: {g.Stats.LastFailure}");
+            }
+            // D41: the launched server died on its own (not a stopServer / killServer step).
+            if (run != null && launched != null && !launched.Running && !launched.StoppedByScenario && launched.Starts > 0)
+            {
+                run.Stress.Crash = new CrashRecord
+                {
+                    Utc = DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                    ExitCode = launched.ExitCode, StepId = run.CurrentStepId, Actors = actors?.Count ?? 0,
+                    ActorsJoined = actors?.All.Count(a => a.State.Joined) ?? 0, LastSample = run.LastSample, LastPhase = run.LastPhase,
+                    LogTail = launched.Log.Tail(ReportLogLines),
+                };
+                if (report.Status is RunStatus.Passed or RunStatus.Skipped) report.Status = RunStatus.Failed;
+                report.Warnings.Add($"The server process exited during step {run.CurrentStepId} (exit code {launched.ExitCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown"}): see Crash.");
+            }
             // A restart step may have replaced the server: talk to the current one.
             if (run != null) client = run.Server;
             // State at the failure (request §103-104), before anything is closed.
@@ -352,6 +408,13 @@ public sealed class QaOrchestrator
                 foreach (var pair in run.Variables) report.Variables[pair.Key] = pair.Value;
                 report.Screenshots.AddRange(run.Screenshots);
                 foreach (ManualCheckRecord m in run.ManualChecks) report.ManualChecks.Add(JsonPath.From(m));
+                report.Warnings.AddRange(run.Warnings.Items);
+                if (run.Warnings.Dropped > 0) report.Warnings.Add($"{run.Warnings.Dropped} more warnings were not kept.");
+                if (stress || run.Stress.Phases.Count > 0 || run.Stress.Crash != null)
+                {
+                    if (run.Groups.All.Any()) run.Stress.Groups = run.Groups.All.ToDictionary(g => g.Name, g => (object)run.Groups.Describe(g.Name));
+                    report.Stress = run.Stress;
+                }
             }
 
             if (actors != null)
@@ -402,8 +465,14 @@ public sealed class QaOrchestrator
 
         report.ExitCode = serverStopFailed ? 2 : RunReport.ExitCodeFor(report.Status, _options.FailOnSkip);
         report.DurationMs = clock.ElapsedMilliseconds;
+        if (report.Stress != null) report.Stress.Summary = StressSummary.From(report.Stress.Phases, report.Status.ToString().ToUpperInvariant());
         RecordBaseline(scenario, report, reportRoot, run?.Variables ?? (IReadOnlyDictionary<string, JsonElement>)variables);
         PrintSummary(report);
+        if (report.Stress?.Summary is StressSummary ss)
+        {
+            _out.WriteLine("   " + ss.Line());
+            _options.LogSink?.Invoke("QA", ss.Line());
+        }
         if (report.Baseline != null)
         {
             foreach (string w in report.Baseline.Warnings) _out.WriteLine($"   WARNING {w}");
@@ -462,6 +531,20 @@ public sealed class QaOrchestrator
             report.Warnings.Add($"Baseline failed: {e.Message}");
         }
     }
+
+    // D39: a stress scenario's server has no QA events unless the scenario turns them on (tick diff cost, §150).
+    public static IReadOnlyDictionary<string, string> LaunchOptions(ScenarioDefinition scenario)
+    {
+        if (!scenario.Stress || scenario.Server.Options.ContainsKey("Qa:Events")) return scenario.Server.Options;
+        var options = new Dictionary<string, string>(scenario.Server.Options, StringComparer.OrdinalIgnoreCase) { ["Qa:Events"] = "false" };
+        return options;
+    }
+
+    // A line worth showing in a stress run's quiet live log.
+    public static bool IsWarning(string line) =>
+        line.Contains("warn", StringComparison.OrdinalIgnoreCase) || line.Contains("fail", StringComparison.OrdinalIgnoreCase)
+        || line.Contains("error", StringComparison.OrdinalIgnoreCase) || line.Contains("exception", StringComparison.OrdinalIgnoreCase)
+        || line.Contains("crit", StringComparison.OrdinalIgnoreCase);
 
     private static async Task<JsonElement> HealthAsync(IQaServerClient client, CancellationToken token)
     {

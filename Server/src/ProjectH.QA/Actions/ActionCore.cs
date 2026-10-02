@@ -74,8 +74,8 @@ public sealed class StepOutcome
 
     public static StepOutcome Skip(string reason, bool skipRest) => new() { Passed = true, Skipped = true, SkipRest = skipRest, Message = reason };
 
-    public static StepOutcome Fail(string message, string? expected = null, string? actual = null) =>
-        new() { Passed = false, Message = message, Expected = expected, Actual = actual };
+    public static StepOutcome Fail(string message, string? expected = null, string? actual = null, JsonElement? value = null) =>
+        new() { Passed = false, Message = message, Expected = expected, Actual = actual, Value = value };
 }
 
 public sealed class ActionRegistry
@@ -97,6 +97,7 @@ public sealed class ActionRegistry
         ServerCommandActions.Register(registry);
         FaultActions.Register(registry);
         UnityActions.Register(registry);
+        StressActions.Register(registry);
         return registry;
     }
 }
