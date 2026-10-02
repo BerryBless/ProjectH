@@ -90,6 +90,18 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
   - 명령의 효과는 다음 Tick의 이벤트로 나온다.
   - `ItemPickedUp`은 없다. InventoryChanged로 대신한다.
 
+### QA 모드 관측 비용 (§150, 2026-10-02 측정)
+
+`Stress/load_bots_50.json`(봇 50명이 60초 동안 이동, DevRespawn, Debug 빌드, i9-14900K)을 `Qa:Events`만 바꿔 두 번 돌렸다. `qaCommandMs`는 QA가 Tick 안에서 쓴 시간(명령 처리 + 이벤트 비교)의 60초 평균이다.
+
+| Qa:Events | Tick p95 | Tick p99 | qaCommandMs (Tick당) | Gen0 GC |
+|---|---|---|---|---|
+| false | 0.256 ms | 0.331 ms | 0.0023 ms | 0 |
+| true | 0.291 ms | 0.391 ms | 0.0126 ms | 0 |
+
+- 이벤트 비교는 Tick당 약 0.01 ms를 더한다. 30 Hz Tick 예산(33 ms)의 0.04 %다. p95·p99 차이는 같은 조건 반복 측정의 흔들림과 비슷한 크기다.
+- 서버 리뷰의 Low 2건(무거운 조회가 한 Tick에 몰리는 경우, 이벤트마다 작은 할당)은 이 측정으로 수정하지 않기로 했다. 성능 측정 시나리오는 그래도 `Qa:Events=false`로 돌린다(Load 시나리오 기본값).
+
 ## Security
 
 - QA Control은 Game Protocol(LiteNetLib)과 완전히 분리되어 있다. 일반 Client가 보내는 패킷으로는 QA 명령을 실행할 수 없다(§6).
