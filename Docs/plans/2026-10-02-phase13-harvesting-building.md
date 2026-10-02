@@ -16921,27 +16921,28 @@ Run: `dotnet build Server/ProjectH.Server.slnx --no-incremental` → 경고 0(�
    SRV=Server/src/ProjectH.Server/bin/Release/net10.0/ProjectH.Server.dll
    BOTS=Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll
 
+   # 서버 리뷰 M2(이 계획 뒤): 서버마다 --Server:ConnectBurstPerIp=200. 봇이 모두 127.0.0.1에서 붙어 IP별 연결 상한(한 번에 20)을 넘는다.
    # A. 기준선: 50명, 건설 없음(Phase 12 개발 모드와 같은 조건)
-   dotnet $SRV --Server:Port=7790 --Server:MaxPlayers=100 --Server:DevRespawn=true --Persistence:Enabled=false > load13-a-server.log 2>&1 &
+   dotnet $SRV --Server:Port=7790 --Server:MaxPlayers=100 --Server:DevRespawn=true --Persistence:Enabled=false --Server:ConnectBurstPerIp=200 > load13-a-server.log 2>&1 &
    echo $! > load13-a-server.pid
    # 4초 뒤
    dotnet $BOTS --port 7790 --count 50 --duration 120 --connect-interval-ms 30 --build false > load13-a-bots.log 2>&1
    kill $(cat load13-a-server.pid)
 
    # B. 건설: 50명, 봇 기본 규칙(맞으면 벽, 높은 적에게 경사로), 자원 무한
-   dotnet $SRV --Server:Port=7791 --Server:MaxPlayers=100 --Server:DevRespawn=true --Persistence:Enabled=false --Server:BuildInfiniteResources=true > load13-b-server.log 2>&1 &
+   dotnet $SRV --Server:Port=7791 --Server:MaxPlayers=100 --Server:DevRespawn=true --Persistence:Enabled=false --Server:BuildInfiniteResources=true --Server:ConnectBurstPerIp=200 > load13-b-server.log 2>&1 &
    echo $! > load13-b-server.pid
    dotnet $BOTS --port 7791 --count 50 --duration 120 --connect-interval-ms 30 > load13-b-bots.log 2>&1
    kill $(cat load13-b-server.pid)
 
    # C. Turbo: 50명, 봇마다 초당 10개(서버는 플레이어마다 0.1초에 1개 받는다), 자원 무한
-   dotnet $SRV --Server:Port=7792 --Server:MaxPlayers=100 --Server:DevRespawn=true --Persistence:Enabled=false --Server:BuildInfiniteResources=true > load13-c-server.log 2>&1 &
+   dotnet $SRV --Server:Port=7792 --Server:MaxPlayers=100 --Server:DevRespawn=true --Persistence:Enabled=false --Server:BuildInfiniteResources=true --Server:ConnectBurstPerIp=200 > load13-c-server.log 2>&1 &
    echo $! > load13-c-server.pid
    dotnet $BOTS --port 7792 --count 50 --duration 120 --connect-interval-ms 30 --build-spam 10 > load13-c-bots.log 2>&1
    kill $(cat load13-c-server.pid)
 
    # 100명: C와 같고 봇 100명
-   dotnet $SRV --Server:Port=7793 --Server:MaxPlayers=100 --Server:DevRespawn=true --Persistence:Enabled=false --Server:BuildInfiniteResources=true > load13-100-server.log 2>&1 &
+   dotnet $SRV --Server:Port=7793 --Server:MaxPlayers=100 --Server:DevRespawn=true --Persistence:Enabled=false --Server:BuildInfiniteResources=true --Server:ConnectBurstPerIp=200 > load13-100-server.log 2>&1 &
    echo $! > load13-100-server.pid
    dotnet $BOTS --port 7793 --count 100 --duration 120 --connect-interval-ms 30 --build-spam 10 > load13-100-bots.log 2>&1
    kill $(cat load13-100-server.pid)

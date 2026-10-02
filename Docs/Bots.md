@@ -9,7 +9,7 @@ dotnet run --project Server/src/ProjectH.Bots -c Release -- --port 7777 --count 
 dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 7790 --count 50 --duration 120 --connect-interval-ms 50
 ```
 
-서버는 따로 띄운다(`Server.md`). 경기는 2명 이상이면 시작한다. 모양은 `--이름 값` 쌍이고, 모르는 이름이나 잘못된 숫자는 오류로 끝난다.
+서버는 따로 띄운다(`Server.md`). 봇이 20명을 넘으면 서버에 `--Server:ConnectBurstPerIp=200`을 준다. 서버는 IP마다 연결 요청을 한 번에 20개, 그 뒤 초당 5개까지만 받는데, 봇은 모두 한 IP에서 붙기 때문이다(서버 리뷰 M2, `Networking.md` "Validation"). 경기는 2명 이상이면 시작한다. 모양은 `--이름 값` 쌍이고, 모르는 이름이나 잘못된 숫자는 오류로 끝난다.
 
 | 옵션 | 기본값 | 의미 |
 |---|---|---|
