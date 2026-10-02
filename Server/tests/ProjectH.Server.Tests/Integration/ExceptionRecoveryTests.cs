@@ -84,6 +84,66 @@ public sealed class ExceptionRecoveryTests
         Assert.True(loop.Listener.IsStopping);      // B10: no new connection into a stopping server
     }
 
+    // Review round 1: a fault in the match that makes every player's tick throw is caught per player (M7), so the tick
+    // itself succeeds. MaxPlayers player failures within the window still count as a failing match: it is reset, and
+    // resets that keep coming stop the server, as for failing ticks (D6).
+    [Fact]
+    public void EveryPlayerFailingEveryTick_ResetsTheMatch_AndRepeatedResetsStopTheServer()
+    {
+        var time = new ManualTime();
+        int fatal = 0;
+        using GameLoop loop = Loop(() => fatal++, time);
+        int nextPeer = 100;
+        void FailEveryone()
+        {
+            Match match = loop.Match;
+            for (int i = 0; i < 4; i++) Assert.Equal(JoinResult.Ok, match.TryJoin(++nextPeer, "p" + nextPeer));
+            match.FaultEntityId = -1;
+            loop.RunTickGuarded();
+        }
+
+        Match first = loop.Match;
+        FailEveryone();
+        Assert.NotSame(first, loop.Match);
+        Assert.Equal(1, loop.Health.MatchResets);
+        Assert.Equal(4, loop.Health.PlayerFailures);
+        Assert.Equal(0, loop.Health.TickFailures);
+
+        FailEveryone();
+        Assert.Equal(2, loop.Health.MatchResets);
+        Assert.Equal(0, fatal);
+        FailEveryone();                              // the third reset within ten minutes: the fatal stop instead
+        Assert.Equal(1, fatal);
+        Assert.Equal(2, loop.Health.MatchResets);
+        Assert.True(loop.Listener.IsStopping);
+    }
+
+    // Fewer than MaxPlayers failures within the window are single players' faults: no reset.
+    [Fact]
+    public void PlayerFailuresSpreadWiderThanTheWindow_DoNotResetTheMatch()
+    {
+        using GameLoop loop = Loop();
+        Match match = loop.Match;
+        void FailTwo(int firstPeer)
+        {
+            Assert.Equal(JoinResult.Ok, match.TryJoin(firstPeer, "a" + firstPeer));
+            Assert.Equal(JoinResult.Ok, match.TryJoin(firstPeer + 1, "b" + firstPeer));
+            match.FaultEntityId = -1;
+            loop.RunTickGuarded();
+            match.FaultEntityId = 0;
+        }
+        FailTwo(101);
+        for (int i = 0; i < 10 * SimHz; i++) loop.RunTickGuarded();   // the window is 10 s
+        FailTwo(111);
+        Assert.Same(match, loop.Match);
+        Assert.Equal(0, loop.Health.MatchResets);
+        Assert.Equal(4, loop.Health.PlayerFailures);
+
+        FailTwo(121);                                // 4 within the window
+        Assert.NotSame(match, loop.Match);
+        Assert.Equal(1, loop.Health.MatchResets);
+    }
+
     // B10: while the server stops, a connection request is refused as ServerFull (no protocol change).
     [Fact]
     public void AStoppingServer_RefusesNewConnections()

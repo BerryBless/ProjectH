@@ -226,7 +226,8 @@ public sealed class Match
     internal bool HasRoute => _hasRoute;
     internal DropRoute Route => _route;
     internal DoorSet Doors => _doors;
-    // Test seam (server review M7): the player loop throws for the player with this entity id (0 = none; ids start at 1).
+    // Test seam (server review M7): the player loop throws for the player with this entity id (0 = none; ids start at 1;
+    // -1 = every player, review round 1).
     // Volatile: a test may set it while the loop thread ticks.
     internal int FaultEntityId { get => Volatile.Read(ref _faultEntityId); set => Volatile.Write(ref _faultEntityId, value); }
     private int _faultEntityId;
@@ -484,7 +485,8 @@ public sealed class Match
     // One player's part of the tick: input, move, reload, actions, consumable (server review M7: Tick isolates it).
     private void TickPlayer(PlayerEntity player, uint now)
     {
-        if (player.EntityId == FaultEntityId) throw new InvalidOperationException("test fault");
+        int fault = FaultEntityId;
+        if (fault != 0 && (fault == -1 || fault == player.EntityId)) throw new InvalidOperationException("test fault");
         InputButtons previous = player.LastInput.Buttons;   // final review A5: the last real input's buttons
         bool sent = TakeInput(player, out InputCommand input);
         // D9: a dead player's input is still taken and acked (LastProcessedSeq) but moves and fires nothing.

@@ -85,6 +85,16 @@ public sealed class GameLoop : IDisposable
     private Exception? _carriedSinkError;
     private long _loopFailuresSinceStats;
     private long _playerFailuresSinceStats;   // server review M7: the first player failure of an interval is logged
+    // Review round 1 (game loop thread only): the loop ticks of the latest MaxPlayers player failures, a ring made once.
+    // MaxPlayers of them within PlayerFailureWindowSeconds are taken as a fault in the match, not in one player (every
+    // player failing every tick, reconnecting and failing again): the match is reset like after failing ticks (D6).
+    // Emptied by every reset.
+    private const int PlayerFailureWindowSeconds = 10;
+    private readonly long _playerFailureWindowTicks;
+    private readonly long[] _playerFailureTicks;
+    private int _playerFailureCount;
+    private int _playerFailureNext;
+    private bool _resetForPlayerFailures;
     private bool _spawnEncodeFailureLogged;   // Phase 11: the first PlayerSpawned encode failure was logged
     private readonly Action? _onFatal;
     private readonly TimeProvider _time;
@@ -122,6 +132,8 @@ public sealed class GameLoop : IDisposable
         _onFatal = onFatal;
         _time = time ?? TimeProvider.System;
         _failuresBeforeReset = options.SimHz * FailingSecondsBeforeReset;
+        _playerFailureWindowTicks = (long)PlayerFailureWindowSeconds * options.SimHz;
+        _playerFailureTicks = new long[options.MaxPlayers];
         _channels = new InboundChannels(options, _stats, _health.AddBuildInboxDrop);
         _joinTimeoutTicks = (long)options.JoinTimeoutSeconds * options.SimHz;
         _inputTimeoutTicks = (long)options.InputTimeoutSeconds * options.SimHz;
@@ -162,9 +174,11 @@ public sealed class GameLoop : IDisposable
     // Server review M7: Match took a player whose own tick threw out of the match. Its connection is closed with ServerError
     // (the client may reconnect and join as a new player) and forgotten here at once, without calling back into Match (it
     // is mid-tick). A graced player (NoPeer) has no connection. Counted every time, logged once per interval.
+    // Review round 1: also recorded in the failure window; RunTickGuarded resets the match after this tick when it is full.
     private void OnPlayerFailed(int peerId, Exception error)
     {
         _health.AddPlayerFailure();
+        if (RecordPlayerFailure()) _resetForPlayerFailures = true;
         if (++_playerFailuresSinceStats == 1)
         {
             try
@@ -179,6 +193,17 @@ public sealed class GameLoop : IDisposable
         if (peerId == PlayerEntity.NoPeer || !_peers.Remove(peerId, out NetPeer? peer)) return;
         _health.AddKick(DisconnectCode.ServerError);
         NetworkListener.Close(peer, DisconnectCode.ServerError);
+    }
+
+    // Review round 1: true when this failure makes MaxPlayers of them within the window. The ring holds the latest
+    // MaxPlayers failure ticks; once full, the entry after the newest is the oldest.
+    private bool RecordPlayerFailure()
+    {
+        _playerFailureTicks[_playerFailureNext] = _loopTick;
+        _playerFailureNext = (_playerFailureNext + 1) % _playerFailureTicks.Length;
+        if (_playerFailureCount < _playerFailureTicks.Length) _playerFailureCount++;
+        return _playerFailureCount == _playerFailureTicks.Length &&
+               _loopTick - _playerFailureTicks[_playerFailureNext] < _playerFailureWindowTicks;
     }
 
     // D2, D9: a graced player left without resuming (at most MaxPlayers per round, so logging each is cheap).
@@ -322,6 +347,9 @@ public sealed class GameLoop : IDisposable
             _tickFaultHook?.Invoke();
             RunTick();
             _consecutiveTickFailures = 0;
+            // Review round 1: the tick went through, but its players kept failing (see _playerFailureTicks). After the
+            // tick, so Match is not replaced while it runs. A reset that throws (only its logger can) fails this tick.
+            if (_resetForPlayerFailures) ResetMatch(PlayerFailuresCause);
         }
         catch (Exception ex)
         {
@@ -344,7 +372,7 @@ public sealed class GameLoop : IDisposable
             {
                 try
                 {
-                    ResetMatch();
+                    ResetMatch(TickFailuresCause);
                 }
                 catch
                 {
@@ -362,9 +390,14 @@ public sealed class GameLoop : IDisposable
     // Phase 10 D6: the match state is most likely broken half-way, so it is thrown away (no record) and every client
     // is closed with ServerError; their clients reconnect into the new match. Three resets within ResetWindow mean the
     // fault is in the code, not in one match: the server stops (onFatal) instead of failing forever.
-    private void ResetMatch()
+    private const string TickFailuresCause = "ticks failed in a row";
+    private const string PlayerFailuresCause = "players' ticks failed (MaxPlayers within 10 s)";
+
+    private void ResetMatch(string cause)
     {
         _consecutiveTickFailures = 0;
+        _resetForPlayerFailures = false;
+        _playerFailureCount = 0;
         _stalePeers.Clear();
         _timedOut.Clear();
 
@@ -403,8 +436,8 @@ public sealed class GameLoop : IDisposable
         _carriedSinkError ??= _match.TakeSinkError();
         try
         {
-            _logger.LogError("{Count} ticks failed in a row: resetting the match (round {Round}) and closing {Peers} connections with ServerError",
-                _failuresBeforeReset, _match.Flow.Round, _peers.Count);
+            _logger.LogError("{Cause}: resetting the match (round {Round}) and closing {Peers} connections with ServerError",
+                cause, _match.Flow.Round, _peers.Count);
             foreach (NetPeer peer in _peers.Values)
             {
                 try
@@ -442,7 +475,7 @@ public sealed class GameLoop : IDisposable
 
     private void DrainControl()
     {
-        // Bounded by the channel capacity (MaxPlayers * 3), so draining fully is safe.
+        // Bounded by the channel capacity (ServerOptions.ControlChannelCapacity), so draining fully is safe.
         var reader = _channels.Control.Reader;
         while (reader.TryRead(out ControlMessage message))
         {
