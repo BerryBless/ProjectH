@@ -16,6 +16,9 @@ namespace ProjectH.Client.Bootstrap
         // boxes are cover (display only).
         private const float StructureHeight = 2.5f;
 
+        // 기능: Shared GameMap으로 지형 Mesh·MeshCollider, 맵 상자 Cube, 바깥 바닥, 조명(Scene에 없을 때)을 만든다.
+        // 입력: 없음.
+        // 출력: 만든 MapWorld 루트 GameObject와 out으로 공유 Material 3개(지형, 구조물, 엄폐물)·지형 Mesh. 셋 모두 호출자가 파괴해야 한다.
         // The caller destroys the returned root, every material and the terrain mesh (GameClient.OnDestroy).
         public static GameObject Build(out Material[] materials, out Mesh terrainMesh)
         {
@@ -74,6 +77,9 @@ namespace ProjectH.Client.Bootstrap
             return root;
         }
 
+        // 기능: 맵 상자가 건물 벽·지붕·외벽 같은 구조물인지 판정한다.
+        // 입력: box - 판정할 GameMap 상자.
+        // 출력: 상자 윗면이 그 아래 지형보다 StructureHeight 이상 높으면 true(구조물), 아니면 false(엄폐물).
         private static bool IsStructure(Box box) =>
             box.Max.Y - GameMap.Terrain.Height(box.Center.X, box.Center.Z) >= StructureHeight;
     }

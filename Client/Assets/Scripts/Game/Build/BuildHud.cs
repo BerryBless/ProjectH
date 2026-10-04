@@ -27,6 +27,9 @@ namespace ProjectH.Client.Game
         private BuildMaterialType _material;
         private float _noticeHideTime = -1f;
 
+        // 기능: 자원·건설 모드·키 안내·거절 알림 Text를 담은 HUD Canvas를 만든다.
+        // 입력: 없음.
+        // 출력: 숨김 상태로 생성된 BuildHud.
         public BuildHud()
         {
             _root = UiFactory.CreateCanvas("BuildHud", 92, interactive: false);
@@ -43,6 +46,9 @@ namespace ProjectH.Client.Game
             _root.SetActive(false);
         }
 
+        // 기능: HUD 표시 여부를 바꾼다.
+        // 입력: visible - 표시하려면 true.
+        // 출력: 반환값 없음. 값이 바뀔 때만 Canvas 활성 상태가 바뀐다.
         public void SetVisible(bool visible)
         {
             if (_root == null || visible == _visible) return;
@@ -50,6 +56,9 @@ namespace ProjectH.Client.Game
             _root.SetActive(visible);
         }
 
+        // 기능: 자원 줄을 갱신한다.
+        // 입력: wood - 나무 수, stone - 돌 수, metal - 금속 수.
+        // 출력: 반환값 없음. 값이 바뀔 때만 자원 Text가 다시 만들어진다.
         public void SetResources(int wood, int stone, int metal)
         {
             if (_root == null || (wood == _wood && stone == _stone && metal == _metal)) return;
@@ -59,6 +68,9 @@ namespace ProjectH.Client.Game
             _resources.text = UiText.ResourcesLine(wood, stone, metal);
         }
 
+        // 기능: 건설 모드 줄과 키 안내를 갱신한다.
+        // 입력: buildMode - 건설 모드 여부, piece - 선택한 조각 종류, material - 선택한 재료.
+        // 출력: 반환값 없음. 표시 값이 바뀔 때만 Text가 바뀌며, 건설 모드가 아니면 비워진다.
         public void SetMode(bool buildMode, BuildPieceType piece, BuildMaterialType material)
         {
             if (_root == null) return;
@@ -70,6 +82,9 @@ namespace ProjectH.Client.Game
             _keys.text = buildMode ? UiText.BuildKeys : string.Empty;
         }
 
+        // 기능: 거절 알림을 NoticeSeconds 동안 띄운다.
+        // 입력: message - 표시할 상수 문자열(null이면 무시), now - 현재 시간(초).
+        // 출력: 반환값 없음. 알림 Text와 숨길 시각이 설정된다.
         // message: a constant (UiText.BuildRefusal), so a notice allocates nothing.
         public void ShowNotice(string message, float now)
         {
@@ -78,6 +93,9 @@ namespace ProjectH.Client.Game
             _noticeHideTime = now + NoticeSeconds;
         }
 
+        // 기능: 알림 표시 시간이 지나면 알림을 지운다.
+        // 입력: now - 현재 시간(초).
+        // 출력: 반환값 없음. 시간이 지났으면 알림 Text가 비워진다.
         public void Tick(float now)
         {
             if (_root == null || _noticeHideTime < 0f || now < _noticeHideTime) return;
@@ -85,6 +103,9 @@ namespace ProjectH.Client.Game
             _notice.text = string.Empty;
         }
 
+        // 기능: HUD Canvas를 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Canvas GameObject가 파괴된다.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);

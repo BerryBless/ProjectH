@@ -39,6 +39,9 @@ namespace ProjectH.Client.Input
         // Phase 12 D7: C turns crouch on and off; a jump or a sprint press turns it off again.
         private bool _crouchToggled;
 
+        // 기능: 이동·시점·전투·아이템·메뉴·웅크리기·건설 키의 InputAction을 코드로 만들고 켠다.
+        // 입력: 없음.
+        // 출력: 모든 Action이 활성화되고 웅크리기 Toggle이 꺼진 InputReader. Dispose로 Action을 해제해야 한다.
         public InputReader()
         {
             _move = new InputAction("Move", InputActionType.Value);
@@ -103,34 +106,74 @@ namespace ProjectH.Client.Input
             _material.Enable();
         }
 
+        // 기능: WASD 이동 입력을 읽는다.
+        // 입력: 없음.
+        // 출력: 이동 방향 벡터(각 축 -1~1).
         public Vector2 Move => _move.ReadValue<Vector2>();
+        // 기능: 이번 Frame 마우스 이동량을 읽는다.
+        // 입력: 없음.
+        // 출력: 마우스 delta.
         public Vector2 LookDelta => _look.ReadValue<Vector2>();
+        // 기능: 질주 키(Left Shift) 상태를 읽는다.
+        // 입력: 없음.
+        // 출력: 누르고 있으면 true.
         public bool Sprint => _sprint.IsPressed();
+        // 기능: 사격 버튼(왼쪽 클릭)을 이번 Frame에 눌렀는지 읽는다.
+        // 입력: 없음.
+        // 출력: 이번 Frame에 눌렀으면 true.
         public bool FirePressed => _fire.WasPressedThisFrame();
+        // 기능: 사격 버튼(왼쪽 클릭) 상태를 읽는다.
+        // 입력: 없음.
+        // 출력: 누르고 있으면 true.
         public bool FireHeld => _fire.IsPressed();
+        // 기능: 조준 버튼(오른쪽 클릭) 상태를 읽는다.
+        // 입력: 없음.
+        // 출력: 누르고 있으면 true.
         public bool AimHeld => _aim.IsPressed();
+        // 기능: Esc를 이번 Frame에 눌렀는지 읽는다.
+        // 입력: 없음.
+        // 출력: 이번 Frame에 눌렀으면 true.
         public bool EscapePressed => _escape.WasPressedThisFrame();
+        // 기능: F1을 이번 Frame에 눌렀는지 읽는다.
+        // 입력: 없음.
+        // 출력: 이번 Frame에 눌렀으면 true.
         public bool DebugTogglePressed => _debugToggle.WasPressedThisFrame();
+        // 기능: 웅크리기 버튼을 보낼지 판단한다.
+        // 입력: 없음.
+        // 출력: C로 Toggle이 켜져 있거나 Ctrl을 누르고 있으면 true.
         // Phase 12 D7: the Crouch button: toggled with C or held with Ctrl.
         public bool CrouchHeld => _crouchToggled || _crouchHold.IsPressed();
 
+        // 기능: 웅크리기 Toggle을 끈다. 부활·사망 시 선 자세로 시작하게 한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. C Toggle 상태가 false가 된다.
         // A respawn or a death starts standing.
         public void ResetCrouch() => _crouchToggled = false;
 
+        // 기능: 이번 Frame에 누른 건설 조각 키(Z X V B)를 읽는다.
+        // 입력: 없음.
+        // 출력: 누른 조각의 BuildPieceType 값, 없으면 -1.
         // Phase 13 D16: this frame's piece key (Z X V B), or -1; T this frame. Read by GameClient once per frame.
         public int PiecePressed =>
             _pieceWall.WasPressedThisFrame() ? (int)BuildPieceType.Wall :
             _pieceFloor.WasPressedThisFrame() ? (int)BuildPieceType.Floor :
             _pieceRamp.WasPressedThisFrame() ? (int)BuildPieceType.Ramp :
             _pieceRoof.WasPressedThisFrame() ? (int)BuildPieceType.Roof : -1;
+        // 기능: 재료 변경 키(T)를 이번 Frame에 눌렀는지 읽는다.
+        // 입력: 없음.
+        // 출력: 이번 Frame에 눌렀으면 true.
         public bool MaterialPressed => _material.WasPressedThisFrame();
 
-        // Jump, Reload, Slot1-3, Interact, Drop and the two heal presses since the last simulation step that
+        // Jump, Reload, Slot1-3, Interact, Drop, the two heal presses and the two tool presses (Q, F) since the last
+        // simulation step that
         // used them. Rendering runs
         // faster than the fixed simulation, so a press between two steps must be remembered, not lost;
         // LocalPlayerPredictor.Advance clears the bits it puts into an input.
         public InputButtons QueuedButtons { get; set; }
 
+        // 기능: 이번 Frame의 웅크리기 Toggle을 처리하고 한 번 누르는 버튼을 QueuedButtons에 모은다.
+        // 입력: gameInputBlocked - 화면이 떠 있거나 Cursor가 풀려 게임 입력을 막는 중인지 여부(true면 C Toggle과 점프·질주의 Toggle 해제를 건너뛴다).
+        // 출력: 반환값 없음. 웅크리기 Toggle과 QueuedButtons가 갱신된다.
         // Call once per rendered frame. gameInputBlocked: a screen is up or the cursor is free; C then does not toggle the
         // crouch (Ctrl is not sent either, GameClient), so a key typed into a menu does not crouch the character.
         public void Update(bool gameInputBlocked)
@@ -153,6 +196,9 @@ namespace ProjectH.Client.Input
             if (_toolHarvest.WasPressedThisFrame()) QueuedButtons |= InputButtons.ToolHarvest;
         }
 
+        // 기능: 만든 InputAction을 모두 해제한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 모든 InputAction이 Dispose된다.
         public void Dispose()
         {
             _move.Dispose();

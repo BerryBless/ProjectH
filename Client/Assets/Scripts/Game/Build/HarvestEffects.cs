@@ -48,6 +48,9 @@ namespace ProjectH.Client.Game
         private Vector3 _swingFeet;
         private float _swingYaw;
 
+        // 기능: 약점 표시, 도구 머리, 먼지 Puff 큐브와 그 Material을 한 번 만든다.
+        // 입력: source - 복제할 기본 Material.
+        // 출력: 모든 효과가 숨겨진 HarvestEffects.
         public HarvestEffects(Material source)
         {
             _root = new GameObject("HarvestEffects");
@@ -73,6 +76,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: Server HarvestHit에 따라 약점 표시를 옮기거나 키우고, 대상이 쓰러지면 먼지를 띄운다.
+        // 입력: hit - 수신한 채집 타격 결과, now - 현재 시간(초).
+        // 출력: 반환값 없음. 약점 Marker와 먼지 Puff 상태가 갱신된다.
         public void OnHit(in HarvestHit hit, float now)
         {
             if (_root == null) return;
@@ -98,12 +104,18 @@ namespace ProjectH.Client.Game
             _marker.gameObject.SetActive(true);
         }
 
+        // 기능: 파괴 Bit Mask에 약점 표시 대상이 있으면 표시를 숨긴다.
+        // 입력: destroyed - 파괴된 채집 대상 Bit Mask.
+        // 출력: 반환값 없음. 대상이 파괴되었으면 Marker가 숨겨진다.
         // A harvestable gone by another player's hit (HarvestStates) loses its marker too.
         public void OnStates(ulong destroyed)
         {
             if (_markerTarget >= 0 && _markerTarget < 64 && (destroyed & (1UL << _markerTarget)) != 0) HideMarker();
         }
 
+        // 기능: 지정 위치에 먼지 Puff 하나를 시작한다(슬롯을 순환 재사용).
+        // 입력: center - 먼지 중심, size - 대상 크기(0.5~5로 제한), now - 현재 시간(초).
+        // 출력: 반환값 없음. Puff 슬롯 하나가 활성화된다.
         public void Puff(Vector3 center, float size, float now)
         {
             if (_root == null) return;
@@ -115,6 +127,9 @@ namespace ProjectH.Client.Game
             _puffs[i].gameObject.SetActive(true);
         }
 
+        // 기능: 로컬 플레이어의 채집 휘두르기 효과를 시작한다.
+        // 입력: feet - 발 위치, yaw - 수평 시선 각도(도), now - 현재 시간(초).
+        // 출력: 반환값 없음. 도구 머리가 활성화된다.
         public void Swing(Vector3 feet, float yaw, float now)
         {
             if (_root == null) return;
@@ -124,6 +139,9 @@ namespace ProjectH.Client.Game
             _tool.gameObject.SetActive(true);
         }
 
+        // 기능: 약점 표시 크기·만료, 먼지 Puff 퍼짐·소멸, 휘두르기 위치를 진행한다.
+        // 입력: now - 현재 시간(초).
+        // 출력: 반환값 없음. 효과 Transform과 활성 상태가 갱신된다.
         public void Tick(float now)
         {
             if (_root == null) return;
@@ -173,6 +191,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 약점 표시, 먼지, 도구 머리를 모두 숨긴다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 모든 효과가 비활성화된다.
         public void HideAll()
         {
             if (_root == null) return;
@@ -182,6 +203,9 @@ namespace ProjectH.Client.Game
             _tool.gameObject.SetActive(false);
         }
 
+        // 기능: 효과 GameObject와 생성한 Material을 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 루트 GameObject와 Material이 파괴된다.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);
@@ -189,12 +213,18 @@ namespace ProjectH.Client.Game
             if (_puffMaterial != null) Object.Destroy(_puffMaterial);
         }
 
+        // 기능: 약점 표시를 숨기고 대상을 비운다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Marker가 비활성화된다.
         private void HideMarker()
         {
             _markerTarget = -1;
             _marker.gameObject.SetActive(false);
         }
 
+        // 기능: Collider를 제거한 큐브를 루트 아래에 비활성 상태로 만든다.
+        // 입력: name - GameObject 이름, material - 적용할 Material, size - 한 변 크기.
+        // 출력: 만든 큐브의 Transform.
         private Transform CreateCube(string name, Material material, float size)
         {
             var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);

@@ -19,6 +19,9 @@ namespace ProjectH.Client.UI
         public static readonly Color ErrorColor = new Color(1f, 0.55f, 0.45f, 1f);
         public static readonly Color AccentColor = new Color(1f, 0.85f, 0.3f, 1f);
 
+        // 기능: Scene에 EventSystem이 없으면 Input System UI 모듈과 함께 만든다.
+        // 입력: 없음.
+        // 출력: 새로 만든 EventSystem GameObject(DontDestroyOnLoad). 비활성 포함 이미 있으면 null.
         // D1: the EventSystem the buttons and fields need, with the Input System's UI module (the project runs the Input
         // System only). The module assigns its default UI actions in OnEnable when it has none and releases them in
         // OnDisable (Input System 1.20). Returns the object it made, or null when one already exists (then it is not the
@@ -32,6 +35,9 @@ namespace ProjectH.Client.UI
             return go;
         }
 
+        // 기능: 1920 x 1080 기준으로 크기가 맞춰지는 Screen Space Overlay Canvas를 만든다.
+        // 입력: name - GameObject 이름, sortingOrder - 그리기 순서, interactive - GraphicRaycaster 추가 여부.
+        // 출력: 만든 Canvas GameObject.
         // D1: a Screen Space Overlay canvas scaled from 1920 x 1080 (width and height weighted equally). interactive adds
         // the GraphicRaycaster: only screens with buttons or fields have one.
         public static GameObject CreateCanvas(string name, int sortingOrder, bool interactive)
@@ -49,6 +55,9 @@ namespace ProjectH.Client.UI
             return go;
         }
 
+        // 기능: 부모 아래에 고정 앵커의 자식 RectTransform을 만든다.
+        // 입력: name - 이름, parent - 부모, anchor - 앵커이자 Pivot, position - 앵커 기준 위치, size - 크기.
+        // 출력: 만든 RectTransform.
         // A child rectangle: anchor is also its pivot; position is from that anchor.
         public static RectTransform CreateRect(string name, Transform parent, Vector2 anchor, Vector2 position, Vector2 size)
         {
@@ -63,7 +72,10 @@ namespace ProjectH.Client.UI
             return rect;
         }
 
-        // A full-screen dim layer. It is a raycast target, so a click beside a panel does not reach anything under it.
+        // 기능: 부모 전체를 덮는 화면 RectTransform을 만들고 필요하면 반투명 배경을 깐다.
+        // 입력: name - 이름, parent - 부모, dim - 반투명 배경 Image 추가 여부.
+        // 출력: 만든 RectTransform. dim이면 Raycast를 막는 배경 Image가 붙는다.
+        // A full-screen layer. With dim it is a raycast target, so a click beside a panel does not reach anything under it.
         public static RectTransform CreateScreen(string name, Transform parent, bool dim)
         {
             var go = new GameObject(name, typeof(RectTransform));
@@ -81,6 +93,9 @@ namespace ProjectH.Client.UI
             return rect;
         }
 
+        // 기능: 부모 중앙에 패널 배경 Image를 가진 RectTransform을 만든다.
+        // 입력: name - 이름, parent - 부모, size - 크기.
+        // 출력: 만든 패널 RectTransform(Raycast 대상 아님).
         public static RectTransform CreatePanel(string name, Transform parent, Vector2 size)
         {
             RectTransform rect = CreateRect(name, parent, new Vector2(0.5f, 0.5f), Vector2.zero, size);
@@ -90,6 +105,9 @@ namespace ProjectH.Client.UI
             return rect;
         }
 
+        // 기능: 공용 폰트와 기본 색을 쓰는 Text를 만든다(Rich Text 끔, Raycast 대상 아님).
+        // 입력: name - 이름, parent - 부모, text - 초기 문자열, fontSize - 글자 크기, alignment - 정렬, anchor - 앵커이자 Pivot, position - 앵커 기준 위치, size - 크기.
+        // 출력: 만든 Text.
         public static Text CreateText(string name, Transform parent, string text, int fontSize, TextAnchor alignment,
             Vector2 anchor, Vector2 position, Vector2 size)
         {
@@ -109,6 +127,9 @@ namespace ProjectH.Client.UI
             return label;
         }
 
+        // 기능: 버튼과 라벨을 만들고 클릭 Handler를 연결한다.
+        // 입력: name - 이름, parent - 부모, label - 버튼 문자열, position - 부모 중앙 기준 위치, size - 크기, onClick - 클릭 시 호출할 Handler.
+        // 출력: 만든 Button.
         // A button centred at position in its parent. onClick runs on the main thread from the EventSystem's update.
         public static Button CreateButton(string name, Transform parent, string label, Vector2 position, Vector2 size, UnityAction onClick)
         {
@@ -123,6 +144,9 @@ namespace ProjectH.Client.UI
             return button;
         }
 
+        // 기능: 텍스트와 Placeholder를 가진 한 줄 InputField를 만든다.
+        // 입력: name - 이름, parent - 부모, position - 부모 중앙 기준 위치, size - 크기, characterLimit - 최대 글자 수, contentType - 입력 형식.
+        // 출력: 만든 InputField.
         // The legacy UGUI InputField (D1: no TextMeshPro), laid out like DefaultControls.CreateInputField.
         public static InputField CreateInputField(string name, Transform parent, Vector2 position, Vector2 size, int characterLimit,
             InputField.ContentType contentType)
@@ -146,6 +170,9 @@ namespace ProjectH.Client.UI
             return field;
         }
 
+        // 기능: InputField 안에 들어갈 여백 있는 Text를 만든다.
+        // 입력: name - 이름, parent - InputField의 RectTransform, fontSize - 글자 크기.
+        // 출력: 만든 Text.
         private static Text CreateFieldText(string name, RectTransform parent, int fontSize)
         {
             var go = new GameObject(name, typeof(RectTransform));

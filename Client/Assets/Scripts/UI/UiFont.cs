@@ -23,6 +23,9 @@ namespace ProjectH.Client.UI
         private static Font s_font;
         private static bool s_ownsFont;
 
+        // 기능: UI 공용 폰트를 반환하고, 없으면 설치된 한글 OS 폰트로 만든다.
+        // 입력: 없음.
+        // 출력: 설치된 후보 OS 폰트로 만든 동적 Font. 후보가 하나도 없으면 내장 LegacyRuntime.ttf.
         public static Font Get()
         {
             // Unity null: a released font is made again.
@@ -56,6 +59,9 @@ namespace ProjectH.Client.UI
             return s_font;
         }
 
+        // 기능: Get이 OS 폰트로 만든 Font를 파괴하고 캐시를 비운다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 소유한 Font가 파괴되고 다음 Get에서 다시 만들어진다.
         // Destroys the font Get made from the OS (the built-in one belongs to Unity).
         public static void Release()
         {

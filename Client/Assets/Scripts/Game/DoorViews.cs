@@ -15,6 +15,9 @@ namespace ProjectH.Client.Game
         private readonly Material _material;
         private int _shownVersion = -1;
 
+        // 기능: GameMap의 문마다 Collider가 있는 상자를 만들고 공유 Material 하나를 입힌다.
+        // 입력: 없음.
+        // 출력: 모든 문 상자가 활성(닫힘)으로 생성된 DoorViews.
         public DoorViews()
         {
             Material source = null;
@@ -34,6 +37,9 @@ namespace ProjectH.Client.Game
             for (int i = 0; i < _doors.Length; i++) _doors[i].GetComponent<Renderer>().sharedMaterial = _material;
         }
 
+        // 기능: 예측된 문 상태의 Version이 바뀌었을 때만 닫힌 문은 보이고 열린 문은 숨긴다.
+        // 입력: doors - 예측된 문 열림 상태(PredictedDoors).
+        // 출력: 반환값 없음. 문 GameObject의 활성 상태가 바뀐다.
         public void Tick(PredictedDoors doors)
         {
             if (doors.Version == _shownVersion) return;
@@ -45,6 +51,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 문 GameObject와 동적으로 만든 Material을 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 문 오브젝트와 Material이 파괴된다.
         public void Dispose()
         {
             for (int i = 0; i < _doors.Length; i++)

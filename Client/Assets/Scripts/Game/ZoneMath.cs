@@ -18,6 +18,9 @@ namespace ProjectH.Client.Game
     // (Server/src/ProjectH.Server/Game/Zone/SafeZone.cs). Change both or neither; the parity test compares them.
     public static class ZoneMath
     {
+        // 기능: 소수 서버 Tick에서 안전 구역 원의 중심과 반지름을 구한다.
+        // 입력: zone - 서버 ZoneState, tick - 서버 Tick(소수).
+        // 출력: 반환값 없음. centerX·centerZ·radius에 원이 쓰인다(축소 전 From, 축소 중 선형 보간, 축소 후 To).
         // The circle at a (fractional) server tick: From until ShrinkStartTick, linear to To until ShrinkEndTick,
         // then To.
         public static void Sample(in ZoneState zone, double tick, out float centerX, out float centerZ, out float radius)
@@ -31,6 +34,9 @@ namespace ProjectH.Client.Game
             radius = zone.FromRadius + (zone.ToRadius - zone.FromRadius) * t;
         }
 
+        // 기능: 위치가 안전 구역 밖인지 판정한다(표시용, 서버 SafeZone.IsOutside와 같은 식).
+        // 입력: zone - 서버 ZoneState, x - 월드 X 좌표, z - 월드 Z 좌표, tick - 서버 Tick(소수).
+        // 출력: 원 밖이거나 반지름이 0 이하면 true, 안이면 false.
         // Horizontal distance above the radius; a radius-0 circle has no inside.
         public static bool IsOutside(in ZoneState zone, float x, float z, double tick)
         {
@@ -40,6 +46,9 @@ namespace ProjectH.Client.Game
             return radius <= 0f || dx * dx + dz * dz > radius * radius;
         }
 
+        // 기능: HUD에 보여줄 구역 안내를 정한다.
+        // 입력: zone - 서버 ZoneState, tick - 현재 서버 Tick 추정값(소수), simHz - 서버 초당 Tick 수.
+        // 출력: 축소 전이면 ShrinksIn과 남은 초(올림), 축소 중이면 Closing, 구역 없음·축소 후·simHz 0 이하면 None(seconds 0).
         // Phase 0 (no zone) says nothing. Before the shrink: whole seconds until it starts (rounded up); during
         // the shrink: closing; after it (the last phase stays closed): nothing.
         public static ZoneHint Hint(in ZoneState zone, double tick, int simHz, out int seconds)

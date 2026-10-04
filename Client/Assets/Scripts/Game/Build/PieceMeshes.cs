@@ -12,6 +12,9 @@ namespace ProjectH.Client.Game
     // (the drawn part, lowered to the construction height). Dispose destroys the meshes.
     public sealed class PieceMeshes : System.IDisposable
     {
+        // 기능: 박스, 경사면, 지붕 공유 Mesh를 만든다.
+        // 입력: 없음.
+        // 출력: 세 Mesh를 가진 PieceMeshes.
         public PieceMeshes()
         {
             Box = BuildBox();
@@ -23,8 +26,14 @@ namespace ProjectH.Client.Game
         public Mesh Ramp { get; }
         public Mesh Roof { get; }
 
+        // 기능: 조각 종류에 맞는 공유 Mesh를 고른다.
+        // 입력: type - 조각 종류.
+        // 출력: Ramp면 Ramp, Roof면 Roof, 벽·바닥이면 Box Mesh.
         public Mesh MeshOf(BuildPieceType type) => type == BuildPieceType.Ramp ? Ramp : type == BuildPieceType.Roof ? Roof : Box;
 
+        // 기능: 조각의 루트 자세와 Body 크기·높이를 함께 맞춘다.
+        // 입력: root - 조각 루트, body - 그리는 자식, shape - 조각 모양, height - 건설 높이 비율(0~1].
+        // 출력: 반환값 없음. root와 body의 Transform이 바뀐다.
         // root: position and rotation; body: a child, scaled (box: to the piece's size) and lowered to height (0-1].
         public void Place(Transform root, Transform body, in BuildPieceShape shape, float height)
         {
@@ -32,6 +41,9 @@ namespace ProjectH.Client.Game
             PlaceBody(body, shape, height);
         }
 
+        // 기능: 루트의 위치와 회전을 조각 모양에 맞춘다.
+        // 입력: root - 조각 루트, shape - 조각 모양.
+        // 출력: 반환값 없음. 벽·바닥은 박스 중심에, 경사면·지붕은 경사 Pivot에 놓인다.
         // The root part (pose; it carries the collider): only when a piece is new or its shape changed.
         public void PlaceRoot(Transform root, in BuildPieceShape shape)
         {
@@ -46,6 +58,9 @@ namespace ProjectH.Client.Game
             root.SetPositionAndRotation(pivot, Quaternion.Euler(0f, yaw, 0f));
         }
 
+        // 기능: Body를 조각 크기와 건설 높이에 맞춘다.
+        // 입력: body - 그리는 자식, shape - 조각 모양, height - 건설 높이 비율(0~1].
+        // 출력: 반환값 없음. 벽·바닥은 박스 크기로 늘리고 바닥에 맞춰 낮추며, 경사면·지붕은 높이만 줄인다.
         // The body part (the child, lowered to the construction height): whenever the height changes.
         public void PlaceBody(Transform body, in BuildPieceShape shape, float height)
         {
@@ -61,6 +76,9 @@ namespace ProjectH.Client.Game
             body.localScale = new Vector3(1f, height, 1f);
         }
 
+        // 기능: 공유 Mesh 세 개를 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Box·Ramp·Roof Mesh가 파괴된다.
         public void Dispose()
         {
             Object.Destroy(Box);
@@ -68,6 +86,9 @@ namespace ProjectH.Client.Game
             Object.Destroy(Roof);
         }
 
+        // 기능: 원점 중심 단위 큐브 Mesh를 만든다.
+        // 입력: 없음.
+        // 출력: 새로 만든 박스 Mesh.
         // A unit cube centred on the origin, one quad per face (flat normals).
         private static Mesh BuildBox()
         {
@@ -76,6 +97,9 @@ namespace ProjectH.Client.Game
             return Hull("PieceBox", c);
         }
 
+        // 기능: +Z 쪽으로 올라가는 경사면 판 Mesh를 만든다.
+        // 입력: 없음.
+        // 출력: 새로 만든 경사면 Mesh.
         // Rising toward +Z: the top from (z -2.5, y 0) to (z +2.5, y RampRise), the bottom SlopeThickness lower.
         private static Mesh BuildRamp()
         {
@@ -90,6 +114,9 @@ namespace ProjectH.Client.Game
             return Hull("PieceRamp", c);
         }
 
+        // 기능: 비트 순서 꼭짓점 8개의 육면체를 면마다 평평한 사각형 6개로 만든다.
+        // 입력: name - Mesh 이름, c - 꼭짓점 8개(bit 0 x, bit 1 y, bit 2 z).
+        // 출력: Normal과 Bounds를 계산한 새 Mesh.
         // A box corner order (bit 0 x, bit 1 y, bit 2 z) made into six flat quads: works for any hexahedron given that way.
         private static Mesh Hull(string name, Vector3[] c)
         {
@@ -119,6 +146,9 @@ namespace ProjectH.Client.Game
             return mesh;
         }
 
+        // 기능: 네 경사면, 처마 아래 판, 평평한 천장으로 된 피라미드 지붕 Mesh를 만든다.
+        // 입력: 없음.
+        // 출력: 새로 만든 지붕 Mesh.
         // Four sloped faces to the apex (RoofRise over the eaves), a SlopeThickness skirt under the eaves and a flat
         // ceiling. Separate vertices per face for flat normals; clockwise seen from outside (Unity's front face).
         private static Mesh BuildRoof()

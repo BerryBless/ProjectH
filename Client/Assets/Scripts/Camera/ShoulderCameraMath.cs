@@ -7,6 +7,9 @@ namespace ProjectH.Client.CameraControl
     // Physics.SphereCast; tests use a fake, so the two-stage solve runs without Unity physics.
     public interface ISphereCaster
     {
+        // 기능: Camera 충돌 반경의 구를 한 방향으로 쏜다.
+        // 입력: origin - 시작점, direction - 방향, maxDistance - 최대 거리, hitDistance - 충돌까지의 거리.
+        // 출력: 충돌하면 true와 hitDistance, 없으면 false.
         bool Cast(Vector3 origin, Vector3 direction, float maxDistance, out float hitDistance);
     }
 
@@ -53,8 +56,14 @@ namespace ProjectH.Client.CameraControl
         public const float TransportDistance = 12f;
         public const float ModeSharpness = 5f;
 
+        // 기능: 기본(지상, 조준 아님) 허리 Camera 목표값을 만든다.
+        // 입력: 없음.
+        // 출력: PivotHeight, HipDistance, HipFov로 채운 CameraTargets.
         public static CameraTargets Hip => new CameraTargets { PivotHeight = PivotHeight, Distance = HipDistance, FieldOfView = HipFov };
 
+        // 기능: 이동 모드와 질주 여부에 맞는 허리 Camera 목표값을 고른다.
+        // 입력: mode - 따라가는 캐릭터의 이동 모드, sprinting - 질주 중 여부(지상 계열 모드에서만 반영).
+        // 출력: 모드에 맞게 Pivot 높이·거리·FOV를 바꾼 CameraTargets.
         // D14: sprinting widens the view; crouched or sliding the pivot is lower; falling and gliding the camera backs off
         // with a wider view; aboard it follows the transport from further away.
         public static CameraTargets TargetsFor(MovementMode mode, bool sprinting)
@@ -82,6 +91,9 @@ namespace ProjectH.Client.CameraControl
             return targets;
         }
 
+        // 기능: 현재 Camera 목표값의 각 항목을 목표값 쪽으로 ModeSharpness로 보간한다.
+        // 입력: current - 현재 값, target - 목표 값, deltaTime - Frame 경과 시간.
+        // 출력: 한 Frame만큼 목표에 다가간 CameraTargets.
         // Frame-rate independent easing of every target value.
         public static CameraTargets Approach(CameraTargets current, CameraTargets target, float deltaTime)
         {
@@ -93,6 +105,9 @@ namespace ProjectH.Client.CameraControl
             };
         }
 
+        // 기능: Yaw와 Pitch로 Camera 전방 단위 벡터를 계산한다.
+        // 입력: yawDegrees - Yaw(도), pitchDegrees - Pitch(도, 양수면 아래).
+        // 출력: Quaternion.Euler(pitch, yaw, 0) * forward와 같은 방향 벡터.
         // Same convention as Quaternion.Euler(pitch, yaw, 0) * Vector3.forward: positive pitch looks down.
         public static Vector3 Forward(float yawDegrees, float pitchDegrees)
         {
@@ -102,6 +117,9 @@ namespace ProjectH.Client.CameraControl
             return new Vector3(Mathf.Sin(yaw) * cosPitch, -Mathf.Sin(pitch), Mathf.Cos(yaw) * cosPitch);
         }
 
+        // 기능: Yaw 방향의 수평 오른쪽 단위 벡터를 계산한다.
+        // 입력: yawDegrees - Yaw(도).
+        // 출력: Y가 0인 오른쪽 방향 벡터.
         // Horizontal right of the yaw heading (matches MovementSimulation's right vector).
         public static Vector3 Right(float yawDegrees)
         {
@@ -109,12 +127,18 @@ namespace ProjectH.Client.CameraControl
             return new Vector3(Mathf.Cos(yaw), 0f, -Mathf.Sin(yaw));
         }
 
+        // 기능: 현재 값을 목표 값 쪽으로 Frame Rate와 무관하게 지수 보간한다.
+        // 입력: current - 현재 값, target - 목표 값, sharpness - 수렴 속도, deltaTime - Frame 경과 시간.
+        // 출력: 보간된 값.
         // Frame-rate independent exponential approach.
         public static float Approach(float current, float target, float sharpness, float deltaTime)
         {
             return current + (target - current) * (1f - Mathf.Exp(-sharpness * deltaTime));
         }
 
+        // 기능: 벽 충돌로 허용된 거리와 현재 Camera 거리로 이번 Frame 거리를 정한다.
+        // 입력: current - 현재 거리, allowed - 충돌 검사로 허용된 거리, deltaTime - Frame 경과 시간.
+        // 출력: allowed가 더 짧으면 allowed, 아니면 ReturnSharpness로 allowed 쪽으로 보간한 거리.
         // A wall closer than the current distance pulls the camera in at once (never show the wall's
         // inside); when the way clears, the camera eases back out.
         public static float ResolveDistance(float current, float allowed, float deltaTime)
@@ -122,9 +146,15 @@ namespace ProjectH.Client.CameraControl
             return allowed < current ? allowed : Approach(current, allowed, ReturnSharpness, deltaTime);
         }
 
+        // 기능: 기본 허리 Camera 목표값(Hip)으로 어깨 Camera 자세를 계산한다.
+        // 입력: feet - 발 위치, yaw - Yaw(도), pitch - Pitch(도), aimBlend - 조준 Blend(0~1), currentDistance - 현재 Camera 거리, deltaTime - Frame 경과 시간, caster - 충돌 검사용 SphereCaster.
+        // 출력: Hip 목표로 계산한 ShoulderPose.
         public static ShoulderPose Solve(Vector3 feet, float yaw, float pitch, float aimBlend, float currentDistance,
             float deltaTime, ISphereCaster caster) => Solve(feet, yaw, pitch, aimBlend, currentDistance, deltaTime, caster, Hip);
 
+        // 기능: Pivot에서 어깨, 어깨에서 Camera까지 두 단계 충돌 검사로 어깨 Camera 자세를 계산한다.
+        // 입력: feet - 발 위치, yaw - Yaw(도), pitch - Pitch(도), aimBlend - 조준 Blend(0~1), currentDistance - 현재 Camera 거리, deltaTime - Frame 경과 시간, caster - 충돌 검사용 SphereCaster, hip - 이동 모드에 맞춰 보간된 허리 Camera 목표값.
+        // 출력: 충돌 후 어깨 위치, Camera 위치, 전방, 거리, FOV를 담은 ShoulderPose.
         // Phase 12 D14: hip is the mode's (eased) camera; aiming blends from it to the aim camera as before.
         public static ShoulderPose Solve(Vector3 feet, float yaw, float pitch, float aimBlend, float currentDistance,
             float deltaTime, ISphereCaster caster, in CameraTargets hip)

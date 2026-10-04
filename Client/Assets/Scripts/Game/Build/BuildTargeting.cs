@@ -13,12 +13,24 @@ namespace ProjectH.Client.Game
         public BuildMaterialType Material { get; private set; } = BuildMaterialType.Wood;
         public int RotationOffset { get; private set; }
 
+        // 기능: 건설할 조각 종류를 고른다.
+        // 입력: piece - 고를 조각 종류.
+        // 출력: 반환값 없음. Piece가 바뀐다.
         public void Select(BuildPieceType piece) => Piece = piece;
 
+        // 기능: 재료를 나무, 돌, 금속 순으로 돌린다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Material이 다음 재료로 바뀐다.
         public void NextMaterial() => Material = (BuildMaterialType)(((int)Material + 1) % 3);
 
+        // 기능: 회전 Offset을 1/4 바퀴 돌린다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. RotationOffset이 0~3 안에서 1 증가한다.
         public void Rotate() => RotationOffset = (RotationOffset + 1) % 4;
 
+        // 기능: 선택을 벽, 나무, 회전 0으로 되돌린다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Piece·Material·RotationOffset이 초기값이 된다.
         public void Reset()
         {
             Piece = BuildPieceType.Wall;
@@ -43,6 +55,9 @@ namespace ProjectH.Client.Game
         public const float UpBand = 20f;
         public const float FeetLift = 1.5f;
 
+        // 기능: 발 위치와 시선으로 선택한 조각을 놓을 격자 슬롯을 고른다(물리 질의 없음).
+        // 입력: piece - 조각 종류, feet - 발 위치, yaw - 수평 시선 각도(도), pitch - 수직 시선 각도(도, 아래가 +), rotationOffset - 회전 Offset(0~3).
+        // 출력: 격자 안이면 true와 정규화된 조각 모양, 값이 유한하지 않거나 격자 밖이면 false.
         public static bool TryPick(BuildPieceType piece, Vector3 feet, float yaw, float pitch, int rotationOffset, out BuildPieceShape shape)
         {
             shape = default;
@@ -77,6 +92,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: yaw에 가장 가까운 축 방향을 구한다.
+        // 입력: yaw - 수평 시선 각도(도, 음수·360 이상 허용).
+        // 출력: 0 +Z, 1 +X, 2 -Z, 3 -X 중 하나.
         // The yaw's nearest axis: 0 +Z (yaw 0), 1 +X (90), 2 -Z (180), 3 -X (270).
         public static int Direction(float yaw)
         {
@@ -85,6 +103,9 @@ namespace ProjectH.Client.Game
             return (int)MathF.Floor((y + 45f) / 90f) % 4;
         }
 
+        // 기능: 값이 NaN이나 무한대가 아닌지 확인한다.
+        // 입력: v - 확인할 값.
+        // 출력: 유한하면 true, 아니면 false.
         private static bool IsFinite(float v) => !float.IsNaN(v) && !float.IsInfinity(v);
     }
 
@@ -99,6 +120,9 @@ namespace ProjectH.Client.Game
 
         public float Interval { get; set; } = 0.1f;
 
+        // 기능: 건설 버튼 상태와 후보로 지금 배치 요청을 보낼지 정한다. 새로 누르면 바로, 누르고 있으면 Interval마다 직전과 다른 슬롯일 때만 보낸다.
+        // 입력: now - 현재 시간(초), pressed - 이번 프레임에 눌렀는지, held - 누르고 있는지, valid - 후보가 있고 시도 가능한지, slotKey - 후보 슬롯 키.
+        // 출력: 보내야 하면 true(마지막 전송 슬롯과 다음 시도 시각이 기록됨), 아니면 false.
         // valid: the candidate exists and may be tried (in range, free, affordable). Returns true when it should be sent
         // now; then it counts as the last one sent.
         public bool ShouldSend(float now, bool pressed, bool held, bool valid, uint slotKey)

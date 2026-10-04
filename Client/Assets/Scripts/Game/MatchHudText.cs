@@ -22,6 +22,9 @@ namespace ProjectH.Client.Game
         public string Zone { get; private set; } = string.Empty;
         public string Spectating { get; private set; } = string.Empty;
 
+        // 기능: 경기 상태별로 표시할 두 숫자를 고르고, 상태나 숫자가 바뀌었을 때만 상단 상태 문자열을 다시 만든다.
+        // 입력: state - 경기 진행 상태, secondsLeft - 시작까지 남은 초(Starting에서 사용), alive - 생존자 수, participants - 참가자 수, minPlayers - 시작 최소 인원.
+        // 출력: 문자열을 다시 만들었으면 true(Rebuilds 증가), 값이 같으면 false.
         // The top line: "플레이어를 기다리는 중 1/2", "시작까지 7초", "생존 3/5", "경기 종료". secondsLeft is used while
         // Starting; alive / participants / minPlayers come from MatchState.
         public bool SetStatus(MatchFlowState state, int secondsLeft, int alive, int participants, int minPlayers)
@@ -53,6 +56,9 @@ namespace ProjectH.Client.Game
             return true;
         }
 
+        // 기능: 자기장 안내나 남은 초가 바뀌었을 때만 자기장 문자열을 다시 만든다. ShrinksIn이 아니면 초는 0으로 본다.
+        // 입력: hint - 자기장 단계 안내, seconds - 축소까지 남은 초.
+        // 출력: 문자열을 다시 만들었으면 true(Rebuilds 증가), 값이 같으면 false.
         // "자기장 축소까지 12초" / "자기장 축소 중" / nothing.
         public bool SetZone(ZoneHint hint, int seconds)
         {
@@ -70,6 +76,9 @@ namespace ProjectH.Client.Game
             return true;
         }
 
+        // 기능: 관전 대상 ID나 이름 참조가 바뀌었을 때만 관전 문자열을 다시 만든다.
+        // 입력: entityId - 관전 대상 Entity ID(0이면 빈 문자열), name - PlayerSpawned로 받은 이름(모르면 null).
+        // 출력: 문자열을 다시 만들었으면 true(Rebuilds 증가), 값이 같으면 false.
         // Phase 11 D9: "관전 중: alice", or "관전 중: 플레이어 3" when that player's name is not known. 0 hides it. The name
         // is PlayerSpawned's string, compared by reference.
         public bool SetSpectating(ushort entityId, string name)

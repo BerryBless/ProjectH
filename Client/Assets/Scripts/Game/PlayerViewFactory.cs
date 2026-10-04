@@ -22,6 +22,9 @@ namespace ProjectH.Client.Game
         private PlayerPose _pose;
         private bool _hasPose;
 
+        // 기능: 팩토리가 만든 루트·몸체·글라이더·히트 박스로 캐릭터 뷰를 구성한다.
+        // 입력: root - 발 위치에 놓이는 회전하지 않는 루트, body - 자세를 표시하는 캡슐, wings - 글라이더 날개 오브젝트, collider - 원격 히트 박스(로컬 플레이어는 null), isLocal - 로컬 플레이어 뷰 여부.
+        // 출력: 살아 있고 자세가 아직 적용되지 않은 PlayerView.
         internal PlayerView(Transform root, Transform body, GameObject wings, BoxCollider collider, bool isLocal)
         {
             Root = root;
@@ -35,6 +38,9 @@ namespace ProjectH.Client.Game
 
         public Transform Root { get; }
 
+        // 기능: 생존 여부를 바꾸고 몸체 Material을 생존/사망 색으로 교체한다.
+        // 입력: alive - 새 생존 여부.
+        // 출력: 반환값 없음. 값이 바뀌면 공유 Material이 교체되고 다음 Place에서 자세와 히트 박스가 다시 적용된다.
         // D13 (Phase 3): dead players are grey and lying down, and a dead remote player's hit box is off.
         public void SetAlive(bool alive)
         {
@@ -44,6 +50,9 @@ namespace ProjectH.Client.Game
             _hasPose = false;   // the pose depends on it
         }
 
+        // 기능: 매 프레임 캐릭터를 발 위치에 놓고 방향과 이동 모드의 자세를 적용한다.
+        // 입력: feet - 그릴 발 위치, yaw - 바라보는 방향(도), mode - 이동 모드, sprinting - 달리기 여부.
+        // 출력: 반환값 없음. 루트 위치와 몸체·날개 회전이 갱신되고, 자세가 바뀐 경우에만 모양과 히트 박스가 다시 적용된다.
         // Every frame: where the feet are drawn, the facing, and the mode's pose.
         public void Place(Vector3 feet, float yaw, MovementMode mode, bool sprinting)
         {
@@ -61,6 +70,9 @@ namespace ProjectH.Client.Game
             if (pose.Wings) _wingsTransform.localRotation = Quaternion.Euler(0f, yaw, 0f);
         }
 
+        // 기능: 자세에 맞게 몸체 높이·위치, 숨김, 날개 표시, 히트 박스 크기를 적용한다.
+        // 입력: pose - 적용할 자세.
+        // 출력: 반환값 없음. 몸체·날개 Transform과 Renderer·Collider 상태가 바뀐다.
         private void ApplyShape(in PlayerPose pose)
         {
             float half = pose.BodyHeight * 0.5f;
@@ -82,6 +94,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 뷰의 루트 GameObject를 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 루트와 자식(몸체·날개)이 파괴된다. 공유 Material은 파괴하지 않는다.
         public void Destroy()
         {
             if (Root != null) Object.Destroy(Root.gameObject);
@@ -106,6 +121,9 @@ namespace ProjectH.Client.Game
         private static Material _deadMaterial;
         private static Material _wingMaterial;
 
+        // 기능: 캐릭터 뷰(루트, 캡슐 몸체, 글라이더 날개, 원격이면 히트 박스)를 만든다.
+        // 입력: name - GameObject 이름, isLocal - 로컬 플레이어 여부(원격만 BoxCollider와 RemoteHitLayer를 가진다).
+        // 출력: 원점에 Ground 자세로 놓인 새 PlayerView.
         public static PlayerView Create(string name, bool isLocal)
         {
             var root = new GameObject(name);
@@ -142,9 +160,15 @@ namespace ProjectH.Client.Game
             return view;
         }
 
+        // 기능: 로컬/원격과 생존 여부에 맞는 공유 몸체 Material을 고른다.
+        // 입력: isLocal - 로컬 플레이어 여부, alive - 생존 여부.
+        // 출력: 생존이면 로컬/원격 색 Material, 사망이면 회색 Material.
         internal static Material BodyMaterial(bool isLocal, bool alive) =>
             alive ? (isLocal ? _localMaterial : _remoteMaterial) : _deadMaterial;
 
+        // 기능: 캐시한 공유 Material을 모두 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 캐시가 null로 비워지고 다음 Create에서 다시 만들어진다.
         // Called by GameClient.OnDestroy: the cached materials live exactly as long as the client.
         public static void ReleaseMaterials()
         {
@@ -158,6 +182,9 @@ namespace ProjectH.Client.Game
             _wingMaterial = null;
         }
 
+        // 기능: 아직 없거나 파괴된 공유 Material을 템플릿으로부터 만든다.
+        // 입력: template - 복사할 URP Lit Material.
+        // 출력: 반환값 없음. 비어 있던 Material 캐시가 채워진다.
         private static void EnsureMaterials(Material template)
         {
             // Explicit == null (not ??=): Unity's null check also catches destroyed materials.
@@ -167,6 +194,9 @@ namespace ProjectH.Client.Game
             if (_wingMaterial == null) _wingMaterial = Tinted(template, new Color(0.95f, 0.85f, 0.25f));
         }
 
+        // 기능: 템플릿을 복사해 지정 색의 새 Material을 만든다.
+        // 입력: template - 복사할 Material, color - 적용할 색.
+        // 출력: 새로 만든 Material(ReleaseMaterials에서 파괴).
         // Copies the Lit material (LitMaterial), so the shader is guaranteed to be in the build.
         private static Material Tinted(Material template, Color color)
         {

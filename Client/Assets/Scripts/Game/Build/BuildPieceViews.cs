@@ -47,6 +47,9 @@ namespace ProjectH.Client.Game
         private readonly Dictionary<uint, PieceView> _active = new Dictionary<uint, PieceView>();
         private readonly List<uint> _building = new List<uint>();
 
+        // 기능: 조각 루트 GameObject, 재료 3 x 손상 단계 3의 공유 Material, 종류별 Pool을 만든다.
+        // 입력: meshes - 공유 조각 Mesh, source - 복제할 기본 Material.
+        // 출력: 표시 중인 조각이 없는 BuildPieceViews.
         public BuildPieceViews(PieceMeshes meshes, Material source)
         {
             _meshes = meshes;
@@ -67,6 +70,9 @@ namespace ProjectH.Client.Game
 
         public int Count => _active.Count;
 
+        // 기능: BuildStore.Changed의 조각을 화면에 반영하고 건설 중인 조각을 다시 그린다. ClearChanged 전에 호출한다.
+        // 입력: store - 확정 조각 저장소, catalog - 건설 Catalog(null 허용), serverTick - 기준 Server Tick.
+        // 출력: 반환값 없음. 추가·변경된 조각은 배치되고 사라진 조각은 Pool로 돌아간다.
         public void Apply(BuildStore store, BuildCatalogData catalog, double serverTick)
         {
             if (_root == null) return;
@@ -80,6 +86,9 @@ namespace ProjectH.Client.Game
             Tick(store, catalog, serverTick);
         }
 
+        // 기능: 표시 중인 조각의 월드 위치를 얻는다.
+        // 입력: id - 조각 ID.
+        // 출력: 표시 중이면 true와 루트 위치, 아니면 false와 default.
         // The world position of a shown piece (for a destruction effect), false when it is not shown.
         public bool TryGetCenter(uint id, out Vector3 center)
         {
@@ -92,6 +101,9 @@ namespace ProjectH.Client.Game
             return false;
         }
 
+        // 기능: 표시 중인 모든 조각을 Pool로 돌려보낸다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 활성 조각과 건설 중 목록이 비워진다.
         public void Clear()
         {
             _building.Clear();
@@ -99,6 +111,9 @@ namespace ProjectH.Client.Game
             _active.Clear();
         }
 
+        // 기능: 조각 GameObject와 생성한 Material을 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 루트 GameObject와 Material이 파괴되고 목록이 비워진다.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);
@@ -110,6 +125,9 @@ namespace ProjectH.Client.Game
             _building.Clear();
         }
 
+        // 기능: 건설 중인 조각만 높이와 손상 단계를 다시 그린다.
+        // 입력: store - 확정 조각 저장소, catalog - 건설 Catalog, serverTick - 기준 Server Tick.
+        // 출력: 반환값 없음. 건설이 끝났거나 사라진 조각은 건설 중 목록에서 빠진다.
         private void Tick(BuildStore store, BuildCatalogData catalog, double serverTick)
         {
             for (int i = _building.Count - 1; i >= 0; i--)
@@ -125,6 +143,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 확정 조각 하나를 표시한다. 종류가 바뀌었으면 View를 바꾸고 모양이 바뀌었으면 다시 배치한다.
+        // 입력: id - 조각 ID, piece - 조각 기록, catalog - 건설 Catalog, serverTick - 기준 Server Tick.
+        // 출력: 반환값 없음. 조각 View가 그려지고, 건설 중이 되면 건설 중 목록에 추가된다.
         private void Show(uint id, in BuildPieceRecord piece, BuildCatalogData catalog, double serverTick)
         {
             if (_active.TryGetValue(id, out PieceView view) && view.Type != piece.Shape.Type)
@@ -144,6 +165,9 @@ namespace ProjectH.Client.Game
             if (view.Building && !wasBuilding) _building.Add(id);
         }
 
+        // 기능: View의 루트 자세·Collider 크기(처음이거나 모양이 바뀐 때), 건설 높이, 손상 단계 Material 중 바뀐 것만 갱신한다.
+        // 입력: view - 그릴 View, piece - 조각 기록, catalog - 건설 Catalog(null이면 건설 완료로 본다), serverTick - 기준 Server Tick.
+        // 출력: 반환값 없음. View의 Transform·Collider·Material과 Building 표시가 갱신된다.
         private void Draw(PieceView view, in BuildPieceRecord piece, BuildCatalogData catalog, double serverTick)
         {
             int m = (int)piece.Material;
@@ -173,6 +197,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 표시 중인 조각을 숨기고 Pool로 돌려보낸다.
+        // 입력: id - 조각 ID.
+        // 출력: 반환값 없음. 표시 중이 아니면 아무것도 하지 않는다.
         private void Hide(uint id)
         {
             if (!_active.TryGetValue(id, out PieceView view)) return;
@@ -180,6 +207,9 @@ namespace ProjectH.Client.Game
             Release(view);
         }
 
+        // 기능: 건설 중 목록의 항목을 마지막 항목과 바꿔 지운다.
+        // 입력: i - 지울 Index.
+        // 출력: 반환값 없음. 건설 중 목록이 하나 줄어든다.
         private void RemoveBuildingAt(int i)
         {
             int last = _building.Count - 1;
@@ -187,6 +217,9 @@ namespace ProjectH.Client.Game
             _building.RemoveAt(last);
         }
 
+        // 기능: 종류별 Pool에서 View를 꺼내거나 없으면 새로 만든다(벽·바닥은 BoxCollider, 경사면·지붕은 convex MeshCollider).
+        // 입력: type - 조각 종류.
+        // 출력: 활성화되어 다시 배치·그리기가 필요한 상태의 PieceView.
         private PieceView Take(BuildPieceType type)
         {
             Stack<PieceView> pool = _pools[(int)type];
@@ -222,6 +255,9 @@ namespace ProjectH.Client.Game
             return new PieceView { Root = root, Body = body.transform, Renderer = renderer, Box = box, Type = type };
         }
 
+        // 기능: View를 비활성화해 Pool에 넣고, Pool이 MaxPooled만큼 차 있으면 파괴한다.
+        // 입력: view - 돌려보낼 View.
+        // 출력: 반환값 없음. 이미 파괴된 View는 무시한다.
         private void Release(PieceView view)
         {
             if (view.Root == null) return;

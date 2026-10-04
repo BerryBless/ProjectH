@@ -23,8 +23,14 @@ namespace ProjectH.Client.Game
 
         private readonly Dictionary<ushort, Entry> _entries = new Dictionary<ushort, Entry>();
 
+        // 기능: 표시 중인 원격 플레이어 수를 돌려준다.
+        // 입력: 없음.
+        // 출력: 등록된 Entry 수.
         public int Count => _entries.Count;
 
+        // 기능: PlayerSpawned로 원격 플레이어 뷰와 보간기를 만들고 스폰 위치에 놓는다.
+        // 입력: spawned - 서버 스폰 이벤트, tick - 첫 샘플로 기록할 서버 Tick(호출자는 ServerClock.LatestTick).
+        // 출력: 반환값 없음. 새 Entry가 추가된다. 이미 있는 ID면 무시한다.
         public void Spawn(in PlayerSpawned spawned, uint tick)
         {
             if (_entries.ContainsKey(spawned.EntityId)) return;
@@ -41,11 +47,17 @@ namespace ProjectH.Client.Game
             _entries.Add(spawned.EntityId, entry);
         }
 
+        // 기능: 원격 플레이어의 Entry를 지우고 뷰를 파괴한다.
+        // 입력: entityId - 대상 Entity ID.
+        // 출력: 반환값 없음. 있으면 Entry 제거와 뷰 파괴, 없으면 변화 없음.
         public void Despawn(ushort entityId)
         {
             if (_entries.Remove(entityId, out Entry entry)) entry.View.Destroy();
         }
 
+        // 기능: Snapshot의 원격 플레이어 상태를 보간 기록에 넣고 생존 여부 변화를 반영한다.
+        // 입력: tick - Snapshot의 서버 Tick, entity - Snapshot의 Entity 항목.
+        // 출력: 반환값 없음. 샘플이 추가되고, 생존 여부가 바뀌면 뷰 색이 바뀌며 부활이면 이전 샘플이 지워진다. 모르는 ID는 무시한다.
         public void Push(uint tick, in SnapshotEntity entity)
         {
             if (!_entries.TryGetValue(entity.EntityId, out Entry entry)) return;
@@ -62,6 +74,9 @@ namespace ProjectH.Client.Game
             entry.Interpolator.Push(tick, entity.Position.ToUnity(), entity.Yaw, entity.Mode, entity.IsSprinting, entity.IsExhausted);
         }
 
+        // 기능: 매 프레임 모든 원격 플레이어 뷰를 렌더 Tick의 보간 위치와 자세로 옮긴다.
+        // 입력: renderTick - 화면에 그릴 서버 Tick(소수).
+        // 출력: 반환값 없음. 샘플이 있는 뷰의 Transform과 자세가 갱신된다.
         public void Render(double renderTick)
         {
             foreach (var pair in _entries)
@@ -74,6 +89,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 살아 있는 원격 플레이어 ID를 버퍼에 채운다.
+        // 입력: buffer - ID를 쓸 재사용 버퍼.
+        // 출력: 버퍼에 쓴 ID 수(버퍼 길이를 넘지 않음).
         // Phase 5 D5 (spectating): the entity ids of the living remote players, written into buffer; returns how
         // many. Alive comes from the snapshot flags. No allocation (struct enumerator).
         public int CollectAlive(ushort[] buffer)
@@ -87,6 +105,9 @@ namespace ProjectH.Client.Game
             return count;
         }
 
+        // 기능: PlayerRespawned를 받은 원격 플레이어의 순간이동 전 샘플을 버린다.
+        // 입력: entityId - 대상 Entity ID, to - 리스폰 위치.
+        // 출력: 반환값 없음. 보간 기록이 정리된다. 모르는 ID는 무시한다.
         // Phase 5: PlayerRespawned for a remote player (match start and round reset are alive -> alive, so the
         // snapshot flag does not flip): drop its pre-teleport samples so the view snaps instead of sliding.
         // Alive and the view stay with the snapshot flags. Unknown id: nothing.
@@ -95,6 +116,9 @@ namespace ProjectH.Client.Game
             if (_entries.TryGetValue(entityId, out Entry entry)) entry.Interpolator.Teleport(to);
         }
 
+        // 기능: 원격 플레이어의 발이 렌더 Tick에 그려지는 위치를 구한다.
+        // 입력: entityId - 대상 Entity ID, renderTick - 화면에 그릴 서버 Tick(소수).
+        // 출력: 등록되어 있고 샘플이 있으면 true와 발 위치, 아니면 false.
         // Where a remote player's feet are drawn at renderTick (the same interpolation as its view).
         public bool TryGetFeet(ushort entityId, double renderTick, out Vector3 feet)
         {
@@ -102,6 +126,9 @@ namespace ProjectH.Client.Game
             return _entries.TryGetValue(entityId, out Entry entry) && entry.Interpolator.TrySample(renderTick, out feet, out _);
         }
 
+        // 기능: 모든 원격 플레이어 뷰를 파괴하고 목록을 비운다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Entry가 모두 제거된다.
         public void Clear()
         {
             foreach (var pair in _entries) pair.Value.View.Destroy();

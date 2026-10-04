@@ -16,6 +16,9 @@ namespace ProjectH.Client.Net
         Joined,
     }
 
+    // 기능: WorldSnapshot 수신 Handler 형식이다.
+    // 입력: header - Snapshot Header, entities - 재사용되는 Entity Buffer, count - 이번 Snapshot에서 유효한 Entity 수.
+    // 출력: 반환값 없음. entities는 다음 Snapshot에 덮어써지므로 Handler 안에서만 읽는다.
     public delegate void SnapshotHandler(in WorldSnapshotHeader header, SnapshotEntity[] entities, int count);
 
     // Owns the LiteNetLib client. Main thread only: UnsyncedEvents is off and Poll() is called from
@@ -34,6 +37,9 @@ namespace ProjectH.Client.Net
         private readonly int _defaultReconnectDelay;
         private readonly int _defaultMaxConnectAttempts;
 
+        // 기능: LiteNetLib NetManager를 Main Thread Poll 방식으로 만든다(Socket은 Connect에서 연다).
+        // 입력: 없음.
+        // 출력: Disconnected 상태이고 LiteNetLib 기본 재접속 간격·시도 횟수를 기억한 NetClient.
         public NetClient()
         {
             _net = new NetManager(this, null)
@@ -106,8 +112,14 @@ namespace ProjectH.Client.Net
         public RejectReason LastRejectReason { get; private set; }
         public JoinResult LastJoinResult { get; private set; }
         public bool LastConnectStartFailed { get; private set; }
+        // 기능: 현재 연결의 왕복 지연을 읽는다.
+        // 입력: 없음.
+        // 출력: 연결 중이면 서버 Peer의 RTT(ms), 아니면 0.
         public int RoundTripMs => _server != null ? _server.RoundTripTime : 0;
 
+        // 기능: 서버에 접속 요청(ProtocolVersion, DevPlayerId를 담은 Connect Data)을 보낸다. Disconnected 상태에서만 동작한다.
+        // 입력: host - 서버 주소, port - 서버 Port, devPlayerId - 개발용 플레이어 ID(32바이트 이하), reconnectAttempt - 자동 재접속이면 짧은 접속 예산을 쓴다.
+        // 출력: 반환값 없음. 시작되면 Connecting 상태가 된다. Socket 열기·ID 길이·주소 해석에 실패하면 Disconnected로 남고 LastError가 설정된다.
         // reconnectAttempt (Phase 10 D10): an automatic attempt gets the short connect budget of DisconnectCodes, so it
         // gives up within its slot (about 1.5 s instead of LiteNetLib's 5.5 s). A manual connect gets the defaults
         // back. LiteNetLib reads both fields on every update of a connecting peer (they are plain public fields,
@@ -152,11 +164,17 @@ namespace ProjectH.Client.Net
             State = _server != null ? ClientState.Connecting : ClientState.Disconnected;
         }
 
+        // 기능: 받은 LiteNetLib Event를 처리한다. GameClient.Update에서 매 Frame 호출한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 쌓인 Event가 Main Thread에서 아래 Listener Callback으로 전달된다.
         public void Poll()
         {
             if (_net.IsRunning) _net.PollEvents();
         }
 
+        // 기능: 플레이어 입력을 서버로 보낸다. Joined 상태가 아니면 무시한다.
+        // 입력: packet - 보낼 입력 Packet.
+        // 출력: 반환값 없음. PlayerInputPacket이 기본 Channel에 Unreliable로 전송된다.
         public void SendInput(in PlayerInputPacket packet)
         {
             if (State != ClientState.Joined) return;
@@ -165,11 +183,17 @@ namespace ProjectH.Client.Net
             _server.Send(writer.WrittenSpan, DeliveryMethod.Unreliable);
         }
 
+        // 기능: 현재 서버 연결을 끊는다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 연결이 있으면 끊기고, 이후 OnPeerDisconnected에서 Disconnected 상태로 바뀌며 Disconnected Event가 발생한다.
         public void Disconnect()
         {
             if (_server != null) _net.DisconnectPeer(_server);
         }
 
+        // 기능: 건설 배치 요청을 서버로 보낸다.
+        // 입력: request - 보낼 건설 요청.
+        // 출력: Joined면 true(BuildRequest가 건설 Channel에 ReliableOrdered로 전송됨), 아니면 false.
         // Phase 13 D8: one placement on the building channel. False when not joined.
         public bool SendBuild(in BuildRequest request)
         {
@@ -180,6 +204,9 @@ namespace ProjectH.Client.Net
             return true;
         }
 
+        // 기능: 이 플레이어의 누적 통계를 서버에 요청한다.
+        // 입력: 없음.
+        // 출력: Joined면 true(StatsRequest가 기본 Channel에 ReliableOrdered로 전송됨, 응답은 StatsReceived), 아니면 false.
         // Phase 11 D8: asks for this player's statistics; the answer comes as StatsReceived. False when not joined.
         public bool RequestStats()
         {
@@ -190,6 +217,9 @@ namespace ProjectH.Client.Net
             return true;
         }
 
+        // 기능: 아직 Join하지 않은 접속 시도·연결을 Disconnected Event 없이 포기한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Connecting·Connected 상태였으면 Peer를 잊고 Disconnected 상태가 되며, Last* 값은 유지된다.
         // Phase 10 D10: gives up a connect that is still in progress, without a Disconnected event: the caller starts
         // the next attempt at once. Phase 11: also a connection that is connected but not joined yet (the disconnected
         // screen's Cancel), so the Last* fields keep the end that started the reconnect cycle. The peer is forgotten
@@ -204,6 +234,9 @@ namespace ProjectH.Client.Net
             _net.DisconnectPeer(abandoned);
         }
 
+        // 기능: NetManager를 멈추고 연결을 정리한다. 두 번 호출해도 안전하다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Socket이 닫히고 Disconnected 상태가 되며 이후 Connect는 무시된다.
         public void Dispose()
         {
             if (_disposed) return;
@@ -213,6 +246,9 @@ namespace ProjectH.Client.Net
             State = ClientState.Disconnected;
         }
 
+        // 기능: 서버 연결 성공을 처리하고 Join 요청을 보낸다. Poll 안에서 Main Thread로 호출된다.
+        // 입력: peer - 연결된 Peer.
+        // 출력: 반환값 없음. 현재 연결이면 Connected 상태가 되고 JoinMatchRequest가 기본 Channel에 ReliableOrdered로 전송된 뒤 Connected Event가 발생한다. 포기한 시도의 Peer는 무시한다.
         void INetEventListener.OnPeerConnected(NetPeer peer)
         {
             if (peer != _server) return;   // an abandoned attempt (CancelConnect)
@@ -223,6 +259,9 @@ namespace ProjectH.Client.Net
             Connected?.Invoke();
         }
 
+        // 기능: 서버 연결 종료를 처리하고 종료 이유를 기록한다. Poll 안에서 Main Thread로 호출된다.
+        // 입력: peer - 끊긴 Peer, disconnectInfo - LiteNetLib 종료 이유와 서버가 보낸 추가 데이터.
+        // 출력: 반환값 없음. 현재 연결이면 Disconnected 상태가 되고 LastDisconnectCode·Retryable·Reason·RejectReason·LastError가 설정된 뒤 Disconnected Event가 발생한다.
         void INetEventListener.OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo)
         {
             if (peer != _server) return;   // an abandoned attempt (CancelConnect): not this connection's end
@@ -254,6 +293,9 @@ namespace ProjectH.Client.Net
             Disconnected?.Invoke(reason);
         }
 
+        // 기능: 서버 종료 코드를 화면·로그용 문장으로 바꾼다.
+        // 입력: code - 서버가 보낸 종료 코드.
+        // 출력: 코드에 맞는 고정 문자열. 모르는 코드는 "Disconnected".
         // Constant strings: no allocation.
         private static string Describe(DisconnectCode code)
         {
@@ -269,6 +311,9 @@ namespace ProjectH.Client.Net
             }
         }
 
+        // 기능: 현재 연결에서 받은 Packet을 PacketId별로 읽어 해당 Event를 발생시킨다. Poll 안에서 Main Thread로 호출된다.
+        // 입력: peer - 보낸 Peer, reader - 받은 데이터, channelNumber - 수신 Channel, deliveryMethod - 전송 방식.
+        // 출력: 반환값 없음. 읽기에 성공한 Packet마다 Event가 발생하고, JoinMatchResponse가 Ok·Resumed면 Joined 상태가 된다. 다른 Peer나 잘못된 Packet은 무시하며, 목록 Packet은 읽기 실패 지점에서 멈춘다.
         void INetEventListener.OnNetworkReceive(NetPeer peer, NetPacketReader reader, byte channelNumber, DeliveryMethod deliveryMethod)
         {
             if (peer != _server) return;
@@ -438,21 +483,33 @@ namespace ProjectH.Client.Net
             }
         }
 
+        // 기능: 들어오는 연결 요청을 거절한다. Client는 연결을 받지 않는다.
+        // 입력: request - 들어온 연결 요청.
+        // 출력: 반환값 없음. 요청이 거절된다.
         void INetEventListener.OnConnectionRequest(ConnectionRequest request)
         {
             // A client never accepts incoming connections.
             request.Reject();
         }
 
+        // 기능: Socket 오류를 기록한다. Poll 안에서 Main Thread로 호출된다.
+        // 입력: endPoint - 오류가 난 주소, socketError - Socket 오류 코드.
+        // 출력: 반환값 없음. LastError가 설정된다.
         void INetEventListener.OnNetworkError(IPEndPoint endPoint, SocketError socketError)
         {
             LastError = "Network error: " + socketError;
         }
 
+        // 기능: 연결 없는 Message를 받는 Callback이다. 사용하지 않아 무시한다.
+        // 입력: remoteEndPoint - 보낸 주소, reader - 받은 데이터, messageType - Message 종류.
+        // 출력: 반환값 없음. 아무것도 바뀌지 않는다.
         void INetEventListener.OnNetworkReceiveUnconnected(IPEndPoint remoteEndPoint, NetPacketReader reader, UnconnectedMessageType messageType)
         {
         }
 
+        // 기능: 지연 갱신 Callback이다. RTT는 RoundTripMs가 Peer 값을 직접 읽으므로 무시한다.
+        // 입력: peer - 대상 Peer, latency - 갱신된 지연(ms).
+        // 출력: 반환값 없음. 아무것도 바뀌지 않는다.
         void INetEventListener.OnNetworkLatencyUpdate(NetPeer peer, int latency)
         {
         }

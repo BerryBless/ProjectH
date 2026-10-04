@@ -18,6 +18,9 @@ namespace ProjectH.Client.Game
 
     public sealed class BuildAudio
     {
+        // 기능: 건설·채집 효과음을 지정한 위치에서 재생한다. 아직 오디오 클립이 없어 지금은 아무 동작도 하지 않는다.
+        // 입력: sound - 재생할 효과음 종류, position - 재생할 월드 위치.
+        // 출력: 반환값 없음. 현재는 바뀌는 상태가 없다.
         // Where a clip for this sound will play, at position.
         public void Play(BuildSound sound, Vector3 position)
         {

@@ -25,8 +25,14 @@ namespace ProjectH.Client.Game
         private int _count;
         private int _newest = -1;
 
+        // 기능: Ground 모드, 달리기·탈진 아님으로 샘플을 추가한다.
+        // 입력: tick - 샘플의 서버 Tick, position - 발 위치, yaw - 방향(도).
+        // 출력: 반환값 없음. 유효한 샘플이면 기록에 추가된다.
         public void Push(uint tick, Vector3 position, float yaw) => Push(tick, position, yaw, MovementMode.Ground, false, false);
 
+        // 기능: Snapshot 샘플을 고정 크기 Ring 기록에 추가한다.
+        // 입력: tick - Snapshot의 서버 Tick, position - 발 위치, yaw - 방향(도), mode - 이동 모드, sprinting - 달리기 여부, exhausted - 탈진 여부.
+        // 출력: 반환값 없음. 값이 유한하고 Tick이 최신보다 크면 추가되고, Ring이 가득 차 있으면 가장 오래된 샘플을 덮어쓴다.
         public void Push(uint tick, Vector3 position, float yaw, MovementMode mode, bool sprinting, bool exhausted)
         {
             // Snapshot values come from the network: a NaN/Infinity sample would poison every
@@ -45,6 +51,9 @@ namespace ProjectH.Client.Game
             if (_count < Capacity) _count++;
         }
 
+        // 기능: 모든 샘플을 잊는다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 기록이 비어 다음 Push부터 새로 시작한다.
         // Forget all samples (respawn teleport): the next Push starts a new history.
         public void Clear()
         {
@@ -52,6 +61,9 @@ namespace ProjectH.Client.Game
             _newest = -1;
         }
 
+        // 기능: 리스폰 순간이동 전의 샘플을 버린다.
+        // 입력: to - 리스폰 위치.
+        // 출력: 반환값 없음. 최신부터 연속으로 to에서 TeleportKeepRadius 안인 샘플만 남고, 없으면 Clear된다. to가 유한하지 않으면 무시한다.
         // Phase 5: a respawn teleport told by PlayerRespawned (match start, round reset, dev respawn). The event is
         // ReliableOrdered and snapshots are Sequenced, on different channels, so samples from after the respawn may
         // already be here (a retransmitted event) or the dead->alive Clear in RemotePlayers.Push may already have
@@ -73,9 +85,15 @@ namespace ProjectH.Client.Game
             else _count = kept;   // the ring keeps _newest; the dropped oldest slots are reused by Push
         }
 
+        // 기능: 렌더 Tick에서 보간한 위치와 방향만 구한다.
+        // 입력: renderTick - 화면에 그릴 서버 Tick(소수, ServerClock.RenderTick).
+        // 출력: 샘플이 있으면 true와 위치·방향, 없으면 false.
         public bool TrySample(double renderTick, out Vector3 position, out float yaw) =>
             TrySample(renderTick, out position, out yaw, out _, out _, out _);
 
+        // 기능: 렌더 Tick 앞뒤 두 샘플 사이를 보간해 위치·방향을 구하고 이동 상태를 고른다.
+        // 입력: renderTick - 화면에 그릴 서버 Tick(소수, ServerClock.RenderTick).
+        // 출력: 샘플이 있으면 true와 위치·방향·모드·달리기·탈진(최신 샘플 이후면 최신 값 유지, 가장 오래된 샘플 이전이면 그 값), 없으면 false.
         // mode, sprinting, exhausted: those of the newest sample at or before renderTick (between two samples, the older
         // one's), the same rule as the server's PositionHistory.Sample; before the oldest sample, the oldest's.
         public bool TrySample(double renderTick, out Vector3 position, out float yaw, out MovementMode mode, out bool sprinting,
@@ -119,6 +137,9 @@ namespace ProjectH.Client.Game
             return true;
         }
 
+        // 기능: 값이 NaN·Infinity가 아닌지 확인한다.
+        // 입력: value - 검사할 값.
+        // 출력: 유한하면 true, 아니면 false.
         private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
     }
 }

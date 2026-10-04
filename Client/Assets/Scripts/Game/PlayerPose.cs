@@ -20,6 +20,9 @@ namespace ProjectH.Client.Game
         public bool Hidden;        // aboard the transport: neither drawn nor hit
         public float HitHeight;    // MovementSimulation.CollisionHeight of the mode
 
+        // 기능: 이동 모드·질주·생존 여부로 캡슐의 표시 자세(몸 높이, 기울기, 엎드림, 날개, 숨김)와 서버와 같은 피격 높이를 정한다.
+        // 입력: mode - 이동 모드, sprinting - 질주 중 여부(전용 자세가 없는 모드에서 앞으로 기울이는 데만 사용), alive - 생존 여부.
+        // 출력: 해당 상태의 PlayerPose. 죽었으면 Prone만 켠 기본 자세.
         public static PlayerPose For(MovementMode mode, bool sprinting, bool alive)
         {
             var pose = new PlayerPose { BodyHeight = StandingBody, HitHeight = MovementSimulation.CollisionHeight(mode) };

@@ -31,6 +31,9 @@ namespace ProjectH.Client.Game
         private int _shownType = -1;
         private int _pendingVersion = -1;
 
+        // 기능: 조각 종류별 후보 Ghost 4개, 대기 배치 Ghost MaxPending개, 판정 상태별 반투명 Material을 만든다.
+        // 입력: meshes - 공유 조각 Mesh, fallback - Sprites/Default가 없을 때 복제할 Material.
+        // 출력: 모든 Ghost가 숨겨진 BuildPreview.
         public BuildPreview(PieceMeshes meshes, Material fallback)
         {
             _meshes = meshes;
@@ -50,6 +53,9 @@ namespace ProjectH.Client.Game
                 _pendingBodies[i] = CreateGhost("Pending", meshes.Box, _pendingMaterial, out _pendingRoots[i], out _pendingFilters[i]);
         }
 
+        // 기능: 이번 프레임 후보 Ghost를 위치와 판정 색으로 그리고, 대기 배치가 바뀐 때만 대기 Ghost를 다시 배치한다.
+        // 입력: build - 후보와 대기 배치를 가진 BuildController.
+        // 출력: 반환값 없음. Ghost의 활성 상태·Transform·Material이 갱신된다.
         public void Update(BuildController build)
         {
             if (_root == null) return;
@@ -81,6 +87,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 모든 후보·대기 Ghost를 숨긴다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Ghost가 숨겨지고, 다음 Update에서 대기 Ghost를 다시 그리도록 버전이 초기화된다.
         public void HideAll()
         {
             if (_root == null) return;
@@ -90,6 +99,9 @@ namespace ProjectH.Client.Game
             _pendingVersion = -1;
         }
 
+        // 기능: Ghost GameObject와 생성한 Material을 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 루트 GameObject와 Material이 파괴된다.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);
@@ -100,6 +112,9 @@ namespace ProjectH.Client.Game
             if (_pendingMaterial != null) Object.Destroy(_pendingMaterial);
         }
 
+        // 기능: Collider 없는 Ghost 루트와 Mesh를 그리는 Body 자식을 만든다.
+        // 입력: name - 루트 이름, mesh - 그릴 Mesh, material - 처음 Material, root - 만든 루트 Transform(out), filter - Body의 MeshFilter(out).
+        // 출력: Body Transform. 루트는 비활성 상태로 만들어진다.
         private Transform CreateGhost(string name, Mesh mesh, Material material, out Transform root, out MeshFilter filter)
         {
             var go = new GameObject(name);
@@ -117,6 +132,9 @@ namespace ProjectH.Client.Game
             return body.transform;
         }
 
+        // 기능: Ghost 색 Material을 만든다. Sprites/Default가 없으면 경고를 한 번 남기고 fallback을 불투명 색으로 복제한다.
+        // 입력: sprite - Sprites/Default Shader(없으면 null), fallback - 대체 Material, color - Ghost 색.
+        // 출력: 새로 만든 Material(Dispose에서 파괴).
         private static Material Make(Shader sprite, Material fallback, Color color)
         {
             if (sprite == null && !_warnedNoSprite)

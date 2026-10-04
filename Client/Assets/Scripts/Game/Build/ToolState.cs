@@ -21,6 +21,9 @@ namespace ProjectH.Client.Game
         public ToolKind Current { get; private set; }
         public ToolKind Previous { get; private set; }
 
+        // 기능: Server HarvestRules.SelectTool과 같은 규칙으로 입력 후 도구를 정한다.
+        // 입력: current - 현재 도구, previous - 건설 모드 전 도구(ref, 건설로 바뀌면 current로 갱신), buttons - 입력 버튼.
+        // 출력: 입력 후 도구.
         // The server's rule (HarvestRules.SelectTool): a weapon slot key wins, then F, then Q (from build mode: back to the
         // tool before it). Returns the tool after the input and updates previous.
         public static ToolKind Select(ToolKind current, ref ToolKind previous, InputButtons buttons)
@@ -35,6 +38,9 @@ namespace ProjectH.Client.Game
             return target;
         }
 
+        // 기능: 입력 하나를 예측 실행하고 이력에 기록한다.
+        // 입력: seq - 입력 번호, buttons - 입력 버튼, acts - 이 입력이 행동 가능한지(ActionsAllowedAt).
+        // 출력: 입력 후 예측 도구. Current·Previous와 이력이 갱신된다.
         // One input (seq) as the server will run it: it switches only when the input acts (ActionsAllowedAt).
         public ToolKind Step(uint seq, InputButtons buttons, bool acts)
         {
@@ -53,9 +59,15 @@ namespace ProjectH.Client.Game
             return Current;
         }
 
+        // 기능: 입력 seq 직후의 예측 도구를 이력에서 읽는다.
+        // 입력: seq - 입력 번호(최근 HistorySize 안).
+        // 출력: 그 입력 후 예측 도구. 범위 밖 seq는 같은 슬롯을 쓴 다른 입력의 값이다.
         // The tool the prediction had after input seq (one of the last HistorySize).
         public ToolKind At(uint seq) => _after[(int)(seq % HistorySize)];
 
+        // 기능: Snapshot의 ack 입력 후 Server 도구로 예측을 보정한다.
+        // 입력: server - ack 입력 후 Server 도구, ackSeq - Server가 처리한 마지막 입력 번호.
+        // 출력: 반환값 없음. 다르면 ack 이후 입력을 다시 실행해 Current·Previous가 갱신되고, ack가 이력 밖이면 Server 도구로 Reset된다.
         // The snapshot's tool after the acked input. A match keeps the prediction; otherwise the server's value replaces it
         // there and the inputs after it are run again (their previous-tool memory follows from the server's tool).
         public void ApplyServer(ToolKind server, uint ackSeq)
@@ -82,6 +94,9 @@ namespace ProjectH.Client.Game
             Previous = previous;
         }
 
+        // 기능: 리스폰·참가·재개 때 도구 상태를 초기화한다.
+        // 입력: tool - 들 도구(기본 Weapon).
+        // 출력: 반환값 없음. Current가 tool, Previous가 Weapon이 된다.
         // A respawn, a join or a resume: the weapons are out (the server's inventory starts over).
         public void Reset(ToolKind tool = ToolKind.Weapon)
         {

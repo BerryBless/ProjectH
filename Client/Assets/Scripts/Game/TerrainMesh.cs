@@ -9,6 +9,9 @@ namespace ProjectH.Client.Game
     // once at startup (MapWorld); pure, testable outside Unity.
     public static class TerrainMesh
     {
+        // 기능: HeightField의 격자 정점을 월드 좌표 정점 배열로 만든다.
+        // 입력: terrain - 높이 격자 지형.
+        // 출력: i + j * VertsX 순서의 새 정점 배열.
         public static Vector3[] Vertices(HeightField terrain)
         {
             var vertices = new Vector3[terrain.VertsX * terrain.VertsZ];
@@ -23,6 +26,9 @@ namespace ProjectH.Client.Game
             return vertices;
         }
 
+        // 기능: 격자 칸마다 HeightField와 같은 대각선으로 위를 향하는 삼각형 두 개를 만든다.
+        // 입력: terrain - 높이 격자 지형.
+        // 출력: 칸당 인덱스 6개를 담은 새 삼각형 인덱스 배열.
         public static int[] Triangles(HeightField terrain)
         {
             int cellsX = terrain.VertsX - 1;

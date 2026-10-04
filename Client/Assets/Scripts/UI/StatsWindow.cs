@@ -20,6 +20,9 @@ namespace ProjectH.Client.UI
         private StatsResponse _shownResponse;
         private bool _shownAny;
 
+        // 기능: 내 전적 창(제목, 상태, 합계, 최근 경기 줄, 닫기 버튼)을 만든다.
+        // 입력: canvas - 부모 Canvas, onClose - 닫기 버튼 Handler.
+        // 출력: 내용 Text가 빈 상태로 초기화된 StatsWindow 객체.
         public StatsWindow(Transform canvas, UnityAction onClose)
         {
             _root = UiFactory.CreateScreen("Stats", canvas, dim: true).gameObject;
@@ -37,6 +40,9 @@ namespace ProjectH.Client.UI
             UiFactory.CreateButton("Close", panel, "닫기", new Vector2(0f, -295f), new Vector2(220f, 60f), onClose);
         }
 
+        // 기능: 창 표시 여부를 바꾼다.
+        // 입력: visible - 보일지 여부.
+        // 출력: 반환값 없음. 값이 바뀌었을 때만 활성 상태가 바뀌고, 열릴 때는 다음 Tick에서 내용을 다시 그리게 된다.
         public void SetVisible(bool visible)
         {
             if (visible == _visible) return;
@@ -45,6 +51,9 @@ namespace ProjectH.Client.UI
             if (visible) _shownAny = false;   // redraw on the first Tick after opening
         }
 
+        // 기능: 요청 대기 상태와 응답에 따라 상태·합계·최근 경기 Text를 갱신한다.
+        // 입력: now - 현재 시각(unscaled 초), sentAt - 요청 시각, answeredAt - 응답 시각, latest - 최신 StatsResponse, utcOffset - 경기 시각 표시용 시간대.
+        // 출력: 반환값 없음. 대기 상태나 응답 참조가 바뀌었을 때만 Text가 다시 쓰인다.
         // Every frame while open. sentAt / answeredAt: GameClient's request and answer times (unscaled seconds).
         public void Tick(float now, float sentAt, float answeredAt, StatsResponse latest, TimeSpan utcOffset)
         {
@@ -71,6 +80,9 @@ namespace ProjectH.Client.UI
             }
         }
 
+        // 기능: 세 내용 Text를 한 번에 바꾼다.
+        // 입력: status - 상태 줄, summary - 합계 줄, rows - 최근 경기 줄.
+        // 출력: 반환값 없음. 상태·합계·최근 경기 Text가 바뀐다.
         private void Set(string status, string summary, string rows)
         {
             _status.text = status;

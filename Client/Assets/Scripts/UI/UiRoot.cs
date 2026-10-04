@@ -41,6 +41,9 @@ namespace ProjectH.Client.UI
         private float _statsSentAt = -1f;
         private TimeSpan _utcOffset;
 
+        // 기능: EventSystem, 화면 Canvas, 각 화면과 디버그 오버레이를 만들고 버튼을 연결한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. UI 객체가 생성되고 버튼이 GameClient·UiFlow 처리에 연결된다.
         private void Awake()
         {
             _client = GetComponent<GameClient>();
@@ -56,6 +59,9 @@ namespace ProjectH.Client.UI
             _debug = new DebugOverlay();
         }
 
+        // 기능: 명령줄 인자나 저장된 값으로 타이틀 입력 칸을 채우고, 자동 접속 인자면 바로 접속한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 타이틀 입력이 채워지고 첫 화면이 표시된다.
         // After every Awake on this GameObject, so GameClient is ready when the command line connects at once.
         private void Start()
         {
@@ -74,6 +80,9 @@ namespace ProjectH.Client.UI
             Apply();
         }
 
+        // 기능: 매 프레임 GameClient 상태를 UiFlow에 전달하고 현재 화면과 디버그 줄을 갱신한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 화면 전환, 커서 잠금·입력 차단 설정, 보이는 화면의 내용과 디버그 줄이 갱신된다.
         private void Update()
         {
             if (_client.DebugTogglePressed) _debug.Toggle();
@@ -108,6 +117,9 @@ namespace ProjectH.Client.UI
             _client.TickBuildDebug(_debug, Time.unscaledTime);
         }
 
+        // 기능: UiFlow가 고른 화면만 보이게 하고 전환 시 필요한 처리를 한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 화면 표시 상태가 바뀌고, 결과 화면이 열리면 결과가 채워지며, 전적 창이 열리면 전적 요청이 보내진다.
         // Shows what UiFlow chose. Runs only when its Version changed (or at start).
         private void Apply()
         {
@@ -140,6 +152,9 @@ namespace ProjectH.Client.UI
             _shownVersion = _flow.Version;
         }
 
+        // 기능: GameClient의 최신 MatchResult로 결과 화면을 채운다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 결과 화면 Text가 갱신된다.
         private void ShowResult()
         {
             MatchResult r = _client.Result;
@@ -149,6 +164,9 @@ namespace ProjectH.Client.UI
                 _client.KillerName);
         }
 
+        // 기능: 타이틀 접속 버튼 콜백: 주소·포트·이름을 저장하고 접속을 시작한다.
+        // 입력: host - 서버 주소, port - 서버 포트, name - 플레이어 이름.
+        // 출력: 반환값 없음. 연결이 끊긴 상태일 때만 PlayerPrefs에 저장되고 접속이 시작된다.
         // The title's Connect: the only path that saves the address, port and name (D4).
         private void Connect(string host, int port, string name)
         {
@@ -160,6 +178,9 @@ namespace ProjectH.Client.UI
             StartConnect(host, port, name);
         }
 
+        // 기능: 접속 주소를 기억하고 GameClient 접속과 Connecting 화면 전환을 시작한다.
+        // 입력: host - 서버 주소, port - 서버 포트, name - 플레이어 이름.
+        // 출력: 반환값 없음. Disconnected 상태일 때만 접속이 시작되고 화면이 Connecting으로 바뀐다.
         // Only from Disconnected: GameClient.Connect ignores a connect while the previous connection is still closing,
         // and the flow must not show "connecting" for a connect that never started.
         private void StartConnect(string host, int port, string name)
@@ -172,12 +193,18 @@ namespace ProjectH.Client.UI
             _flow.ConnectRequested();
         }
 
+        // 기능: 다시 접속 버튼 Handler: 마지막 주소로 다시 접속한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 이전 접속 주소가 있으면 접속이 시작된다.
         private void Retry()
         {
             if (_host == null) return;
             StartConnect(_host, _port, _name);
         }
 
+        // 기능: 접속 중 화면의 취소 버튼 Handler.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 연결이 끊기고 타이틀 화면으로 돌아간다.
         // Connecting "cancel".
         private void CancelConnect()
         {
@@ -185,6 +212,9 @@ namespace ProjectH.Client.UI
             _flow.LeaveRequested();
         }
 
+        // 기능: 메뉴의 접속 끊기·연결 끊김 화면의 타이틀로 버튼 Handler.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 연결과 자동 재접속이 중단되고 타이틀 화면으로 돌아간다.
         // Menu "disconnect", Disconnected "to title": also stops an automatic reconnect.
         private void Leave()
         {
@@ -192,12 +222,18 @@ namespace ProjectH.Client.UI
             _flow.LeaveRequested();
         }
 
+        // 기능: 게임 종료 버튼 Handler.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 빌드된 Player가 종료된다(Editor에서는 변화 없음).
         // A built player closes. In the Editor Application.Quit does nothing (stop Play Mode instead).
         private static void Quit()
         {
             Application.Quit();
         }
 
+        // 기능: UiRoot가 만든 UI 객체를 정리한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 디버그 오버레이, 화면 Canvas, 직접 만든 EventSystem이 파괴된다.
         private void OnDestroy()
         {
             _debug?.Dispose();

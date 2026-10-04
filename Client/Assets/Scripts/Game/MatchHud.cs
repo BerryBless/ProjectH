@@ -23,6 +23,9 @@ namespace ProjectH.Client.Game
         private readonly GameObject _edges;
         private bool _visible;
 
+        // 기능: 경기 HUD Canvas와 자기장 밖 빨간 화면 가장자리, 상태·자기장·관전 Text를 코드로 만든다.
+        // 입력: 없음.
+        // 출력: 모든 요소가 생성되고 Root와 가장자리가 비활성인 MatchHud.
         public MatchHud()
         {
             _root = new GameObject("MatchHud");
@@ -53,6 +56,9 @@ namespace ProjectH.Client.Game
             _root.SetActive(false);
         }
 
+        // 기능: HUD 전체의 표시 여부를 바꾼다. 값이 같거나 Root가 이미 파괴됐으면 아무것도 하지 않는다.
+        // 입력: visible - 보일지 여부.
+        // 출력: 반환값 없음. Root GameObject의 활성 상태가 바뀐다.
         public void SetVisible(bool visible)
         {
             // Unity null: the root can be destroyed on teardown before the owner's OnDestroy runs this.
@@ -61,33 +67,51 @@ namespace ProjectH.Client.Game
             _root.SetActive(visible);
         }
 
+        // 기능: 상단 경기 상태 줄을 문자열이 다시 만들어졌을 때만 화면에 반영한다.
+        // 입력: state - 경기 진행 상태, secondsLeft - 시작까지 남은 초, alive - 생존자 수, participants - 참가자 수, minPlayers - 시작 최소 인원.
+        // 출력: 반환값 없음. 값이 바뀌면 상태 Text가 갱신된다.
         public void SetStatus(MatchFlowState state, int secondsLeft, int alive, int participants, int minPlayers)
         {
             if (_root != null && _text.SetStatus(state, secondsLeft, alive, participants, minPlayers)) _status.text = _text.Status;
         }
 
+        // 기능: 자기장 줄을 문자열이 다시 만들어졌을 때만 화면에 반영한다.
+        // 입력: hint - 자기장 단계 안내, seconds - 축소까지 남은 초.
+        // 출력: 반환값 없음. 값이 바뀌면 자기장 Text가 갱신된다.
         public void SetZone(ZoneHint hint, int seconds)
         {
             if (_root != null && _text.SetZone(hint, seconds)) _zone.text = _text.Zone;
         }
 
+        // 기능: 관전 대상 줄을 문자열이 다시 만들어졌을 때만 화면에 반영한다.
+        // 입력: entityId - 관전 대상 Entity ID(0이면 숨김), name - 그 플레이어 이름(모르면 null).
+        // 출력: 반환값 없음. 값이 바뀌면 관전 Text가 갱신된다.
         // 0 hides the line. name: PlayerSpawned's name of that player, null when not known.
         public void SetSpectating(ushort entityId, string name)
         {
             if (_root != null && _text.SetSpectating(entityId, name)) _spectating.text = _text.Spectating;
         }
 
+        // 기능: 로컬 플레이어가 자기장 밖에 있는 동안 빨간 화면 가장자리를 켠다.
+        // 입력: outside - 자기장 밖 여부.
+        // 출력: 반환값 없음. 가장자리 GameObject의 활성 상태가 바뀐다.
         // Red screen edges while the local player is outside the zone.
         public void SetOutside(bool outside)
         {
             if (_root != null && _edges.activeSelf != outside) _edges.SetActive(outside);
         }
 
+        // 기능: 경기 HUD Canvas를 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Root와 모든 자식 UI가 파괴된다.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);
         }
 
+        // 기능: Root 아래에 Raycast 대상이 아니고 Rich Text를 쓰지 않는 가운데 정렬 Text 하나를 만든다.
+        // 입력: name - GameObject 이름, font - 사용할 글꼴, size - 글자 크기, anchor - 앵커·피벗 위치, offset - 앵커 기준 위치.
+        // 출력: 빈 문자열로 초기화된 Text.
         private Text CreateText(string name, Font font, int size, Vector2 anchor, Vector2 offset)
         {
             var go = new GameObject(name, typeof(RectTransform));
@@ -111,6 +135,9 @@ namespace ProjectH.Client.Game
             return text;
         }
 
+        // 기능: 화면 한쪽 가장자리를 따라 반투명 빨간 막대 하나를 만든다.
+        // 입력: parent - 부모 RectTransform, anchorMin - 가장자리 앵커 시작, anchorMax - 가장자리 앵커 끝, size - 가장자리에 수직인 두께.
+        // 출력: 반환값 없음. 부모 아래에 가장자리 Image가 생긴다.
         // A red bar along one screen edge: anchored to the edge (anchorMin..anchorMax), size = thickness across it.
         private static void CreateEdge(RectTransform parent, Vector2 anchorMin, Vector2 anchorMax, Vector2 size)
         {

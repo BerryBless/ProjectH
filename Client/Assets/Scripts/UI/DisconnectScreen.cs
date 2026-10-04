@@ -24,6 +24,9 @@ namespace ProjectH.Client.UI
         private int _shownAttempt = -1;
         private int _shownSeconds = -1;
 
+        // 기능: 연결 끊김 화면(사유, 재접속 진행 줄, 재접속 취소·다시 접속·타이틀로 버튼)을 만든다.
+        // 입력: canvas - 부모 Canvas, onCancel - 재접속 취소 버튼 Handler, onRetry - 다시 접속 버튼 Handler, onToTitle - 타이틀로 버튼 Handler.
+        // 출력: 다시 접속·타이틀로 버튼이 보이는 상태로 초기화된 DisconnectScreen 객체.
         public DisconnectScreen(Transform canvas, UnityAction onCancel, UnityAction onRetry, UnityAction onToTitle)
         {
             _root = UiFactory.CreateScreen("Disconnected", canvas, dim: true).gameObject;
@@ -40,6 +43,9 @@ namespace ProjectH.Client.UI
             SetReconnecting(false);
         }
 
+        // 기능: 화면 표시 여부를 바꾼다.
+        // 입력: visible - 보일지 여부.
+        // 출력: 반환값 없음. 값이 바뀌었을 때만 화면 GameObject의 활성 상태가 바뀐다.
         public void SetVisible(bool visible)
         {
             if (visible == _visible) return;
@@ -47,6 +53,9 @@ namespace ProjectH.Client.UI
             _root.SetActive(visible);
         }
 
+        // 기능: 연결 종료 사유를 표시한다.
+        // 입력: reason - UiText의 상수 사유 문자열.
+        // 출력: 반환값 없음. 참조가 바뀌었을 때만 사유 Text가 갱신된다.
         // reason: one of UiText's constants (UiText.Disconnect).
         public void SetReason(string reason)
         {
@@ -55,6 +64,9 @@ namespace ProjectH.Client.UI
             _reason.text = reason;
         }
 
+        // 기능: 다시 접속 버튼을 누를 수 있는지 바꾼다.
+        // 입력: enabled - 누를 수 있는지 여부.
+        // 출력: 반환값 없음. 값이 바뀌었을 때만 버튼의 interactable이 바뀐다.
         // Off while the previous connection is still closing (Retry would be ignored), like the title's Connect.
         public void SetRetryEnabled(bool enabled)
         {
@@ -63,6 +75,9 @@ namespace ProjectH.Client.UI
             _retryButton.interactable = enabled;
         }
 
+        // 기능: 자동 재접속 여부에 맞게 버튼 구성을 바꾼다.
+        // 입력: reconnecting - 자동 재접속 진행 여부.
+        // 출력: 반환값 없음. 재접속 중이면 취소 버튼만, 아니면 다시 접속·타이틀로 버튼이 보이고 진행 줄이 비워진다.
         public void SetReconnecting(bool reconnecting)
         {
             if (reconnecting == _reconnecting) return;
@@ -78,6 +93,9 @@ namespace ProjectH.Client.UI
             }
         }
 
+        // 기능: 재접속 시도 번호와 다음 시도까지 남은 초를 표시한다.
+        // 입력: attempt - 현재 시도 번호, maxAttempts - 최대 시도 수, secondsLeft - 다음 시도까지 남은 초.
+        // 출력: 반환값 없음. 재접속 중이고 숫자가 바뀌었을 때만 진행 줄 Text가 갱신된다.
         // secondsLeft 0 = the attempt is connecting now.
         public void SetProgress(int attempt, int maxAttempts, int secondsLeft)
         {
