@@ -5,6 +5,7 @@
 #if UNITY_EDITOR || DEVELOPMENT_BUILD || !UNITY_5_3_OR_NEWER
 #nullable disable
 using System;
+using System.Globalization;
 using System.Text;
 
 namespace ProjectH.Client.Qa
@@ -77,6 +78,7 @@ namespace ProjectH.Client.Qa
         Status,       // GET  /qa/status
         Screenshot,   // POST /qa/screenshot {name}
         Ui,           // POST /qa/ui {command}
+        Input,        // POST /qa/input {key|button|lookX,lookY, ...}
     }
 
     public enum QaUiCommand : byte
@@ -101,7 +103,9 @@ namespace ProjectH.Client.Qa
         // D28: the shot file is <dir>/<name>.png, so the name can never leave the directory.
         public const int MaxShotNameLength = 64;
 
-        // Exact, case-sensitive paths (one trailing slash tolerated).
+        // 기능: HTTP 메서드와 경로를 QA 명령 경로로 바꾼다. 경로는 대소문자를 구분하고 끝의 '/' 하나는 허용한다.
+        // 입력: method - HTTP 메서드, path - URL의 절대 경로.
+        // 출력: 알려진 경로와 맞는 메서드면 그 QaRoute, 경로는 맞고 메서드가 다르면 MethodNotAllowed, 그 밖에는 NotFound.
         public static QaRoute Resolve(string method, string path)
         {
             if (path == null) return QaRoute.NotFound;
@@ -111,6 +115,7 @@ namespace ProjectH.Client.Qa
                 case "/qa/status": return method == "GET" ? QaRoute.Status : QaRoute.MethodNotAllowed;
                 case "/qa/screenshot": return method == "POST" ? QaRoute.Screenshot : QaRoute.MethodNotAllowed;
                 case "/qa/ui": return method == "POST" ? QaRoute.Ui : QaRoute.MethodNotAllowed;
+                case "/qa/input": return method == "POST" ? QaRoute.Input : QaRoute.MethodNotAllowed;
                 default: return QaRoute.NotFound;
             }
         }
@@ -183,6 +188,258 @@ namespace ProjectH.Client.Qa
         }
     }
 
+    public enum QaInputKind : byte
+    {
+        None,
+        Key,      // {"key"}: a keyboard key from QaInput.KeyNames
+        Button,   // {"button"}: left or right mouse button
+        Look,     // {"lookX","lookY"}: mouse delta spread over "ms"
+        ReleaseAll,   // {"releaseAll":true}: let go of every held key and button and stop every look
+    }
+
+    public enum QaInputAction : byte
+    {
+        Press,   // no holdMs and no action: down now, up on the next frame
+        Hold,    // holdMs: down now, up after holdMs
+        Down,    // action "down": down until "up" (or MaxHoldMs)
+        Up,      // action "up": up now
+    }
+
+    // One parsed POST /qa/input body. Code is the index into QaInput.KeyNames (Key) or 0 = left, 1 = right (Button).
+    public readonly struct QaInputRequest
+    {
+        public QaInputRequest(QaInputKind kind, QaInputAction action, int code, int holdMs, double lookX, double lookY, int ms)
+        {
+            Kind = kind;
+            Action = action;
+            Code = code;
+            HoldMs = holdMs;
+            LookX = lookX;
+            LookY = lookY;
+            Ms = ms;
+        }
+
+        public QaInputKind Kind { get; }
+        public QaInputAction Action { get; }
+        public int Code { get; }
+        public int HoldMs { get; }
+        public double LookX { get; }
+        public double LookY { get; }
+        public int Ms { get; }
+    }
+
+    // The pure half of POST /qa/input: which keys exist, the limits, the body parser and the "applied" text. The receiver
+    // maps a key index to an Input System Key in the same order as KeyNames.
+    public static class QaInput
+    {
+        public const int MaxHoldMs = 10000;   // also how long an explicit "down" stays down without an "up"
+        public const int MaxLookMs = 5000;
+        public const double MaxLook = 20000;
+
+        // Input System key names, exactly as the request writes them. The receiver's key table follows this order.
+        public static readonly string[] KeyNames =
+        {
+            "w", "a", "s", "d", "space", "leftShift", "leftCtrl", "c", "q", "f", "z", "x", "v", "b", "t", "r", "e", "g",
+            "1", "2", "3", "4", "5", "escape", "f1",
+        };
+
+        // Every field a body may carry; any other field is a 400, so a typo ("holdms") is not silently a press.
+        private static readonly string[] Fields = { "key", "button", "action", "holdMs", "lookX", "lookY", "ms", "releaseAll" };
+        private static readonly string[] ReleaseAllFields = { "releaseAll" };
+
+        // 기능: 키 이름을 KeyNames의 번호로 바꾼다(대소문자 구분).
+        // 입력: name - 요청의 키 이름.
+        // 출력: 허용된 키면 KeyNames의 번호, 아니면 -1.
+        public static int KeyIndex(string name)
+        {
+            if (name == null) return -1;
+            for (int i = 0; i < KeyNames.Length; i++)
+            {
+                if (KeyNames[i] == name) return i;
+            }
+            return -1;
+        }
+
+        // 기능: POST /qa/input Body를 검사해 입력 하나로 바꾼다. {"releaseAll":true}는 다른 필드 없이 혼자 온다. 그 밖에는
+        //       key·button·look 중 정확히 하나, holdMs와 action은 함께 쓸 수 없고 key·button에만, ms는 look에만 쓴다.
+        //       holdMs(1–10000)와 ms(0–5000)는 정수, lookX·lookY는 절댓값 20000 이하.
+        // 입력: body - 요청 Body(크기는 호출자가 16 KB로 제한한다).
+        // 출력: 올바르면 true와 입력, 아니면 false와 400 응답에 넣을 오류 문구.
+        public static bool TryParse(string body, out QaInputRequest request, out string error)
+        {
+            request = default;
+            if (!QaJsonReader.HasOnlyKeys(body, Fields))
+            {
+                error = "expected one flat JSON object with only key, button, action, holdMs, lookX, lookY, ms, releaseAll";
+                return false;
+            }
+            QaJsonResult releaseResult = QaJsonReader.TryGetBool(body, "releaseAll", out bool releaseAll);
+            if (releaseResult != QaJsonResult.Missing)
+            {
+                if (releaseResult != QaJsonResult.Ok || !releaseAll || !QaJsonReader.HasOnlyKeys(body, ReleaseAllFields))
+                {
+                    error = "releaseAll must be true and come alone";
+                    return false;
+                }
+                request = new QaInputRequest(QaInputKind.ReleaseAll, QaInputAction.Press, 0, 0, 0, 0, 0);
+                error = null;
+                return true;
+            }
+            QaJsonResult keyResult = QaJsonReader.TryGetString(body, "key", out string key);
+            QaJsonResult buttonResult = QaJsonReader.TryGetString(body, "button", out string button);
+            QaJsonResult actionResult = QaJsonReader.TryGetString(body, "action", out string actionText);
+            QaJsonResult holdResult = QaJsonReader.TryGetNumber(body, "holdMs", out double hold);
+            QaJsonResult xResult = QaJsonReader.TryGetNumber(body, "lookX", out double lookX);
+            QaJsonResult yResult = QaJsonReader.TryGetNumber(body, "lookY", out double lookY);
+            QaJsonResult msResult = QaJsonReader.TryGetNumber(body, "ms", out double ms);
+            if (keyResult == QaJsonResult.Invalid || buttonResult == QaJsonResult.Invalid || actionResult == QaJsonResult.Invalid ||
+                holdResult == QaJsonResult.Invalid || xResult == QaJsonResult.Invalid || yResult == QaJsonResult.Invalid ||
+                msResult == QaJsonResult.Invalid)
+            {
+                error = "key, button and action must be strings; holdMs, lookX, lookY and ms must be numbers";
+                return false;
+            }
+            bool hasKey = keyResult == QaJsonResult.Ok;
+            bool hasButton = buttonResult == QaJsonResult.Ok;
+            bool hasLook = xResult == QaJsonResult.Ok || yResult == QaJsonResult.Ok;
+            if ((hasKey ? 1 : 0) + (hasButton ? 1 : 0) + (hasLook ? 1 : 0) != 1)
+            {
+                error = "expected exactly one of key, button or lookX/lookY";
+                return false;
+            }
+            bool hasHold = holdResult == QaJsonResult.Ok;
+            bool hasAction = actionResult == QaJsonResult.Ok;
+            bool hasMs = msResult == QaJsonResult.Ok;
+
+            if (hasLook)
+            {
+                if (hasHold || hasAction)
+                {
+                    error = "holdMs and action do not apply to lookX/lookY";
+                    return false;
+                }
+                if (xResult != QaJsonResult.Ok) lookX = 0;
+                if (yResult != QaJsonResult.Ok) lookY = 0;
+                if (Math.Abs(lookX) > MaxLook || Math.Abs(lookY) > MaxLook)
+                {
+                    error = "lookX and lookY must be within -20000..20000";
+                    return false;
+                }
+                int spread = 0;
+                if (hasMs && !TryWholeNumber(ms, 0, MaxLookMs, out spread))
+                {
+                    error = "ms must be a whole number 0..5000";
+                    return false;
+                }
+                request = new QaInputRequest(QaInputKind.Look, QaInputAction.Press, 0, 0, lookX, lookY, spread);
+                error = null;
+                return true;
+            }
+
+            if (hasMs)
+            {
+                error = "ms applies to lookX/lookY only (use holdMs)";
+                return false;
+            }
+            if (hasHold && hasAction)
+            {
+                error = "use holdMs or action, not both";
+                return false;
+            }
+            int code;
+            if (hasKey)
+            {
+                code = KeyIndex(key);
+                if (code < 0)
+                {
+                    error = "unknown key (allowed: w a s d space leftShift leftCtrl c q f z x v b t r e g 1 2 3 4 5 escape f1)";
+                    return false;
+                }
+            }
+            else
+            {
+                code = button == "left" ? 0 : button == "right" ? 1 : -1;
+                if (code < 0)
+                {
+                    error = "button must be left or right";
+                    return false;
+                }
+            }
+            QaInputAction action = QaInputAction.Press;
+            int holdMs = 0;
+            if (hasHold)
+            {
+                if (!TryWholeNumber(hold, 1, MaxHoldMs, out holdMs))
+                {
+                    error = "holdMs must be a whole number 1..10000";
+                    return false;
+                }
+                action = QaInputAction.Hold;
+            }
+            else if (hasAction)
+            {
+                if (actionText == "down") action = QaInputAction.Down;
+                else if (actionText == "up") action = QaInputAction.Up;
+                else
+                {
+                    error = "action must be down or up";
+                    return false;
+                }
+            }
+            request = new QaInputRequest(hasKey ? QaInputKind.Key : QaInputKind.Button, action, code, holdMs, 0, 0, 0);
+            error = null;
+            return true;
+        }
+
+        // 기능: 숫자가 min..max 범위의 정수인지 확인한다.
+        // 입력: value - JSON 숫자, min·max - 허용 범위(양 끝 포함).
+        // 출력: 범위 안의 정수면 true와 int 값, 아니면 false.
+        private static bool TryWholeNumber(double value, int min, int max, out int whole)
+        {
+            whole = 0;
+            if (value < min || value > max || Math.Floor(value) != value) return false;
+            whole = (int)value;
+            return true;
+        }
+
+        // 기능: 적용한 입력을 사람이 읽는 짧은 문구로 쓴다(예: "press q", "hold w 1500ms", "down left", "look 120,-30 300ms",
+        //       "releaseAll").
+        //       키 이름은 영문·숫자뿐이라 JSON 문자열 안에 그대로 써도 된다.
+        // 입력: sb - 이어 쓸 StringBuilder, request - TryParse가 만든 입력.
+        // 출력: 반환값 없음. sb 끝에 문구가 붙는다.
+        public static void AppendDescription(StringBuilder sb, in QaInputRequest request)
+        {
+            if (request.Kind == QaInputKind.ReleaseAll)
+            {
+                sb.Append("releaseAll");
+                return;
+            }
+            if (request.Kind == QaInputKind.Look)
+            {
+                sb.Append("look ");
+                QaJsonWriter.AppendFixed(sb, request.LookX, 3);
+                sb.Append(',');
+                QaJsonWriter.AppendFixed(sb, request.LookY, 3);
+                sb.Append(' ');
+                QaJsonWriter.AppendLong(sb, request.Ms);
+                sb.Append("ms");
+                return;
+            }
+            switch (request.Action)
+            {
+                case QaInputAction.Hold: sb.Append("hold "); break;
+                case QaInputAction.Down: sb.Append("down "); break;
+                case QaInputAction.Up: sb.Append("up "); break;
+                default: sb.Append("press "); break;
+            }
+            sb.Append(request.Kind == QaInputKind.Key ? KeyNames[request.Code] : request.Code == 0 ? "left" : "right");
+            if (request.Action != QaInputAction.Hold) return;
+            sb.Append(' ');
+            QaJsonWriter.AppendLong(sb, request.HoldMs);
+            sb.Append("ms");
+        }
+    }
+
     // A tiny reader for the request bodies: one flat JSON object whose values are strings, numbers, true, false or null.
     // Nested objects and arrays are rejected (no request needs them). The caller bounds the body size (16 KB), and the
     // reader only walks the string once, so a hostile body costs at most one linear pass.
@@ -248,6 +505,118 @@ namespace ProjectH.Client.Qa
                 return QaJsonResult.Missing;
             }
             return QaJsonResult.Ok;
+        }
+
+        // 기능: 평평한 JSON 객체에서 key의 숫자 값을 읽는다(InvariantCulture). 무한대·NaN이 되는 값은 받지 않는다.
+        // 입력: json - 요청 Body, key - 찾을 이름.
+        // 출력: 숫자면 Ok와 값, key가 없으면 Missing, 객체가 아니거나 값이 숫자가 아니거나 key가 두 번 나오면 Invalid.
+        public static QaJsonResult TryGetNumber(string json, string key, out double value)
+        {
+            value = 0;
+            if (key == null) return QaJsonResult.Invalid;
+            QaJsonResult result = Find(json, key, null, out int start, out int end, out bool isString);
+            if (result != QaJsonResult.Ok) return result;
+            if (isString) return QaJsonResult.Invalid;
+            // Unity's Mono and .NET disagree on overflow (false vs. infinity); both end as Invalid here.
+            if (!double.TryParse(json.Substring(start, end - start), NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed) ||
+                double.IsNaN(parsed) || double.IsInfinity(parsed))
+                return QaJsonResult.Invalid;
+            value = parsed;
+            return QaJsonResult.Ok;
+        }
+
+        // 기능: 평평한 JSON 객체에서 key의 true/false 값을 읽는다.
+        // 입력: json - 요청 Body, key - 찾을 이름.
+        // 출력: true나 false면 Ok와 값, key가 없으면 Missing, 객체가 아니거나 값이 true/false가 아니거나 key가 두 번 나오면 Invalid.
+        public static QaJsonResult TryGetBool(string json, string key, out bool value)
+        {
+            value = false;
+            if (key == null) return QaJsonResult.Invalid;
+            QaJsonResult result = Find(json, key, null, out int start, out int end, out bool isString);
+            if (result != QaJsonResult.Ok) return result;
+            if (isString) return QaJsonResult.Invalid;
+            if (end - start == 4 && string.CompareOrdinal(json, start, "true", 0, 4) == 0)
+            {
+                value = true;
+                return QaJsonResult.Ok;
+            }
+            if (end - start == 5 && string.CompareOrdinal(json, start, "false", 0, 5) == 0) return QaJsonResult.Ok;
+            return QaJsonResult.Invalid;
+        }
+
+        // 기능: Body가 평평한 JSON 객체이고 허용된 이름만 담고 있는지 확인한다.
+        // 입력: json - 요청 Body, allowed - 허용된 이름 목록(대소문자 구분).
+        // 출력: 올바른 객체이고 모든 이름이 allowed 안에 있으면 true, 아니면 false.
+        public static bool HasOnlyKeys(string json, string[] allowed)
+        {
+            return allowed != null && Find(json, null, allowed, out _, out _, out _) != QaJsonResult.Invalid;
+        }
+
+        // 기능: 평평한 JSON 객체를 한 번 훑어 key의 값이 있는 범위를 찾는다(TryGetString과 같은 문법).
+        // 입력: json - 요청 Body, key - 찾을 이름(null이면 찾지 않고 문법만 본다), allowed - null이 아니면 허용된 이름 목록.
+        // 출력: 찾으면 Ok와 값의 [start, end) 범위·문자열 여부, 없으면 Missing, 문법 오류·허용되지 않은 이름·key 중복이면 Invalid.
+        private static QaJsonResult Find(string json, string key, string[] allowed, out int start, out int end, out bool isString)
+        {
+            start = -1;
+            end = -1;
+            isString = false;
+            if (json == null) return QaJsonResult.Invalid;
+            int i = 0;
+            SkipWhitespace(json, ref i);
+            if (i >= json.Length || json[i] != '{') return QaJsonResult.Invalid;
+            i++;
+            bool found = false;
+            SkipWhitespace(json, ref i);
+            if (i < json.Length && json[i] == '}')
+            {
+                i++;
+            }
+            else
+            {
+                while (true)
+                {
+                    SkipWhitespace(json, ref i);
+                    if (!ReadString(json, ref i, out string name)) return QaJsonResult.Invalid;
+                    if (allowed != null && Array.IndexOf(allowed, name) < 0) return QaJsonResult.Invalid;
+                    SkipWhitespace(json, ref i);
+                    if (i >= json.Length || json[i] != ':') return QaJsonResult.Invalid;
+                    i++;
+                    SkipWhitespace(json, ref i);
+                    if (i >= json.Length) return QaJsonResult.Invalid;
+                    bool match = key != null && name == key;
+                    if (match && found) return QaJsonResult.Invalid;
+                    int valueStart = i;
+                    bool text = json[i] == '"';
+                    if (text)
+                    {
+                        if (!ReadString(json, ref i, out _)) return QaJsonResult.Invalid;
+                    }
+                    else if (!SkipScalar(json, ref i))
+                    {
+                        return QaJsonResult.Invalid;
+                    }
+                    if (match)
+                    {
+                        found = true;
+                        start = valueStart;
+                        end = i;
+                        isString = text;
+                    }
+                    SkipWhitespace(json, ref i);
+                    if (i >= json.Length) return QaJsonResult.Invalid;
+                    if (json[i] == ',')
+                    {
+                        i++;
+                        continue;
+                    }
+                    if (json[i] != '}') return QaJsonResult.Invalid;
+                    i++;
+                    break;
+                }
+            }
+            SkipWhitespace(json, ref i);
+            if (i != json.Length) return QaJsonResult.Invalid;
+            return found ? QaJsonResult.Ok : QaJsonResult.Missing;
         }
 
         private static void SkipWhitespace(string s, ref int i)
@@ -457,9 +826,17 @@ namespace ProjectH.Client.Qa
             sb.Append('}');
         }
 
-        // statsOpen and debugVisible are additions to D28's field list (the QA tool can assert openStats/toggleDebug).
+        // 기능: GET /qa/status 응답 JSON을 쓴다.
+        // 입력: sb - 이어 쓸 StringBuilder, devPlayerId - 마지막 접속의 id(null 가능), connected·joined - 접속·Join 여부,
+        //       screen - 화면 이름, statsOpen·debugVisible - 통계 창·F1 줄, alive·health - 내 생존·체력, fps·frame - 프레임 값,
+        //       tool - Weapon|Harvest|Build|none, preview - Valid|Invalid|NoResource|none, cursorLocked - 게임이 보는 커서 잠금
+        //       (QA 가정 포함).
+        // 출력: 반환값 없음. sb 끝에 상태 객체 하나가 붙는다.
+        // statsOpen and debugVisible are additions to D28's field list (the QA tool can assert openStats/toggleDebug);
+        // tool, preview and cursorLocked come with POST /qa/input (the QA tool waits on them after gameplay input).
         public static void AppendStatus(StringBuilder sb, string devPlayerId, bool connected, bool joined, string screen,
-            bool statsOpen, bool debugVisible, bool alive, int health, double fps, long frame)
+            bool statsOpen, bool debugVisible, bool alive, int health, double fps, long frame, string tool, string preview,
+            bool cursorLocked)
         {
             sb.Append("{\"ok\":true,\"devPlayerId\":");
             QaJsonWriter.AppendString(sb, devPlayerId);
@@ -481,7 +858,23 @@ namespace ProjectH.Client.Qa
             QaJsonWriter.AppendFixed(sb, fps, 1);
             sb.Append(",\"frame\":");
             QaJsonWriter.AppendLong(sb, frame);
+            sb.Append(",\"tool\":");
+            QaJsonWriter.AppendString(sb, tool);
+            sb.Append(",\"preview\":");
+            QaJsonWriter.AppendString(sb, preview);
+            sb.Append(",\"cursorLocked\":");
+            QaJsonWriter.AppendBool(sb, cursorLocked);
             sb.Append('}');
+        }
+
+        // 기능: POST /qa/input 성공 응답 JSON을 쓴다.
+        // 입력: sb - 이어 쓸 StringBuilder, request - 적용한 입력.
+        // 출력: 반환값 없음. sb 끝에 {"ok":true,"applied":"..."}가 붙는다.
+        public static void AppendInput(StringBuilder sb, in QaInputRequest request)
+        {
+            sb.Append("{\"ok\":true,\"applied\":\"");
+            QaInput.AppendDescription(sb, request);
+            sb.Append("\"}");
         }
 
         public static void AppendShot(StringBuilder sb, string path)

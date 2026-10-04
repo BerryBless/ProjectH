@@ -12,7 +12,10 @@ using System.Threading.Tasks;
 using ProjectH.Client.Game;
 using ProjectH.Client.Net;
 using ProjectH.Client.UI;
+using ProjectH.Shared.Protocol;
 using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.LowLevel;
 
 namespace ProjectH.Client.Qa
 {
@@ -30,10 +33,20 @@ namespace ProjectH.Client.Qa
     // Bounds: at most MaxInFlight requests are being handled at once (more get 503 at once); the queue holds at most
     // MaxQueued requests (more get 503); a request without an answer after TimeoutMs gets 504, one whose body has not
     // arrived by then gets 408 and its connection is closed; pending screenshots are at most MaxQueued (more get 503).
-    // Status codes: 200 ok, 400 bad JSON / bad name / unknown command, 403 not from loopback, 404 unknown path,
-    // 405 wrong method (OPTIONS included), 408 body not received within 5 s, 409 UI command does not apply to the current screen, 413 body over 16 KB,
-    // 415 POST without Content-Type application/json, 500 capture or write failed, 503 full or shutting down,
-    // 504 not answered within 5 s.
+    // Status codes: 200 ok, 400 bad JSON / bad name / unknown command / bad input body, 403 not from loopback,
+    // 404 unknown path, 405 wrong method (OPTIONS included), 408 body not received within 5 s, 409 UI command does not
+    // apply to the current screen or gameplay input while not joined, 413 body over 16 KB, 415 POST without
+    // Content-Type application/json, 500 capture or write failed, 503 full, shutting down, all MaxHolds input slots in
+    // use or no QA input devices, 504 not answered within 5 s.
+    // Gameplay input (POST /qa/input): two virtual Input System devices (QaKeyboard, QaMouse) added in Awake and removed
+    // in Shutdown. InputReader's bindings (<Keyboard>/q, <Mouse>/delta, ...) match any keyboard and mouse, so the game
+    // reads them through its normal actions. Main thread only: requests change one kept KeyboardState/MouseState and
+    // queue it (InputSystem.QueueStateEvent); the Input System applies it at its next update (the next frame). Held keys,
+    // buttons and spread mouse looks take one of MaxHolds fixed slots (one per key or button, one per look) and are
+    // released by Update when due; Shutdown removes the devices, which releases everything. While the receiver runs,
+    // InputSystem.settings.backgroundBehavior is IgnoreFocus (a QA player is often not focused; in the Editor also
+    // editorInputBehaviorInPlayMode = AllDeviceInputAlwaysGoesToGameView) and
+    // GameClient.QaAssumeCursorLocked is set; Shutdown restores both.
     // Connections stay open after a response (HTTP keep-alive) except after 408 and 413, whose body may be partly
     // unread. Closing from this side reset the connection on Windows now and then (Mono's HttpListener: about 1 in 12
     // requests failed with "forcibly closed by the remote host" before the caller read the answer). Mono closes an
@@ -98,6 +111,59 @@ namespace ProjectH.Client.Qa
         private string _shotDir;
         private float _smoothedDelta = 1f / 60f;
 
+        // ---- gameplay input (main thread only) ----
+        private const int MaxHolds = 16;
+
+        // QaInput.KeyNames in the same order ("1".."5" are the top-row digits, not the numpad).
+        private static readonly Key[] InputKeys =
+        {
+            Key.W, Key.A, Key.S, Key.D, Key.Space, Key.LeftShift, Key.LeftCtrl, Key.C, Key.Q, Key.F, Key.Z, Key.X, Key.V,
+            Key.B, Key.T, Key.R, Key.E, Key.G, Key.Digit1, Key.Digit2, Key.Digit3, Key.Digit4, Key.Digit5, Key.Escape, Key.F1,
+        };
+
+        private enum HoldKind : byte
+        {
+            Free,
+            Key,
+            Button,
+            Look,
+        }
+
+        // One active held key/button (released at ReleaseAt, but never before MinFrame so the down is seen for at least
+        // one frame) or one look being spread from Start to End (unscaled seconds).
+        private struct Hold
+        {
+            public HoldKind Kind;
+            public int Code;            // key index (QaInput.KeyNames) or 0 = left, 1 = right
+            public double ReleaseAt;
+            public int MinFrame;
+            public double Start;
+            public double End;
+            public double TotalX;
+            public double TotalY;
+            public double SentX;
+            public double SentY;
+        }
+
+        private readonly Hold[] _holds = new Hold[MaxHolds];
+        private int _holdCount;
+        private Keyboard _qaKeyboard;
+        private Mouse _qaMouse;
+        private KeyboardState _keyState;
+        private MouseState _mouseState;   // delta is always zero here; a look's delta goes only into the queued copy
+        private bool _keysDirty;
+        private bool _mouseDirty;
+        private bool _inputReady;
+        private bool _backgroundSet;
+        private InputSettings.BackgroundBehavior _previousBackground;
+#if UNITY_EDITOR
+        private bool _editorBehaviorSet;
+        private InputSettings.EditorInputBehaviorInPlayMode _previousEditorBehavior;
+#endif
+
+        // 기능: 수신기를 준비한다. -qaPort가 있으면 Listener와 Accept 스레드를 시작하고, 그 다음 QA 입력 장치를 붙인다.
+        // 입력: 없음(실행 인자·환경 변수를 QaLaunchOptions로 읽는다).
+        // 출력: 반환값 없음. 시작하지 못하면 컴포넌트가 꺼진다(enabled = false). 입력 장치를 붙이지 못하면 /qa/input만 503이다.
         private void Awake()
         {
             _client = GetComponent<GameClient>();
@@ -126,7 +192,89 @@ namespace ProjectH.Client.Qa
             }
             _acceptThread = new Thread(AcceptLoop) { IsBackground = true, Name = "QaCommandReceiver" };
             _acceptThread.Start();
+            // After the listener started: Shutdown (guarded by _listener) is then sure to undo it.
+            StartInput();
             Debug.Log($"[QA] Command receiver listening on port {options.Port}; screenshots to {_shotDir}");
+        }
+
+        // 기능: QA 입력 장치(QaKeyboard, QaMouse)를 붙이고, 포커스 없이도 입력이 가게 하고(backgroundBehavior, Editor에서는
+        //       editorInputBehaviorInPlayMode도), GameClient에 커서 잠금 가정을 켠다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 성공하면 _inputReady가 true. 실패하면 경고 한 줄을 남기고 붙인 장치를 떼며 /qa/input은 503으로 답한다.
+        private void StartInput()
+        {
+            if (InputKeys.Length != QaInput.KeyNames.Length)
+            {
+                Debug.LogError("[QA] Input key table does not match QaInput.KeyNames; /qa/input is off");
+                return;
+            }
+            try
+            {
+                _qaKeyboard = InputSystem.AddDevice<Keyboard>("QaKeyboard");
+                _qaMouse = InputSystem.AddDevice<Mouse>("QaMouse");
+                _keyState = default;
+                _mouseState = default;
+                _previousBackground = InputSystem.settings.backgroundBehavior;
+                InputSystem.settings.backgroundBehavior = InputSettings.BackgroundBehavior.IgnoreFocus;
+                _backgroundSet = true;
+#if UNITY_EDITOR
+                // In Play Mode the Editor routes keyboard and mouse input away from the game while the Game View is not
+                // focused (the default); a QA run usually has another window in front.
+                _previousEditorBehavior = InputSystem.settings.editorInputBehaviorInPlayMode;
+                InputSystem.settings.editorInputBehaviorInPlayMode = InputSettings.EditorInputBehaviorInPlayMode.AllDeviceInputAlwaysGoesToGameView;
+                _editorBehaviorSet = true;
+#endif
+                _client.QaAssumeCursorLocked = true;
+                _inputReady = true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[QA] Gameplay input disabled: cannot add the QA input devices: {e.Message}");
+                StopInput();
+            }
+        }
+
+        // 기능: QA 입력을 모두 끝낸다. 칸을 비우고, 장치를 떼고(눌린 키·버튼이 함께 풀린다), 포커스 설정(Editor 설정 포함)과
+        //       커서 가정을 되돌린다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. _inputReady가 false가 되고 InputSystem 설정이 수신기 시작 전 값으로 돌아간다. 여러 번 불러도 된다.
+        private void StopInput()
+        {
+            _inputReady = false;
+            Array.Clear(_holds, 0, _holds.Length);
+            _holdCount = 0;
+            _keysDirty = false;
+            _mouseDirty = false;
+            // Each step on its own: at quit the Input System may already be partly torn down, and one failure must not
+            // leave the others undone.
+            if (_qaKeyboard != null)
+            {
+                try { InputSystem.RemoveDevice(_qaKeyboard); }
+                catch (Exception e) { Debug.LogWarning($"[QA] Removing QaKeyboard failed: {e.Message}"); }
+                _qaKeyboard = null;
+            }
+            if (_qaMouse != null)
+            {
+                try { InputSystem.RemoveDevice(_qaMouse); }
+                catch (Exception e) { Debug.LogWarning($"[QA] Removing QaMouse failed: {e.Message}"); }
+                _qaMouse = null;
+            }
+            if (_backgroundSet)
+            {
+                try { InputSystem.settings.backgroundBehavior = _previousBackground; }
+                catch (Exception e) { Debug.LogWarning($"[QA] Restoring backgroundBehavior failed: {e.Message}"); }
+                _backgroundSet = false;
+            }
+#if UNITY_EDITOR
+            if (_editorBehaviorSet)
+            {
+                try { InputSystem.settings.editorInputBehaviorInPlayMode = _previousEditorBehavior; }
+                catch (Exception e) { Debug.LogWarning($"[QA] Restoring editorInputBehaviorInPlayMode failed: {e.Message}"); }
+                _editorBehaviorSet = false;
+            }
+#endif
+            // GameClient may already be destroyed at quit (Unity's == null covers that).
+            if (_client != null) _client.QaAssumeCursorLocked = false;
         }
 
         // D26: 127.0.0.1 first; "localhost" only when that cannot start. A port in use (another Editor clone, another
@@ -381,6 +529,10 @@ namespace ProjectH.Client.Qa
 
         // ---- main thread ----
 
+        // 기능: 메인 스레드에서 쌓인 요청에 답하고, QA 입력의 누름 해제와 시점 이동 나누기를 이번 프레임만큼 진행한다.
+        // 입력: 없음(Unity가 매 프레임 부른다).
+        // 출력: 반환값 없음. 큐의 요청이 답해지고, 바뀐 QA 키보드·마우스 상태가 Input System에 들어간다.
+        // Steady state (no request, no hold) allocates nothing: the queue check and TickInput's early returns only.
         private void Update()
         {
             _smoothedDelta = Mathf.Lerp(_smoothedDelta, Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.1f);
@@ -396,8 +548,23 @@ namespace ProjectH.Client.Qa
                 if (request.Done.Task.IsCompleted) continue;   // timed out while queued
                 Process(request);
             }
+            if (!_inputReady) return;
+            try
+            {
+                TickInput();
+            }
+            catch (Exception e)
+            {
+                // Outside Process's try/catch: a failing QueueStateEvent (a device removed by someone else) would throw
+                // again every frame. Turn QA input off once instead (/qa/input then answers 503).
+                Debug.LogWarning($"[QA] Gameplay input stopped: {e.Message}");
+                StopInput();
+            }
         }
 
+        // 기능: 요청 하나를 경로에 맞게 처리하고 답한다(스크린샷은 Coroutine이 나중에 답한다).
+        // 입력: request - 큐에서 꺼낸 요청.
+        // 출력: 반환값 없음. 요청의 답이 정해지고, 예외가 나면 500으로 답한다.
         private void Process(Request request)
         {
             try
@@ -413,6 +580,9 @@ namespace ProjectH.Client.Qa
                     case QaRoute.Screenshot:
                         ProcessScreenshot(request);
                         break;
+                    case QaRoute.Input:
+                        ProcessInput(request);
+                        break;
                     default:
                         Answer(request, 404, ErrorJson("not found"));
                         break;
@@ -425,6 +595,9 @@ namespace ProjectH.Client.Qa
             }
         }
 
+        // 기능: GET /qa/status 응답을 만든다.
+        // 입력: 없음(GameClient·UiRoot의 QA 읽기 전용 값을 읽는다).
+        // 출력: 상태 JSON 문자열(접속·화면·생존·체력·fps·frame·도구·건설 미리보기·커서 잠금).
         private string StatusJson()
         {
             ClientState state = _client.State;
@@ -432,8 +605,253 @@ namespace ProjectH.Client.Qa
             _json.Clear();
             QaResponses.AppendStatus(_json, _client.QaDevPlayerId, state == ClientState.Connected || joined, joined,
                 ScreenName(_ui.QaScreen), _ui.QaStatsOpen, _ui.QaDebugVisible, joined && _client.QaAlive,
-                joined ? _client.QaHealth : 0, 1.0 / _smoothedDelta, Time.frameCount);
+                joined ? _client.QaHealth : 0, 1.0 / _smoothedDelta, Time.frameCount, ToolName(_client.QaTool),
+                PreviewName(_client.QaPreview), _client.QaCursorLocked);
             return _json.ToString();
+        }
+
+        // 기능: 도구를 상태 JSON의 이름으로 바꾼다.
+        // 입력: tool - GameClient.QaTool(null = Join 전).
+        // 출력: "Weapon", "Harvest", "Build" 또는 "none".
+        private static string ToolName(ToolKind? tool)
+        {
+            if (!tool.HasValue) return "none";
+            switch (tool.Value)
+            {
+                case ToolKind.Weapon: return "Weapon";
+                case ToolKind.Harvest: return "Harvest";
+                case ToolKind.Build: return "Build";
+                default: return "none";
+            }
+        }
+
+        // 기능: 건설 미리보기 판정을 상태 JSON의 이름으로 바꾼다.
+        // 입력: preview - GameClient.QaPreview(null = 건설 모드가 아니거나 후보 없음).
+        // 출력: "Valid", "Invalid", "NoResource" 또는 "none".
+        private static string PreviewName(BuildPreviewState? preview)
+        {
+            if (!preview.HasValue) return "none";
+            switch (preview.Value)
+            {
+                case BuildPreviewState.Valid: return "Valid";
+                case BuildPreviewState.Invalid: return "Invalid";
+                case BuildPreviewState.NoResource: return "NoResource";
+                default: return "none";
+            }
+        }
+
+        // 기능: POST /qa/input 하나를 검사하고 QA 키보드·마우스에 적용한다.
+        // 입력: request - Body가 {key|button|lookX,lookY, holdMs?, action?, ms?}인 요청.
+        // 출력: 반환값 없음. 200(적용, 키·버튼 상태는 이미 Input System 큐에 들어감), 400(잘못된 Body), 409(Join 전),
+        //       503(입력 장치 없음 또는 칸 16개가 모두 사용 중)으로 답한다.
+        private void ProcessInput(Request request)
+        {
+            if (!QaInput.TryParse(request.Body, out QaInputRequest input, out string error))
+            {
+                Answer(request, 400, ErrorJson(error));
+                return;
+            }
+            if (input.Kind == QaInputKind.ReleaseAll)
+            {
+                // Allowed in any state (also before a join): nothing held is the goal, so it always succeeds.
+                if (_inputReady) ReleaseAll();
+                _json.Clear();
+                QaResponses.AppendInput(_json, input);
+                Answer(request, 200, _json.ToString());
+                return;
+            }
+            if (!_inputReady)
+            {
+                Answer(request, 503, ErrorJson("QA input devices are not available"));
+                return;
+            }
+            if (_client.State != ClientState.Joined)
+            {
+                Answer(request, 409, ErrorJson("not joined"));
+                return;
+            }
+            if (!ApplyInput(input))
+            {
+                Answer(request, 503, ErrorJson("too many active holds (16)"));
+                return;
+            }
+            FlushInputState(Vector2.zero, false);
+            _json.Clear();
+            QaResponses.AppendInput(_json, input);
+            Answer(request, 200, _json.ToString());
+        }
+
+        // 기능: 파싱한 입력 하나를 칸과 장치 상태에 반영한다. 같은 키·버튼은 한 칸을 같이 쓰고, 새 누름이 해제 시각을 바꾼다.
+        // 입력: input - QaInput.TryParse가 만든 입력.
+        // 출력: 반영했으면 true, 새 칸이 필요한데 MaxHolds칸이 모두 차 있으면 false(아무것도 바꾸지 않는다).
+        private bool ApplyInput(in QaInputRequest input)
+        {
+            double now = Time.unscaledTimeAsDouble;
+            int frame = Time.frameCount;
+            if (input.Kind == QaInputKind.Look)
+            {
+                int free = FindSlot(HoldKind.Free, 0);
+                if (free < 0) return false;
+                double seconds = input.Ms / 1000.0;
+                _holds[free] = new Hold
+                {
+                    Kind = HoldKind.Look,
+                    Start = now,
+                    End = now + seconds,
+                    TotalX = input.LookX,
+                    TotalY = input.LookY,
+                };
+                _holdCount++;
+                return true;
+            }
+
+            HoldKind kind = input.Kind == QaInputKind.Key ? HoldKind.Key : HoldKind.Button;
+            int slot = FindSlot(kind, input.Code);
+            if (input.Action == QaInputAction.Up)
+            {
+                // Idempotent: an up for something not held still writes "up" and answers 200.
+                if (slot >= 0) FreeSlot(slot);
+                SetDown(kind, input.Code, false);
+                return true;
+            }
+            if (slot < 0)
+            {
+                slot = FindSlot(HoldKind.Free, 0);
+                if (slot < 0) return false;
+                _holdCount++;
+            }
+            double holdSeconds = input.Action == QaInputAction.Hold ? input.HoldMs / 1000.0
+                : input.Action == QaInputAction.Down ? QaInput.MaxHoldMs / 1000.0
+                : 0.0;
+            // A second press or hold of a key already held replaces its release time, so the earlier one cannot let go
+            // of a key the later one still expects down.
+            _holds[slot] = new Hold { Kind = kind, Code = input.Code, ReleaseAt = now + holdSeconds, MinFrame = frame + 1 };
+            SetDown(kind, input.Code, true);
+            return true;
+        }
+
+        // 기능: 눌린 QA 키·버튼을 모두 떼고 진행 중인 시점 이동을 멈춘다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 칸이 모두 비고, 모든 키·버튼이 떼어진 상태가 바로 Input System 큐에 들어간다.
+        private void ReleaseAll()
+        {
+            Array.Clear(_holds, 0, _holds.Length);
+            _holdCount = 0;
+            // "up" can leave a key down only through a slot, but clearing the whole state also covers anything else.
+            _keyState = default;
+            _mouseState = default;
+            _keysDirty = true;
+            _mouseDirty = true;
+            FlushInputState(Vector2.zero, false);
+        }
+
+        // 기능: 종류와 코드가 같은 칸을 찾는다(Free면 빈 칸).
+        // 입력: kind - 칸 종류, code - 키 번호나 버튼 번호(Free·Look이면 무시).
+        // 출력: 칸 번호, 없으면 -1.
+        private int FindSlot(HoldKind kind, int code)
+        {
+            for (int i = 0; i < MaxHolds; i++)
+            {
+                if (_holds[i].Kind != kind) continue;
+                if (kind == HoldKind.Free || kind == HoldKind.Look || _holds[i].Code == code) return i;
+            }
+            return -1;
+        }
+
+        // 기능: 칸 하나를 비운다.
+        // 입력: slot - 비울 칸 번호.
+        // 출력: 반환값 없음. 칸이 Free가 되고 사용 중 칸 수가 줄어든다.
+        private void FreeSlot(int slot)
+        {
+            _holds[slot] = default;
+            _holdCount--;
+        }
+
+        // 기능: 보관 중인 QA 키보드·마우스 상태에서 키나 버튼 하나를 누르거나 뗀다(Input System에는 FlushInputState가 넣는다).
+        // 입력: kind - Key 또는 Button, code - 키 번호(InputKeys)나 버튼 번호(0 왼쪽, 1 오른쪽), down - 누름 여부.
+        // 출력: 반환값 없음. _keyState나 _mouseState가 바뀌고 dirty 표시가 켜진다.
+        private void SetDown(HoldKind kind, int code, bool down)
+        {
+            if (kind == HoldKind.Key)
+            {
+                _keyState.Set(InputKeys[code], down);
+                _keysDirty = true;
+                return;
+            }
+            _mouseState = _mouseState.WithButton(code == 0 ? MouseButton.Left : MouseButton.Right, down);
+            _mouseDirty = true;
+        }
+
+        // 기능: 이번 프레임의 QA 입력을 진행한다. Joined가 아니면 모두 떼고(ReleaseAll), 때가 된 누름을 떼고, 시점 이동을 시간에 맞게 나눠 보낸다.
+        // 입력: 없음(Time.unscaledTimeAsDouble, Time.frameCount를 읽는다).
+        // 출력: 반환값 없음. 바뀐 상태와 이번 프레임의 마우스 delta가 Input System 큐에 들어간다. 칸이 없으면 바로 끝난다.
+        private void TickInput()
+        {
+            if (_holdCount == 0)
+            {
+                if (_keysDirty || _mouseDirty) FlushInputState(Vector2.zero, false);
+                return;
+            }
+            // Leaving the Joined state (disconnect, back to the title) lets go of everything at once, so no hold survives
+            // into the next session. Every down key or button has a slot, so checking only while slots are used suffices.
+            if (_client.State != ClientState.Joined)
+            {
+                ReleaseAll();
+                return;
+            }
+            double now = Time.unscaledTimeAsDouble;
+            int frame = Time.frameCount;
+            double dx = 0;
+            double dy = 0;
+            bool look = false;
+            for (int i = 0; i < MaxHolds; i++)
+            {
+                ref Hold hold = ref _holds[i];
+                switch (hold.Kind)
+                {
+                    case HoldKind.Key:
+                    case HoldKind.Button:
+                        if (frame >= hold.MinFrame && now >= hold.ReleaseAt)
+                        {
+                            SetDown(hold.Kind, hold.Code, false);
+                            FreeSlot(i);
+                        }
+                        break;
+                    case HoldKind.Look:
+                        // Spread by time: the part due by now minus what was sent, so the total is exact at any frame
+                        // rate (the last frame carries the remainder). ms 0 sends everything in this frame.
+                        double fraction = hold.End <= hold.Start ? 1.0 : Math.Min(1.0, (now - hold.Start) / (hold.End - hold.Start));
+                        double targetX = hold.TotalX * fraction;
+                        double targetY = hold.TotalY * fraction;
+                        dx += targetX - hold.SentX;
+                        dy += targetY - hold.SentY;
+                        hold.SentX = targetX;
+                        hold.SentY = targetY;
+                        look = true;
+                        if (fraction >= 1.0) FreeSlot(i);
+                        break;
+                }
+            }
+            if (_keysDirty || _mouseDirty || look) FlushInputState(new Vector2((float)dx, (float)dy), look);
+        }
+
+        // 기능: 바뀐 QA 키보드·마우스 상태를 Input System 큐에 넣는다. Input System은 다음 입력 Update(다음 프레임)에 반영한다.
+        // 입력: delta - 이번 프레임에 더할 마우스 이동(픽셀), look - delta를 보내야 하는지.
+        // 출력: 반환값 없음. dirty 표시가 꺼진다. 마우스 delta는 Input System이 Update마다 0으로 되돌리므로 따로 0을 보내지 않는다.
+        private void FlushInputState(Vector2 delta, bool look)
+        {
+            if (_keysDirty)
+            {
+                InputSystem.QueueStateEvent(_qaKeyboard, _keyState);
+                _keysDirty = false;
+            }
+            if (_mouseDirty || look)
+            {
+                MouseState state = _mouseState;
+                state.delta = delta;
+                InputSystem.QueueStateEvent(_qaMouse, state);
+                _mouseDirty = false;
+            }
         }
 
         private void ProcessUi(Request request)
@@ -521,6 +939,10 @@ namespace ProjectH.Client.Qa
 
         private void OnDestroy() => Shutdown();
 
+        // 기능: 수신기를 한 번만 멈춘다. 남은 요청에 503으로 답하고, Listener를 닫고 Accept 스레드를 Join하고, QA 입력을 끝낸다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 스레드·Listener가 정리되고, QA 장치가 제거되며 Input System 설정과 커서 가정이 원래대로 돌아간다.
+        //       _listener가 null이면(시작하지 않았거나 이미 멈춤) 아무것도 하지 않는다.
         private void Shutdown()
         {
             if (_listener == null) return;
@@ -556,6 +978,7 @@ namespace ProjectH.Client.Qa
                 Debug.LogWarning("[QA] Command receiver accept thread did not stop within 1 s");
             _acceptThread = null;
             _listener = null;
+            StopInput();
         }
     }
 }

@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace ProjectH.QA;
 
 // The Unity Development player's QA receiver (Docs/QA.md "Unity Client", D26-D28): GET /qa/status, POST /qa/screenshot,
-// POST /qa/ui. 127.0.0.1 only. One per UnityActor; disposed with it. Per-request timeout: the player answers within 5 s
+// POST /qa/ui, POST /qa/input (real Input System input, §87). 127.0.0.1 only. One per UnityActor; disposed with it. Per-request timeout: the player answers within 5 s
 // (its own queue timeout), a screenshot after the PNG is on disk.
 public sealed class UnityQaClient : IDisposable
 {
@@ -31,6 +31,16 @@ public sealed class UnityQaClient : IDisposable
     public Task<UnityAnswer> ScreenshotAsync(string name, CancellationToken token) => SendAsync(HttpMethod.Post, "qa/screenshot", new { name }, token);
 
     public Task<UnityAnswer> UiAsync(string command, CancellationToken token) => SendAsync(HttpMethod.Post, "qa/ui", new { command }, token);
+
+    // 기능: Player에 Gameplay 입력 하나(키, 마우스 버튼, 시점 이동)를 보낸다. Player가 Input System의 가상 장치로 넣는다.
+    // 입력: body - POST /qa/input의 평평한 JSON 본문(key|button|lookX·lookY와 holdMs·action·ms), token - 실행 취소.
+    // 출력: Player의 답. 200이면 입력이 Input System에 들어갔고(hold는 그 뒤에도 이어진다), 400·409·503은 상태 코드로 온다.
+    public Task<UnityAnswer> InputAsync(object body, CancellationToken token) => SendAsync(HttpMethod.Post, "qa/input", body, token);
+
+    // 기능: Player에 눌린 입력 전부를 떼라고 보낸다(POST /qa/input {"releaseAll":true}, join 전에도 받는다).
+    // 입력: token - 실행 취소(호출자가 짧은 시간 제한을 건다).
+    // 출력: Player의 답. 200이면 hold·look이 모두 끝났다.
+    public Task<UnityAnswer> ReleaseAllAsync(CancellationToken token) => SendAsync(HttpMethod.Post, "qa/input", new { releaseAll = true }, token);
 
     public void Dispose() => _http.Dispose();
 

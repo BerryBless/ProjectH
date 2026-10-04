@@ -267,9 +267,12 @@ Editor에는 Play마다 다른 명령줄이 없다. 그래서 명령줄에 없�
 
 명령(`QaCommandReceiver`):
 
-- `GET /qa/status`가 돌려주는 값: `{ok, devPlayerId, connected, joined, screen, statsOpen, debugVisible, alive, health, fps, frame}`.
+- `GET /qa/status`가 돌려주는 값: `{ok, devPlayerId, connected, joined, screen, statsOpen, debugVisible, alive, health, fps, frame, tool, preview, cursorLocked}`.
   - `devPlayerId`는 첫 접속 전에 null이다.
   - `screen`은 Title, Connecting, InGame, Menu, Disconnected, Result 중 하나다.
+  - `tool`은 예측 도구 `Weapon`·`Harvest`·`Build`, Join 전이면 `none`이다.
+  - `preview`는 건설 미리보기 판정 `Valid`·`Invalid`·`NoResource`다. 건설 모드가 아니거나 이번 프레임 후보가 없으면 `none`이다.
+  - `cursorLocked`는 게임이 보는 커서 잠금이다(아래 QA 커서 가정 포함).
 - `POST /qa/screenshot {"name"}`은 프레임이 끝난 뒤(`WaitForEndOfFrame`) 화면을 찍어 `<dir>/<name>.png`에 쓴다. 파일이 생긴 뒤에 `{ok, path}`로 답한다.
   - name은 `[A-Za-z0-9_-]{1,64}`만 받는다.
   - Windows 장치 이름(CON, PRN, AUX, NUL, COM1–9, LPT1–9)은 거절한다.
@@ -285,15 +288,35 @@ Editor에는 Play마다 다른 명령줄이 없다. 그래서 명령줄에 없�
 
   - 화면은 바로 다시 그린다. 그래서 같은 프레임의 스크린샷에 바뀐 화면이 찍힌다.
   - 맞지 않는 화면이면 409를 돌려주고 아무것도 바꾸지 않는다.
-  - Gameplay 입력 명령은 없다.
+  - Gameplay 입력은 아래 `/qa/input`으로 한다.
+- `POST /qa/input`은 실제 Input System 경로로 Gameplay 입력을 넣는다. 가상 장치 `QaKeyboard`·`QaMouse`를 수신기가 시작할 때 붙이고(`InputSystem.AddDevice`) 종료할 때 뗀다. `InputReader`의 Binding(`<Keyboard>/q`, `<Mouse>/delta` 등)은 어느 키보드·마우스에나 맞으므로 게임 코드는 바뀌지 않는다. 상태는 `InputSystem.QueueStateEvent`로 넣고, Input System이 다음 프레임 입력 Update에서 반영한다.
+
+  | Body | 뜻 |
+  |---|---|
+  | `{"key":"q"}` | 누름: 이번에 누르고 다음 프레임에 뗀다(`WasPressedThisFrame`이 한 번) |
+  | `{"key":"w","holdMs":1500}` | 누르고 holdMs(1–10000, 정수) 뒤 뗀다. 적어도 한 프레임은 눌려 있다 |
+  | `{"key":"w","action":"down"}` / `"up"` | 직접 누르기·떼기. 떼지 않은 down은 10초 뒤 저절로 뗀다. 눌려 있지 않은 키의 up도 200이다 |
+  | `{"button":"left"}` | 마우스 `left`·`right`. holdMs·action은 키와 같다 |
+  | `{"lookX":120,"lookY":-30,"ms":300}` | 마우스 이동(픽셀)을 ms(0–5000, 정수, 0 = 한 프레임) 동안 시간에 맞게 나눠 보낸다. 합계는 프레임 속도와 상관없이 정확하다. 절댓값 20000 이하 |
+  | `{"releaseAll":true}` | 눌린 키·버튼을 모두 떼고 진행 중인 이동을 멈춘다. Join 전에도 된다(200) |
+
+  - 허용 키: `w a s d space leftShift leftCtrl c q f z x v b t r e g 1 2 3 4 5 escape f1`(Input System 이름, 대소문자 구분. 숫자는 윗줄 숫자키).
+  - key·button·look 중 정확히 하나만 온다. holdMs와 action은 함께 쓸 수 없고, ms는 look에만, 다른 필드는 받지 않는다(오타가 누름으로 처리되지 않게). 어기면 400이다.
+  - 성공하면 `{"ok":true,"applied":"press q"}`(`hold w 1500ms`, `down left`, `look 120,-30 300ms`, `releaseAll`)로 답한다. 키·버튼은 답하기 전에 Input System 큐에 들어가 있고, hold와 look은 그 뒤에도 이어진다.
+  - Join 전이면 409(releaseAll 제외), 누르고 있는 키·버튼과 진행 중인 look이 이미 16칸을 쓰고 있으면 503이다. 같은 키·버튼은 한 칸을 같이 쓰고 새 요청이 해제 시각을 바꾼다. look은 요청마다 한 칸이다.
+  - Joined 상태를 벗어나면(끊김, 타이틀) 모두 뗀다. 눌린 키가 다음 접속까지 남지 않는다.
+  - 포커스: 수신기가 있는 동안 `InputSystem.settings.backgroundBehavior = IgnoreFocus`다(QA가 띄운 Player는 보통 포커스가 없다). Editor에서는 `editorInputBehaviorInPlayMode = AllDeviceInputAlwaysGoesToGameView`도 켠다. 종료할 때 원래 값으로 되돌린다.
+  - 커서: 포커스 없는 창은 커서가 잠기지 않는다. 그래서 수신기가 `GameClient.QaAssumeCursorLocked`를 켜고, 게임은 클릭으로 잠글 수 있는 화면(`_cursorLockAllowed`)이면 커서가 잠긴 것으로 본다(`CursorLocked`). 메뉴·결과 같은 화면은 지금처럼 입력을 막는다. QA 클릭은 잠그는 클릭이 아니라 바로 발사한다. 시점(`ShoulderCamera.ApplyLook`)도 실제 커서 잠금을 따로 보지 않고 `GameClient`가 막힌 프레임에 0을 넘기는 것으로 막는다. 창에 포커스가 있으면 클릭이 실제 커서도 잠근다(Editor에서 `PROJECTH_QA_PORT`를 켜고 사람이 플레이할 때). 이 클릭도 발사한다. 수신기가 없으면 실제 잠금만 본다.
+  - 매 프레임 일은 수신기 `Update`의 `TickInput`이다. 칸이 비어 있으면 바로 끝나고, 칸은 고정 배열 16개라 할당이 없다.
 - POST는 `Content-Type: application/json`이어야 한다. 아니면 415를 돌려준다. 브라우저가 preflight 없이 보내는 text/plain·form POST를 막기 위해서다.
 - 그 밖의 오류 코드:
-  - 400: 잘못된 JSON·이름·명령
+  - 400: 잘못된 JSON·이름·명령·입력 Body
   - 403: loopback이 아님
   - 404, 405(OPTIONS 포함)
   - 408: 5초 안에 Body가 오지 않음. 연결도 닫는다
   - 413: Body가 16 KB를 넘음
-  - 503: 처리 중 32개 초과, 큐가 가득 참, 종료 중
+  - 409: UI 명령이 지금 화면에 맞지 않음, Join 전의 Gameplay 입력
+  - 503: 처리 중 32개 초과, 큐가 가득 참, 종료 중, 입력 칸 16개가 모두 사용 중, QA 입력 장치를 붙이지 못함
   - 504: 5초 안에 답하지 못함
 
 스레드 구조:
@@ -306,6 +329,7 @@ Editor에는 Play마다 다른 명령줄이 없다. 그래서 명령줄에 없�
   2. 그 응답이 나갈 때까지 최대 100 ms 기다린다.
   3. Listener를 닫는다.
   4. Accept 스레드를 Join한다.
+  5. QA 입력 장치를 떼고(눌린 것이 모두 풀린다) Input System 설정과 커서 가정을 되돌린다.
 
 녹화(`QaInputRecorder`, `QaInputRecordFormat`):
 
@@ -322,7 +346,7 @@ Editor에는 Play마다 다른 명령줄이 없다. 그래서 명령줄에 없�
 
 ## 자동 검사
 
-EditMode 테스트: `Assets/Tests/EditMode`(`LocalPlayerPredictorTests`, `MapPredictionTests`, `MovementPredictionTests`, `PlayerPoseTests`, `RemotePlayerInterpolatorTests`, `ShoulderCameraMathTests`, `AimSolverTests`, `WeaponStateTests`, `RingCursorTests`, `PickupRuleTests`, `WorldItemListTests`, `InventoryHudTextTests`, `ZoneMathTests`, `MatchHudTextTests`, `SpectatorTargetsTests`, `PoiLookupTests`, `TerrainMeshTests`. Phase 12 끝에서 모두 146개). Phase 12가 바꾼 범위(`LocalPlayerPredictorTests` 20, `MapPredictionTests` 5, `MovementPredictionTests` 11, `PlayerPoseTests` 5, `ShoulderCameraMathTests` 11, `MatchHudTextTests`·`InventoryHudTextTests` 10, 그리고 최종 검토에서 더한 `RemotePlayerInterpolatorTests`·`WeaponStateTests`)는 저장소 밖의 `EditTests` 도구가 Unity 밖 NUnit으로 돌린다. 모두 99개다. 이 코드는 Unity의 관리 코드 멤버(`Vector2/3`, `Mathf`, `Quaternion` 필드)만 쓰고 Physics·GameObject·`Quaternion.Euler` 같은 네이티브 호출이 없어서 `UnityEngine.CoreModule.dll`만 참조해 돈다. View·HUD 클래스는 테스트가 없다. 컴파일은 `UnityCompile` 도구가, 동작은 위 "Unity 확인 순서 (Phase 12)"가 본다.
+EditMode 테스트: `Assets/Tests/EditMode`(`LocalPlayerPredictorTests`, `MapPredictionTests`, `MovementPredictionTests`, `PlayerPoseTests`, `RemotePlayerInterpolatorTests`, `ShoulderCameraMathTests`, `AimSolverTests`, `WeaponStateTests`, `RingCursorTests`, `PickupRuleTests`, `WorldItemListTests`, `InventoryHudTextTests`, `ZoneMathTests`, `MatchHudTextTests`, `SpectatorTargetsTests`, `PoiLookupTests`, `TerrainMeshTests`. Phase 12 끝에서 모두 146개). QA 입력(`/qa/input`)의 순수 코드는 `QaInputProtocolTests`(19개)가 본다. 이 테스트도 `EditTests` 도구가 Unity 밖에서 돌린다(그 도구 기준 모두 188개). Phase 12가 바꾼 범위(`LocalPlayerPredictorTests` 20, `MapPredictionTests` 5, `MovementPredictionTests` 11, `PlayerPoseTests` 5, `ShoulderCameraMathTests` 11, `MatchHudTextTests`·`InventoryHudTextTests` 10, 그리고 최종 검토에서 더한 `RemotePlayerInterpolatorTests`·`WeaponStateTests`)는 저장소 밖의 `EditTests` 도구가 Unity 밖 NUnit으로 돌린다. 모두 99개다. 이 코드는 Unity의 관리 코드 멤버(`Vector2/3`, `Mathf`, `Quaternion` 필드)만 쓰고 Physics·GameObject·`Quaternion.Euler` 같은 네이티브 호출이 없어서 `UnityEngine.CoreModule.dll`만 참조해 돈다. View·HUD 클래스는 테스트가 없다. 컴파일은 `UnityCompile` 도구가, 동작은 위 "Unity 확인 순서 (Phase 12)"가 본다.
 
 `MovementPredictionTests`(Phase 12 spec §2 예측)의 방식: 서버가 Tick마다 하는 일(탑승이면 `DropTransport.Ride`, 아니면 `MovementSimulation.Step`을 닫힌 문을 붙인 세계에서, 밀치기로 문 열기)을 그대로 되풀이하는 복제본을 둔다. 같은 입력을 복제본과 `LocalPlayerPredictor`에 먹이고, 두 Tick마다 복제본의 상태를 실제 Snapshot 쓰기·읽기(양자화된 Entity와 Self 블록, `DoorStates`)로 거쳐 `Reconcile`에 넣는다. 예측이 서버와 같으면 보정이 한 번도 일어나지 않아야 한다. 달리기·기력, 웅크리기·슬라이드, Hurdle, 탑승·낙하·글라이더, 문 밀치기와 E를 모드마다 시험하고, 공중에서의 재접속(Ack 0), 첫 Ack 전 탑승자 고정, 지운 경로, 행동 제한도 본다. `WeaponStateTests`는 행동이 막힌 동안(탑승·공중·Vault)에도 Fire를 누른 상태는 따라가서 누른 채 착지한 반자동 무기가 새로 누르기 전에는 쏘지 않는 것을 본다(서버 `FireHeld`와 같다, 최종 검토 C9).
 

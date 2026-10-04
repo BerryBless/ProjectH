@@ -31,6 +31,9 @@ public static partial class ScenarioValidator
         }
     }
 
+    // 기능: 실행 전에 알 수 있는 시나리오 오류·경고를 모두 찾는다(Actor 종류별 허용 Action, Unity 입력 Action 규칙 포함).
+    // 입력: s - 검사할 시나리오, registry - Action 목록, markers - 위치 이름 검사용 Marker.
+    // 출력: 찾은 문제 목록. 오류가 하나라도 있으면 실행하지 않는다.
     public static IReadOnlyList<ValidationIssue> Validate(ScenarioDefinition s, ActionRegistry registry, MarkerStore markers)
     {
         var issues = new List<ValidationIssue>();
@@ -118,7 +121,7 @@ public static partial class ScenarioValidator
         foreach (StepDefinition step in s.Steps)
         {
             string where = $"step {step.Index + 1:00} ({step.Id})";
-            if (s.Stress && step.Action is "captureScreenshot" or "manualCheck" or "uiCommand" or "waitForUnity")
+            if (s.Stress && (step.Action == "manualCheck" || Array.IndexOf(UnityActions.UnityOnly, step.Action) >= 0))
                 Error(where, $"'{step.Action}' is not allowed in a stress scenario (D39: no screenshots, Unity players or manual steps).");
             if (eventsOff && (step.Action == "waitForEvent" || step.Params.Any(p => p.Key is "path" or "condition" && p.Value.ValueKind == JsonValueKind.String && p.Value.GetString()!.StartsWith("event.", StringComparison.Ordinal))))
                 Warn(where, "QA events are off in a stress scenario (Qa:Events=false): this step sees no events. Set server.options Qa:Events to \"true\" if it needs them.");
@@ -160,9 +163,10 @@ public static partial class ScenarioValidator
             if (spec.Actor == ActorUse.Required && step.Actor == null) Error(where, $"'{spec.Name}' needs 'actor'.");
             if (spec.Actor == ActorUse.None && step.Actor != null) Error(where, $"'{spec.Name}' takes no 'actor'.");
             if (step.Actor != null && !actors.Contains(step.Actor)) Error(where, $"Unknown actor '{step.Actor}'.");
-            // QA-4 §87: Unity players get UI commands and screenshots, never gameplay input.
+            // QA-4 §87: a Unity player takes gameplay input only through the real input path (unityKey, unityClick,
+            // unityLook go through the Input System and InputReader); the headless gameplay actions never reach it.
             if (step.Actor != null && unity.Contains(step.Actor) && Array.IndexOf(UnityActions.HeadlessOnly, spec.Name) >= 0)
-                Error(where, $"'{spec.Name}' is gameplay input; UnityClient actor '{step.Actor}' takes none (§87). Use a HeadlessClient actor.");
+                Error(where, $"'{spec.Name}' is headless gameplay input; UnityClient actor '{step.Actor}' takes none (§87). Use unityKey/unityClick/unityLook (real input path) or a HeadlessClient actor.");
             if (step.Actor != null && actors.Contains(step.Actor) && !unity.Contains(step.Actor) && Array.IndexOf(UnityActions.UnityOnly, spec.Name) >= 0)
                 Error(where, $"'{spec.Name}' needs a UnityClient actor ('{step.Actor}' is not one).");
             if (spec.NeedsProxy && step.Actor != null && actors.Contains(step.Actor) && !proxied.Contains(step.Actor))

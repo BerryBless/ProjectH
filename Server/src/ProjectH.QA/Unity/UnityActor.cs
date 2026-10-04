@@ -20,16 +20,21 @@ public sealed class UnitySettings
 }
 
 // QA-4 (D26-D28, request §16, §83-87): an actor that is a real Unity Development player. It joins the game by itself
-// (-autoConnect with -devId qa-<alias>) and is observed and driven only through its QA receiver: status, screenshots and
-// UI commands. It takes no gameplay input (§87): moving, shooting, building stay with HeadlessClient actors.
+// (-autoConnect with -devId qa-<alias>) and is observed and driven only through its QA receiver: status, screenshots,
+// UI commands and gameplay input through the real input path (POST /qa/input feeds the player's Input System, so the
+// game's InputReader bindings see it, §87). The headless gameplay commands (moveTo, fire, build ...) never reach it.
 // State: a status poll every PollMs while connected (an async loop, no thread of its own) publishes an immutable
 // ActorState (Volatile) with the status body under `Unity` (actor.unity.*). Game assertions still read the server
 // (player.*).
 // Lifetime: the player process and the HTTP client are created by connect and ended by disconnect, a new connect, or
 // the run's cleanup (ActorManager.StopUnityAsync). Attach mode (unity.attachPort) never launches or closes anything.
+// Closing first asks the player to release all held input (releaseAll, best effort, at most ReleaseTimeout), so a down
+// without an up or a running async hold never leaks into the next scenario on an attached Editor.
 public sealed class UnityActor : IQaActor, IAsyncDisposable
 {
     public const int PollMs = 250;
+    // Cleanup's releaseAll may delay closing by at most this much.
+    public static readonly TimeSpan ReleaseTimeout = TimeSpan.FromSeconds(1);
 
     private readonly UnitySpec? _spec;
     private readonly UnitySettings _settings;
@@ -85,6 +90,9 @@ public sealed class UnityActor : IQaActor, IAsyncDisposable
         }
     }
 
+    // 기능: Actor 공통 명령(connect, disconnect, 정리용 의도)을 Unity Player에 적용한다.
+    // 입력: command - 실행할 Actor 명령, token - 실행 취소.
+    // 출력: 반환값 없음. 연결 상태가 바뀌고 ActorState가 다시 게시된다. Headless Gameplay 명령은 QaStepException.
     public async ValueTask SendAsync(ActorCommand command, CancellationToken token)
     {
         switch (command)
@@ -99,7 +107,7 @@ public sealed class UnityActor : IQaActor, IAsyncDisposable
             case ResetIntentCommand or ClearInputQueueCommand or StopFireCommand or ClearAimCommand or MoveToCommand { Target: null }:
                 break;
             default:
-                throw new QaStepException($"UnityClient actor '{Alias}' takes no gameplay input (§87); use a HeadlessClient actor for {command.GetType().Name.Replace("Command", string.Empty)}.");
+                throw new QaStepException($"UnityClient actor '{Alias}' takes no headless gameplay commands (§87); use unityKey/unityClick/unityLook (real input path) or a HeadlessClient actor for {command.GetType().Name.Replace("Command", string.Empty)}.");
         }
         Volatile.Write(ref _lastCommandId, Math.Max(Volatile.Read(ref _lastCommandId), command.Id));
         // Under the refresh gate like every other publish, so this cannot overwrite a newer poll status.
@@ -123,6 +131,18 @@ public sealed class UnityActor : IQaActor, IAsyncDisposable
         await RefreshAsync(token).ConfigureAwait(false);
         return answer;
     }
+
+    // 기능: Gameplay 입력 하나를 Player의 실제 입력 경로(POST /qa/input)로 보낸다.
+    // 입력: body - /qa/input 본문, token - 실행 취소.
+    // 출력: Player의 답(상태 코드 포함). 연결 전이면 QaStepException.
+    public async Task<UnityAnswer> InputAsync(object body, CancellationToken token) =>
+        await Client().InputAsync(body, token).ConfigureAwait(false);
+
+    // 기능: Player에 눌린 입력 전부를 떼게 한다(unityReleaseAll Step).
+    // 입력: token - 실행 취소.
+    // 출력: Player의 답(상태 코드 포함). 연결 전이면 QaStepException.
+    public async Task<UnityAnswer> ReleaseAllAsync(CancellationToken token) =>
+        await Client().ReleaseAllAsync(token).ConfigureAwait(false);
 
     // One status read now (actions call it so they judge a fresh state, not the last poll).
     // The poll loop and the run flow both refresh: one at a time, so an older answer is never published after a newer
@@ -217,6 +237,10 @@ public sealed class UnityActor : IQaActor, IAsyncDisposable
         }, poll);
     }
 
+    // 기능: Player 연결을 끝낸다. 상태 Poll을 멈추고, 눌린 입력을 모두 떼게 한 뒤(releaseAll, 최선 노력), 띄운 Player를 닫고
+    //       HTTP Client를 버린다. Attach한 Player는 닫지 않는다.
+    // 입력: reason - 연결이 끝난 이유(Report와 상태에 남는다).
+    // 출력: 반환값 없음. Actor가 Disconnected(또는 Idle) 상태로 게시된다.
     private async Task CloseAsync(string reason)
     {
         CancellationTokenSource? cts = _pollCts;
@@ -236,6 +260,7 @@ public sealed class UnityActor : IQaActor, IAsyncDisposable
             }
             cts.Dispose();
         }
+        if (_client != null && !(_process != null && _process.HasExited)) await ReleaseOnCloseAsync(_client).ConfigureAwait(false);
         if (_process != null)
         {
             LastStop = await _process.StopAsync().ConfigureAwait(false);
@@ -250,6 +275,24 @@ public sealed class UnityActor : IQaActor, IAsyncDisposable
             _closeReason = reason;
         }
         Publish(State.Unity);
+    }
+
+    // 기능: Player에 눌린 키·버튼과 진행 중인 시점 이동을 모두 떼게 한다(POST /qa/input {"releaseAll":true}). down만 보내고
+    //       up이 없거나 async hold가 남은 채 시나리오가 끝나도, 같은 Editor에 붙는 다음 시나리오로 입력이 새지 않게 한다.
+    // 입력: client - 아직 열린 Player QA Client.
+    // 출력: 반환값 없음. 실패·무응답(ReleaseTimeout)은 로그만 남기고 무시한다(정리는 계속된다).
+    private async Task ReleaseOnCloseAsync(UnityQaClient client)
+    {
+        using var cts = new CancellationTokenSource(ReleaseTimeout);
+        try
+        {
+            UnityAnswer answer = await client.ReleaseAllAsync(cts.Token).ConfigureAwait(false);
+            if (!answer.Ok) _log($"{Alias}: releaseAll refused ({answer.Error}, HTTP {answer.StatusCode})");
+        }
+        catch (Exception e) when (e is QaApiException or OperationCanceledException)
+        {
+            _log($"{Alias}: releaseAll not answered ({e.Message})");
+        }
     }
 
     private void Publish(JsonElement? status)

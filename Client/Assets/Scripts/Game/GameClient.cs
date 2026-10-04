@@ -190,7 +190,36 @@ namespace ProjectH.Client.Game
         public string QaDevPlayerId => _devPlayerId;
         public bool QaAlive => _predictor != null && !_predictor.IsDead;
         public int QaHealth => _health;
+
+        // QA gameplay input (POST /qa/input): set by QaCommandReceiver while it runs. A QA-launched player is often not
+        // focused, so its real cursor never locks; with this set the game (input, look via ShoulderCamera.ApplyLook,
+        // fire, aim) treats the cursor as locked whenever a click could lock it (_cursorLockAllowed), so screens and
+        // menus still block input exactly as before. A click in a focused window still locks the real cursor too
+        // (UpdateCursorAndButtons), so a person playing in the Editor with PROJECTH_QA_PORT set keeps the mouse.
+        public bool QaAssumeCursorLocked { get; set; }
+        // The predicted tool once joined (null = "none"), and build mode's candidate look (null = "none": not in build
+        // mode or no candidate this frame; HasCandidate is false outside build mode, see BuildController.Update).
+        public ToolKind? QaTool => State == ClientState.Joined ? _tools.Current : (ToolKind?)null;
+        public BuildPreviewState? QaPreview =>
+            State == ClientState.Joined && _tools.Current == ToolKind.Build && _build.HasCandidate ? _build.CandidateState : (BuildPreviewState?)null;
+        // The cursor lock as the game sees it this frame (QA assumption included).
+        public bool QaCursorLocked => CursorLocked;
 #endif
+
+        // 기능: 게임 입력 기준으로 커서가 잠겨 있는지 알려 준다.
+        // 입력: 없음.
+        // 출력: 실제 커서가 잠겨 있으면 true. Editor·Development Build에서는 QA 가정(QaAssumeCursorLocked)이 켜져 있고 클릭으로
+        //       잠글 수 있는 화면(_cursorLockAllowed)이어도 true. 그 밖에는 false. Release에서는 실제 잠금 비교 그대로다.
+        private bool CursorLocked
+        {
+            get
+            {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                if (QaAssumeCursorLocked && _cursorLockAllowed) return true;
+#endif
+                return Cursor.lockState == CursorLockMode.Locked;
+            }
+        }
 
         // D7: whole seconds until the current state's timer ends (Starting, Finished), 0 without one.
         public int StateSecondsLeft
@@ -344,12 +373,15 @@ namespace ProjectH.Client.Game
             _net.HarvestHitReceived += OnHarvestHit;
         }
 
+        // 기능: 한 프레임의 Client 처리: 네트워크 Poll, 재접속, 입력·커서, 원격 플레이어 렌더, 시점과 이동 예측, 로컬 뷰 배치.
+        // 입력: 없음(Unity가 매 프레임 부른다).
+        // 출력: 반환값 없음. 예측 상태와 보낼 입력 Step 수(_pendingSteps)가 갱신된다. 커서 잠금은 CursorLocked(QA 가정 포함)로 본다.
         private void Update()
         {
             _net.Poll();
             UpdateReconnect();
             // Phase 12: the same block as below (last frame's UI control, this frame's cursor) for the crouch toggle.
-            _input.Update(_inputBlocked || Cursor.lockState != CursorLockMode.Locked);
+            _input.Update(_inputBlocked || !CursorLocked);
             UpdateCursorAndButtons();
 
             if (_clock != null && _clock.IsReady)
@@ -363,7 +395,7 @@ namespace ProjectH.Client.Game
 
             // Phase 11 D5: with a screen up or the cursor free, no look, move, sprint or fire, and keys pressed meanwhile
             // are dropped. The predictor still steps, so empty inputs keep going out (the Phase 10 input timeout).
-            bool blocked = _inputBlocked || Cursor.lockState != CursorLockMode.Locked;
+            bool blocked = _inputBlocked || !CursorLocked;
             _blockedThisFrame = blocked;
             _camera.ApplyLook(blocked ? Vector2.zero : _input.LookDelta, _aiming);
             InputButtons held = InputButtons.None;
@@ -689,6 +721,9 @@ namespace ProjectH.Client.Game
             UiFont.Release();
         }
 
+        // 기능: 커서 잠금과 발사·조준 버튼 상태를 이번 프레임 값으로 정한다.
+        // 입력: 없음(InputReader, UI 제어 값, 관전 상태를 읽는다).
+        // 출력: 반환값 없음. Cursor.lockState, _fireHeld, _aiming, _fireBlockedUntilRelease가 바뀌고 관전 중 클릭이면 대상이 넘어간다.
         // Left click locks a free cursor (only once joined) and fires while it is locked (D12).
         // Aim and fire only count while the cursor is locked, i.e. while the mouse controls the game.
         // Phase 5 D5: while spectating, a left click on a locked cursor moves to the next player and never fires;
@@ -696,9 +731,18 @@ namespace ProjectH.Client.Game
         // The click that locks the cursor neither fires nor cycles.
         // Phase 11 D5: Esc no longer unlocks here; it opens the menu (UiFlow), and with any screen up the cursor is
         // freed for its buttons and a click does not lock it.
+        // QA: with QaAssumeCursorLocked the cursor counts as locked (CursorLocked), so a QA click fires instead of locking.
+        // In the !_cursorLockAllowed branch CursorLocked is the real lock, so screens behave exactly as without QA.
+        // With the QA assumption a click in a focused window also locks the real cursor (a person in the Editor); that
+        // click fires as well, because the game already counted the cursor as locked.
         private void UpdateCursorAndButtons()
         {
-            bool locked = Cursor.lockState == CursorLockMode.Locked;
+            bool locked = CursorLocked;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if (QaAssumeCursorLocked && _cursorLockAllowed && Cursor.lockState != CursorLockMode.Locked && Application.isFocused &&
+                _input.FirePressed && State == ClientState.Joined)
+                Cursor.lockState = CursorLockMode.Locked;
+#endif
             if (!_cursorLockAllowed)
             {
                 if (locked) Cursor.lockState = CursorLockMode.None;

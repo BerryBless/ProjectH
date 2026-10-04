@@ -38,9 +38,14 @@ namespace ProjectH.Client.CameraControl
         // so geometry between the camera and the player is never picked as the aim point.
         public Ray AimRay { get; private set; }
 
+        // 기능: 마우스 이동만큼 카메라 Yaw·Pitch를 돌린다(조준 중이면 감도를 줄인다).
+        // 입력: lookDelta - 이번 프레임의 마우스 이동(입력이 막혀 있으면 호출자가 0을 넘긴다), aiming - 조준 중인지.
+        // 출력: 반환값 없음. Yaw(0–360)와 Pitch(MinPitch–MaxPitch)가 바뀐다. lookDelta가 0이면 아무것도 바뀌지 않는다.
+        // The cursor-lock gate lives in the caller (GameClient passes zero when input is blocked, which includes a free
+        // cursor). Checking Cursor.lockState here too stopped QA look, whose real cursor never locks (QaAssumeCursorLocked).
         public void ApplyLook(Vector2 lookDelta, bool aiming)
         {
-            if (Cursor.lockState != CursorLockMode.Locked) return;
+            if (lookDelta == Vector2.zero) return;
             float sensitivity = aiming ? Sensitivity * ShoulderCameraMath.AimSensitivityScale : Sensitivity;
             Yaw = Mathf.Repeat(Yaw + lookDelta.x * sensitivity, 360f);
             Pitch = Mathf.Clamp(Pitch - lookDelta.y * sensitivity, MinPitch, MaxPitch);

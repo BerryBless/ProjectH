@@ -311,10 +311,16 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
   - 아무것도 띄우거나 닫지 않는다.
   - 그 Player는 스스로 이번 실행의 서버에 접속해 있어야 한다. 보통 `server.mode: attach`와 같이 쓴다.
 - **상태**: Player의 `/qa/status`를 250 ms마다 읽는다(별도 스레드 없는 async Loop).
-  - `actor.unity.<필드>`(screen, joined, connected, statsOpen, debugVisible, alive, health, fps, frame)와 `network.connected`·`actor.status`가 이것을 따른다.
+  - `actor.unity.<필드>`(screen, joined, connected, statsOpen, debugVisible, alive, health, fps, frame, tool, preview, cursorLocked)와 `network.connected`·`actor.status`가 이것을 따른다.
+  - tool 값: Weapon, Harvest, Build, none(join 전). preview 값: Valid, Invalid, NoResource, none(건설 모드가 아니거나 후보 없음). cursorLocked: 게임이 보는 커서 잠금(QA 가정 포함).
   - 게임 판정은 여전히 서버 상태다(`player.*`).
   - screen 값: Title, Connecting, InGame, Menu, Disconnected, Result.
-- **입력 없음**(§87): 이동·사격·건설·입력 정지 같은 Gameplay Action은 Unity Actor에 쓰면 Validation 오류다. 그런 동작은 Headless Actor로 한다. Unity Actor에는 UI 명령과 Screenshot만 보낸다.
+- **입력은 실제 입력 경로로만**(§87): Unity Actor의 Gameplay 입력은 `unityKey`·`unityClick`·`unityLook`만 쓴다. Player가 Input System 가상 키보드·마우스에 넣으므로 게임의 `InputReader` Binding을 그대로 지난다(Build Preview, Turbo Build, 도구 전환, 채집, 걷기 확인용).
+  - Headless용 Gameplay Action(`moveTo`, `fire`, `build`, `pauseInput` 등)은 Unity Actor에 쓰면 Validation 오류다. 게임 코드에 값을 직접 넣는 경로가 없다.
+  - 기다림: `async`가 없으면 입력이 끝난 뒤(`holdMs` 또는 `ms`) 50 ms(약 2 Frame)를 더 기다리고 Player 상태를 다시 읽은 뒤 PASS한다. 다음 Step이 결과를 본다. `async: true`면 Player가 받아들인 즉시 PASS한다(W를 누른 채 시점을 돌릴 때 등).
+  - 기본 Timeout은 10 s + 입력 시간이다. 기다리는 Step의 `timeoutMilliseconds`가 입력 시간 + 50 ms 이하이면 Validation 오류다.
+  - Player가 409(join 전), 400(잘못된 본문), 503(동시 hold·look 16개 초과)으로 답하면 Step이 FAIL한다.
+  - 정리: Actor 연결을 닫을 때(disconnect, 새 connect, 실행 Cleanup) 먼저 `{"releaseAll":true}`를 보낸다(최대 1 s, 실패는 무시). up 없는 down이나 남은 async hold가 Attach한 Editor의 다음 시나리오로 새지 않는다. 시나리오 중간에는 `unityReleaseAll`로 뗀다.
 - **종료**: Cleanup에서 띄운 Player의 창을 닫고, 3 s 안에 안 끝나면 그 자식 프로세스 트리만 Kill한다. Report Cleanup에 `unity <alias>` 줄이 남는다.
   - **QA Tool이 강제 종료되어도 Player는 남지 않는다(Windows).** 띄운 Player는 Kill-on-close Job Object에 들어가 있다. 도구 프로세스가 어떻게 끝나든 Windows가 Job 핸들을 닫으면서 Player를 끝낸다. 서버는 Job에 넣지 않는다(서버는 `Qa:ParentPid` 감시로 스스로 정상 종료한다).
   - Job에 넣지 못하면 로그에 경고를 남기고 계속한다. Windows가 아닌 환경도 같다. 그때는 정상 종료(Ctrl+C, UI Stop·종료)의 Cleanup만 Player를 닫는다.
@@ -324,7 +330,11 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 |---|---|---|
 | `captureScreenshot` | actor, `name`(`[A-Za-z0-9_-]{1,64}`) | `screenshots/<Step 번호>_<alias>_<name>.png`(64자 이내).<br>Step 번호가 있어서, 영문이 아닌 Alias가 같은 문자로 바뀌거나 잘려도 파일이 겹치지 않는다. 다시 실행한 Step은 `_2`가 붙는다.<br>Report에는 썸네일과 링크로 나온다(상대 경로). UI에서 연 Report도 `/reports/<runId>/screenshots/<file>.png`로 이미지를 보인다. 실행당 최대 200장 |
 | `uiCommand` | actor, `command`(openMenu, closeMenu, openStats, closeStats, toggleDebug) | 지금 화면에 맞지 않으면(409) 실패한다. 화면 이름이 메시지에 나온다 |
-| `waitForUnity` | actor, `condition`(status 필드, 예: `joined`, `screen`, `unity.statsOpen`), 연산자 하나, `timeoutMilliseconds` | Player 상태를 직접 읽으며 기다린다 |
+| `waitForUnity` | actor, `condition`(status 필드, 예: `joined`, `screen`, `unity.statsOpen`, `tool`, `preview`), 연산자 하나, `timeoutMilliseconds` | Player 상태를 직접 읽으며 기다린다 |
+| `unityKey` | actor, `key`(w a s d space leftShift leftCtrl c q f z x v b t r e g 1 2 3 4 5 escape f1), `holdMs?`(1–10000), `state?`(down\|up), `async?` | 키 입력. 없으면 한 번 누름(이번 Frame 누르고 다음 Frame 뗌), `holdMs`면 그동안 누름, `state`면 누름·뗌만(뗌 없는 down은 Player가 10 s 뒤 뗀다). `holdMs`와 `state`는 함께 쓰지 않는다 |
+| `unityClick` | actor, `button?`(left\|right, 기본 left), `holdMs?`, `state?`, `async?` | 마우스 버튼. 규칙은 `unityKey`와 같다 |
+| `unityReleaseAll` | actor | 눌린 키·버튼과 진행 중인 시점 이동을 모두 뗀다(`{"releaseAll":true}`). 약 2 Frame 뒤 PASS |
+| `unityLook` | actor, `dx`·`dy`(픽셀, 하나 이상, \|값\| ≤ 20000), `ms?`(0–5000, 기본 0 = 한 Frame), `async?` | 마우스 이동량을 `ms` 동안의 Frame에 고르게 나눠 넣는다 |
 
 - **확인한 것**(2026-10-02, Development Build): `Smoke/unity_client.json`과 `UI/kill_feed.json`이 PASS했고 Player와 서버가 남지 않았다.
   - Player 시작부터 join까지 5~13 s 걸렸다.
@@ -391,6 +401,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `UI/kill_feed.json` | 84 | Headless B가 A를 실제 사격으로 제거하는 동안 Unity Player가 보고, Kill Feed Screenshot | ~18 s |
 | `UI/visual_screens.json` | 로드맵 §9 | Unity Player가 3인 경기에 들어가 HUD, Esc 메뉴, F1, Kill Feed, 결과, 전적 창(DB 꺼짐 안내), 서버 Crash 뒤 재접속 화면, 같은 Port로 다시 뜬 서버에 재입장한 화면을 찍는다 | ~20 s |
 | `Building/visual_building.json` | 로드맵 §10 | Unity Player가 15 m 앞의 건설을 본다. 실제 입력으로 짓는 나무 벽(짓는 중 → 완성), 돌·나무·금속 벽, 바닥·경사로·지붕, 자원 줄(1600×900), 실제 사격 피해 두 단계, 지지벽 파괴 뒤 다리 붕괴(먼지)와 그 뒤를 찍는다 | ~17 s |
+| `Building/unity_build_input.json` | 로드맵 §10, §87 | Unity Player를 가상 키보드·마우스로 움직인다(`unityKey`·`unityClick`·`unityLook`). W 걷기, Q 건축 모드(Player·서버 둘 다 Build), Z 벽 → 미리보기 Valid, 클릭 배치(서버 조각 1, 나무 차감) → 같은 자리 Invalid, 자기 벽에 막힘, F 채집(나무 증가), 버튼을 누른 채 회전하는 Turbo(조각 증가), 1 무기 | ~15 s |
 | `Manual/ime_name.json` | 88–90 | 한글 IME 이름 입력 Manual Check 2개(CI에서는 SKIPPED) | 사람 |
 | `Manual/editor_ui.json` | 로드맵 §9 | Editor 수동 검증(Phase 11 UI). 서버를 127.0.0.1:7777(Editor 기본 주소)에 띄우고 Headless 상대 2명을 둔다. 사람이 Editor로 접속해 타이틀·한글 글꼴·IME·접속·이름·ESC 메뉴·F1·Kill Feed·결과·전적·끊김·재접속을 PASS/FAIL로 답한다. Kill Feed와 결과 화면은 상대를 `killPlayer`로 제거해 만든다. 끊김은 `stopServer`, 재접속은 같은 Port로 `startServer` | 사람 |
 | `Manual/editor_building.json` | 로드맵 §10 | Editor 수동 검증(Phase 13 건설). DevRespawn 서버를 7777에 띄우고 QA_Build_Test 근처에 돌·나무·금속 벽과 두 칸 다리를 놓는다. 사람이 채집·미리보기(유효/무효)·벽·바닥·경사로·지붕·Turbo·건설 중 표시·충돌·피해를 확인한다. 마지막에 도구가 다리 밑 돌벽을 부수고(`damageBuild`) 붕괴 연출을 묻는다 | 사람 |
@@ -696,9 +707,10 @@ Client 쪽 세부 사항(스레드, 상태 코드 전체, 녹화 형식)은 `Doc
 
 | Method | Path | Body | 응답 |
 |---|---|---|---|
-| GET | `/qa/status` | — | `{ok, devPlayerId, connected, joined, screen, statsOpen, debugVisible, alive, health, fps, frame}` |
+| GET | `/qa/status` | — | `{ok, devPlayerId, connected, joined, screen, statsOpen, debugVisible, alive, health, fps, frame, tool, preview, cursorLocked}` |
 | POST | `/qa/screenshot` | `{"name":"[A-Za-z0-9_-]{1,64}"}` | 파일이 생긴 뒤 `{ok, path}`. Windows 장치 이름(CON, NUL, COM1…)은 400 |
 | POST | `/qa/ui` | `{"command":"openMenu\|closeMenu\|openStats\|closeStats\|toggleDebug"}` | `{ok, command, screen, statsOpen, debugVisible}`. 지금 화면에 맞지 않으면 409이고 아무것도 바뀌지 않는다 |
+| POST | `/qa/input` | 하나만: `{"key":"q"}`, `{"key":"w","holdMs":1500}`, `{"key":"w","action":"down\|up"}`, `{"button":"left\|right"}`(같은 `holdMs`·`action`), `{"lookX":120,"lookY":-30,"ms":300}`, `{"releaseAll":true}`(join 전에도 200). 숫자는 JSON 숫자 | Input System에 넣은 뒤 `{ok, applied}`(hold는 그 뒤에도 이어진다). 400 잘못된 본문·허용 밖 키, 409 join 전, 503 동시 hold·look 16개 초과. 도구의 `unityKey`·`unityClick`·`unityLook`이 보낸다(도구 인자 `state`가 본문의 `action`이 된다) |
 
 - 모든 POST에는 `Content-Type: application/json`이 있어야 한다. 없으면 415다(브라우저 CSRF 방지).
 - 그 밖의 오류 코드:
@@ -709,8 +721,8 @@ Client 쪽 세부 사항(스레드, 상태 코드 전체, 녹화 형식)은 `Doc
   - 413: Body가 16 KB를 넘음
   - 503: 32개 처리 중, 큐가 가득 참, 종료 중
   - 504: 5초 안에 답이 없음
-- 모든 응답은 `Connection: close`다.
-- Gameplay 입력 명령은 없다(§87). 총격 같은 동작은 Headless Actor로 확인한다.
+- 연결은 유지된다(Keep-Alive). 408·413 응답 뒤에만 수신기가 연결을 닫는다(2026-10-05 수정, 위 "Unity Client Actor"의 수정).
+- Gameplay 입력은 `/qa/input`뿐이다(§87). 게임 코드에 값을 넣지 않고 Input System 가상 장치로 넣어 `InputReader` Binding을 그대로 지난다.
 - 화면이 잠겨 있거나 창이 그려지지 않으면, 스크린샷 파일은 생겨도 내용이 비어 있을 수 있다. 잠기지 않은 데스크톱에서 확인한다.
 
 녹화 형식(`convert-recording`의 입력):
@@ -830,7 +842,7 @@ dotnet run --project Server/src/ProjectH.QA -- run QA/Scenarios/Stress/soak.json
 
 ### Stress 모드 (`"stress": true`, D39)
 
-- Headless Actor만 쓴다. UnityClient Actor, `captureScreenshot`, `manualCheck`, `uiCommand`, `waitForUnity`는 Validation 오류다(§2, §122).
+- Headless Actor만 쓴다. UnityClient Actor, `captureScreenshot`, `manualCheck`, `uiCommand`, `waitForUnity`, `unityKey`, `unityClick`, `unityLook`, `unityReleaseAll`은 Validation 오류다(§2, §122).
 - 띄우는 서버는 `Qa:Events=false`다(QA Tick diff 비용을 빼기 위해, §150). `server.options`에 `Qa:Events`가 있으면 그 값을 쓴다. 이벤트가 꺼진 시나리오의 `waitForEvent`·`event.*`는 Validation 경고다.
 - 콘솔(`--verbose` 포함)과 UI Live Log에는 Step 줄과 경고(warn/fail/error/exception/crit가 든 줄)만 나온다. Report의 서버 로그 Tail은 전부 남는다.
 - UI Inspector는 서버를 View마다 5초에 한 번만 조회한다(§87-88).
@@ -1141,7 +1153,8 @@ Baseline Player Count 비교(D40 묶음, steady 30 s, `batch-20261002-202122-417
 | Material HUD | PASS(다듬기 필요) | "나무 120 돌 80 금속 40"이 오른쪽 아래에 나온다. Development Build 워터마크와 겹친다(Editor·Release에는 워터마크가 없다) |
 | Structure Damage | PASS(다듬기 필요) | 실제 사격 3발(150→90): 25 % 어두워짐(대비가 약하다). 6발(→30): 붉은 단계가 뚜렷하다 |
 | Collapse Visual | PASS | 지지벽 파괴 150 ms 뒤 다리 두 칸이 사라지고 먼지가 보인다. 1.5초 뒤 공중에 남은 조각이 없다 |
-| Korean IME, Build Preview(유효/무효), Turbo Build, 채집 손맛, Build Collision 느낌 | 사람 확인 남음 | Unity Actor는 게임 입력을 받지 않는다(§87). `Manual/editor_ui.json`·`Manual/editor_building.json`으로 확인한다. 충돌 계산 자체는 서버·예측 테스트가 본다 |
+| Build Preview(유효/무효), Turbo Build, 채집, Build Collision, 도구 전환 | PASS(실제 입력) | `Building/unity_build_input.json`(가상 Input System 장치, 2026-10-05 추가): 파란 유효 유령 → 배치 → 같은 자리 빨간 무효 유령, 자기 벽에 막힘(z < -15), Turbo로 칸 둘레 벽, 나무 채집, Q·F·1 전환. 3번 연속 PASS |
+| Korean IME, 조작감 | 사람 확인 남음 | IME는 OS 입력기를 거쳐서 가상 장치로는 검증되지 않는다. `Manual/editor_ui.json`·`Manual/editor_building.json` |
 
 발견한 문제:
 - **수정함(High, QA 도구):** Unity 수신기의 무작위 연결 끊김(위 "Unity Client Actor"의 수정). Unity 시나리오가 아무 Step에서나 실패했다.
