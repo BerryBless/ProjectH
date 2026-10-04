@@ -17,6 +17,9 @@ public sealed class ServerMeter : IDisposable
 
     private readonly Meter _meter = new(Name);
 
+    // 기능: "ProjectH.Server" Meter에 Health 수치를 읽는 Observable Gauge·Counter를 등록한다.
+    // 입력: h - Listener가 Polling할 때 값을 읽을 서버 Health Counter.
+    // 출력: 모든 Instrument가 등록된 ServerMeter 객체. Dispose 전까지 dotnet-counters로 조회할 수 있다.
     public ServerMeter(HealthCounters h)
     {
         _meter.CreateObservableGauge("projecth.peers", () => h.Peers, description: "Open connections");
@@ -75,10 +78,19 @@ public sealed class ServerMeter : IDisposable
         _meter.CreateObservableCounter("projecth.stats_queries", () => StatsQueries(h));
     }
 
+    // 기능: 서버 Meter를 해제해 모든 Observable 계측을 멈춘다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. Meter와 그 계측이 해제된다.
     public void Dispose() => _meter.Dispose();
 
+    // 기능: Measurement에 붙일 Tag 하나를 만든다.
+    // 입력: key - Tag 이름, value - Tag 값.
+    // 출력: key와 value로 된 Tag 쌍.
     private static KeyValuePair<string, object?> Tag(string key, string value) => new(key, value);
 
+    // 기능: 서버가 연결 하나를 끊은 사유 코드별 Kick 수를 Measurement로 만든다.
+    // 입력: h - 값을 읽을 서버 Health Counter.
+    // 출력: code Tag가 붙은 사유 코드별 Kick 누적 수 배열.
     // Every code the server closes one connection with. None and ServerShutdown are left out: a shutdown closes everyone
     // at once and is not a kick (it is never counted).
     private static Measurement<long>[] ByCode(HealthCounters h) => new[]
@@ -90,8 +102,14 @@ public sealed class ServerMeter : IDisposable
         Kick(h, DisconnectCode.Congested),
     };
 
+    // 기능: 종료 코드 하나의 Kick 누적 수를 Measurement로 만든다.
+    // 입력: h - 값을 읽을 서버 Health Counter, code - 읽을 종료 코드.
+    // 출력: code Tag가 붙은 해당 코드의 Kick 누적 수.
     private static Measurement<long> Kick(HealthCounters h, DisconnectCode code) => new(h.Kicks(code), Tag("code", code.ToString()));
 
+    // 기능: 잘못된 Packet 수를 사유별 Measurement로 만든다.
+    // 입력: h - 값을 읽을 서버 Health Counter.
+    // 출력: reason Tag가 붙은 BadPacketReason별 누적 수 배열.
     private static Measurement<long>[] ByReason(HealthCounters h)
     {
         var result = new Measurement<long>[(int)BadPacketReason.Count];
@@ -100,6 +118,9 @@ public sealed class ServerMeter : IDisposable
         return result;
     }
 
+    // 기능: 건설 요청 수를 처리 결과별 Measurement로 만든다.
+    // 입력: h - 값을 읽을 서버 Health Counter.
+    // 출력: result Tag가 붙은 수락(Ok)·거절 사유별·중복(Duplicate) 누적 수 배열.
     // Accepted, each refusal reason, and duplicates.
     private static Measurement<long>[] BuildRequests(HealthCounters h)
     {
@@ -111,6 +132,9 @@ public sealed class ServerMeter : IDisposable
         return result;
     }
 
+    // 기능: Match 기록 Writer의 저장 결과 수를 Measurement로 만든다.
+    // 입력: h - Persistence Counter 공급자를 가진 서버 Health Counter.
+    // 출력: result Tag가 붙은 saved·failed·discarded·dropped 누적 수 배열. Writer가 없으면 빈 배열.
     private static Measurement<long>[] DbRecords(HealthCounters h)
     {
         if (h.Persistence is not { } source) return Array.Empty<Measurement<long>>();
@@ -124,6 +148,9 @@ public sealed class ServerMeter : IDisposable
         };
     }
 
+    // 기능: 전적 조회 경로의 요청·제한·실패 수를 Measurement로 만든다.
+    // 입력: h - StatsQueries Counter 공급자를 가진 서버 Health Counter.
+    // 출력: result Tag가 붙은 requests·limited·busy·unavailable·undelivered 누적 수 배열. 공급자가 없으면 빈 배열.
     // Phase 11 D8: the statistics path.
     private static Measurement<long>[] StatsQueries(HealthCounters h)
     {

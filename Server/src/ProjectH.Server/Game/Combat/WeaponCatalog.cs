@@ -16,6 +16,9 @@ public sealed class WeaponCatalog
     // Weapon id -> index in _weapons, -1 when unknown. Ids are bytes, so 256 entries cover every id.
     private readonly int[] _indexById = new int[256];
 
+    // 기능: 검증된 무기 목록으로 id 색인과 전송용 무기 정보를 만든다.
+    // 입력: weapons - 검증된 무기 정의 목록, simHz - Tick 값 변환에 쓴 시뮬레이션 Tick 속도.
+    // 출력: 이후 바뀌지 않는 무기 카탈로그.
     private WeaponCatalog(WeaponDefinition[] weapons, int simHz)
     {
         _weapons = weapons;
@@ -37,6 +40,9 @@ public sealed class WeaponCatalog
 
     public WeaponDefinition this[int index] => _weapons[index];
 
+    // 기능: 무기 id로 무기 정의를 찾는다.
+    // 입력: id - 무기 id.
+    // 출력: 있으면 true와 무기 정의, 없으면 false.
     // Weapon items and inventory slots store the weapon id (Phase 4).
     public bool TryGetById(byte id, out WeaponDefinition weapon)
     {
@@ -45,6 +51,9 @@ public sealed class WeaponCatalog
         return index >= 0;
     }
 
+    // 기능: weapons.json 파일을 읽고 검증해 무기 카탈로그를 만든다.
+    // 입력: path - 무기 데이터 파일 경로, simHz - 시뮬레이션 Tick 속도.
+    // 출력: 읽은 무기 카탈로그. 파일이 없거나 잘못되면 InvalidOperationException(서버 시작 중단).
     public static WeaponCatalog LoadFile(string path, int simHz)
     {
         if (!File.Exists(path)) throw new InvalidOperationException($"Weapon data not found: {path}");
@@ -54,6 +63,9 @@ public sealed class WeaponCatalog
         return catalog!;
     }
 
+    // 기능: 무기 데이터 JSON을 파싱하고 각 무기 값과 id·이름 중복을 검증한다.
+    // 입력: json - 무기 데이터 JSON 문자열, simHz - 초 단위 값을 Tick으로 바꿀 시뮬레이션 Tick 속도.
+    // 출력: 성공하면 true와 무기 카탈로그, 실패하면 false와 오류 메시지.
     public static bool TryParse(string json, int simHz, out WeaponCatalog? catalog, out string? error)
     {
         catalog = null;
@@ -102,6 +114,9 @@ public sealed class WeaponCatalog
         return true;
     }
 
+    // 기능: JSON 무기 항목 하나의 값 범위를 검증하고 무기 정의로 바꾼다.
+    // 입력: w - JSON에서 읽은 무기 항목, simHz - 초 단위 값을 Tick으로 바꿀 시뮬레이션 Tick 속도.
+    // 출력: 문제가 없으면 null과 무기 정의(weapon), 있으면 문제 설명 문자열.
     private static string? Validate(WeaponJson? w, int simHz, out WeaponDefinition? weapon)
     {
         weapon = null;

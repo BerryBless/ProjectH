@@ -48,8 +48,14 @@ public sealed class Inventory
     private readonly int[] _resources = new int[3];
     public bool ResourcesChanged;
 
+    // 기능: 건설 재료 보유량을 돌려준다.
+    // 입력: material - 재료 종류.
+    // 출력: 그 재료의 보유량.
     public int Resource(BuildMaterialType material) => _resources[(int)material];
 
+    // 기능: 건설 재료 보유량을 설정하고, 값이 바뀌었으면 재료 변경 알림을 표시한다.
+    // 입력: material - 바꿀 재료 종류, amount - 새 보유량.
+    // 출력: 반환값 없음. 값이 달라졌으면 보유량이 바뀌고 ResourcesChanged가 설정된다.
     public void SetResource(BuildMaterialType material, int amount)
     {
         if (_resources[(int)material] == amount) return;
@@ -57,6 +63,9 @@ public sealed class Inventory
         ResourcesChanged = true;
     }
 
+    // 기능: 건설 재료 보유량을 Client로 보낼 ResourcesState Packet 값으로 만든다.
+    // 입력: 없음.
+    // 출력: 나무·돌·금속 보유량을 0..ushort 최대값으로 잘라 담은 ResourcesState.
     public ResourcesState ResourcesToWire() => new()
     {
         Wood = (ushort)Math.Clamp(_resources[0], 0, ushort.MaxValue),
@@ -66,10 +75,19 @@ public sealed class Inventory
 
     public ref HeldWeapon Current => ref Slots[CurrentSlot];
 
+    // 기능: 탄약 종류별 예비 탄약 수를 돌려준다.
+    // 입력: type - 탄약 종류(None이 아닌 값).
+    // 출력: 그 종류의 예비 탄약 수.
     public int GetAmmo(AmmoType type) => _ammo[(int)type - 1];
 
+    // 기능: 탄약 종류별 예비 탄약 수를 설정한다. 최대치 검사와 Changed 설정은 호출자가 한다.
+    // 입력: type - 탄약 종류(None이 아닌 값), value - 새 예비 탄약 수.
+    // 출력: 반환값 없음. 그 종류의 예비 탄약 수가 바뀐다.
     public void SetAmmo(AmmoType type, int value) => _ammo[(int)type - 1] = value;
 
+    // 기능: 새 생명을 위해 인벤토리를 빈 상태로 되돌린다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 무기 슬롯·탄약·회복 아이템·재료가 비워지고 도구는 무기로, 사용 중인 회복은 취소되며 Changed와 ResourcesChanged가 설정된다.
     public void Clear()
     {
         Array.Clear(Slots);
@@ -88,6 +106,9 @@ public sealed class Inventory
         ResourcesChanged = true;
     }
 
+    // 기능: 인벤토리를 소유자에게 보낼 InventoryState Packet 값으로 만든다.
+    // 입력: now - 현재 서버 Tick(남은 회복 사용 Tick 계산 기준).
+    // 출력: 현재 슬롯, 탄약, 회복 아이템 수, 사용 중인 회복과 남은 Tick(진행 중이면 최소 1), 채워진 무기 슬롯을 담은 InventoryState.
     // now = the current server tick; the client counts the rest of a running use down from it.
     public InventoryState ToWire(uint now)
     {

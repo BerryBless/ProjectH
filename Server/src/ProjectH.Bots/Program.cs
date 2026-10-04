@@ -13,6 +13,9 @@ if (!BotOptions.TryParse(args, out BotOptions options, out string? error))
 }
 
 using var cancel = new CancellationTokenSource();
+// 기능: Ctrl+C를 가로채 프로세스를 바로 죽이지 않고 봇 루프 취소를 요청한다.
+// 입력: e - 콘솔 취소 이벤트 인자.
+// 출력: 반환값 없음. 프로세스 종료가 취소되고 토큰이 취소되어 Run이 끝난 뒤 소켓이 닫힌다.
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;   // stop the loop and close the sockets instead of killing the process

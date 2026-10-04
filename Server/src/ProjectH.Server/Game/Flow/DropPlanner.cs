@@ -9,6 +9,9 @@ namespace ProjectH.Server.Game.Flow;
 // 200 m along an axis, 2 x (half-diagonal 113 m + 20 m) = about 266 m, 13.3 s, on a diagonal), flown at TransportSpeed. One Random per match start.
 public static class DropPlanner
 {
+    // 기능: Seed로 방향을 정해 맵 중심을 지나는 수송기 직선 경로를 만든다.
+    // 입력: seed - 이번 Match의 경로 난수 Seed, startTick - 수송기가 출발하는 Tick, simHz - 서버 시뮬레이션 Tick 속도.
+    // 출력: 시작·끝 좌표, 고도, 출발 Tick, 비행 Tick 수(최소 1)가 채워진 DropRoute.
     public static DropRoute Plan(int seed, uint startTick, int simHz)
     {
         var rng = new Random(seed);

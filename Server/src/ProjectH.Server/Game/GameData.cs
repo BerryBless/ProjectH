@@ -17,6 +17,9 @@ public sealed class GameData
     public const string ZonesFile = "zones.json";
     public const string BuildingFile = BuildingCatalog.FileName;
 
+    // 기능: 데이터 테이블들을 묶고 SimHz 일치와 Loot Spawn Point가 가리키는 테이블 존재를 교차 검증한다.
+    // 입력: weapons - 무기 데이터, items - 아이템 데이터, loot - 루트 테이블, zones - 안전지대 단계, building - 건설 데이터(null이면 기본값).
+    // 출력: 검증을 통과한 불변 GameData. null 인자는 ArgumentNullException, 불일치는 ArgumentException을 던진다.
     // Phase 13: building null = the shipped numbers (BuildingCatalog.Default), so tests need no file.
     public GameData(WeaponCatalog weapons, ItemCatalog items, LootTable loot, ZoneData zones, BuildingCatalog? building = null)
     {
@@ -48,6 +51,9 @@ public sealed class GameData
     public BuildingCatalog Building { get; }
     public int SimHz => Weapons.SimHz;
 
+    // 기능: 디렉터리의 데이터 파일을 모두 읽어 GameData를 만든다.
+    // 입력: directory - 데이터 파일이 있는 폴더, simHz - 서버 시뮬레이션 Tick 속도.
+    // 출력: 로드·검증된 GameData. 파일이 없거나 잘못되면 예외를 던진다(교차 검증 실패는 InvalidOperationException).
     // The files are copied next to the server executable. A missing or invalid file throws, so the host
     // refuses to start (same as an invalid ServerOptions value).
     public static GameData LoadDirectory(string directory, int simHz)

@@ -39,6 +39,9 @@ public sealed class BotBuilder
     private BuildRequest _pending;
     private Vector3 _aimAt;
 
+    // 기능: 봇 하나의 건설 행동 상태를 시드 고정 난수로 만든다.
+    // 입력: seed - 난수 시드, spamPerSecond - 초당 스팸 건설 요청 수(0이면 끔), chance - 피격 시 방어벽을 세울 확률.
+    // 출력: 진행 중인 배치가 없고 요청 수가 0인 건설 객체.
     public BotBuilder(int seed, int spamPerSecond = 0, float chance = DefenceChance)
     {
         _rng = new System.Random(seed);
@@ -48,6 +51,9 @@ public sealed class BotBuilder
 
     public int Requests { get; private set; }
 
+    // 기능: 두뇌가 만든 입력에 이번 Tick의 건설 버튼과 조준을 덧붙이고, 진행 중인 배치(조준 → 요청 → 무기 복귀) 단계를 진행하거나 방어벽·경사로·스팸 배치를 새로 시작한다.
+    // 입력: view - 봇이 받은 정보, now - 현재 시각(초), fightTarget - 두뇌의 교전 대상 ID(0이면 없음), command - 두뇌가 만든 이번 Tick 입력.
+    // 출력: 이번 Tick에 건설 요청을 보내야 하면 true와 request(Sequence 포함), 아니면 false. command의 버튼·조준과 배치 단계·쿨다운이 갱신된다.
     // Adds this tick's building buttons and aim to the brain's command; request is what to send this tick (on the
     // building channel), if anything.
     public bool Tick(BotView view, float now, ushort fightTarget, ref InputCommand command, out BuildRequest request)
@@ -109,6 +115,9 @@ public sealed class BotBuilder
         return false;
     }
 
+    // 기능: 계획한 배치를 시작한다. 건설 모드가 아니면 Q를 누르고 계획한 조각을 조준한다.
+    // 입력: view - 봇이 받은 정보, now - 현재 시각(초), command - 채울 이번 Tick 입력.
+    // 출력: 항상 false(요청은 다음 단계에서 보낸다). 배치 단계가 조준(1)이 되고 다음 계획 시각이 DefenceCooldownSeconds 뒤로 밀린다.
     private bool Start(BotView view, float now, ref InputCommand command)
     {
         _phase = 1;
@@ -120,6 +129,9 @@ public sealed class BotBuilder
         return false;
     }
 
+    // 기능: 봇이 선 격자 칸과 높이에서 방향에 맞는 벽 또는 경사로 배치 요청과 조준점을 계획한다.
+    // 입력: view - 봇이 받은 정보, type - 조각 종류(Wall 또는 Ramp), direction - 공격자나 대상 쪽 방향(수평 성분 사용).
+    // 출력: 격자 안에 놓을 수 있는 모양이면 true(대기 요청 _pending과 조준점 _aimAt이 설정됨), 아니면 false.
     // A wall on the bot's cell edge facing direction, or a ramp in the next cell that way rising towards it, at the bot's
     // level, in the first material the bot can pay for (any, with infinite resources the server does not ask).
     private bool Plan(BotView view, BuildPieceType type, Vector3 direction)
@@ -150,6 +162,9 @@ public sealed class BotBuilder
         return true;
     }
 
+    // 기능: 현재 자원으로 비용을 낼 수 있는 첫 재료를 고른다.
+    // 입력: view - 건설 카탈로그와 자원 상태가 든 봇 정보.
+    // 출력: 낼 수 있는 첫 재료. 카탈로그가 없거나 낼 수 있는 재료가 없으면 Wood.
     private static BuildMaterialType Affordable(BotView view)
     {
         if (view.BuildCatalog == null) return BuildMaterialType.Wood;
@@ -160,6 +175,9 @@ public sealed class BotBuilder
         return BuildMaterialType.Wood;
     }
 
+    // 기능: 부하 테스트용으로 건설 모드를 유지하며 초당 spamPerSecond개의 건설 요청을 주변 칸을 돌아가며 만든다.
+    // 입력: view - 봇이 받은 정보, now - 현재 시각(초), command - 채울 이번 Tick 입력.
+    // 출력: 지난 Tick에 조준한 요청을 이번에 보내면 true와 request, 아니면 false. 사격·슬롯 버튼은 지워지고, 새 요청이면 조준과 대기 요청이 설정된다.
     // --build-spam: stay in build mode and send N requests a second, each aimed a tick before it is sent, cycling through
     // walls, floors and ramps of the 3 x 3 cells around the bot on its level and the next.
     private bool Spam(BotView view, float now, ref InputCommand command, out BuildRequest request)
@@ -211,12 +229,18 @@ public sealed class BotBuilder
         return false;
     }
 
+    // 기능: 도구 전환 버튼을 누르고 다음 누름까지의 간격을 잡는다.
+    // 입력: command - 채울 이번 Tick 입력, button - 누를 버튼, now - 현재 시각(초).
+    // 출력: 반환값 없음. command에 버튼이 추가되고 다음 도구 버튼 시각이 ButtonRepeatSeconds 뒤가 된다.
     private void Press(ref InputCommand command, InputButtons button, float now)
     {
         command.Buttons |= button;
         _nextToolPress = now + ButtonRepeatSeconds;
     }
 
+    // 기능: 눈 높이에서 계획한 조각 중심을 향하도록 조준 각도를 맞춘다.
+    // 입력: view - 봇 위치가 든 봇 정보, command - 채울 이번 Tick 입력.
+    // 출력: 반환값 없음. command의 AimYaw·AimPitch가 바뀐다. 조준점이 눈 위치와 거의 같으면 그대로 둔다.
     // Aim from the eye (the server's build check) at the planned piece.
     private void Aim(BotView view, ref InputCommand command)
     {
@@ -227,6 +251,9 @@ public sealed class BotBuilder
         command.AimPitch = -MathF.Atan2(d.Y, flat) * 180f / MathF.PI;
     }
 
+    // 기능: 현재 이동 모드에서 건설 행동을 할 수 있는지 판단한다.
+    // 입력: mode - 봇의 이동 모드.
+    // 출력: 지상·웅크림·슬라이드면 true, 수송기·낙하·활공 등 그 외 모드면 false.
     private static bool ActionsAllowed(MovementMode mode) =>
         mode == MovementMode.Ground || mode == MovementMode.Crouch || mode == MovementMode.Slide;
 }

@@ -33,6 +33,9 @@ public sealed class BuildWorld
     private readonly Dictionary<ushort, int> _ownerCounts = new();
     private uint _nextId = 1;
 
+    // 기능: 건설 조각 저장소를 Match 최대 조각 수에 맞춰 만든다.
+    // 입력: catalog - 재료 설정과 Match당 최대 조각 수를 담은 건설 카탈로그.
+    // 출력: 조각이 하나도 없고 다음 id가 1인 BuildWorld.
     public BuildWorld(BuildingCatalog catalog)
     {
         _catalog = catalog;
@@ -48,21 +51,38 @@ public sealed class BuildWorld
     // The next id to hand out (ids before it were used in this server's life).
     public uint NextId => _nextId;
 
+    // 기능: 조각 id로 저장 슬롯 번호를 찾는다.
+    // 입력: id - 찾을 조각 id.
+    // 출력: 조각이 있으면 true와 저장 슬롯 번호, 없으면 false.
     public bool TryGetSlot(uint id, out int slot)
     {
         slot = Grid.SlotOf(id);
         return slot >= 0;
     }
 
+    // 기능: 슬롯에 저장된 조각을 참조로 돌려준다.
+    // 입력: slot - 조각 슬롯 번호(TryGetSlot으로 얻은 값).
+    // 출력: 그 슬롯의 BuildPiece 참조. 수정하면 저장된 조각이 바로 바뀐다.
     public ref BuildPiece At(int slot) => ref _pieces[slot];
 
+    // 기능: 조각 id가 격자에 놓여 있는지 확인한다.
+    // 입력: id - 조각 ID.
+    // 출력: 놓여 있으면 true, 없으면 false.
     public bool Contains(uint id) => Grid.Contains(id);
 
-    // The id in that grid slot, or 0.
+    // 기능: 격자 슬롯 키에 놓인 조각 id를 찾는다.
+    // 입력: slotKey - BuildGrid.SlotKey로 만든 격자 슬롯 키.
+    // 출력: 그 슬롯의 조각 id, 비어 있으면 0.
     public uint IdAtSlotKey(uint slotKey) => _bySlot.TryGetValue(slotKey, out uint id) ? id : 0;
 
+    // 기능: 한 건설자가 현재 가진 조각 수를 센다.
+    // 입력: owner - 건설자의 entity id.
+    // 출력: 그 건설자의 조각 수, 없으면 0.
     public int OwnerCount(ushort owner) => _ownerCounts.TryGetValue(owner, out int n) ? n : 0;
 
+    // 기능: 빈 격자 슬롯에 새 조각을 추가하고 슬롯·소유자 색인을 갱신한다.
+    // 입력: shape - 조각의 격자 위치와 종류, material - 재료, owner - 건설자 entity id, createdTick - 건설 시작 Tick, grounded - 지형이나 맵 상자에 닿는지 여부(D12).
+    // 출력: 새 조각 id. 저장소가 가득 찼거나 슬롯이 이미 차 있으면 0.
     // A new piece in an empty slot (the caller checked it and the budgets). Returns its id, 0 when full.
     public uint Add(in BuildPieceShape shape, BuildMaterialType material, ushort owner, uint createdTick, bool grounded)
     {
@@ -80,6 +100,9 @@ public sealed class BuildWorld
         return id;
     }
 
+    // 기능: 조각 하나를 저장소와 슬롯·소유자·격자 색인에서 지운다.
+    // 입력: id - 지울 조각 id.
+    // 출력: 지웠으면 true, 그 id의 조각이 없으면 false.
     public bool Remove(uint id)
     {
         int slot = Grid.SlotOf(id);
@@ -94,6 +117,9 @@ public sealed class BuildWorld
         return true;
     }
 
+    // 기능: 모든 조각과 색인을 비운다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 조각이 하나도 없는 상태가 되며 다음 id는 그대로 이어진다.
     // Every piece gone (a round reset, a match start). Ids keep growing.
     public void Clear()
     {
@@ -103,6 +129,9 @@ public sealed class BuildWorld
         Array.Clear(_pieces);
     }
 
+    // 기능: 조각의 건설 진행도를 계산한다.
+    // 입력: piece - 대상 조각, now - 현재 서버 Tick.
+    // 출력: 0~1 사이의 건설 진행도. 재료의 건설 Tick이 지났으면 1.
     // D10: construction progress 0..1 at tick now: (now - created) / the material's construction ticks.
     public float Progress(in BuildPiece piece, uint now)
     {
@@ -111,6 +140,9 @@ public sealed class BuildWorld
         return age >= ticks ? 1f : age / (float)ticks;
     }
 
+    // 기능: 건설 진행도와 받은 피해로 조각의 현재 체력을 계산한다.
+    // 입력: piece - 대상 조각, now - 현재 서버 Tick.
+    // 출력: 현재 체력. 0 이하면 파괴되어야 하는 상태.
     // D10: health at tick now: initial + (max - initial) x progress - damage taken (request §59-§62).
     public int Health(in BuildPiece piece, uint now)
     {

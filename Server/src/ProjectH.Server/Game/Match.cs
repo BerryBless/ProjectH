@@ -120,6 +120,9 @@ public sealed class Match
     private readonly int _maxRewindTicks;
     private ushort _nextEntityId = 1;
 
+    // 기능: 서버 설정과 게임 데이터로 Match를 만들고 송신 경로, 건설, 루트, 자기장, 투입 지점을 준비한다.
+    // 입력: options - 서버 설정, data - 무기·아이템·건설·자기장 데이터, send - 패킷 송신 함수, loadout - 시작 장비(null이면 빈 손), lootPoints - 루트 지점(null이면 맵 기본값), dropPoints - 투입 지점(null이면 맵 기본값), matchSink - 끝난 경기 기록을 받을 곳, graceExpired - 재접속 유예 만료 통지, movementAnomaly - 이동 속도 이상 통지, sendBuild - 건설 채널 송신 함수, buildBacklog - 피어의 건설 채널 대기 패킷 수 조회, playerFailed - Tick 중 예외로 제거된 플레이어 통지.
+    // 출력: 플레이어가 없는 Match 객체. Dev Sandbox면 모든 루트 지점이 채워진다. data의 SimHz가 다르거나 시작 장비·투입 지점이 잘못되면 ArgumentException.
     // Test seams: loadout null = StartingLoadout.Empty (the production start, D1); lootPoints null = the
     // map's LootPoints.All; dropPoints null = the map's DropPoints.All (Phase 6 D9).
     // Phase 13 D13: sendBuild sends on the building channel (LiteNetLib channel 1); null = everything through send (tests).
@@ -200,6 +203,9 @@ public sealed class Match
     // Phase 10 D2: players kept for a reconnect (included in PlayerCount).
     public int GracedCount => _graced.Count;
 
+    // 기능: 현재 플레이어들의 입력 버퍼가 가득 차 버린 입력 수를 합한다.
+    // 입력: 없음.
+    // 출력: 모든 플레이어 DroppedCount의 합.
     public long TotalBufferDrops
     {
         get
@@ -210,6 +216,9 @@ public sealed class Match
         }
     }
 
+    // 기능: 연결 번호로 플레이어를 찾는다.
+    // 입력: peerId - 연결 Peer 번호.
+    // 출력: 찾으면 true와 player, 없으면 false.
     public bool TryGetPlayer(int peerId, out PlayerEntity player) => _playersByPeer.TryGetValue(peerId, out player!);
 
     // Test seam (InternalsVisibleTo): the store itself. Match is the only writer.
@@ -242,6 +251,9 @@ public sealed class Match
     // Phase 13 test seams: the pieces and this tick's events.
     internal BuildWorld Build => _build;
     internal BuildReplication Replication => _replication;
+    // 기능: 결과 코드별 건설 요청 처리 수를 돌려준다.
+    // 입력: code - 건설 결과 코드.
+    // 출력: 이 Match 객체가 만들어진 뒤 그 결과로 끝난 건설 요청 수.
     // Phase 13 D18: build requests by result since this match object was made (Ok = accepted), and the ones dropped
     // without a result (a sequence already processed).
     public long BuildResults(BuildResultCode code) => _buildResults[(int)code];
@@ -256,6 +268,9 @@ public sealed class Match
     // Final review A4: ticks a client's sync waited because its building channel was backed up (all recipients).
     public long SyncsDeferred { get; private set; }
 
+    // 기능: 건설·채집 집계 수치를 한 묶음으로 만든다.
+    // 입력: 없음.
+    // 출력: 조각 수, 점유 열, 요청·수락·거절 수, 파괴·붕괴 수, 중복 요청, 채집 타격, 환경 파괴, 송신 패킷 수, 지연된 Sync 수를 담은 BuildCounts.
     // D18: the building and harvesting numbers for the Health line and the Meter (GameLoop copies them every tick).
     public BuildCounts BuildCounts()
     {
@@ -277,6 +292,9 @@ public sealed class Match
     // Phase 10 D6: the first sink exception since the game loop last took it (logged once per stats interval).
     private Exception? _sinkError;
 
+    // 기능: GameLoop가 마지막으로 가져간 뒤 처음 발생한 경기 기록 Sink 예외를 꺼내고 비운다.
+    // 입력: 없음.
+    // 출력: 저장된 예외. 없으면 null. 호출 뒤 저장값은 null이 된다.
     internal Exception? TakeSinkError()
     {
         Exception? error = _sinkError;
@@ -284,6 +302,9 @@ public sealed class Match
         return error;
     }
 
+    // 기능: 피어를 Match에 참가시킨다. 같은 DevPlayerId의 유예 플레이어가 있으면 재접속으로 잇고, 경기 중 새 참가자는 관전자로 들어온다.
+    // 입력: peerId - 접속한 피어 ID, devPlayerId - 접속 요청에서 검증된 플레이어 ID(이름).
+    // 출력: Ok, Resumed, AlreadyJoined, MatchFull 중 하나. Ok면 플레이어가 추가되고 본인에게 참가 응답·카탈로그·월드 상태 패킷이, 다른 플레이어에게 PlayerSpawned가 전송된다. MatchFull이면 거절 응답만 전송된다.
     public JoinResult TryJoin(int peerId, string devPlayerId)
     {
         if (_playersByPeer.ContainsKey(peerId)) return JoinResult.AlreadyJoined;
@@ -341,6 +362,9 @@ public sealed class Match
         return JoinResult.Ok;
     }
 
+    // 기능: 피어 연결 종료를 처리해 플레이어를 재접속 유예 상태로 두거나 즉시 내보낸다.
+    // 입력: peerId - 연결이 끊긴 피어 ID, allowGrace - 서버가 닫은 연결이 아니어서 유예를 허용하는지 여부.
+    // 출력: 플레이어가 유예 상태로 남으면 true, 즉시 나갔거나 해당 피어의 플레이어가 없으면 false.
     // Phase 10 D2: the connection of peerId is gone. During the match a living participant whose connection was not
     // closed by the server (allowGrace) stays in the world for ReconnectGraceSeconds: no input, it can be shot and the
     // zone still hurts it. Everyone else leaves at once. Returns true when the player was kept.
@@ -361,11 +385,17 @@ public sealed class Match
         return true;
     }
 
+    // 기능: 연결된 피어의 플레이어를 Match에서 내보낸다.
+    // 입력: peerId - 나갈 피어 ID.
+    // 출력: 반환값 없음. 플레이어가 있으면 피어 매핑에서 빠지고 RemovePlayer로 제거된다. 없으면 아무 일도 없다.
     public void Leave(int peerId)
     {
         if (_playersByPeer.Remove(peerId, out var player)) RemovePlayer(player);
     }
 
+    // 기능: 연결 또는 유예 중인 플레이어를 Match에서 제거하고, 경기 중이면 탈락으로 처리한다.
+    // 입력: player - 제거할 플레이어(피어 매핑은 호출자가 먼저 지운다).
+    // 출력: 반환값 없음. 플레이어·유예 목록에서 빠지고 남은 플레이어에게 PlayerDespawned가 전송된다. 경기 중 살아 있던 참가자면 순위가 정해지고 소지품이 바닥에 떨어진다. 경기 중 참가자면(생사 무관) 기록 Sink가 있을 때 이탈 참가자 기록이 남는다.
     // Leave for a connected or a graced player. Never called inside a loop over _players.
     private void RemovePlayer(PlayerEntity player)
     {
@@ -389,12 +419,18 @@ public sealed class Match
         if (_flow.InMatch && player.Participant && _matchSink != null) _leftParticipants.Add(RecordOf(player, ServerTick));
     }
 
+    // 기능: 네트워크에서 받은 입력 묶음을 해당 플레이어의 입력 버퍼에 넣는다.
+    // 입력: peerId - 보낸 피어 ID, packet - 수신한 입력 패킷.
+    // 출력: 반환값 없음. 플레이어가 있으면 입력이 버퍼에 추가된다. 버퍼가 가득 차 버려진 입력은 DroppedCount로 집계된다.
     public void EnqueueInput(int peerId, in PlayerInputPacket packet)
     {
         if (!_playersByPeer.TryGetValue(peerId, out var player)) return;
         for (int i = 0; i < packet.Count; i++) player.Inputs.Add(packet.Get(i));
     }
 
+    // 기능: 건설 요청을 플레이어의 건설 대기열에 넣는다.
+    // 입력: peerId - 보낸 피어 ID, request - 수신한 건설 요청.
+    // 출력: 반환값 없음. 대기열에 추가된다. 대기열이 가득 차면 RateLimited가 집계되고 본인에게 BuildResult가 전송된다.
     // Phase 13 D8: a build request from the network (GameLoop.DrainBuild). It waits in the player's queue for the next
     // tick; a full queue refuses it at once (RateLimited), so a flood costs one small answer each and no memory.
     public void EnqueueBuild(int peerId, in BuildRequest request)
@@ -407,6 +443,9 @@ public sealed class Match
         }
     }
 
+    // 기능: 한 Tick을 시뮬레이션한다. 유예 만료, 경기 흐름 전환, 자기장, 리스폰·루트 보충, 자원 줍기, 건설 요청, 플레이어별 입력·이동·행동, 붕괴, 경기 종료 판정 순서로 처리한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. ServerTick이 1 늘고 Server Authoritative World State가 갱신되며, 바뀐 인벤토리·경기·자기장·문·채집물·자원·건설 이벤트 패킷과 주기에 맞춘 Snapshot이 전송된다.
     public void Tick()
     {
         // now = the last completed tick; this call simulates tick now + 1. Weapon timers
@@ -488,6 +527,9 @@ public sealed class Match
         if (ServerTick % (uint)_snapshotEveryTicks == 0) SendSnapshots();
     }
 
+    // 기능: 플레이어 한 명의 Tick 처리(입력 소비, 이동 또는 수송기 탑승, 재장전, 행동, 소모품 사용 완료)를 한다.
+    // 입력: player - 처리할 플레이어, now - 마지막으로 완료된 Tick.
+    // 출력: 반환값 없음. 플레이어의 입력 Ack·이동 상태·무기·인벤토리가 갱신된다. 던진 예외는 Tick이 잡아 이 플레이어만 내보낸다.
     // One player's part of the tick: input, move, reload, actions, consumable (server review M7: Tick isolates it).
     private void TickPlayer(PlayerEntity player, uint now)
     {
@@ -515,6 +557,9 @@ public sealed class Match
         ConsumableRules.Complete(player, _items, now);   // step 9: every tick, input or not
     }
 
+    // 기능: 이번 Tick에 예외가 난 플레이어들을 Match에서 내보내고 GameLoop에 알린다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 실패한 플레이어가 제거되고 플레이어마다 _playerFailed가 호출되며 실패 목록이 비워진다.
     // Server review M7: the failed players leave (a connected one through Leave, a graced one directly), then GameLoop
     // is told, even when the leave itself throws (that exception then fails the tick as before).
     private void RemoveFailedPlayers()
@@ -535,6 +580,9 @@ public sealed class Match
         _failedPlayers.Clear();
     }
 
+    // 기능: 입력으로 플레이어를 한 Step 이동시키고 돌진 문 열기, 이동 속도 자체 점검, 낙하 피해를 처리한다.
+    // 입력: player - 이동할 플레이어, input - 이번 Tick에 적용할 입력.
+    // 출력: 착지 낙하 피해로 죽었으면 false, 아니면 true. 이동 상태와 Sprinting이 갱신된다.
     // One Step and the Phase 12 checks of its result: the movement self-check (D12) and fall damage (D10). Returns false
     // when the landing killed the player.
     private bool Move(PlayerEntity player, in InputCommand input)
@@ -567,6 +615,9 @@ public sealed class Match
         return !(step.LandingSpeed > 0f && _flow.DamageAllowed && ApplyFallDamage(player, step.LandingSpeed));
     }
 
+    // 기능: 발 위치 주변의 충돌 후보를 공용 버퍼에 모은다.
+    // 입력: feet - 기준 발 위치.
+    // 출력: 모은 결과를 담은 공용 CollisionWorld. 다음 호출이 덮어쓴다.
     // Phase 13 D3: the colliders a step at these feet may touch: map boxes, closed doors, standing harvestables and the
     // pieces around.
     private CollisionWorld GatherAround(Vector3 feet)
@@ -575,6 +626,9 @@ public sealed class Match
         return _collision;
     }
 
+    // 기능: 모든 플레이어의 대기 중 건설 요청을 오래된 순서로 처리한다.
+    // 입력: now - 마지막으로 완료된 Tick.
+    // 출력: 반환값 없음. 조각이 배치되거나 거절되어 결과별 집계와 BuildResult 전송이 이루어진다. 중복 요청은 결과 없이 BuildDuplicates로 세고, 배치에 성공하면 다음 건설 가능 Tick이 정해진다.
     // Phase 13 D8, D9: each player's waiting requests, oldest first. One placement per player per MinBuildInterval: once a
     // piece is placed the rest wait for a later tick (not refused); a refused request does not use the interval. A
     // sequence that is not newer than the last one processed is dropped (a replay or a duplicate, request §149).
@@ -602,6 +656,9 @@ public sealed class Match
         }
     }
 
+    // 기능: 건설 요청을 검증하고, 통과하면 자원을 차감해 조각을 배치한다.
+    // 입력: player - 요청한 플레이어, request - 건설 요청, tick - 시뮬레이션 중인 Tick(조각의 CreatedTick), id - 배치된 조각 ID를 받을 out.
+    // 출력: 성공하면 Ok와 새 조각 ID, 실패하면 처음 실패한 검사의 결과 코드와 id 0(상태 변경 없음).
     // D9 (request §45): every check in order; the first that fails is the answer, and nothing changes then. On success the
     // resources go first, then the piece is made and announced (request §51). tick: the tick being simulated (the piece's
     // CreatedTick).
@@ -644,6 +701,9 @@ public sealed class Match
         return BuildResultCode.Ok;
     }
 
+    // 기능: 조각이 맵 상자, 문, 서 있는 채집물과 너무 많이 겹치는지 검사한다.
+    // 입력: shape - 정규화된 조각 모양.
+    // 출력: 하나라도 너무 많이 겹치면 true, 아니면 false.
     // D9: a map box, any door (open or closed: a door must be able to close) or a standing harvestable overlapped too much.
     private bool CutsTheMap(in BuildPieceShape shape)
     {
@@ -663,6 +723,9 @@ public sealed class Match
         return false;
     }
 
+    // 기능: 조각이 살아 있는 캐릭터의 몸을 가로지르거나, 캐릭터를 막힌 곳으로 들어 올리거나, 진행 중인 Vault 경로를 막는지 검사한다.
+    // 입력: shape - 정규화된 조각 모양.
+    // 출력: 걸리는 캐릭터가 하나라도 있으면 true, 아니면 false.
     // D9: a wall or floor through a living character's body centre. Final review B6: also a ramp or roof that would lift a
     // character into something overhead (its body does not fit on the new surface: a floor, roof or map box above), and
     // any piece across the rest of a vault in progress (a vault moves without collision, D8, so it would pass through).
@@ -682,8 +745,14 @@ public sealed class Match
         return false;
     }
 
+    // 기능: 조각을 복제용 레코드로 바꾼다. BuildReplication.Record로 넘긴다.
+    // 입력: piece - 변환할 조각.
+    // 출력: 그 조각의 BuildPieceRecord.
     private static BuildPieceRecord Record(in BuildPiece piece) => BuildReplication.Record(piece);
 
+    // 기능: 건설 요청 결과를 요청한 플레이어에게 보낸다.
+    // 입력: player - 요청한 플레이어, sequence - 요청 순번, code - 결과 코드, id - 배치된 조각 ID(실패면 0).
+    // 출력: 반환값 없음. 건설 채널로 BuildResult Packet이 전송된다.
     private void SendBuildResult(PlayerEntity player, ushort sequence, BuildResultCode code, uint id)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -691,6 +760,9 @@ public sealed class Match
         _sendBuild(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: Tick 끝에 플레이어별 건설 관심 영역 갱신, 이번 Tick 건설 이벤트, 새로 들어간 셀의 Sync를 건설 채널로 보낸다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. BuildInterest·BuildEvents·BuildSync Packet이 전송되고 이번 Tick 이벤트가 비워지며 송신·지연 집계가 늘어난다.
     // D13, D14, end of the tick, per client: its interest window first (BuildInterest when it changed), then this tick's
     // events in its window, then up to MaxSyncPacketsPerTick sync packets for the cells it entered. All on the building
     // channel, in this order.
@@ -734,6 +806,9 @@ public sealed class Match
         }
     }
 
+    // 기능: 플레이어의 건설 관심 셀 범위를 다시 계산하고 바뀌었으면 알린다.
+    // 입력: p - 대상 플레이어.
+    // 출력: 반환값 없음. 범위가 바뀌면 관심 셀·Sync 대기 셀이 갱신되고 BuildInterest Packet이 전송된다. 유예 중이거나 그대로면 아무 일도 없다.
     // D14: a living player keeps the cells around it (radius, plus the keep margin for cells it has); a dead player or a
     // spectator the whole map. Cells it enters go to its sync queue; cells it leaves stop being sent and its client drops
     // their pieces (BuildInterest).
@@ -752,6 +827,9 @@ public sealed class Match
         _sendBuild(p.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 건설 수치 카탈로그를 한 피어에게 보낸다.
+    // 입력: peerId - 받을 피어 ID.
+    // 출력: 반환값 없음. 건설 채널로 BuildCatalog Packet이 전송된다.
     // Phase 13 D4: what the client needs of the building numbers. Final review A3: on the building channel, right before
     // the join's (or resume's) reset sync, so the channel's first packet is the catalog and no BuildInterest or piece is
     // ever read with a default interest cell size (the channels are independent of each other).
@@ -762,6 +840,9 @@ public sealed class Match
         _sendBuild(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 플레이어의 건설 관심 상태를 초기화하고 Client에 Reset Sync를 보낸다.
+    // 입력: player - 참가, 재접속 또는 건설 초기화 대상 플레이어.
+    // 출력: 반환값 없음. 관심 상태가 초기화되고 reset 표시된 BuildSync 헤더가 전송된다. 관심 범위와 조각은 Tick 끝 SendBuildEvents가 보낸다.
     // D14: a join or a resume: the client drops whatever it has (a reset sync), and the window and its pieces follow at
     // the end of the tick.
     private void StartBuildSync(PlayerEntity player)
@@ -772,6 +853,9 @@ public sealed class Match
         _sendBuild(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 모든 건설 조각과 지지 관계·복제 상태를 지우고 각 Client를 Reset Sync한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 조각, 플레이어별 건설 대기열과 건설 간격이 초기화되고 플레이어마다 Reset BuildSync가 전송된다.
     // D10 (request §70, §132): every piece goes at a round reset and a match start; clients clear theirs (a reset sync).
     private void ClearBuilds()
     {
@@ -786,6 +870,9 @@ public sealed class Match
         }
     }
 
+    // 기능: 사격·휘두르기·낙하가 부딪히는 상자 목록(맵 상자와 닫힌 문, 서 있는 채집 대상)을 돌려준다. 첫 호출이거나 문 열림·채집 대상 파괴 상태가 바뀌었을 때만 캐시를 다시 만든다.
+    // 입력: 없음.
+    // 출력: 캐시 배열 앞부분의 유효한 상자 Span.
     // Phase 13 D6: the map boxes, the closed doors and the standing harvestables, for shots, swings and drops.
     private ReadOnlySpan<Box> Blockers
     {
@@ -809,14 +896,20 @@ public sealed class Match
         }
     }
 
-    // Phase 12 D12: riding, falling, gliding and vaulting allow no shot, reload, pickup, interaction, heal, slot switch
-    // or drop. A reload or heal already running goes on.
     // Final review B7: a piece this close to (or level with) the map surface a ray met is hit first.
     private const float PieceTieTolerance = 1e-3f;
 
+    // 기능: 이동 모드가 사격·재장전·줍기·상호작용·회복 시작·슬롯 전환·버리기 같은 행동을 허용하는지 판정한다.
+    // 입력: mode - 현재 이동 모드.
+    // 출력: Ground, Crouch, Slide면 true, 그 밖의 모드면 false.
+    // Phase 12 D12: riding, falling, gliding and vaulting allow no shot, reload, pickup, interaction, heal, slot switch
+    // or drop. A reload or heal already running goes on.
     private static bool ActionsAllowed(MovementMode mode) =>
         mode == MovementMode.Ground || mode == MovementMode.Crouch || mode == MovementMode.Slide;
 
+    // 기능: 착지 속도에 따른 낙하 피해를 체력에만 적용한다.
+    // 입력: player - 착지한 플레이어, landingSpeed - 착지 순간의 낙하 속도.
+    // 출력: 낙하로 죽었으면 true, 아니면 false. 피해가 있으면 본인에게 DamageTaken이 전송되고, 죽으면 Kill이 처리된다.
     // Phase 12 D10: health only (the shield does not stop it, like the zone) and a DamageTaken from nobody; a fatal fall
     // is a death without a killer, cause Fall. Returns true when it killed.
     private bool ApplyFallDamage(PlayerEntity player, float landingSpeed)
@@ -832,6 +925,9 @@ public sealed class Match
         return true;
     }
 
+    // 기능: 플레이어의 이번 Tick 입력을 버퍼에서 하나 꺼내고, 없으면 서버가 입력을 만든다.
+    // 입력: player - 대상 플레이어, input - 이번 Tick에 쓸 입력을 받을 out.
+    // 출력: Client가 보낸 입력이면 true(LastInput·Ack 갱신), 서버가 만든 입력(직전 입력 반복 또는 정지)이면 false.
     // One buffered input per tick (Phase 0). Returns false when the input is made up by the server.
     private bool TakeInput(PlayerEntity player, out InputCommand input)
     {
@@ -859,6 +955,9 @@ public sealed class Match
         return false;
     }
 
+    // 기능: 살아 있는 플레이어의 실제 입력 하나로 사용 취소, 도구·슬롯 선택, 버리기, 문·줍기, 사격·채집, 회복 시작을 순서대로 처리한다.
+    // 입력: player - 행동할 플레이어, input - Client가 보낸 입력, previous - 직전 실제 입력의 버튼, now - 마지막으로 완료된 Tick.
+    // 출력: 반환값 없음. 인벤토리·무기·문·월드 아이템 상태가 바뀌고 관련 패킷(ShotFired, PickupResult, HarvestHit 등)이 전송된다.
     // One real input of a living player, in the spec §2 order: cancel use -> tool -> slot -> drop -> pickup ->
     // reload -> fire -> start use. (Movement came first; finishing a use comes after, every tick.)
     // Phase 13 D5: Fire acts by the tool in hand: a shot (Weapon), a swing (Harvest), nothing (Build: placing is a
@@ -901,9 +1000,15 @@ public sealed class Match
     internal const InputButtons EdgeButtons = InputButtons.Interact | InputButtons.Drop | InputButtons.ToolHarvest | InputButtons.ToolBuild |
                                               InputButtons.Slot1 | InputButtons.Slot2 | InputButtons.Slot3 | InputButtons.Reload;
 
+    // 기능: 직전 입력에서 이미 눌려 있던 한 번용 키(EdgeButtons)를 이번 버튼에서 뺀다.
+    // 입력: buttons - 이번 입력의 버튼, previous - 직전 실제 입력의 버튼.
+    // 출력: 새로 눌린 한 번용 키와 유지형 키만 남긴 버튼.
     // The buttons of this input with the press keys that were already down in the previous one taken away.
     internal static InputButtons PressedOnly(InputButtons buttons, InputButtons previous) => buttons & ~(previous & EdgeButtons);
 
+    // 기능: 채집 도구 휘두르기를 처리해 앞의 조각이나 채집물에 피해를 준다.
+    // 입력: player - 휘두른 플레이어, direction - 조준 방향, now - 마지막으로 완료된 Tick.
+    // 출력: 반환값 없음. 피해 불가 상태거나 쿨다운 중이면 아무 일도 없다. 조각을 맞히면 구조 피해, 채집물을 맞히면 체력 감소·자원 획득과 본인에게 HarvestHit 전송이 일어난다.
     // Phase 13 D7: a harvest swing (held Fire swings at the cooldown) while damage is allowed (the dev sandbox or the
     // match). The server finds the target along the aim from the eye; a harvestable takes the damage, gives the swinger
     // its material up to the cap, and the swinger hears what happened (HarvestHit). A destroyed one leaves the world at
@@ -948,6 +1053,9 @@ public sealed class Match
         _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: Hitscan 사격 한 발을 판정해 맞은 플레이어나 조각에 피해를 준다.
+    // 입력: shooter - 쏜 플레이어, direction - 조준 방향, viewTick - 쏜 Client가 보던 Tick(Lag Compensation 기준).
+    // 출력: 반환값 없음. 모두에게 ShotFired가 전송되고, 피해 허용 중이면 맞은 플레이어에게 ApplyHit, 또는 맞은 조각에 DamagePiece가 적용된다.
     // D7: from the eye along the aim, the nearest map surface (box, terrain or floor plane) or living player stops the shot. The
     // client only sent a direction; which player is hit is decided here (D12, request §17).
     // D6: other players are tested where the shooter saw them, at ViewTick (clamped to the last
@@ -993,6 +1101,9 @@ public sealed class Match
             DamagePiece(pieceSlot, damage * _building.Material(_build.At(pieceSlot).Material).StructureDamageMultiplier);
     }
 
+    // 기능: 조각에 피해를 누적하고 체력이 0 이하가 되면 파괴한다.
+    // 입력: slot - 조각 슬롯, amount - 반올림 전 피해량(최소 1로 적용).
+    // 출력: 반환값 없음. 조각 피해가 늘고, 파괴되면 DestroyPiece, 아니면 Tick 끝 체력 이벤트가 예약된다.
     // Phase 13 D11: damage to a piece, standing or under construction (its health is computed from the tick, D10). At 0 it
     // is destroyed at once; otherwise its health goes out once at the end of the tick, whatever the hits (request §85).
     private void DamagePiece(int slot, float amount)
@@ -1004,6 +1115,9 @@ public sealed class Match
         else _replication.Damaged(slot);
     }
 
+    // 기능: 조각을 즉시 월드에서 빼고 이웃 조각을 붕괴 검사 대기열에 넣는다.
+    // 입력: slot - 파괴할 조각 슬롯.
+    // 출력: 반환값 없음. 조각이 제거되고 파괴 이벤트가 예약된다. 붕괴는 Tick 끝 CollapseUnsupported에서 처리된다.
     // Phase 13 D11: a piece leaves the world now (moves and shots of the rest of this tick no longer meet it) and every
     // client hears of it at the end of the tick. D12: then whatever it held up and nothing else holds collapses in this
     // same tick, in the same BuildEvents (request §80). Final review A2: the collapse search runs once at the end of the
@@ -1015,6 +1129,9 @@ public sealed class Match
         RemovePiece(slot);
     }
 
+    // 기능: 이번 Tick 파괴로 지지를 잃은 조각을 한 번의 탐색으로 찾아 무너뜨린다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 지지 없는 조각이 제거되어 파괴 이벤트가 예약되고 PiecesCollapsed가 늘어난다. 대기열이 비어 있으면 아무 일도 없다.
     // End of the tick (after every action, before the events go out): what this tick's destroys left unsupported falls.
     private void CollapseUnsupported()
     {
@@ -1027,6 +1144,9 @@ public sealed class Match
         }
     }
 
+    // 기능: 테스트용으로 ID의 조각을 파괴하고 붕괴까지 즉시 처리한다.
+    // 입력: id - 파괴할 조각 ID.
+    // 출력: 반환값 없음. 조각이 있으면 제거되고 지지를 잃은 조각도 무너진다.
     // Test seam: a piece destroyed as if its health reached 0 (support and events included), collapse at once.
     internal void DestroyPiece(uint id)
     {
@@ -1034,6 +1154,9 @@ public sealed class Match
         CollapseUnsupported();
     }
 
+    // 기능: 테스트용으로 여러 조각을 한 Tick 안에서 파괴하고 붕괴 탐색을 한 번만 한다.
+    // 입력: ids - 파괴할 조각 ID 목록.
+    // 출력: 반환값 없음. 존재하는 조각이 제거되고 지지를 잃은 조각도 무너진다.
     // Test seam: several pieces destroyed within one tick, the collapse searched once afterwards (as Tick does).
     internal void DestroyPieces(ReadOnlySpan<uint> ids)
     {
@@ -1044,6 +1167,9 @@ public sealed class Match
         CollapseUnsupported();
     }
 
+    // 기능: 조각을 건설 월드와 지지 관계에서 제거하고 파괴 이벤트를 남긴다.
+    // 입력: slot - 제거할 조각 슬롯.
+    // 출력: 반환값 없음. 조각이 사라지고 Tick 끝에 보낼 파괴 이벤트가 기록되며 PiecesDestroyed가 1 늘어난다.
     private void RemovePiece(int slot)
     {
         ref BuildPiece piece = ref _build.At(slot);
@@ -1054,6 +1180,9 @@ public sealed class Match
         PiecesDestroyed++;
     }
 
+    // 기능: 사격 명중 피해를 대상의 실드·체력에 적용하고 결과를 알린다.
+    // 입력: shooter - 쏜 플레이어, target - 맞은 플레이어, damage - 적용할 피해량.
+    // 출력: 반환값 없음. 대상 체력·실드와 경기 중 쏜 참가자의 누적 피해가 갱신되고, 쏜 사람에게 HitConfirmed, 대상에게 DamageTaken이 전송된다. 죽으면 Kill이 처리된다.
     private void ApplyHit(PlayerEntity shooter, PlayerEntity target, ushort damage)
     {
         int before = target.Health + target.Shield;
@@ -1078,6 +1207,9 @@ public sealed class Match
         if (killed) Kill(target, shooter);
     }
 
+    // 기능: 자기장 단계를 진행하고 1초마다 원 밖 플레이어에게 자기장 피해를 준다.
+    // 입력: now - 마지막으로 완료된 Tick.
+    // 출력: 반환값 없음. 자기장 단계·최종 단계 여부와 원 밖 플레이어의 체력이 갱신되고, 체력이 0이 된 플레이어는 Kill로 처리된다.
     // D7, D8: the next phase when the shrink is over, then, once per second since the start, zone damage to
     // everyone outside the circle at this tick. Health only: the shield does not stop the zone. Players are
     // processed in list order, which fixes the placements of deaths in the same tick (D9).
@@ -1096,6 +1228,9 @@ public sealed class Match
         }
     }
 
+    // 기능: 경기를 끝내고 승자를 정해 결과를 보낸 뒤 경기 기록을 Sink에 넘긴다.
+    // 입력: now - 마지막으로 완료된 Tick.
+    // 출력: 반환값 없음. 흐름이 Finished가 되고 WinnerId가 정해지며 참가자에게 MatchResult가 전송된다. Sink 예외는 MatchSinkFailures와 _sinkError에 남는다.
     // D9: the living participant wins; when the last ones died in the same tick, the one processed last (the
     // only placement 1). A winner who already left is no winner (0).
     private void FinishMatch(uint now)
@@ -1131,6 +1266,9 @@ public sealed class Match
         }
     }
 
+    // 기능: 플레이어 앞의 문을 열거나, 그 자리에 아무도 없으면 닫는다.
+    // 입력: player - E를 누른 플레이어.
+    // 출력: 손이 닿는 문이 있으면 true(문이 막혀 닫지 못해도 true), 없으면 false.
     // Phase 12 D9: E on the door DoorRules picks opens it, or closes it when no living character stands in its place.
     // Returns false when no door is in reach (then E picks up an item).
     private bool ToggleDoor(PlayerEntity player)
@@ -1142,6 +1280,9 @@ public sealed class Match
         return true;
     }
 
+    // 기능: 문 자리에 살아 있는 캐릭터나 진행 중인 Vault 경로가 겹치는지 검사한다.
+    // 입력: door - 문 번호.
+    // 출력: 겹치는 캐릭터가 있으면 true, 없으면 false.
     // A living character's box overlaps the door's. A vaulter also occupies the rest of its straight vault path (current
     // position to position + velocity x ModeTicks, swept with its box): the vault moves without collision (D8), so a door
     // closed across that path would be passed through.
@@ -1158,6 +1299,9 @@ public sealed class Match
         return false;
     }
 
+    // 기능: Vault 중인 캐릭터의 남은 직선 경로를 몸 상자로 쓸어 상자와 겹치는지 검사한다.
+    // 입력: state - Vault 중인 이동 상태, height - 캐릭터 충돌 높이, box - 검사할 상자.
+    // 출력: 남은 경로가 상자와 겹치면 true, 아니면 false.
     private bool VaultPathOverlaps(in MoveState state, float height, in Box box)
     {
         Vector3 from = state.Position;
@@ -1167,6 +1311,9 @@ public sealed class Match
         return min.X < box.Max.X && max.X > box.Min.X && min.Y < box.Max.Y && max.Y > box.Min.Y && min.Z < box.Max.Z && max.Z > box.Min.Z;
     }
 
+    // 기능: 지상(Ground, Crouch, Slide)에 있는 살아 있는 플레이어가 근처 건설 자원 아이템을 자동으로 줍게 한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 플레이어 자원이 늘고, 다 주운 아이템은 제거(ItemRemoved), 일부만 주운 아이템은 수량 변경(ItemSpawned)이 전송된다.
     // Phase 13 D15 (request §158, §159): every living player on foot takes the Material items within MaterialPickupRange,
     // up to the resource cap; what does not fit stays with the smaller amount. Players in list order, so two reaching
     // for one item: the first takes it. At most WorldItems.Capacity items per player, every few ticks.
@@ -1193,6 +1340,9 @@ public sealed class Match
         }
     }
 
+    // 기능: E 입력으로 범위 안 가장 가까운 아이템을 줍는다.
+    // 입력: player - 줍는 플레이어.
+    // 출력: 반환값 없음. 인벤토리와 월드 아이템이 바뀌고 본인에게 PickupResult(Ok, Full, NothingInRange)가 전송된다.
     // D8, D9: the server picks the nearest item in range itself; the client never names one, so it cannot
     // reach for a far item. Items are processed in player order within a tick, so when two players reach
     // for the same item the first one takes it and the second finds it gone.
@@ -1227,6 +1377,9 @@ public sealed class Match
         SendPickupResult(player, PickupResultCode.Ok, item.ItemId);
     }
 
+    // 기능: 바닥 무기를 빈 슬롯에 넣거나, 슬롯이 꽉 찼으면 들고 있던 무기와 바꾼다.
+    // 입력: player - 줍는 플레이어, index - 월드 아이템 인덱스, item - 주울 무기 아이템 데이터.
+    // 출력: 무기를 얻었으면 true, 바꿀 무기를 월드에 놓지 못해 원래대로 되돌렸으면 false.
     // D9: the first empty slot, or, with all three full, the current slot; the weapon it held goes on the
     // ground in front of the player (like a G-drop). Empty-handed (current slot empty), the player also takes it in hand.
     // Returns false when nothing changed hands (see the swap below).
@@ -1286,6 +1439,9 @@ public sealed class Match
         return true;
     }
 
+    // 기능: 들고 있는 무기를 탄창째 플레이어 앞 바닥에 버린다.
+    // 입력: player - 버리는 플레이어.
+    // 출력: 반환값 없음. 무기가 월드에 생기면(ItemSpawned 전송) 손 슬롯이 비고 재장전이 취소된다. 손이 비었거나 월드가 받지 못하면 아무 일도 없다.
     // D12: G drops the current weapon 1 m in front of the feet, magazine included.
     private void DropCurrentWeapon(PlayerEntity player)
     {
@@ -1305,6 +1461,9 @@ public sealed class Match
         inventory.Changed = true;
     }
 
+    // 기능: 플레이어가 가진 무기·탄약·소모품·건설 자원을 몸 주위 원 위에 모두 떨어뜨린다.
+    // 입력: player - 죽었거나 경기 중 나간 플레이어.
+    // 출력: 반환값 없음. 각 물건이 월드 아이템으로 생기고(ItemSpawned 전송) 인벤토리가 비워진다. 월드가 받지 못한 물건은 인벤토리에 남는다.
     // D12 (request §21): everything the player carried goes on a circle around the body, one item per
     // weapon, per ammo type and per consumable type, so they do not lie on one point. Then the inventory
     // is empty. Dropped items are not respawn points and can be evicted when the world is full (D13).
@@ -1357,6 +1516,9 @@ public sealed class Match
         inventory.Changed = true;
     }
 
+    // 기능: 플레이어 기준 오프셋에 떨어진 아이템이 놓일 위치를 지형·상자·경사면을 고려해 구한다.
+    // 입력: player - 기준 플레이어, offset - 플레이어 발에서의 수평 오프셋.
+    // 출력: 아이템이 놓일 월드 위치.
     // Where an item dropped at this offset from the player lies (final review B10: on a ramp or roof under it too).
     private Vector3 DropAt(PlayerEntity player, Vector3 offset)
     {
@@ -1364,6 +1526,9 @@ public sealed class Match
         return ItemRules.DropPosition(player.State.Position, offset, world.Boxes, GameMap.Terrain, world.Slopes);
     }
 
+    // 기능: 사망 드롭 원 위의 n번째 자리에 아이템 하나를 놓는다.
+    // 입력: player - 기준 플레이어, n - 원 위 순번, count - 떨어뜨릴 전체 개수, roll - 놓을 아이템.
+    // 출력: 월드에 놓였으면 true, 월드가 받지 못했으면 false.
     // Returns false when the world could not take the item.
     private bool DropAround(PlayerEntity player, int n, int count, in LootRoll roll)
     {
@@ -1371,6 +1536,9 @@ public sealed class Match
         return SpawnItem(roll, DropAt(player, offset), -1) != 0;
     }
 
+    // 기능: Tick 끝에 경기 상태나 자기장 단계가 바뀌었으면 모두에게 알린다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 바뀐 것만 MatchState·ZoneState Packet으로 전송되고 마지막 전송값이 갱신된다. Dev Sandbox에서는 보내지 않는다.
     // End of tick (D11): the match state when any of its fields changed (state, timer, alive and player counts,
     // round), the zone when its phase changed. Each is one small Reliable packet to everyone.
     private void SendMatchChanges()
@@ -1390,6 +1558,9 @@ public sealed class Match
         }
     }
 
+    // 기능: Tick 끝에 문 상태가 바뀌었으면 모두에게 알린다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 바뀐 경우 DoorStates Packet이 전송되고 마지막 전송값이 갱신된다.
     // Phase 12 D9: at the end of a tick in which a door changed, the doors to everyone (one small packet however many
     // changed).
     private void SendDoorChanges()
@@ -1399,6 +1570,9 @@ public sealed class Match
         foreach (var p in _players) SendDoors(p.PeerId);
     }
 
+    // 기능: 현재 문 열림 상태를 한 피어에게 보낸다.
+    // 입력: peerId - 받을 피어 ID.
+    // 출력: 반환값 없음. DoorStates Packet이 전송된다.
     private void SendDoors(int peerId)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -1406,6 +1580,9 @@ public sealed class Match
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: Tick 끝에 파괴된 채집물 집합이 바뀌었으면 모두에게 알린다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 바뀐 경우 HarvestStates Packet이 전송되고 마지막 전송값이 갱신된다.
     // Phase 13 D6: at the end of a tick in which a harvestable was destroyed (or all stood up again at a reset), the
     // destroyed set to everyone: one small packet however many changed.
     private void SendHarvestChanges()
@@ -1415,6 +1592,9 @@ public sealed class Match
         foreach (var p in _players) SendHarvestStates(p.PeerId);
     }
 
+    // 기능: 현재 파괴된 채집물 집합을 한 피어에게 보낸다.
+    // 입력: peerId - 받을 피어 ID.
+    // 출력: 반환값 없음. HarvestStates Packet이 전송된다.
     private void SendHarvestStates(int peerId)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -1422,6 +1602,9 @@ public sealed class Match
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: Tick 끝에 건설 자원이 바뀐 플레이어에게 자기 자원을 보낸다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 바뀐 플레이어마다 ResourcesState Packet이 전송된다.
     // Phase 13 D15: each owner's resources, only at the end of a tick in which they changed.
     private void SendResourceChanges()
     {
@@ -1431,6 +1614,9 @@ public sealed class Match
         }
     }
 
+    // 기능: 플레이어의 현재 건설 자원을 본인에게 보낸다.
+    // 입력: player - 대상 플레이어.
+    // 출력: 반환값 없음. 자원 변경 표시가 지워지고 ResourcesState Packet이 전송된다.
     private void SendResources(PlayerEntity player)
     {
         player.Inventory.ResourcesChanged = false;
@@ -1439,6 +1625,9 @@ public sealed class Match
         _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 경기 상태를 한 피어에게 보낸다.
+    // 입력: peerId - 받을 피어 ID, state - 보낼 경기 상태.
+    // 출력: 반환값 없음. MatchState Packet이 전송된다.
     private void SendMatchState(int peerId, in MatchState state)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -1446,6 +1635,9 @@ public sealed class Match
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 자기장 상태를 한 피어에게 보낸다.
+    // 입력: peerId - 받을 피어 ID, zone - 보낼 자기장 상태.
+    // 출력: 반환값 없음. ZoneState Packet이 전송된다.
     private void SendZoneState(int peerId, in ZoneState zone)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -1453,6 +1645,9 @@ public sealed class Match
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 현재 수송기 경로를 한 피어에게 보낸다.
+    // 입력: peerId - 받을 피어 ID.
+    // 출력: 반환값 없음. TransportRoute Packet이 전송된다.
     // Phase 12 D5: the route, to one player (a newcomer or a resumed player during the match) or to everyone (the start).
     private void SendRoute(int peerId)
     {
@@ -1461,6 +1656,9 @@ public sealed class Match
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 사망 알림을 한 피어에게 보낸다.
+    // 입력: peerId - 받을 피어 ID, died - 보낼 사망 정보.
+    // 출력: 반환값 없음. PlayerDied Packet이 전송된다.
     private void SendDied(int peerId, in PlayerDied died)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -1468,6 +1666,9 @@ public sealed class Match
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 플레이어 자신의 경기 결과(승자, 순위, 처치 수, 참가자 수)를 보낸다.
+    // 입력: player - 결과를 받을 참가자.
+    // 출력: 반환값 없음. 본인에게 MatchResult Packet이 전송된다(유예 중이면 버려진다).
     private void SendMatchResult(PlayerEntity player)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -1481,6 +1682,9 @@ public sealed class Match
         _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 줍기 결과를 플레이어에게 보낸다.
+    // 입력: player - 줍기를 시도한 플레이어, result - 결과 코드, itemId - 대상 아이템 ID(없으면 0).
+    // 출력: 반환값 없음. PickupResult Packet이 전송된다.
     private void SendPickupResult(PlayerEntity player, PickupResultCode result, ushort itemId)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -1488,6 +1692,9 @@ public sealed class Match
         _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 플레이어를 죽이고 재장전·회복을 취소하며, 경기 중이면 순위와 처치 수를 정한 뒤 소지품을 떨어뜨린다.
+    // 입력: victim - 죽은 플레이어, killer - 처치한 플레이어(자기장·낙하면 null), cause - killer가 null일 때 보낼 사망 원인(killer가 있으면 무시되고 Zone 값이 간다).
+    // 출력: 반환값 없음. victim이 죽음 상태가 되고 리스폰 Tick이 정해지며, 모두에게 PlayerDied가 전송된 뒤 소지품이 월드 아이템으로 떨어진다.
     // D9: death is decided here. The same ReliableOrdered channel carries DamageTaken, PlayerDied and
     // PlayerRespawned, so every client sees them in that order.
     // killer null = the zone (Phase 5 D8) or a fall (Phase 12 D10, cause): KillerId 0, nobody gets the kill. During a
@@ -1523,8 +1730,14 @@ public sealed class Match
         DropEverything(victim);
     }
 
+    // 기능: 플레이어를 스폰 링의 자기 자리에서 Ground 모드로 되살린다.
+    // 입력: player - 되살릴 플레이어.
+    // 출력: 반환값 없음. Respawn(player, position, mode)와 같은 상태 변경과 PlayerRespawned 전송이 일어난다.
     private void Respawn(PlayerEntity player) => Respawn(player, SpawnPosition(player.EntityId));
 
+    // 기능: 플레이어를 지정 위치·이동 모드로 되살리고 전투 상태와 입력 반복 상태를 초기화한다.
+    // 입력: player - 되살릴 플레이어, position - 시작 위치, mode - 시작 이동 모드(기본 Ground).
+    // 출력: 반환값 없음. 이동 상태·체력·실드·시작 장비·위치 기록이 초기화되고 모두에게 PlayerRespawned가 전송된다.
     // Phase 12: mode is the movement mode the player starts in (Transport aboard the drop transport).
     private void Respawn(PlayerEntity player, Vector3 position, MovementMode mode = MovementMode.Ground)
     {
@@ -1547,6 +1760,9 @@ public sealed class Match
         Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: Starting에서 Playing으로 넘어가는 Tick에 경기를 시작한다.
+    // 입력: now - 마지막으로 완료된 Tick.
+    // 출력: 반환값 없음. 월드 아이템·문·채집물·건설이 초기화되고 모든 플레이어가 투입 지점이나 수송기로 리스폰되어 참가자가 되며, 루트가 새로 놓이고 자기장이 시작된다. TransportRoute, PlayerRespawned, ItemRemoved/ItemSpawned, BuildSync 등이 전송된다.
     // D3: Starting -> Playing, in this one tick: everyone to a drop point (Phase 6 D9), empty-handed with Health 100 and
     // Shield 0 (the loadout), the world cleared and filled with this match's loot, the participants fixed, the
     // zone started. Respawn keeps Seq, so clients re-sync their prediction exactly as after a death.
@@ -1592,6 +1808,9 @@ public sealed class Match
         WinnerId = 0;
     }
 
+    // 기능: 끝난 경기를 닫고 다음 라운드를 위해 월드를 로비 상태로 되돌린다.
+    // 입력: now - 마지막으로 완료된 Tick.
+    // 출력: 반환값 없음. 유예 플레이어가 모두 나가고 월드 아이템·채집물·건설·자기장이 초기화되며, 모든 플레이어가 스폰 링에 비참가자로 리스폰되고 경기 흐름이 다시 열린다.
     // D13: Finished -> Closing -> the next round, in this one tick: everyone alive on the spawn ring with an
     // empty inventory, no items in the world (no loot before a match, D2), no zone.
     private void CloseRound(uint now)
@@ -1613,6 +1832,9 @@ public sealed class Match
         _flow.Reopen(now, _players.Count);
     }
 
+    // 기능: 월드 아이템을 모두 지우고 모든 Client에 알린다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 월드 아이템 목록이 비고 아이템마다 ItemRemoved가 전송된다.
     // Removes every world item, telling every client. Spawn-point timers are not involved (the spawner restarts).
     private void ClearWorldItems()
     {
@@ -1625,6 +1847,9 @@ public sealed class Match
         }
     }
 
+    // 기능: 플레이어를 살아 있는 상태로 만들고 체력·실드·인벤토리·무기 상태를 시작값으로 되돌린다.
+    // 입력: player - 대상 플레이어.
+    // 출력: 반환값 없음. 최대 체력, 시작 장비의 실드·인벤토리, 초기 무기 상태가 적용된다.
     private void ResetCombat(PlayerEntity player)
     {
         player.Alive = true;
@@ -1634,11 +1859,17 @@ public sealed class Match
         WeaponRules.ResetState(player);
     }
 
+    // 기능: 같은 패킷을 Match의 모든 플레이어에게 보낸다.
+    // 입력: data - 보낼 패킷 바이트, method - 전송 방식.
+    // 출력: 반환값 없음. 모든 플레이어에게 전송된다(유예 중인 플레이어 몫은 _send가 버린다).
     private void Broadcast(ReadOnlySpan<byte> data, DeliveryMethod method)
     {
         foreach (var p in _players) _send(p.PeerId, data, method);
     }
 
+    // 기능: 모든 플레이어의 World Snapshot을 만들어 각 Client에게 보낸다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 분할 Packet마다 받는 사람별 AckInputSeq와 Self Block을 고친 Snapshot이 Sequenced로 전송된다.
     // Phase 8 D3: the snapshot is split into packets of at most MaxEntitiesPerSnapshotPacket players. Each packet is one
     // payload for everyone; AckInputSeq and the self block differ per recipient and are patched in place.
     private void SendSnapshots()
@@ -1682,6 +1913,9 @@ public sealed class Match
         }
     }
 
+    // 기능: Snapshot에 넣을 받는 사람 본인 전용 상태를 만든다.
+    // 입력: p - Snapshot을 받을 플레이어.
+    // 출력: 체력·실드·무기 슬롯·도구·탄약·남은 재장전 Tick·이동 예측 값을 담은 SnapshotSelf.
     private SnapshotSelf SelfBlock(PlayerEntity p)
     {
         // While a reload runs the remaining time is reported as at least 1, even on its last tick: 0 means
@@ -1706,6 +1940,9 @@ public sealed class Match
         };
     }
 
+    // 기능: 참가 결과와 서버 Tick·주기 정보를 피어에게 보낸다.
+    // 입력: peerId - 받을 피어 ID, result - 참가 결과, entityId - 배정된 엔티티 ID(실패면 0).
+    // 출력: 반환값 없음. JoinMatchResponse Packet이 전송된다.
     private void SendJoinResponse(int peerId, JoinResult result, ushort entityId)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -1720,6 +1957,9 @@ public sealed class Match
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 무기·아이템 카탈로그를 한 피어에게 보낸다.
+    // 입력: peerId - 받을 피어 ID.
+    // 출력: 반환값 없음. WeaponCatalog와 ItemCatalog Packet이 순서대로 전송된다.
     private void SendCatalogs(int peerId)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -1731,6 +1971,9 @@ public sealed class Match
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: Tick 끝에 인벤토리가 바뀐 플레이어에게 자기 인벤토리를 보낸다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 바뀐 플레이어마다 InventoryState Packet이 전송된다.
     // D14: the owner's inventory, only at the end of a tick in which it changed (shots do not count).
     private void SendInventoryChanges()
     {
@@ -1740,6 +1983,9 @@ public sealed class Match
         }
     }
 
+    // 기능: 플레이어의 현재 인벤토리를 본인에게 보낸다.
+    // 입력: player - 대상 플레이어.
+    // 출력: 반환값 없음. 변경 표시가 지워지고 InventoryState Packet이 전송된다.
     private void SendInventory(PlayerEntity player)
     {
         player.Inventory.Changed = false;
@@ -1748,6 +1994,9 @@ public sealed class Match
         _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 현재 월드 아이템 전체 목록을 한 피어에게 나눠 보낸다.
+    // 입력: peerId - 받을 피어 ID.
+    // 출력: 반환값 없음. WorldItems Packet이 MaxItems 단위로 전송된다. 아이템이 없으면 보내지 않는다.
     // D13, D14: the whole list in chunks of WorldItemsPacket.MaxItems (at most 256 items = 6 packets).
     private void SendWorldItems(int peerId)
     {
@@ -1761,7 +2010,11 @@ public sealed class Match
         }
     }
 
-    // Every change to the world item list goes through these three, so each one reaches every client.
+    // 기능: 월드에 아이템을 추가하고 모든 Client에 알린다.
+    // 입력: roll - 만들 아이템(종류, 정의 ID, 등급, 수량), position - 놓을 위치, spawnPoint - 루트 지점 번호(드롭이면 -1).
+    // 출력: 새 아이템 ID, 저장소가 받지 못하면 0. 다른 아이템이 밀려나면 ItemRemoved, 추가되면 ItemSpawned가 전송된다.
+    // Every change to the world item list goes through these three, so each one reaches every client. The exception is
+    // ClearWorldItems at the round reset: it removes items and broadcasts ItemRemoved itself, without the loot spawner.
     // Each finishes its send before returning: none of them keeps a PacketWriter on _sendBuffer open
     // across another send. Returns the new id, or 0 when the store could not take the item.
     internal ushort SpawnItem(in LootRoll roll, Vector3 position, int spawnPoint)
@@ -1776,6 +2029,9 @@ public sealed class Match
         return itemId;
     }
 
+    // 기능: 월드 아이템 하나를 제거하고 모든 Client에 알린다.
+    // 입력: index - 제거할 월드 아이템 인덱스.
+    // 출력: 반환값 없음. ItemRemoved가 전송되고, 루트 지점 아이템이면 Spawner에 가져감이 알려진다(보충 타이머는 Dev Sandbox에서만 시작된다).
     internal void RemoveItemAt(int index)
     {
         ushort itemId = _worldItems[index].Data.ItemId;
@@ -1785,6 +2041,9 @@ public sealed class Match
         if (spawnPoint >= 0) _loot.OnTaken(spawnPoint, ServerTick);
     }
 
+    // 기능: 보충 시간이 된 루트 지점에 새 아이템을 놓는다.
+    // 입력: now - 마지막으로 완료된 Tick.
+    // 출력: 반환값 없음. 지점에 아이템이 이미 있거나 새로 놓이면 그 지점의 타이머가 끝나고, 놓인 아이템은 ItemSpawned로 전송된다.
     // D7: a looted spawn point gets a new roll from its table once its timer is up. A point never holds two
     // items (the death-drop guarantee relies on at most one live item per point): if one is in the world
     // (a partial-pickup remainder, or the swap rollback that puts the item back), the timer is dropped.
@@ -1797,6 +2056,9 @@ public sealed class Match
         }
     }
 
+    // 기능: 루트 지점 소속 아이템이 월드에 남아 있는지 검사한다.
+    // 입력: point - 루트 지점 번호.
+    // 출력: 남아 있으면 true, 없으면 false.
     private bool PointHasItem(int point)
     {
         for (int i = 0; i < _worldItems.Count; i++)
@@ -1804,6 +2066,9 @@ public sealed class Match
         return false;
     }
 
+    // 기능: 월드 아이템 수량을 바꾸고 모든 Client에 알린다.
+    // 입력: index - 월드 아이템 인덱스, amount - 새 수량.
+    // 출력: 반환값 없음. 수량이 바뀌고 ItemSpawned(Upsert)가 전송된다.
     // Partial pickup (D9): the rest stays where it was. Sent as ItemSpawned, which clients treat as an upsert.
     internal void SetItemAmount(int index, ushort amount)
     {
@@ -1813,6 +2078,9 @@ public sealed class Match
         Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 아이템 제거를 모든 Client에 알린다.
+    // 입력: itemId - 제거된 아이템 ID.
+    // 출력: 반환값 없음. ItemRemoved Packet이 전송된다.
     private void BroadcastItemRemoved(ushort itemId)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -1820,6 +2088,9 @@ public sealed class Match
         Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 한 플레이어의 등장(위치, 방향, 이름)을 받는 피어에게 알린다.
+    // 입력: recipientPeerId - 받을 피어 ID, player - 등장한 플레이어.
+    // 출력: 반환값 없음. PlayerSpawned Packet이 전송된다. 이름 인코딩에 실패하면 보내지 않고 SpawnEncodeFailures가 늘어난다.
     private void SendSpawned(int recipientPeerId, PlayerEntity player)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -1838,6 +2109,9 @@ public sealed class Match
         _send(recipientPeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 유예 시간이 끝났거나 유예 중 죽은 플레이어를 내보낸다.
+    // 입력: now - 마지막으로 완료된 Tick.
+    // 출력: 반환값 없음. 해당 플레이어가 ExpireGraced로 제거되고 GameLoop에 통지된다.
     // Phase 10 D2: a graced player leaves when its grace is over, and also once it is dead (killed while away: its
     // placement is fixed and there is nothing left to resume; coming back is a new spectator, like any late join).
     private void ExpireGrace(uint now)
@@ -1850,6 +2124,9 @@ public sealed class Match
         }
     }
 
+    // 기능: 유예 플레이어를 재접속 없이 내보내고 GameLoop에 알린다.
+    // 입력: player - 내보낼 유예 플레이어.
+    // 출력: 반환값 없음. RemovePlayer로 제거되고 _graceExpired가 호출된다.
     // Every way a graced player leaves without resuming goes through here, so GameLoop counts each one (D9).
     private void ExpireGraced(PlayerEntity player)
     {
@@ -1857,6 +2134,9 @@ public sealed class Match
         _graceExpired?.Invoke(player.DevPlayerId);
     }
 
+    // 기능: 접속한 DevPlayerId가 이어 받을 유예 플레이어를 찾는다.
+    // 입력: devPlayerId - 접속한 플레이어 ID.
+    // 출력: 가장 오래된 살아 있는 유예 플레이어. 없거나 같은 ID가 이미 연결 중이면 null.
     // D2: the oldest graced, living player with this DevPlayerId, unless a connected player already uses the id (then
     // the newcomer joins as a new player and takes nothing over).
     private PlayerEntity? FindGraced(string devPlayerId)
@@ -1873,6 +2153,9 @@ public sealed class Match
         return null;
     }
 
+    // 기능: 유예 플레이어를 새 연결에 넘기고 늦게 참가한 플레이어가 받는 상태를 다시 보낸다.
+    // 입력: peerId - 새 피어 ID, player - 재접속한 유예 플레이어.
+    // 출력: 반환값 없음. 유예 목록에서 빠져 피어에 연결되고 입력·건설 순번이 초기화되며, Resumed 응답과 카탈로그·월드·인벤토리·경기·문·채집·자원·건설 상태 Packet이 전송된다. 경기가 끝났으면 MatchResult도 전송된다.
     // D2: the character goes to the new connection with everything it has (position, health, inventory, placement
     // state). The new client numbers its inputs from 1, so the input state starts over. It gets what a late joiner
     // gets; the others never saw it leave, so they are told nothing.
@@ -1911,6 +2194,9 @@ public sealed class Match
         if (_flow.State == MatchFlowState.Finished && player.Participant) SendMatchResult(player);
     }
 
+    // 기능: Client에 보낼 건설 카탈로그 내용을 만든다.
+    // 입력: c - 건설 수치 카탈로그, infiniteResources - 자원 무제한 모드 여부.
+    // 출력: 거리·쿨다운·관심 영역·재료별 비용·체력·건설 Tick을 담은 BuildCatalogData. 무제한이면 비용은 0.
     // Phase 13 D4: the BuildCatalog packet's content, built once.
     // infiniteResources: placement costs nothing (TryBuild), so the client is told cost 0; with the real cost its preview
     // would judge NoResource and never send a request.
@@ -1939,13 +2225,19 @@ public sealed class Match
         return data;
     }
 
-    // Entity ids are ushort and 0 means "none". With at most 50 players a free id is always found.
+    // 기능: 사용 중이 아닌 다음 엔티티 ID를 배정한다.
+    // 입력: 없음.
+    // 출력: 0이 아니고 현재 플레이어가 쓰지 않는 엔티티 ID.
+    // Entity ids are ushort and 0 means "none". With at most MaxPlayers (100) players a free id is always found.
     private ushort AllocateEntityId()
     {
         while (_nextEntityId == 0 || IsEntityIdInUse(_nextEntityId)) _nextEntityId++;
         return _nextEntityId++;
     }
 
+    // 기능: 엔티티 ID를 현재 플레이어가 쓰고 있는지 검사한다.
+    // 입력: id - 검사할 엔티티 ID.
+    // 출력: 쓰는 플레이어가 있으면 true, 없으면 false.
     private bool IsEntityIdInUse(ushort id)
     {
         foreach (var p in _players)
@@ -1955,6 +2247,9 @@ public sealed class Match
         return false;
     }
 
+    // 기능: 방금 끝난 경기의 기록을 만든다.
+    // 입력: now - 경기가 끝난 Tick, winner - 아직 Match에 있는 승자(없으면 null).
+    // 출력: 라운드, 시작·종료 시각, 승자 ID, 남은 참가자와 이탈 참가자 기록을 담은 MatchRecord.
     // Phase 9 D4: the record of the match that just finished: every participant still here plus those who left. Built
     // once per match on the game loop thread (the only allocation of the finish tick); the sink must not block.
     private MatchRecord BuildRecord(uint now, PlayerEntity? winner)
@@ -1977,6 +2272,9 @@ public sealed class Match
         return new MatchRecord(_flow.Round, _matchStartedUtc, DateTime.UtcNow, winnerId, players);
     }
 
+    // 기능: 참가자 한 명의 경기 기록을 만든다.
+    // 입력: player - 대상 참가자, now - 아직 탈락하지 않았을 때 생존 종료로 쓸 Tick.
+    // 출력: ID, 순위, 처치 수, 누적 피해, 생존 시간(ms)을 담은 PlayerRecord.
     // Survival runs from the match start to the elimination, or to `now` for a player still in.
     private PlayerRecord RecordOf(PlayerEntity player, uint now)
     {
@@ -1985,6 +2283,9 @@ public sealed class Match
         return new PlayerRecord(player.DevPlayerId, player.Placement, player.Kills, player.DamageDealt, survivalMs);
     }
 
+    // 기능: 투입 지점 순서를 시드로 섞는다.
+    // 입력: seed - 이번 라운드의 스폰 시드.
+    // 출력: 반환값 없음. 투입 순서가 시드에만 의존하는 순열로 바뀐다.
     // Phase 6 D9: resets the order to 0..n-1 and shuffles it (Fisher-Yates), so the result depends on the seed only.
     // One Random per match start, never per tick.
     private void ShuffleDropOrder(int seed)
@@ -1998,6 +2299,9 @@ public sealed class Match
         }
     }
 
+    // 기능: k번째 참가자의 투입 위치를 구한다.
+    // 입력: k - 플레이어 목록 순서의 참가자 번호(0부터).
+    // 출력: 투입 지점 위치. 지점 수를 넘는 바퀴면 동서로 밀린 지형 위 위치.
     // Where the k-th participant (0-based, player list order) starts: drop point order[k % n]. Lap k / n > 0 moves it
     // DropLapOffset times ((lap + 1) / 2) east on odd laps and west on even laps, onto the terrain there (spec
     // interpretation 6).
@@ -2015,6 +2319,9 @@ public sealed class Match
         return spot;
     }
 
+    // 기능: 엔티티 ID로 스폰 링 위 위치를 구한다.
+    // 입력: entityId - 플레이어 엔티티 ID.
+    // 출력: 원점 중심 반지름 SpawnRadius 원 위의 위치(높이 0).
     // Spread players on a circle (golden angle) so they do not spawn inside each other.
     // The 5 m ring lies inside the plaza, GameMap.PlazaRadius (checked by GameMapTests).
     internal static Vector3 SpawnPosition(ushort entityId)

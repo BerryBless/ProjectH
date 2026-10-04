@@ -33,6 +33,9 @@ public sealed class ConnectRateLimiter
     private readonly long _capacity;
     private readonly long _perMs;
 
+    // 기능: IP별 연결 요청 Token Bucket 표를 만든다.
+    // 입력: burst - 한 번에 허용할 연결 요청 수, perSecond - 이후 초당 허용할 연결 요청 수.
+    // 출력: 모든 Slot이 비어 있는 ConnectRateLimiter 객체. burst나 perSecond가 0 이하면 표 없이 꺼진 상태.
     // burst or perSecond 0 = off (every request passes, no table is made).
     public ConnectRateLimiter(int burst, int perSecond)
     {
@@ -48,6 +51,9 @@ public sealed class ConnectRateLimiter
 
     public bool Enabled => _slots.Length != 0;
 
+    // 기능: 주소의 Bucket을 경과 시간만큼 채운 뒤 연결 요청 하나에 쓸 Token을 꺼낸다. 빈 Slot은 가득 찬 Bucket으로 시작한다.
+    // 입력: address - 연결을 요청한 원격 IP, nowMs - 단조 증가 Millisecond 시각.
+    // 출력: 지금 연결해도 되면 true(Token 하나 소비), 비율을 넘었으면 false. 꺼져 있으면 항상 true.
     // True when the address may connect now (one token taken). nowMs: a monotonic millisecond clock.
     public bool TryAcquire(IPAddress address, long nowMs)
     {
@@ -70,11 +76,20 @@ public sealed class ConnectRateLimiter
         return true;
     }
 
+    // 기능: IP 주소가 쓰는 Slot 번호를 돌려준다. 테스트에서 두 주소의 Slot 충돌 여부를 확인할 때 쓴다.
+    // 입력: address - 확인할 원격 IP.
+    // 출력: 0 이상 Slots 미만의 Slot 번호.
     internal static int SlotOf(IPAddress address) => IndexOf(KeyOf(address));
 
+    // 기능: 주소 Key를 표의 Slot 번호로 바꾼다.
+    // 입력: key - 32bit 주소 Key.
+    // 출력: 0 이상 Slots 미만의 Slot 번호.
     // Fibonacci hashing: the top bits of key * 2^32/phi, so neighbouring addresses spread over the table.
     private static int IndexOf(uint key) => (int)((key * 2654435769u) >> (32 - SlotBits));
 
+    // 기능: IP 주소를 32bit Key로 바꾼다.
+    // 입력: address - 변환할 원격 IP.
+    // 출력: IPv4는 주소 값 그대로, IPv6는 4Byte씩 XOR한 값. 주소를 쓸 수 없으면 0.
     // The IPv4 address as a number. The server binds IPv4 only; an IPv6 address (not expected) is folded into 32 bits,
     // so two such addresses may share a bucket. No allocation.
     private static uint KeyOf(IPAddress address)

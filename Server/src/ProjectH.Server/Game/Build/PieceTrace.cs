@@ -15,6 +15,9 @@ public static class PieceTrace
 {
     private const float ParallelEpsilon = 1e-8f;
 
+    // 기능: 광선이 처음 맞는 건설 조각을 지면 투영 격자 DDA로 가까운 칸부터 찾는다.
+    // 입력: origin - 광선 시작점, direction - 광선 방향 단위 벡터, range - 최대 거리, world - 현재 Match의 건설 조각 목록.
+    // 출력: 조각을 맞혔으면 true와 그 조각의 id·저장 슬롯·맞은 거리, 못 맞혔거나 입력이 유효하지 않으면 false(id 0, slot -1, distance는 range).
     public static bool Trace(Vector3 origin, Vector3 direction, float range, BuildWorld world, out uint id, out int slot, out float distance)
     {
         id = 0;
@@ -69,6 +72,9 @@ public static class PieceTrace
         return true;
     }
 
+    // 기능: 한 건설 칸 기둥의 조각들을 광선과 맞춰 보고 더 가까운 명중을 기록한다.
+    // 입력: grid - 조각 격자, x, z - 칸 좌표, wallsOnly - 벽만 검사할지(이웃 칸에 걸친 벽용), o - 광선 시작점, d - 광선 방향, best - 지금까지 가장 가까운 명중 거리, bestSlot - 그 조각의 슬롯.
+    // 출력: 반환값 없음. 더 가까운 명중이 있으면 best와 bestSlot이 갱신된다.
     private static void TestColumn(PieceGrid grid, int x, int z, bool wallsOnly, Vector3 o, Vector3 d, ref float best, ref int bestSlot)
     {
         for (int s = grid.First(x, z); s >= 0; s = grid.Next(s))
@@ -83,6 +89,9 @@ public static class PieceTrace
         }
     }
 
+    // 기능: 광선이 조각 하나(벽·바닥 상자, 경사면 판, 지붕 피라미드)에 맞는지 계산한다.
+    // 입력: shape - 검사할 조각, o - 광선 시작점, d - 광선 방향, maxDistance - 최대 거리.
+    // 출력: maxDistance 안에서 맞으면 true와 진입 거리 t(시작점이 안에 있으면 0), 아니면 false.
     // The ray against one piece within maxDistance: where it enters the piece's solid (0 when it starts inside).
     public static bool Hit(in BuildPieceShape shape, Vector3 o, Vector3 d, float maxDistance, out float t)
     {
@@ -130,6 +139,9 @@ public static class PieceTrace
         return t0 <= t1;
     }
 
+    // 기능: 광선 구간을 한 평면의 아래쪽(value0 + rate x t <= limit)으로 좁힌다.
+    // 입력: value0 - t=0일 때 값, rate - t에 대한 변화율, limit - 상한, t0·t1 - 좁힐 광선 구간.
+    // 출력: 남은 구간이 비어 있지 않으면 true, 비면 false. t0·t1이 갱신된다.
     // Narrows [t0, t1] to where value0 + rate x t <= limit.
     private static bool Below(float value0, float rate, float limit, ref float t0, ref float t1)
     {
@@ -146,6 +158,9 @@ public static class PieceTrace
         return t0 <= t1;
     }
 
+    // 기능: 광선 구간을 한 축의 [min, max] 판(slab) 안쪽으로 좁힌다.
+    // 입력: origin - 그 축의 시작 좌표, direction - 그 축의 방향 성분, min·max - 판의 범위, tMin·tMax - 좁힐 광선 구간.
+    // 출력: 남은 구간이 비어 있지 않으면 true, 비면 false. tMin·tMax가 갱신된다.
     private static bool Slab(float origin, float direction, float min, float max, ref float tMin, ref float tMax)
     {
         if (MathF.Abs(direction) < ParallelEpsilon) return origin >= min && origin <= max;
@@ -163,8 +178,14 @@ public static class PieceTrace
         return tMin <= tMax;
     }
 
+    // 기능: 광선이 한 축의 경계 좌표에 닿는 거리를 구한다.
+    // 입력: origin - 그 축의 시작 좌표, direction - 그 축의 방향 성분, boundary - 경계 좌표.
+    // 출력: 경계까지의 광선 거리. 축과 평행하면 무한대.
     private static float Boundary(float origin, float direction, float boundary) =>
         MathF.Abs(direction) < ParallelEpsilon ? float.PositiveInfinity : (boundary - origin) / direction;
 
+    // 기능: 벡터의 세 성분이 모두 유한한지 검사한다.
+    // 입력: v - 검사할 벡터.
+    // 출력: NaN·무한대 성분이 없으면 true, 있으면 false.
     private static bool IsFinite(Vector3 v) => float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z);
 }

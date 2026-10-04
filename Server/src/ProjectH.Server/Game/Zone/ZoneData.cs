@@ -9,6 +9,9 @@ namespace ProjectH.Server.Game.Zone;
 // the whole phase (its wait and its shrink). Tick values are already in simulation ticks.
 public readonly struct ZonePhase
 {
+    // 기능: 안전지대 단계 하나의 값을 담는다.
+    // 입력: waitTicks - 축소 전 대기 Tick, shrinkTicks - 축소 Tick, targetRadius - 축소 후 반지름, damagePerSecond - 단계 동안 원 밖 초당 피해.
+    // 출력: 받은 값을 그대로 가진 ZonePhase.
     public ZonePhase(uint waitTicks, uint shrinkTicks, float targetRadius, ushort damagePerSecond)
     {
         WaitTicks = waitTicks;
@@ -32,6 +35,9 @@ public sealed class ZoneData
 
     private readonly ZonePhase[] _phases;
 
+    // 기능: 검증을 마친 값으로 ZoneData를 만든다. 클래스 안의 생성 함수만 호출한다.
+    // 입력: initialCenter - 첫 원 중심, initialRadius - 첫 원 반지름, arenaHalfSize - 원 중심이 벗어날 수 없는 맵 반 크기, phases - 단계 목록, simHz - Tick 변환에 쓴 Tick 속도.
+    // 출력: 받은 값을 그대로 가진 변경 불가 ZoneData.
     private ZoneData(Vector2 initialCenter, float initialRadius, float arenaHalfSize, ZonePhase[] phases, int simHz)
     {
         InitialCenter = initialCenter;
@@ -49,9 +55,15 @@ public sealed class ZoneData
     // Tick values were converted with this rate; GameData refuses zones built for another SimHz.
     public int SimHz { get; }
 
+    // 기능: 안전지대 단계 하나를 돌려준다.
+    // 입력: index - 단계 번호(0 = 1단계).
+    // 출력: 그 단계의 ZonePhase.
     // index 0 = phase 1
     public ZonePhase Phase(int index) => _phases[index];
 
+    // 기능: zones.json 파일을 읽고 검증해 ZoneData를 만든다.
+    // 입력: path - zones.json 경로, simHz - 서버 시뮬레이션 Tick 속도.
+    // 출력: 검증된 ZoneData. 파일이 없거나 내용이 잘못되면 InvalidOperationException을 던진다.
     public static ZoneData LoadFile(string path, int simHz)
     {
         if (!File.Exists(path)) throw new InvalidOperationException($"Zone data not found: {path}");
@@ -60,6 +72,9 @@ public sealed class ZoneData
         return data!;
     }
 
+    // 기능: zones.json 내용을 파싱하고 첫 원·Arena 범위·단계별 시간·반지름 감소·피해, 마지막 단계 반지름 0 규칙을 검증한다.
+    // 입력: json - zones.json 내용, simHz - 초를 Tick으로 바꿀 시뮬레이션 Tick 속도, data - 만들어진 ZoneData, error - 실패 이유.
+    // 출력: 유효하면 true와 data, 아니면 false와 error 메시지.
     public static bool TryParse(string json, int simHz, out ZoneData? data, out string? error)
     {
         data = null;
@@ -158,7 +173,8 @@ public sealed class ZoneData
         return true;
     }
 
-    // Missing numbers stay 0 and fail validation, so every required field must be written.
+    // Missing numbers stay 0. That fails validation for initialRadius, arenaHalfSize, waitSeconds and shrinkSeconds;
+    // a missing targetRadius or damagePerSecond is 0, which TryParse accepts on every phase except the last.
     private sealed class ZonesJson
     {
         public double[]? InitialCenter { get; set; }

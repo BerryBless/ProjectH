@@ -13,7 +13,8 @@ public sealed record MatchHistoryEntry(long MatchId, int Round, DateTime EndedUt
 // Phase 9 (§36-37): the MySQL side. Every call opens a pooled connection and returns it on the way out
 // (await using), and a match is saved in one short transaction: accounts, profiles, the match, its players and the
 // running statistics, or nothing. Only MatchHistoryWriter calls SaveAsync (one writer, so no row-lock ordering
-// issues between transactions); the read methods are for tools and tests. Never called from the game loop.
+// issues between transactions); the read methods serve StatsQueryService (Phase 11 stats requests), tools and tests.
+// Never called from the game loop.
 public sealed class MatchStore
 {
     // D3: idempotent schema, created at startup. Table names avoid MATCH (a reserved word).
@@ -81,12 +82,18 @@ public sealed class MatchStore
 
     private readonly string _connectionString;
 
+    // 기능: MySQL 연결 문자열을 가진 매치 저장소를 만든다. 연결은 호출마다 연다.
+    // 입력: connectionString - MySQL 연결 문자열.
+    // 출력: 연결을 열지 않은 MatchStore 객체. 연결 문자열이 비어 있으면 ArgumentException을 던진다.
     public MatchStore(string connectionString)
     {
         if (string.IsNullOrWhiteSpace(connectionString)) throw new ArgumentException("A connection string is required.", nameof(connectionString));
         _connectionString = connectionString;
     }
 
+    // 기능: 계정·프로필·통계·매치·매치 참가자 테이블이 없으면 만든다(여러 번 실행해도 안전).
+    // 입력: cancellationToken - 작업 취소 신호.
+    // 출력: 반환값 없음. 다섯 테이블이 존재하게 된다. 연결·SQL 실패 시 예외를 던지며 연결은 항상 반환된다.
     public async Task EnsureSchemaAsync(CancellationToken cancellationToken)
     {
         await using var connection = new MySqlConnection(_connectionString);
@@ -98,6 +105,9 @@ public sealed class MatchStore
         }
     }
 
+    // 기능: 끝난 매치 하나를 한 Transaction으로 저장한다(계정·프로필 생성, game_match, 계정별 match_player, player_stats 누적).
+    // 입력: record - 저장할 매치 기록, cancellationToken - 작업 취소 신호.
+    // 출력: 새 game_match id. 실패하면 Commit 없이 예외를 던지고 Transaction은 Rollback되어 아무것도 저장되지 않는다.
     // One transaction for the whole match. Returns the new game_match id.
     public async Task<long> SaveAsync(MatchRecord record, CancellationToken cancellationToken)
     {
@@ -181,6 +191,9 @@ public sealed class MatchStore
         return matchId;
     }
 
+    // 기능: DevPlayerId의 누적 통계를 조회한다.
+    // 입력: devPlayerId - 조회할 개발용 플레이어 ID, cancellationToken - 작업 취소 신호.
+    // 출력: 조회된 PlayerStats. 통계 행이 없으면 null. 연결·SQL 실패 시 예외를 던진다.
     public async Task<PlayerStats?> GetStatsAsync(string devPlayerId, CancellationToken cancellationToken)
     {
         await using var connection = new MySqlConnection(_connectionString);
@@ -195,6 +208,9 @@ public sealed class MatchStore
             reader.GetInt64(4), reader.GetInt64(5));
     }
 
+    // 기능: DevPlayerId가 참가한 최근 매치 기록을 조회한다.
+    // 입력: devPlayerId - 조회할 개발용 플레이어 ID, limit - 최대 개수(1..100으로 잘림), cancellationToken - 작업 취소 신호.
+    // 출력: 최신 매치부터 정렬된 매치 기록 목록(없으면 빈 목록). 연결·SQL 실패 시 예외를 던진다.
     // Newest first, at most limit (1-100) entries.
     public async Task<IReadOnlyList<MatchHistoryEntry>> GetHistoryAsync(string devPlayerId, int limit, CancellationToken cancellationToken)
     {
@@ -217,9 +233,15 @@ public sealed class MatchStore
         return entries;
     }
 
+    // 기능: 같은 계정의 중복 기록 중 남길 기록을 고르기 위한 순위 값을 만든다.
+    // 입력: player - 참가자 기록.
+    // 출력: 순위 값(작을수록 좋음). 순위 없음(0)은 int 최대값.
     // Lower is better. Placement 0 (unranked) sorts after every real placement.
     private static int PlacementRank(PlayerRecord player) => player.Placement == 0 ? int.MaxValue : player.Placement;
 
+    // 기능: 진행 중인 Transaction 안에서 DevPlayerId의 계정을 찾거나 만들고, 프로필이 없으면 만든다.
+    // 입력: connection - 열린 연결, transaction - 매치 저장 Transaction, devPlayerId - 개발용 플레이어 ID, cancellationToken - 작업 취소 신호.
+    // 출력: 기존 또는 새 account id. SQL 실패 시 예외를 던진다.
     // The account id for a DevPlayerId, created (with its profile) on first sight. LAST_INSERT_ID(id) on the duplicate
     // path makes one statement return the existing id too.
     private static async Task<long> EnsureAccountAsync(MySqlConnection connection, MySqlTransaction transaction, string devPlayerId,

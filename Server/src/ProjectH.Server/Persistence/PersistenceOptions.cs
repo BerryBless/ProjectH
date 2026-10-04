@@ -17,6 +17,9 @@ public sealed class PersistenceOptions
     // D8: on shutdown, how long the writer may keep saving what is still queued (1 or more: 0 would abort at once).
     public int ShutdownDrainSeconds { get; set; } = 5;
 
+    // 기능: Persistence 설정 값의 범위와 활성화 시 연결 문자열 필수 여부를 검증한다.
+    // 입력: 없음.
+    // 출력: 문제가 없으면 null, 있으면 첫 번째 오류 메시지.
     public string? Validate()
     {
         if (QueueCapacity < 1 || QueueCapacity > 1024) return "Persistence:QueueCapacity must be 1-1024.";

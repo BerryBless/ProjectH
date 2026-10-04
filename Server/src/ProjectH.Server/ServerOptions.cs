@@ -74,6 +74,9 @@ public sealed class ServerOptions
     public int MaxInputPacketsPerSecond => SimHz * 2;
     public int InputBurst => SimHz;
 
+    // 기능: 설정 값이 허용 범위 안에 있고 서로 맞는지 검사한다. 시작 시 잘못된 설정을 바로 실패시키기 위해 쓴다.
+    // 입력: 없음.
+    // 출력: 모두 유효하면 null, 아니면 처음 발견한 문제를 설명하는 오류 메시지.
     public string? Validate()
     {
         if (Port < 0 || Port > 65535) return "Port must be 0-65535.";

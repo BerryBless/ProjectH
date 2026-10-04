@@ -12,6 +12,9 @@ public sealed class PlayerEntity
     // peer ids, so a graced player must not keep its old one: the next connection with that id would get its packets.
     public const int NoPeer = -1;
 
+    // 기능: 접속한 플레이어 엔티티를 만든다.
+    // 입력: entityId - Match 안의 엔티티 ID, peerId - 연결 Peer ID, devPlayerId - 개발용 플레이어 ID, inputCapacity - 입력 Buffer 최대 크기.
+    // 출력: 빈 입력 Buffer를 가진 PlayerEntity. 전투·위치 상태는 Match가 이후에 설정한다.
     public PlayerEntity(ushort entityId, int peerId, string devPlayerId, int inputCapacity)
     {
         EntityId = entityId;
@@ -76,6 +79,9 @@ public sealed class PlayerEntity
     public int SyncColumn;
     public uint SyncAfterId;
 
+    // 기능: 건설 관심 영역 동기화 상태를 처음으로 되돌린다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 관심 셀, 동기화 대기 셀, 진행 위치가 초기화되어 관심 영역 전체를 다시 보낸다.
     // A join, a resume or a round reset: the client starts from nothing and the window is sent again.
     public void ResetInterest()
     {

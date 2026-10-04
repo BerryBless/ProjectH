@@ -43,6 +43,9 @@ public sealed class StatsQueryQueue
     private long _unavailable;
     private long _undelivered;
 
+    // 기능: 통계 요청 Queue와 응답 Queue를 같은 크기 제한으로 만든다.
+    // 입력: capacity - 각 Queue의 최대 대기 개수.
+    // 출력: 두 Queue가 비어 있고 모든 카운터가 0인 StatsQueryQueue 객체.
     public StatsQueryQueue(int capacity = DefaultCapacity)
     {
         Capacity = capacity;
@@ -68,6 +71,9 @@ public sealed class StatsQueryQueue
     public StatsQueryCounts Counts => new(Interlocked.Read(ref _accepted), Interlocked.Read(ref _limited),
         Interlocked.Read(ref _busy), Interlocked.Read(ref _unavailable), Interlocked.Read(ref _undelivered));
 
+    // 기능: 통계 요청을 기다리지 않고 요청 Queue에 넣는다.
+    // 입력: query - 연결의 통계 요청.
+    // 출력: 넣었으면 true(Requests 카운터 1 증가), Queue가 가득 차 있으면 false.
     // Network thread. False = the request queue is full: the caller answers Busy.
     public bool TryEnqueue(in StatsQuery query)
     {
@@ -76,6 +82,9 @@ public sealed class StatsQueryQueue
         return true;
     }
 
+    // 기능: 통계 응답을 기다리지 않고 응답 Queue에 넣는다. Busy·Unavailable 응답은 해당 카운터에 센다.
+    // 입력: reply - 게임 루프가 보낼 통계 응답.
+    // 출력: 넣었으면 true, Queue가 가득 차 있으면 false(응답은 버려지고 Undelivered가 1 증가).
     // StatsQueryService or a network thread. False = the reply queue is full: the reply is dropped and counted.
     public bool TryReply(in StatsReply reply)
     {
@@ -86,9 +95,18 @@ public sealed class StatsQueryQueue
         return false;
     }
 
+    // 기능: 응답 Queue에서 보낼 통계 응답 하나를 기다리지 않고 꺼낸다.
+    // 입력: reply - 꺼낸 응답을 받을 out 변수.
+    // 출력: 꺼냈으면 true, Queue가 비어 있으면 false.
     // Game loop only.
     public bool TryTakeReply(out StatsReply reply) => _replies.Reader.TryRead(out reply);
 
+    // 기능: 응답 없이 버린 통계 요청(Join 전이거나 요청 간격 미달) 하나를 센다. Network Thread에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. Limited 수가 1 증가한다.
     public void AddLimited() => Interlocked.Increment(ref _limited);
+    // 기능: 연결이 사라져 보내지 못한 통계 응답 하나를 센다. Game Loop Thread에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. Undelivered 수가 1 증가한다.
     public void AddUndelivered() => Interlocked.Increment(ref _undelivered);
 }

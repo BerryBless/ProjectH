@@ -92,28 +92,88 @@ public sealed class HealthCounters
     // Phase 11 D8 counters of the statistics path (StatsQueryQueue). Set once by GameLoop's constructor.
     public Func<StatsQueryCounts>? StatsQueries { get; set; }
 
+    // 기능: 거절한 연결 요청 하나를 사유별로 센다. LiteNetLib의 연결 요청 Callback에서 호출한다.
+    // 입력: reason - 거절 사유.
+    // 출력: 반환값 없음. 해당 사유의 거절 수가 1 증가한다.
     public void AddReject(RejectReason reason) => Interlocked.Increment(ref _rejects[(int)reason]);
+    // 기능: 서버가 끊은 연결 하나를 종료 코드별로 센다. Game Loop와 LiteNetLib Thread 어디서 불러도 된다.
+    // 입력: code - 연결을 끊은 종료 코드.
+    // 출력: 반환값 없음. 해당 코드의 Kick 수가 1 증가한다.
     public void AddKick(DisconnectCode code) => Interlocked.Increment(ref _kicks[(int)code]);
+    // 기능: 잘못된 Packet 하나를 사유별로 센다. LiteNetLib 수신 Thread에서 호출한다.
+    // 입력: reason - 잘못된 Packet으로 본 사유.
+    // 출력: 반환값 없음. 해당 사유의 잘못된 Packet 수가 1 증가한다.
     public void AddBadPacket(BadPacketReason reason) => Interlocked.Increment(ref _badPackets[(int)reason]);
+    // 기능: 수락한 연결 하나를 센다. LiteNetLib의 연결 요청 Callback에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 수락한 연결 누적 수가 1 증가한다.
     public void AddConnection() => Interlocked.Increment(ref _connections);
+    // 기능: 새로 성공한 Join(JoinResult.Ok) 하나를 센다. Game Loop Thread에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 새로 성공한 Join(JoinResult.Ok) 누적 수가 1 증가한다.
     public void AddJoin() => Interlocked.Increment(ref _joins);
+    // 기능: 재접속으로 이어진 참가(JoinResult.Resumed) 하나를 센다. Game Loop Thread에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 재접속으로 이어진 참가(JoinResult.Resumed) 누적 수가 1 증가한다.
     public void AddResume() => Interlocked.Increment(ref _resumes);
+    // 기능: 재접속 유예를 시작한 참가자 하나를 센다. Game Loop Thread에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 재접속 유예를 시작한 참가자 누적 수가 1 증가한다.
     public void AddGraceStart() => Interlocked.Increment(ref _graceStarts);
+    // 기능: 재접속하지 못하고 유예가 끝난 참가자 하나를 센다. Game Loop Thread에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 재접속하지 못하고 유예가 끝난 참가자 누적 수가 1 증가한다.
     // A graced player that left without resuming: its grace ran out, it died while away, or the round reset.
     public void AddGraceExpiry() => Interlocked.Increment(ref _graceExpiries);
+    // 기능: 연결 종료 하나를 Timeout 또는 그 밖의 사유로 나눠 센다.
+    // 입력: timeout - Timeout으로 끊겼으면 true.
+    // 출력: 반환값 없음. Timeout 종료 수 또는 기타 종료 수가 1 증가한다.
     public void AddDisconnect(bool timeout) => Interlocked.Increment(ref timeout ? ref _disconnectTimeouts : ref _disconnectOthers);
+    // 기능: 예외로 실패한 Tick 하나를 센다. Game Loop Thread에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 예외로 실패한 Tick 누적 수가 1 증가한다.
     public void AddTickFailure() => Interlocked.Increment(ref _tickFailures);
+    // 기능: Tick 바깥 Loop 본문에서 잡힌 예외 하나를 센다. Game Loop Thread에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. Tick 바깥 Loop 본문에서 잡힌 예외 누적 수가 1 증가한다.
     public void AddLoopFailure() => Interlocked.Increment(ref _loopFailures);
+    // 기능: Match Reset 하나를 센다. Game Loop Thread에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. Match Reset 누적 수가 1 증가한다.
     public void AddMatchReset() => Interlocked.Increment(ref _matchResets);
+    // 기능: 감지된 Game Loop Stall 하나를 센다. Stall Watchdog의 Timer Thread에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 감지된 Game Loop Stall 누적 수가 1 증가한다.
     public void AddStall() => Interlocked.Increment(ref _stalls);
+    // 기능: 이동 모드 허용 속도를 넘은 이동 하나를 센다. Game Loop Thread(Match 자체 점검)에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 이동 모드 허용 속도를 넘은 이동 누적 수가 1 증가한다.
     // Phase 12 D12: a move faster than its mode allows (Match's self-check; should stay 0).
     public void AddMovementAnomaly() => Interlocked.Increment(ref _movementAnomalies);
+    // 기능: LiteNetLib가 알린 Socket 오류 하나를 센다. LiteNetLib의 OnNetworkError Callback에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. LiteNetLib가 알린 Socket 오류 누적 수가 1 증가한다.
     public void AddNetworkError() => Interlocked.Increment(ref _networkErrors);
+    // 기능: IP별 연결 비율 초과로 거절한 연결 요청 하나를 센다. LiteNetLib의 연결 요청 Callback에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. IP별 연결 비율 초과로 거절한 연결 요청 누적 수가 1 증가한다.
     public void AddConnectRateReject() => Interlocked.Increment(ref _connectRateRejects);
+    // 기능: 자기 Tick 처리 중 예외가 나서 Match에서 빠진 참가자 하나를 센다. Game Loop Thread에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 자기 Tick 처리 중 예외가 나서 Match에서 빠진 참가자 누적 수가 1 증가한다.
     public void AddPlayerFailure() => Interlocked.Increment(ref _playerFailures);
+    // 기능: FatalStallSeconds 동안 이어져 서버를 멈춘 Stall 하나를 센다. Stall Watchdog의 Timer Thread에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. FatalStallSeconds 동안 이어져 서버를 멈춘 Stall 누적 수가 1 증가한다.
     public void AddStallExit() => Interlocked.Increment(ref _stallExits);
+    // 기능: 외부 진입점(LiteNetLib Callback, Watchdog Timer)에서 잡힌 예외 하나를 센다. 해당 Callback의 Thread에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 외부 진입점(LiteNetLib Callback, Watchdog Timer)에서 잡힌 예외 누적 수가 1 증가한다.
     public void AddCallbackError() => Interlocked.Increment(ref _callbackErrors);
 
+    // 기능: 현재 연결 수·참가자 수·유예 중 참가자 수·Match 상태 Gauge를 기록한다. Game Loop가 Tick마다 호출한다.
+    // 입력: peers - 열린 연결 수, players - 유예 포함 Match 참가자 수, graced - 재접속 대기 중인 참가자 수, state - 현재 Match 흐름 상태.
+    // 출력: 반환값 없음. Health 줄과 Meter가 읽는 Gauge 값이 갱신된다.
     public void SetGauges(int peers, int players, int graced, MatchFlowState state)
     {
         Volatile.Write(ref _peers, peers);
@@ -122,6 +182,9 @@ public sealed class HealthCounters
         Volatile.Write(ref _matchState, (int)state);
     }
 
+    // 기능: 현재 Match의 건설·채집 수치를 이전 Match에서 넘겨받은 기준값에 더해 서버 시작 이후 누적값으로 기록한다.
+    // 입력: c - 현재 Match의 건설 수치, rejects - 거절 사유별 현재 Match 거절 수를 돌려주는 함수.
+    // 출력: 반환값 없음. 건설 누적 Counter와 Pieces·Cells Gauge가 갱신된다.
     // The current match's numbers, written as totals since the start: the carried base plus these (the gauges Pieces and
     // Cells as they are).
     public void SetBuild(in BuildCounts c, Func<BuildResultCode, long> rejects)
@@ -144,6 +207,9 @@ public sealed class HealthCounters
         for (int i = 1; i < _buildRejects.Length; i++) Volatile.Write(ref _buildRejects[i], _buildRejectBase[i] + rejects((BuildResultCode)i));
     }
 
+    // 기능: Match Reset 직전에 마지막으로 기록된 건설 누적값을 다음 Match의 기준값으로 저장한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 건설 기준값(Pieces·Cells는 0)과 거절 사유별 기준값이 갱신된다.
     // Final review B12: a match reset replaces the match (whose numbers start at 0): what was written last becomes the
     // base, so the totals (and the Meter's counters) never go back. Game loop only, before the new match's first SetBuild.
     public void CarryBuildTotals()
@@ -158,14 +224,29 @@ public sealed class HealthCounters
         Volatile.Read(ref _buildEventPackets), Volatile.Read(ref _buildSyncPackets), Volatile.Read(ref _buildDamageDestroyed),
         Volatile.Read(ref _buildSyncDeferred));
 
+    // 기능: 가득 찬 수신 Channel이 버린 건설 요청 하나를 센다. LiteNetLib Thread에서 호출한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 가득 찬 수신 Channel이 버린 건설 요청 누적 수가 1 증가한다.
     // Build requests the inbound channel dropped (full, DropOldest); written by LiteNetLib threads.
     public void AddBuildInboxDrop() => Interlocked.Increment(ref _buildInboxDrops);
     public long BuildInboxDrops => Interlocked.Read(ref _buildInboxDrops);
 
+    // 기능: 건설 거절 수를 결과 코드별로 읽는다.
+    // 입력: code - 읽을 건설 결과 코드.
+    // 출력: 서버 시작 이후 해당 코드로 거절된 건설 요청 누적 수.
     public long BuildRejects(BuildResultCode code) => Volatile.Read(ref _buildRejects[(int)code]);
 
+    // 기능: 거절한 연결 요청 수를 사유별로 읽는다.
+    // 입력: reason - 읽을 거절 사유.
+    // 출력: 서버 시작 이후 해당 사유로 거절한 연결 요청 누적 수.
     public long Rejects(RejectReason reason) => Interlocked.Read(ref _rejects[(int)reason]);
+    // 기능: 서버가 끊은 연결 수를 종료 코드별로 읽는다.
+    // 입력: code - 읽을 종료 코드.
+    // 출력: 서버 시작 이후 해당 코드로 끊은 연결 누적 수.
     public long Kicks(DisconnectCode code) => Interlocked.Read(ref _kicks[(int)code]);
+    // 기능: 잘못된 Packet 수를 사유별로 읽는다.
+    // 입력: reason - 읽을 잘못된 Packet 사유.
+    // 출력: 서버 시작 이후 해당 사유로 센 잘못된 Packet 누적 수.
     public long BadPackets(BadPacketReason reason) => Interlocked.Read(ref _badPackets[(int)reason]);
     public long Connections => Interlocked.Read(ref _connections);
     public long Joins => Interlocked.Read(ref _joins);
@@ -189,6 +270,9 @@ public sealed class HealthCounters
     public int Graced => Volatile.Read(ref _graced);
     public MatchFlowState MatchState => (MatchFlowState)Volatile.Read(ref _matchState);
 
+    // 기능: 모든 사유의 잘못된 Packet 수를 더해 읽는다.
+    // 입력: 없음.
+    // 출력: 서버 시작 이후 잘못된 Packet 누적 수의 사유별 합계.
     public long BadPacketsTotal
     {
         get

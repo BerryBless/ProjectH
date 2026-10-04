@@ -6,6 +6,9 @@ namespace ProjectH.Server.Game.Combat;
 // every player: per-player state (magazine, next fire tick) lives in the player's Inventory.
 public sealed class WeaponDefinition
 {
+    // 기능: 검증된 무기 수치로 무기 정의를 만든다.
+    // 입력: id - 무기 id, name - 이름, damage - 기본 피해, fireIntervalTicks - 발사 간격 Tick, magazineSize - 탄창 크기, reloadTicks - 재장전 Tick, range - 사거리, automatic - 연사 여부, spread - 탄퍼짐(미적용), recoil - 반동(미적용), ammoType - 사용하는 탄약 종류.
+    // 출력: 주어진 값을 담은 불변 무기 정의.
     public WeaponDefinition(byte id, string name, ushort damage, ushort fireIntervalTicks, byte magazineSize,
         ushort reloadTicks, float range, bool automatic, float spread, float recoil, AmmoType ammoType)
     {
@@ -37,6 +40,9 @@ public sealed class WeaponDefinition
     public float Spread { get; }
     public float Recoil { get; }
 
+    // 기능: 무기 정의를 Client에 보낼 WeaponInfo로 옮긴다.
+    // 입력: 없음.
+    // 출력: id·이름·피해·발사 간격·탄창·재장전·사거리·연사·탄약 종류를 담은 WeaponInfo(탄퍼짐·반동은 보내지 않음).
     public WeaponInfo ToWire() => new WeaponInfo
     {
         WeaponId = Id,

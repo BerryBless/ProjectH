@@ -10,6 +10,9 @@ public static class MovementLimits
 {
     public const float Slack = 1.5f;
 
+    // 기능: 이동 모드별 이론상 최대 속도(수평 최대 + 수직 최대)를 계산한다.
+    // 입력: mode - 이동 모드.
+    // 출력: 초당 최대 이동 거리(m/s). Transport처럼 시뮬레이션으로 이동하지 않는 모드는 0.
     public static float MaxSpeed(MovementMode mode)
     {
         switch (mode)

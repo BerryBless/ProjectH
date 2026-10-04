@@ -41,6 +41,9 @@ public sealed class BuildSupport
     private bool[] _queued;
     private int _startCount;
 
+    // 기능: 조각 연결 색인과 탐색 버퍼를 만든다.
+    // 입력: capacity - Match당 최대 조각 수(슬롯별 배열이 커질 수 있는 상한).
+    // 출력: 등록된 조각과 대기 중인 탐색 시작점이 없는 BuildSupport.
     public BuildSupport(int capacity)
     {
         _capacity = capacity;
@@ -56,6 +59,9 @@ public sealed class BuildSupport
         _queued = new bool[slots];
     }
 
+    // 기능: 슬롯별 배열이 주어진 슬롯을 담을 만큼 크도록 늘린다.
+    // 입력: slot - 곧 사용할 저장 슬롯 번호.
+    // 출력: 반환값 없음. 필요하면 모든 슬롯별 배열이 두 배(최대 조각 수까지)로 커진다.
     // Every per-slot array reaches past slot (doubling, up to the piece limit).
     private void EnsureSlot(int slot)
     {
@@ -72,6 +78,9 @@ public sealed class BuildSupport
         Array.Resize(ref _queued, size);
     }
 
+    // 기능: 조각이 차지하는 건설 격자 모서리들을 키로 구한다.
+    // 입력: s - 조각의 격자 위치·종류·회전, keys - 모서리 키를 받을 버퍼(MaxEdges 이상).
+    // 출력: keys에 채운 모서리 수(벽 6, 그 외 4).
     // The lattice edges of a piece (4 or 6), as keys: (lower point index) | (higher point index << 16).
     public static int Edges(in BuildPieceShape s, Span<uint> keys)
     {
@@ -104,6 +113,9 @@ public sealed class BuildSupport
         }
     }
 
+    // 기능: 사각형 조각의 네 변(벽이면 두 대각선까지)을 모서리 키로 채운다.
+    // 입력: keys - 모서리 키를 받을 버퍼, p00·p10·p01·p11 - 사각형 네 꼭짓점의 격자점 번호, diagonals - 대각선도 넣을지 여부.
+    // 출력: 채운 모서리 수(대각선 포함 6, 아니면 4).
     // A rectangle p00-p10 / p01-p11 (p00-p01 and p10-p11 its other sides), with both diagonals for a wall.
     private static int Rect(Span<uint> keys, int p00, int p10, int p01, int p11, bool diagonals)
     {
@@ -117,10 +129,19 @@ public sealed class BuildSupport
         return 6;
     }
 
+    // 기능: 격자 꼭짓점 좌표를 하나의 격자점 번호로 바꾼다.
+    // 입력: x, z - 꼭짓점의 격자 X·Z 좌표, y - 층 번호.
+    // 출력: 격자점 번호.
     private static int Point(int x, int y, int z) => x + PointsX * (z + PointsZ * y);
 
+    // 기능: 두 격자점을 잇는 모서리의 키를 방향과 무관하게 만든다.
+    // 입력: a, b - 모서리 양 끝의 격자점 번호.
+    // 출력: 작은 번호를 아래 16비트, 큰 번호를 위 16비트에 둔 모서리 키.
     private static uint Key(int a, int b) => a < b ? (uint)a | ((uint)b << 16) : (uint)b | ((uint)a << 16);
 
+    // 기능: 조각 바닥이 지형이나 맵 상자 윗면에 닿아 있는지(접지) 검사한다.
+    // 입력: s - 검사할 조각, terrain - 높이 격자 지형, mapBoxes - 맵 정적 상자(채집 대상 제외).
+    // 출력: 바닥의 검사점 중 하나라도 땅에 닿으면 true, 아니면 false.
     // D12: the piece's bottom rests on the terrain or a map box top, at any of a few points along it.
     public static bool IsGrounded(in BuildPieceShape s, HeightField terrain, ReadOnlySpan<Box> mapBoxes)
     {
@@ -156,6 +177,9 @@ public sealed class BuildSupport
         }
     }
 
+    // 기능: 한 점이 지형이나 맵 상자 윗면에 닿아 있는지 검사한다.
+    // 입력: x, z - 점의 수평 위치, y - 점의 높이, terrain - 높이 격자 지형, mapBoxes - 맵 정적 상자.
+    // 출력: 지형이나 상자 윗면이 GroundTolerance 안에 있으면 true, 아니면 false.
     // A point at height y rests on the ground: the terrain under it is at most GroundTolerance lower (or higher: the
     // piece's foot is in the ground), or a map box top under it is within GroundTolerance of y.
     private static bool Rests(float x, float y, float z, HeightField terrain, ReadOnlySpan<Box> mapBoxes)
@@ -169,6 +193,9 @@ public sealed class BuildSupport
         return false;
     }
 
+    // 기능: 놓으려는 조각과 모서리를 공유하는 기존 조각이 있는지 검사한다.
+    // 입력: shape - 놓으려는 조각.
+    // 출력: 모서리를 공유하는 조각이 하나라도 있으면 true, 없으면 false.
     // Placement: some standing piece shares an edge with this shape.
     public bool HasNeighbour(in BuildPieceShape shape)
     {
@@ -181,6 +208,9 @@ public sealed class BuildSupport
         return false;
     }
 
+    // 기능: 새 조각의 모서리들을 모서리 색인에 등록한다.
+    // 입력: slot - 조각의 저장 슬롯 번호, shape - 조각의 격자 위치·종류·회전.
+    // 출력: 반환값 없음. 조각이 각 모서리 목록의 맨 앞에 연결된다.
     public void Add(int slot, in BuildPieceShape shape)
     {
         EnsureSlot(slot);
@@ -198,6 +228,9 @@ public sealed class BuildSupport
         }
     }
 
+    // 기능: 조각의 모서리들을 모서리 색인에서 떼어 낸다.
+    // 입력: slot - 지울 조각의 저장 슬롯 번호.
+    // 출력: 반환값 없음. 조각이 모든 모서리 목록에서 빠지고, 빈 모서리는 색인에서 지워진다.
     public void Remove(int slot)
     {
         int n = _edgeCount[slot];
@@ -214,6 +247,9 @@ public sealed class BuildSupport
         _edgeCount[slot] = 0;
     }
 
+    // 기능: 모서리 색인과 대기 중인 탐색 시작점을 모두 비운다(라운드 리셋, Match 시작).
+    // 입력: 없음.
+    // 출력: 반환값 없음. 등록된 조각과 탐색 시작점이 없는 상태가 된다.
     public void Clear()
     {
         _heads.Clear();
@@ -227,6 +263,9 @@ public sealed class BuildSupport
     // Nodes the last Unsupported call took from its queue (tests: the work is bounded by the components, not the map).
     public int LastVisited { get; private set; }
 
+    // 기능: 제거될 조각의 이웃들을 이번 Tick 끝 지지 탐색의 시작점으로 등록한다.
+    // 입력: slot - 곧 제거될 조각의 저장 슬롯 번호(아직 색인에 남아 있어야 한다).
+    // 출력: 반환값 없음. 아직 등록되지 않은 이웃 슬롯이 탐색 시작점 목록에 추가된다.
     // Final review A2: before a piece is removed, its neighbours become search starts for the end of the tick, so every
     // destroy of a tick shares one search (Unsupported's "reached by an earlier search" stop). Each slot is queued once.
     public void QueueNeighbours(int slot)
@@ -242,6 +281,9 @@ public sealed class BuildSupport
         }
     }
 
+    // 기능: 이번 Tick에 쌓인 탐색 시작점으로 지지를 잃은 조각들을 한 번에 찾는다.
+    // 입력: world - 현재 Match의 건설 조각 목록(파괴된 조각은 이미 제거된 상태).
+    // 출력: 무너뜨릴 조각의 슬롯 목록(다음 호출에서 버퍼가 재사용됨). 호출 후 시작점 목록은 비워진다.
     // End of the tick: the pieces the queued starts no longer hold up (see Unsupported); the queue is empty afterwards.
     // The result is the same as searching after every destroy: removing all of them first and then searching every
     // former neighbour's component finds exactly the components that no longer reach a grounded piece.
@@ -253,6 +295,9 @@ public sealed class BuildSupport
         return Unsupported(new ReadOnlySpan<int>(_starts, 0, count), world);
     }
 
+    // 기능: 한 조각과 모서리를 공유하는 이웃 조각 슬롯을 중복 없이 모은다.
+    // 입력: slot - 기준 조각의 저장 슬롯 번호, result - 이웃 슬롯을 받을 버퍼.
+    // 출력: result에 채운 이웃 수. 버퍼가 차면 나머지 이웃은 버린다.
     // The slots sharing an edge with this one (each once), into result; returns how many.
     public int Neighbours(int slot, Span<int> result)
     {
@@ -270,6 +315,9 @@ public sealed class BuildSupport
         return count;
     }
 
+    // 기능: 시작점마다 연결된 조각 묶음을 BFS로 탐색해 접지 조각에 닿지 않는 묶음을 찾는다.
+    // 입력: starts - 탐색 시작 슬롯(제거된 조각의 이전 이웃), world - 현재 Match의 건설 조각 목록.
+    // 출력: 무너뜨릴 조각의 슬롯 목록(다음 호출에서 버퍼가 재사용됨). LastVisited가 이번 탐색 수로 갱신된다.
     // D12: after a piece went, the pieces that lost their support, starting from its former neighbours. Each start's
     // component is searched once; a component that reaches a grounded piece (or a piece an earlier search of this call
     // found supported) stays. Returns the slots to collapse (the buffer is reused by the next call). Visits at most every

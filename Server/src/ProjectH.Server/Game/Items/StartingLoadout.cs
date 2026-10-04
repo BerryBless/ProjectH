@@ -20,6 +20,9 @@ public sealed class StartingLoadout
     public int Medkits { get; init; }
     public int ShieldCells { get; init; }
 
+    // 기능: 시작 장비가 게임 데이터와 인벤토리 한도(보호막, 슬롯 수, 무기 ID, 등급, 탄약·회복 최대치)에 맞는지 검증한다.
+    // 입력: data - 무기·아이템 카탈로그를 가진 게임 데이터.
+    // 출력: 문제가 없으면 null, 있으면 첫 번째 오류 메시지.
     // Null when the loadout fits the data and the inventory limits.
     public string? Validate(GameData data)
     {
@@ -40,6 +43,9 @@ public sealed class StartingLoadout
         return null;
     }
 
+    // 기능: 인벤토리를 비우고 시작 장비(무기는 탄창 가득, 탄약, 회복 아이템)로 채운다. Validate를 통과한 장비를 전제로 한다.
+    // 입력: inventory - 채울 인벤토리, weapons - 무기 ID로 정의를 찾을 무기 카탈로그.
+    // 출력: 반환값 없음. 인벤토리 전체가 시작 장비로 바뀌고 Changed가 설정된다.
     // Replaces the whole inventory (Clear marks it changed, so the owner hears of it).
     public void ApplyTo(Inventory inventory, WeaponCatalog weapons)
     {

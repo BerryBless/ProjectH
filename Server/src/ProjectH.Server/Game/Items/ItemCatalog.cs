@@ -8,6 +8,9 @@ namespace ProjectH.Server.Game.Items;
 
 public sealed class AmmoDefinition
 {
+    // 기능: 탄약 종류 하나의 정의를 만든다.
+    // 입력: type - 탄약 종류, name - 이름, pickupAmount - 루트 탄약 하나의 탄 수, max - 예비 탄약 최대치.
+    // 출력: 받은 값을 그대로 가진 변경 불가 AmmoDefinition.
     public AmmoDefinition(AmmoType type, string name, ushort pickupAmount, ushort max)
     {
         Type = type;
@@ -24,6 +27,9 @@ public sealed class AmmoDefinition
 
 public sealed class ConsumableDefinition
 {
+    // 기능: 회복 아이템 종류 하나의 정의를 만든다.
+    // 입력: type - 회복 아이템 종류, name - 이름, useTicks - 사용 시간(Tick), heal - 체력 회복량, shield - 실드 회복량, maxStack - 최대 보유 개수.
+    // 출력: 받은 값을 그대로 가진 변경 불가 ConsumableDefinition.
     public ConsumableDefinition(ConsumableType type, string name, ushort useTicks, ushort heal, ushort shield, byte maxStack)
     {
         Type = type;
@@ -51,6 +57,9 @@ public sealed class ItemCatalog
     private readonly AmmoDefinition[] _ammo;              // index = AmmoType - 1
     private readonly ConsumableDefinition[] _consumables; // index = ConsumableType - 1
 
+    // 기능: 검증된 등급·탄약·회복 아이템 정의로 카탈로그를 만들고, 입장 시 보낼 ItemCatalog Packet 데이터를 한 번 만들어 둔다.
+    // 입력: rarityNames - 등급 이름, damageMultipliers - 등급별 피해 배율, ammo - 탄약 정의(AmmoType 순), consumables - 회복 아이템 정의(ConsumableType 순), simHz - Tick 변환에 쓴 시뮬레이션 주파수.
+    // 출력: 정의와 Wire 데이터가 채워진 불변 ItemCatalog 객체.
     private ItemCatalog(string[] rarityNames, float[] damageMultipliers, AmmoDefinition[] ammo,
         ConsumableDefinition[] consumables, int simHz)
     {
@@ -86,11 +95,26 @@ public sealed class ItemCatalog
     // Built once for the ItemCatalog packet sent at every join.
     public ItemCatalogData Wire { get; }
 
+    // 기능: 등급의 피해 배율을 돌려준다.
+    // 입력: rarity - 등급 번호.
+    // 출력: 그 등급의 피해 배율.
     public float DamageMultiplier(int rarity) => _damageMultipliers[rarity];
+    // 기능: 등급 번호의 이름을 돌려준다.
+    // 입력: rarity - 등급 번호.
+    // 출력: 그 등급의 이름.
     public string RarityName(int rarity) => _rarityNames[rarity];
+    // 기능: 탄약 종류의 정의를 돌려준다.
+    // 입력: type - 탄약 종류(None이 아닌 값).
+    // 출력: 그 종류의 AmmoDefinition.
     public AmmoDefinition Ammo(AmmoType type) => _ammo[(int)type - 1];
+    // 기능: 회복 아이템 종류의 정의를 돌려준다.
+    // 입력: type - 회복 아이템 종류(None이 아닌 값).
+    // 출력: 그 종류의 ConsumableDefinition.
     public ConsumableDefinition Consumable(ConsumableType type) => _consumables[(int)type - 1];
 
+    // 기능: 등급 이름으로 등급 번호를 찾는다.
+    // 입력: name - 찾을 등급 이름.
+    // 출력: 일치하는 등급 번호, 없으면 -1.
     // Index of a rarity name, or -1 (loot.json refers to rarities by name).
     public int RarityIndex(string name)
     {
@@ -101,6 +125,9 @@ public sealed class ItemCatalog
         return -1;
     }
 
+    // 기능: items.json 파일을 읽어 검증하고 카탈로그를 만든다.
+    // 입력: path - items.json 경로, simHz - 사용 시간을 Tick으로 바꿀 시뮬레이션 주파수.
+    // 출력: 로드된 ItemCatalog. 파일이 없거나 내용이 잘못되면 InvalidOperationException을 던진다(서버 시작 중단).
     public static ItemCatalog LoadFile(string path, int simHz)
     {
         if (!File.Exists(path)) throw new InvalidOperationException($"Item data not found: {path}");
@@ -109,6 +136,9 @@ public sealed class ItemCatalog
         return catalog!;
     }
 
+    // 기능: items.json 내용을 파싱하고 등급·탄약·회복 아이템을 검증해 카탈로그를 만든다.
+    // 입력: json - items.json 내용, simHz - 시뮬레이션 주파수, catalog - 만든 카탈로그, error - 실패 이유.
+    // 출력: 성공하면 true와 catalog, 실패하면 false와 첫 번째 오류 메시지.
     public static bool TryParse(string json, int simHz, out ItemCatalog? catalog, out string? error)
     {
         catalog = null;
@@ -130,6 +160,9 @@ public sealed class ItemCatalog
         return true;
     }
 
+    // 기능: 탄약 종류 이름 문자열을 AmmoType으로 바꾼다.
+    // 입력: text - "Light", "Medium", "Heavy" 중 하나여야 하는 문자열, type - 변환된 탄약 종류.
+    // 출력: 알려진 이름이면 true와 type, 아니면 false(type은 None).
     // Enum names only: "1" or "None" are not ammo types.
     public static bool TryParseAmmoType(string? text, out AmmoType type)
     {
@@ -143,6 +176,9 @@ public sealed class ItemCatalog
         }
     }
 
+    // 기능: rarities 목록의 개수·이름·피해 배율·중복을 검증하고 배열로 바꾼다.
+    // 입력: list - JSON의 rarities 항목, names - 등급 이름 배열, multipliers - 등급별 피해 배율 배열.
+    // 출력: 성공하면 null과 names·multipliers, 실패하면 오류 메시지(out 값은 null).
     private static string? ParseRarities(List<RarityJson?>? list, out string[]? names, out float[]? multipliers)
     {
         names = null;
@@ -170,6 +206,9 @@ public sealed class ItemCatalog
         return null;
     }
 
+    // 기능: ammo 목록의 종류·이름·최대 보유량·줍기 수량·중복을 검증하고 AmmoType 순 배열로 만든다.
+    // 입력: list - JSON의 ammo 항목, ammo - 탄약 정의 배열.
+    // 출력: 성공하면 null과 ammo, 실패하면 오류 메시지(ammo는 null).
     private static string? ParseAmmo(List<AmmoJson?>? list, out AmmoDefinition[]? ammo)
     {
         ammo = null;
@@ -197,6 +236,9 @@ public sealed class ItemCatalog
         return null;
     }
 
+    // 기능: consumables 목록의 id·이름·사용 시간·회복량·최대 스택·중복을 검증하고 ConsumableType 순 배열로 만든다.
+    // 입력: list - JSON의 consumables 항목, simHz - 사용 시간(초)을 Tick으로 바꿀 주파수, consumables - 회복 아이템 정의 배열.
+    // 출력: 성공하면 null과 consumables, 실패하면 오류 메시지(consumables는 null).
     private static string? ParseConsumables(List<ConsumableJson?>? list, int simHz, out ConsumableDefinition[]? consumables)
     {
         consumables = null;
@@ -234,6 +276,9 @@ public sealed class ItemCatalog
         return null;
     }
 
+    // 기능: 데이터 항목 이름이 비어 있지 않고 UTF-8 바이트 제한 안인지 확인한다.
+    // 입력: name - 확인할 이름.
+    // 출력: 문제가 없으면 null, 있으면 오류 메시지.
     private static string? CheckName(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return "name is required.";

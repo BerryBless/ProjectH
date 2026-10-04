@@ -31,7 +31,8 @@ public sealed class BotRunner : IDisposable
     private readonly int[] _attempts;
     private readonly bool[] _established;
     private long _reconnects;
-    // Totals of the connections a reconnect replaced, so the stats line keeps counting across them.
+    // Totals of the connections a reconnect replaced, so the stats line keeps counting inputs, packets and bytes across
+    // them. Build counts (sent, accepted, refused, pieces seen) are not carried over and restart at 0.
     private long _retiredInputs;
     private long _retiredPackets;
     private long _retiredBytes;
@@ -47,6 +48,9 @@ public sealed class BotRunner : IDisposable
     private long _lastBytes;
     private double _lastStatsAt;
 
+    // 기능: 옵션을 검증하고 봇 수만큼 연결·두뇌·건설 객체를 시드별로 만든다(접속은 Step에서 시작).
+    // 입력: options - 봇 실행 옵션, log - 로그 한 줄을 출력할 함수.
+    // 출력: 아직 아무 봇도 접속하지 않았고 예약된 재접속이 없는 러너. 옵션이 틀리면 ArgumentException.
     public BotRunner(BotOptions options, Action<string> log)
     {
         string? error = options.Validate();
@@ -72,10 +76,22 @@ public sealed class BotRunner : IDisposable
 
     public int Count => _connections.Length;
     public long Reconnects => _reconnects;
+    // 기능: 봇 하나의 서버 연결을 돌려준다.
+    // 입력: index - 봇 번호(0부터).
+    // 출력: 그 봇의 BotConnection.
     public BotConnection Connection(int index) => _connections[index];
+    // 기능: 봇 하나의 판단(이동·사격 결정) 객체를 돌려준다.
+    // 입력: index - 봇 번호(0부터).
+    // 출력: 그 봇의 BotBrain.
     public BotBrain Brain(int index) => _brains[index];
+    // 기능: 봇 하나의 건설 요청 생성기를 돌려준다.
+    // 입력: index - 봇 번호(0부터).
+    // 출력: 그 봇의 BotBuilder.
     public BotBuilder Builder(int index) => _builders[index];
 
+    // 기능: 모든 봇의 한 Tick을 처리한다. 접속 순서가 된 봇을 접속시키고, 예약된 재접속을 실행하고, 각 봇의 수신·판단·입력/건설 송신을 한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 봇 연결·View·두뇌 상태가 갱신되고 서버에 입력·건설 패킷이 전송되며, 이번 루프 소요 시간이 표본에 기록된다. 새로 끊긴 봇은 한 번 로그를 남기고 재접속이 예약될 수 있다.
     public void Step()
     {
         double start = _clock.Elapsed.TotalSeconds;
@@ -125,6 +141,9 @@ public sealed class BotRunner : IDisposable
         if (_loopCount < LoopSampleCount) _loopCount++;
     }
 
+    // 기능: 끊긴 봇의 다음 재접속 시각을 정한다. 재접속 옵션이 꺼졌거나, 재시도할 수 없는 끊김이거나, 한 번도 성립하지 않은 첫 접속이면 예약하지 않는다.
+    // 입력: i - 봇 번호, connection - 끊긴 연결, now - 끊김을 본 시각(초).
+    // 출력: 반환값 없음. _reconnectAt[i]가 다음 시도 시각 또는 NaN(재접속 없음)이 되고, 새 주기면 _dropAt[i]가 기록된다. 이미 예약된 시도가 있거나 횟수를 다 썼으면 예약을 바꾸지 않는다.
     // A drop starts a cycle (its time is the base of every slot); a failed attempt waits for the slot already armed.
     private void ScheduleReconnect(int i, BotConnection connection, double now)
     {
@@ -139,6 +158,9 @@ public sealed class BotRunner : IDisposable
         _reconnectAt[i] = _dropAt[i] + DisconnectCodes.ReconnectOffsetSeconds(_attempts[i] + 1);
     }
 
+    // 기능: 봇 하나의 재접속 시도를 시작한다. 이전 연결을 닫고 같은 이름으로 새 연결·두뇌·건설 객체를 만들어 접속한다.
+    // 입력: i - 재접속할 봇 번호.
+    // 출력: 반환값 없음. 시도 횟수와 다음 시도 시각이 갱신되고, 이전 연결의 입력 수·수신 패킷·바이트 통계는 누적값으로 옮겨진 뒤(건설 통계는 새 연결에서 0부터) 연결이 닫히며, 새 연결이 접속을 시작한다.
     // A fresh connection (its own Seq from 1, as the server expects after a resume) and a fresh brain, same name. The
     // previous connection, still connecting or already failed, is closed. The next slot is armed at once, so an attempt
     // that has not connected by then is replaced.
@@ -163,6 +185,9 @@ public sealed class BotRunner : IDisposable
         _connections[i].Connect(_options.Host, _options.Port, _options.BotName(i));
     }
 
+    // 기능: 취소되거나, 실행 시간이 끝나거나, 모든 봇이 완전히 끊길 때까지 서버 SimHz로 Step을 반복하고 주기적으로 통계를 남긴다.
+    // 입력: token - 실행 중단 요청(Ctrl+C).
+    // 출력: 반환값 없음. 호출 스레드를 막고 돌며, 끝나면 루프를 빠져나온다(소켓은 Dispose가 닫는다). 밀린 Tick이 MaxCatchUpTicks를 넘으면 몰아 돌지 않고 건너뛴다.
     public void Run(CancellationToken token)
     {
         double next = _clock.Elapsed.TotalSeconds;
@@ -191,11 +216,17 @@ public sealed class BotRunner : IDisposable
         }
     }
 
+    // 기능: 모든 봇 연결을 닫는다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 현재 연결들의 소켓이 정리된다.
     public void Dispose()
     {
         foreach (BotConnection connection in _connections) connection.Dispose();
     }
 
+    // 기능: 루프 주기로 쓸 Tick 속도를 정한다.
+    // 입력: 없음.
+    // 출력: 참가한 첫 봇이 받은 서버 SimHz. 참가한 봇이 없으면 30.
     private int TickRate()
     {
         for (int i = 0; i < _started; i++)
@@ -205,6 +236,9 @@ public sealed class BotRunner : IDisposable
         return 30;
     }
 
+    // 기능: 연결·참가·생존 수, 매치 상태, 초당 입력·수신량, 루프 p95, 재접속, 건설 결과를 한 줄 로그로 남긴다.
+    // 입력: seconds - 이전 통계 이후 지난 시간(초), 초당 값 계산에 쓴다.
+    // 출력: 반환값 없음. 통계 로그가 출력되고 다음 구간 계산용 직전 누적값이 갱신된다.
     private void LogStats(double seconds)
     {
         int connected = 0, joined = 0, alive = 0;
@@ -235,6 +269,9 @@ public sealed class BotRunner : IDisposable
         _lastBytes = bytes;
     }
 
+    // 기능: 더 돌릴 봇이 남았는지 확인한다.
+    // 입력: 없음.
+    // 출력: 모든 봇이 접속을 시작했고 전부 끊겼으며 예약된 재접속도 없으면 true, 아니면 false.
     // True once every bot has been started and every one of them is gone for good (no reconnect pending): nothing is
     // left to run.
     private bool AllDisconnected()
@@ -247,6 +284,9 @@ public sealed class BotRunner : IDisposable
         return true;
     }
 
+    // 기능: 최근 최대 LoopSampleCount개 Step 소요 시간의 95 백분위를 구한다(원본 표본은 건드리지 않고 복사본을 정렬).
+    // 입력: 없음.
+    // 출력: Step 한 번의 p95 소요 시간(ms). 표본이 없으면 0.
     private double LoopP95()
     {
         if (_loopCount == 0) return 0;
@@ -256,6 +296,9 @@ public sealed class BotRunner : IDisposable
         return _loopScratch[Math.Clamp(index, 0, _loopCount - 1)];
     }
 
+    // 기능: 목표 시각까지 기다린다. 2 ms보다 많이 남으면 Sleep하고, 그 이하는 Yield로 맞춘다.
+    // 입력: target - 깨어날 시각(러너 시계 기준 초), token - 대기 중단 요청.
+    // 출력: 반환값 없음. 목표 시각이 되거나 취소되면 돌아온다.
     private void WaitUntil(double target, CancellationToken token)
     {
         while (!token.IsCancellationRequested)

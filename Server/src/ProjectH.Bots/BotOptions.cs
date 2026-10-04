@@ -25,6 +25,9 @@ public sealed class BotOptions
     // Phase 13: false = no building at all (load scenario A, comparable with Phase 12: not even defence walls).
     public bool Build { get; set; } = true;
 
+    // 기능: 연결 전에 모든 옵션 값의 범위와 봇 이름 규칙(서버의 DevPlayerId 길이·문자 규칙)을 검사한다.
+    // 입력: 없음.
+    // 출력: 모두 유효하면 null, 아니면 첫 번째로 걸린 옵션의 오류 메시지.
     public string? Validate()
     {
         if (string.IsNullOrWhiteSpace(Host)) return "--host must not be empty.";
@@ -46,6 +49,9 @@ public sealed class BotOptions
         return null;
     }
 
+    // 기능: 명령줄 인자를 "--name value" 쌍으로 읽어 옵션을 만들고 Validate()로 검사한다.
+    // 입력: args - 명령줄 인자 배열.
+    // 출력: 성공하면 true와 파싱된 options(error는 null), 실패하면 false와 error 메시지(options는 일부만 채워진 객체).
     // "--name value" pairs. Unknown names and malformed numbers are errors, so a typo never runs a different test.
     public static bool TryParse(string[] args, out BotOptions options, out string? error)
     {
@@ -86,12 +92,18 @@ public sealed class BotOptions
         return error == null;
     }
 
+    // 기능: 문자열 옵션 값을 그대로 적용한다.
+    // 입력: value - 인자 값, set - 값을 옵션에 넣는 대입 함수.
+    // 출력: 항상 true. 해당 옵션이 value로 바뀐다.
     private static bool Set(string value, Action<string> set)
     {
         set(value);
         return true;
     }
 
+    // 기능: 옵션 값을 bool로 파싱해 적용한다.
+    // 입력: value - 인자 값("true"/"false"), set - 값을 옵션에 넣는 대입 함수.
+    // 출력: 파싱되어 적용되면 true, 형식이 틀리면 false(옵션은 그대로).
     private static bool SetBool(string value, Action<bool> set)
     {
         if (!bool.TryParse(value, out bool parsed)) return false;
@@ -99,6 +111,9 @@ public sealed class BotOptions
         return true;
     }
 
+    // 기능: 옵션 값을 InvariantCulture 정수로 파싱해 적용한다.
+    // 입력: value - 인자 값, set - 값을 옵션에 넣는 대입 함수.
+    // 출력: 파싱되어 적용되면 true, 정수가 아니면 false(옵션은 그대로).
     private static bool SetInt(string value, Action<int> set)
     {
         if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed)) return false;
@@ -106,6 +121,9 @@ public sealed class BotOptions
         return true;
     }
 
+    // 기능: 봇 번호로 접속에 쓸 이름(DevPlayerId)을 만든다.
+    // 입력: index - 0부터 시작하는 봇 번호.
+    // 출력: "{NamePrefix}-{index+1:000}" 형식의 이름(예: "bot-001").
     // DevPlayerId of bot i (0-based): "bot-001". Within ProtocolConstants.MaxDevPlayerIdBytes.
     public string BotName(int index) => $"{NamePrefix}-{index + 1:000}";
 }

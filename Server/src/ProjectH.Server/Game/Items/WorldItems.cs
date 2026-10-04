@@ -32,6 +32,9 @@ public sealed class WorldItems
     // index 0..Count-1
     public ref readonly WorldItem this[int index] => ref _items[index];
 
+    // 기능: 월드에 아이템을 추가하고 새 ID를 부여한다. 가득 차 있으면 가장 오래된 버려진 아이템을 먼저 제거한다.
+    // 입력: kind - 아이템 종류, defId - 정의 ID, rarity - 등급, amount - 수량, position - 놓일 위치, spawnPoint - 만든 루트 지점 번호(버린 아이템은 -1), itemId - 부여된 ID, evictedId - 제거된 아이템 ID.
+    // 출력: 추가했으면 true와 itemId·evictedId(제거 없으면 0), 모든 칸이 스폰 지점 아이템이라 추가할 수 없으면 false.
     // Adds an item and gives it the next free id. When the store is full the oldest dropped item is
     // evicted first and its id returned in evictedId (0 when nothing was evicted). Spawn-point items are
     // never evicted; if every record is one (impossible while spawn points < Capacity) nothing is added.
@@ -64,6 +67,9 @@ public sealed class WorldItems
         return true;
     }
 
+    // 기능: 아이템 ID로 현재 저장 위치를 찾는다.
+    // 입력: itemId - 찾을 아이템 ID.
+    // 출력: 저장 위치(다음 변경 전까지만 유효), 없으면 -1.
     public int IndexOf(ushort itemId)
     {
         for (int i = 0; i < _count; i++)
@@ -73,6 +79,9 @@ public sealed class WorldItems
         return -1;
     }
 
+    // 기능: 저장 위치의 아이템을 월드에서 제거한다. 마지막 기록을 빈자리로 옮긴다.
+    // 입력: index - 제거할 아이템의 저장 위치.
+    // 출력: 반환값 없음. 아이템 수(Material이면 MaterialCount도)가 줄고 마지막 아이템의 저장 위치가 바뀐다.
     public void RemoveAt(int index)
     {
         if (_items[index].Data.Kind == ItemKind.Material) MaterialCount--;
@@ -81,11 +90,17 @@ public sealed class WorldItems
         _items[_count] = default;
     }
 
+    // 기능: 땅에 놓인 아이템의 수량을 바꾼다.
+    // 입력: index - 저장소 안의 아이템 번호, amount - 새 수량.
+    // 출력: 반환값 없음. 그 아이템의 Amount가 바뀐다.
     public void SetAmount(int index, ushort amount)
     {
         _items[index].Data.Amount = amount;
     }
 
+    // 기능: 발 위치에서 줍기 범위 안에 있는 가장 가까운 아이템(Material 제외)을 찾는다.
+    // 입력: feet - 플레이어 발 위치, horizontalRange - 수평 줍기 거리, verticalRange - 위아래 허용 높이 차.
+    // 출력: 가장 가까운 아이템의 저장 위치(거리가 같으면 ItemId가 작은 쪽), 없으면 -1.
     // D8: the item nearest to feet (3D distance) among those within horizontalRange on the ground plane
     // and verticalRange up or down, or -1. Ties go to the lower ItemId, so the result does not depend on
     // the storage order (the client prompt applies the same rule to its own list). Phase 13 D15: never a Material
@@ -112,6 +127,9 @@ public sealed class WorldItems
         return best;
     }
 
+    // 기능: 현재 사용 중이 아닌 다음 아이템 ID를 순환 방식으로 고른다.
+    // 입력: 없음.
+    // 출력: 1..65535 중 사용 중이 아닌 다음 ID. 마지막 ID 기록이 갱신된다.
     // Ids go 1, 2, ... 65535, 1, ... skipping ids still in use, so a freed id is reused only after a full
     // lap (a late ItemRemoved can never name a newer item). At most Capacity ids are in use, so this ends.
     private ushort NextId()

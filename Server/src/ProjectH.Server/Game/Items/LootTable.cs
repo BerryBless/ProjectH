@@ -19,6 +19,9 @@ public enum LootKind : byte
 // One rolled item, before it has an id or a position.
 public readonly struct LootRoll
 {
+    // 기능: 굴려 나온 아이템 하나의 값을 담는다.
+    // 입력: kind - 아이템 종류, defId - 정의 ID, rarity - 등급 번호, amount - 수량.
+    // 출력: 받은 값을 그대로 가진 LootRoll.
     public LootRoll(ItemKind kind, byte defId, byte rarity, ushort amount)
     {
         Kind = kind;
@@ -47,6 +50,9 @@ public sealed class LootTable
     private readonly int[][] _weights;
     private readonly int[] _totals;
 
+    // 기능: 검증된 등급 가중치와 테이블 항목으로 루트 테이블을 만들고 가중치 합계를 미리 계산한다.
+    // 입력: rarityWeights - 등급별 무기 가중치, names - 테이블 이름, kinds - 테이블별 항목 종류, weights - 테이블별 항목 가중치.
+    // 출력: 등급 합계와 테이블별 합계가 계산된 불변 LootTable 객체.
     private LootTable(int[] rarityWeights, string[] names, LootKind[][] kinds, int[][] weights)
     {
         _rarityWeights = rarityWeights;
@@ -63,9 +69,15 @@ public sealed class LootTable
 
     public int TableCount => _names.Length;
 
+    // 기능: 루트 테이블 이름으로 테이블 번호를 찾는다.
+    // 입력: name - 테이블 이름.
+    // 출력: 일치하는 테이블 번호, 없으면 -1.
     // Index of a table name, or -1. Resolved once when the spawner is built, not per roll.
     public int TableIndex(string name) => Array.IndexOf(_names, name);
 
+    // 기능: 테이블 가중치로 항목 종류를 고르고 그 종류의 아이템 하나를 굴린다.
+    // 입력: table - 테이블 번호, rng - 게임 루프 스레드가 소유한 시드 난수, weapons - 무기 카탈로그, items - 아이템 카탈로그.
+    // 출력: 무기(무작위 무기, 등급 가중치로 고른 등급, 탄창 가득), 탄약(무작위 종류, 줍기 수량), Medkit 또는 Shield Cell 1개의 LootRoll.
     public LootRoll Roll(int table, Random rng, WeaponCatalog weapons, ItemCatalog items)
     {
         switch (Pick(_kinds[table], _weights[table], _totals[table], rng))
@@ -84,6 +96,9 @@ public sealed class LootTable
         }
     }
 
+    // 기능: loot.json 파일을 읽어 items.json 기준으로 검증하고 루트 테이블을 만든다.
+    // 입력: path - loot.json 경로, items - 등급 이름을 확인할 아이템 카탈로그.
+    // 출력: 로드된 LootTable. 파일이 없거나 내용이 잘못되면 InvalidOperationException을 던진다(서버 시작 중단).
     public static LootTable LoadFile(string path, ItemCatalog items)
     {
         if (!File.Exists(path)) throw new InvalidOperationException($"Loot data not found: {path}");
@@ -92,6 +107,9 @@ public sealed class LootTable
         return loot!;
     }
 
+    // 기능: loot.json 내용을 파싱하고 등급 가중치(모든 등급 필수)와 테이블 항목(종류 중복 금지, 가중치 범위)을 검증한다.
+    // 입력: json - loot.json 내용, items - 등급 이름을 확인할 아이템 카탈로그, loot - 만든 루트 테이블, error - 실패 이유.
+    // 출력: 성공하면 true와 loot, 실패하면 false와 첫 번째 오류 메시지.
     public static bool TryParse(string json, ItemCatalog items, out LootTable? loot, out string? error)
     {
         loot = null;
@@ -184,6 +202,9 @@ public sealed class LootTable
         return true;
     }
 
+    // 기능: 루트 항목 종류 문자열을 LootKind로 바꾼다.
+    // 입력: text - "Weapon", "Ammo", "Medkit", "ShieldCell" 중 하나여야 하는 문자열, kind - 변환된 항목 종류.
+    // 출력: 알려진 이름이면 true와 kind, 아니면 false.
     private static bool TryParseKind(string? text, out LootKind kind)
     {
         switch (text)
@@ -196,8 +217,14 @@ public sealed class LootTable
         }
     }
 
+    // 기능: 가중치 비율로 항목 종류 하나를 고른다.
+    // 입력: kinds - 항목 종류 목록, weights - 종류별 가중치, total - 가중치 합계, rng - 난수.
+    // 출력: 선택된 항목 종류.
     private static LootKind Pick(LootKind[] kinds, int[] weights, int total, Random rng) => kinds[PickIndex(weights, total, rng)];
 
+    // 기능: 가중치 비율로 항목 번호 하나를 고른다.
+    // 입력: weights - 항목별 가중치, total - 가중치 합계, rng - 난수.
+    // 출력: 선택된 항목 번호.
     // Weighted choice: one Next(total), then walk the cumulative weights. No allocation.
     private static int PickIndex(int[] weights, int total, Random rng)
     {

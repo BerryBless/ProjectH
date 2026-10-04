@@ -14,6 +14,9 @@ public sealed class BuildRequestQueue
 
     public int Count => _count;
 
+    // 기능: 건설 요청을 Queue 끝에 넣는다.
+    // 입력: request - 게임 루프가 나중에 처리할 건설 요청.
+    // 출력: 넣었으면 true, Queue가 가득 차 거절했으면 false.
     public bool TryAdd(in BuildRequest request)
     {
         if (_count == Capacity) return false;
@@ -22,6 +25,9 @@ public sealed class BuildRequestQueue
         return true;
     }
 
+    // 기능: 가장 오래된 건설 요청을 Queue에서 꺼낸다.
+    // 입력: 없음.
+    // 출력: 꺼냈으면 true와 그 요청, Queue가 비었으면 false.
     public bool TryTake(out BuildRequest request)
     {
         if (_count == 0)
@@ -35,6 +41,9 @@ public sealed class BuildRequestQueue
         return true;
     }
 
+    // 기능: 대기 중인 건설 요청을 모두 버린다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. Queue가 빈 상태가 된다.
     public void Clear()
     {
         _head = 0;

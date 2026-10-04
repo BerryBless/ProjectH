@@ -11,6 +11,9 @@ namespace ProjectH.Server;
 // (server review M1).
 internal static class ServerHost
 {
+    // 기능: 서버 Host 설정(Content Root, Console Logger, 설정 Binding, Match 기록·전적 조회 Service, 종료 제한 시간, Game Server)을 구성한다. Host를 만들거나 시작하지는 않는다.
+    // 입력: args - 명령줄 인수(설정 덮어쓰기 포함).
+    // 출력: Service 등록이 끝난 HostApplicationBuilder. 종료 때 Game Server가 Writer·전적 조회 Service보다 먼저 멈추도록 등록 순서가 정해져 있다.
     public static HostApplicationBuilder CreateBuilder(string[] args)
     {
         // Content root = the build output folder, so appsettings.json is found no matter where

@@ -22,6 +22,9 @@ public static class CombatRules
     // window; 400 ms keeps RTT up to ~200 ms hittable (CombatRulesTests.MaxRewind_*).
     public const float MaxRewindSeconds = 0.4f;
 
+    // 기능: 이동 모드에 따른 사격 시작 높이(발 기준 눈 높이)를 정한다.
+    // 입력: mode - 플레이어의 이동 모드.
+    // 출력: 앉기·슬라이드면 CrouchEyeHeight, 그 외에는 EyeHeight.
     // Phase 12 D13: where a shot of a player in this mode starts above its feet.
     public static float EyeHeightOf(MovementMode mode) =>
         mode == MovementMode.Crouch || mode == MovementMode.Slide ? CrouchEyeHeight : EyeHeight;
@@ -32,6 +35,9 @@ public static class CombatRules
     public const float FallDamageMaxSpeed = 30f;
     public const int FallDamageMax = 100;
 
+    // 기능: 착지 속도로 낙하 피해를 계산한다.
+    // 입력: landingSpeed - 착지 순간의 수직 속도(m/s).
+    // 출력: 낙하 피해량(0 ~ FallDamageMax). 숫자가 아니면 0.
     // Phase 12 D10: no damage up to FallDamageMinSpeed, FallDamageMax from FallDamageMaxSpeed on, linear between
     // (rounded half away from zero). Speeds are the landing's vertical speed in m/s; anything not a number is 0.
     public static int FallDamage(float landingSpeed)
@@ -42,6 +48,9 @@ public static class CombatRules
         return (int)MathF.Round(share * FallDamageMax, MidpointRounding.AwayFromZero);
     }
 
+    // 기능: 피해를 실드에 먼저, 남은 만큼 체력에 적용한다.
+    // 입력: health - 대상 체력(갱신됨), shield - 대상 실드(갱신됨), damage - 적용할 피해량.
+    // 출력: 이번 피해로 체력이 0이 되었으면 true, 아니면(이미 0이었거나 피해가 0 이하 포함) false.
     // D8: the shield absorbs first, the rest comes off health (never below 0). Returns true when this
     // damage took health from above 0 to 0.
     public static bool ApplyDamage(ref int health, ref int shield, int damage)
@@ -53,6 +62,9 @@ public static class CombatRules
         return health == 0;
     }
 
+    // 기능: 무기 기본 피해에 등급 배율을 곱한 피해를 구한다.
+    // 입력: damage - 무기 기본 피해, multiplier - 등급 피해 배율.
+    // 출력: 반올림(0.5는 0에서 먼 쪽)한 피해량, 1 ~ 65535로 제한.
     // Phase 4 D4: a weapon's damage times its rarity multiplier, rounded half away from zero, at least 1.
     // decimal, not float: 1.15f is 1.1499999..., and 90 x 1.15 must round to 104 as written in the data.
     // Casting the float to decimal keeps its 7 significant digits (1.15).
@@ -62,6 +74,9 @@ public static class CombatRules
         return (ushort)Math.Clamp(scaled, 1m, ushort.MaxValue);
     }
 
+    // 기능: Client가 보낸 조준 각도를 사격 방향 단위 벡터로 바꾼다.
+    // 입력: yawDegrees - 수평 조준 각도(도), pitchDegrees - 수직 조준 각도(도, 양수가 아래).
+    // 출력: 각도가 유한하면 true와 조준 방향, 아니면 false.
     // D14: non-finite angles are no shot. Pitch is clamped to +-89 degrees. Same convention as the
     // client camera (ShoulderCameraMath.Forward): yaw 0 faces +Z, yaw 90 faces +X, positive pitch looks down.
     public static bool TryAimDirection(float yawDegrees, float pitchDegrees, out Vector3 direction)
@@ -77,6 +92,9 @@ public static class CombatRules
         return true;
     }
 
+    // 기능: Client가 보낸 ViewTick을 허용 되감기 범위로 제한한다.
+    // 입력: viewTick - Client가 본 Tick(신뢰하지 않음), latestTick - 최신 서버 Tick, maxRewindTicks - 최대 되감기 Tick 수.
+    // 출력: 대상 위치를 되감을 Tick. NaN이면 latestTick.
     // D14: the tick a shot rewinds targets to. The client's ViewTick is untrusted: NaN means "now", and
     // anything outside [latestTick - maxRewindTicks, latestTick] is clamped into it (never below tick 0).
     public static double ClampViewTick(float viewTick, uint latestTick, int maxRewindTicks)
@@ -89,6 +107,9 @@ public static class CombatRules
         return viewTick;
     }
 
+    // 기능: 최대 되감기 시간을 Tick 수로 바꾼다.
+    // 입력: simHz - 시뮬레이션 Tick 속도.
+    // 출력: 최대 되감기 Tick 수(PositionHistory.Capacity - 1 이하).
     // MaxRewindSeconds in ticks, cut to what PositionHistory holds (a high SimHz would otherwise reach
     // outside the ring: 0.4 s at 128 Hz is 51 ticks, the ring keeps Capacity - 1 = 31 behind the newest).
     public static int MaxRewindTicks(int simHz)
@@ -96,6 +117,9 @@ public static class CombatRules
         return Math.Min((int)TicksFromSeconds(MaxRewindSeconds, simHz), PositionHistory.Capacity - 1);
     }
 
+    // 기능: 초 단위 시간을 Tick 수로 바꾼다.
+    // 입력: seconds - 시간(초), simHz - 시뮬레이션 Tick 속도.
+    // 출력: 반올림한 Tick 수, 최소 1.
     // Whole ticks at simHz, at least 1 (3 s at 30 Hz = 90).
     public static uint TicksFromSeconds(float seconds, int simHz)
     {

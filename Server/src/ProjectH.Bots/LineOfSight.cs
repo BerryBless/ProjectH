@@ -10,6 +10,9 @@ public static class LineOfSight
 {
     public const float Step = 0.5f;
 
+    // 기능: 두 점 사이를 Step 간격으로 표본 검사해 맵 박스나 지형에 막히는지 판정한다(봇 쪽 근사치).
+    // 입력: from - 시작점(보통 봇의 눈), to - 끝점(보통 대상의 가슴), boxes - 맵 충돌 박스, terrain - 높이 격자 지형.
+    // 출력: 어떤 표본도 박스 안이나 지형 아래에 없으면 true, 막히면 false. 거리가 Step 이하이거나 NaN이면 true.
     public static bool Clear(Vector3 from, Vector3 to, ReadOnlySpan<Box> boxes, HeightField terrain)
     {
         Vector3 delta = to - from;
