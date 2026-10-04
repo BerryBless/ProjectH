@@ -201,14 +201,35 @@ public static partial class StressActions
 
     private static async Task<StepOutcome> MeasureAsync(StepContext ctx, CancellationToken token)
     {
-        RunContext run = ctx.Run;
         string name = ctx.RequireString("name");
         double seconds = ctx.Double("seconds") ?? 0;
         if (seconds < 1 || seconds > MaxMeasureSeconds) throw new QaStepException($"'seconds' must be 1-{MaxMeasureSeconds}.");
-        int interval = MeasureMath.SampleInterval(seconds, ctx.Double("sampleSeconds"));
+        PhaseRun phase = await MeasurePhaseAsync(ctx.Run, name, ctx.Step.Id, seconds, ctx.Double("sampleSeconds"), token).ConfigureAwait(false);
+        MeasureResult result = phase.Result;
+        if (phase.Failure != null) return StepOutcome.Fail($"Measure {name}: {phase.Failure}", "server answering", phase.Failure);
+        return StepOutcome.Pass(PhaseText(result), JsonPath.From(Flat(result)));
+    }
+
+    internal static string PhaseText(MeasureResult result)
+    {
+        string latencyText = result.InputLatency is LatencyStats l ? $", R1 p95 {MeasureMath.F(l.P95Ms)} ms" : string.Empty;
+        return $"{result.Name} {MeasureMath.F(result.Seconds)} s, {result.PlayersMax} players: tick p50 {MeasureMath.F(result.TickP50Ms)} p95 {MeasureMath.F(result.TickP95Ms)} p99 {MeasureMath.F(result.TickP99Ms)} max {MeasureMath.F(result.TickMaxMs)} ms, CPU {MeasureMath.F(result.CpuAvgPercent)}%, managed {MeasureMath.F(result.ManagedEndMB)} MB, send {MeasureMath.F(result.SendKBps)} KB/s{latencyText}";
+    }
+
+    // One measured phase (D37): the start reading, a sample every interval, the exact whole-phase window when it fits the
+    // server's ring, then the summary into the run's stress report. Failure = the server did not answer (or exited).
+    // Shared by `measure` and `matchLoop` (one phase per match). Start = the cumulative reading the phase began with.
+    internal sealed record PhaseRun(MeasureResult Result, MeasureSample Start, string? Failure);
+
+    // keep: add the phase to the report (matchLoop stops keeping its phases after MatchLoopKeptPhases, so later measure steps
+    // still get a slot); warnTickBudget: the D42 tick-budget warning per phase (matchLoop sums them into one warning).
+    internal static async Task<PhaseRun> MeasurePhaseAsync(RunContext run, string name, string? stepId, double seconds, double? sampleSeconds, CancellationToken token,
+        bool keep = true, bool warnTickBudget = true)
+    {
+        int interval = MeasureMath.SampleInterval(seconds, sampleSeconds);
         var result = new MeasureResult
         {
-            Name = name, StepId = ctx.Step.Id, PlannedSeconds = seconds, SampleSeconds = interval,
+            Name = name, StepId = stepId, PlannedSeconds = seconds, SampleSeconds = interval,
             StartedUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
         };
         IQaServerClient server = run.Server;
@@ -221,7 +242,7 @@ public static partial class StressActions
         }
         catch (QaApiException e)
         {
-            return StepOutcome.Fail($"Measure {name}: {ServerGone(run, e)}", "server answering", e.Message);
+            return new PhaseRun(result, new MeasureSample(), ServerGone(run, e));
         }
         run.LastPhase = name;
         run.LastSample = start;
@@ -277,19 +298,17 @@ public static partial class StressActions
                 ? $"{latency.Samples} acknowledged inputs; includes the snapshot interval and the actor pump's ~33 ms tick"
                 : "Not Available (no headless actor input was acknowledged in this phase)";
             result.ArrangeCommands = run.Groups.ArrangeCommandsTotal() - arrangeStart;
-            if (run.Stress.Phases.Count < StressReport.MaxPhases) run.Stress.Phases.Add(result);
-            if (!result.Cancelled && !name.StartsWith("warmup", StringComparison.OrdinalIgnoreCase) && result.TickMaxMs > MeasureResult.TickBudgetMs)
+            if (keep && run.Stress.Phases.Count < StressReport.MaxPhases) run.Stress.Phases.Add(result);
+            else if (keep) run.Stress.PhasesDropped++;
+            if (warnTickBudget && !result.Cancelled && !name.StartsWith("warmup", StringComparison.OrdinalIgnoreCase) && result.TickMaxMs > MeasureResult.TickBudgetMs)
                 run.Warnings.Add($"Stress: phase '{name}' tickMaxMs {MeasureMath.F(result.TickMaxMs)} ms is over the {MeasureResult.TickBudgetMs} ms tick budget (30 Hz; D42 warning, not a failure).");
         }
-        if (failure != null) return StepOutcome.Fail($"Measure {name}: {failure}", "server answering", failure);
-        string latencyText = result.InputLatency is LatencyStats l ? $", R1 p95 {MeasureMath.F(l.P95Ms)} ms" : string.Empty;
-        string text = $"{name} {MeasureMath.F(result.Seconds)} s, {result.PlayersMax} players: tick p50 {MeasureMath.F(result.TickP50Ms)} p95 {MeasureMath.F(result.TickP95Ms)} p99 {MeasureMath.F(result.TickP99Ms)} max {MeasureMath.F(result.TickMaxMs)} ms, CPU {MeasureMath.F(result.CpuAvgPercent)}%, managed {MeasureMath.F(result.ManagedEndMB)} MB, send {MeasureMath.F(result.SendKBps)} KB/s{latencyText}";
-        return StepOutcome.Pass(text, JsonPath.From(Flat(result)));
+        return new PhaseRun(result, start, failure);
     }
 
     // 503 (QA queue full) and 504 (the loop did not run the query in time) are retried twice, half a second apart; a
     // server that still does not answer is a hang (D41: the measure fails).
-    private static async Task<JsonElement> MetricsAsync(IQaServerClient server, int? window, CancellationToken token)
+    internal static async Task<JsonElement> MetricsAsync(IQaServerClient server, int? window, CancellationToken token)
     {
         for (int attempt = 0; ; attempt++)
         {
@@ -318,7 +337,7 @@ public static partial class StressActions
         inputLatencyP50Ms = r.InputLatency?.P50Ms, inputLatencyP95Ms = r.InputLatency?.P95Ms, inputLatencyP99Ms = r.InputLatency?.P99Ms, inputLatencyMaxMs = r.InputLatency?.MaxMs,
     };
 
-    private static string ServerGone(RunContext run, QaApiException e)
+    internal static string ServerGone(RunContext run, QaApiException e)
     {
         if (run.ServerControl is LaunchedServer { Running: false } launched)
             return $"the server process exited (exit code {launched.ExitCode?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}) — {e.Message}";

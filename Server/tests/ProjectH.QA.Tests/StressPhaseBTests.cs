@@ -324,6 +324,183 @@ public class StressPhaseBTests : IDisposable
         Assert.Contains(_actors.SelectMany(a => a.Commands), c => c is SetBrainCommand { Brain: BuildSpamBrain });
     }
 
+    // ---- matchLoop (soak) ----
+
+    private static MeasureSample M(double managed, long gc) => new() { ManagedMB = managed, Gen0 = gc };
+
+    [Fact]
+    public void MatchTrendMilestonesFloorAndRule()
+    {
+        int[] milestones = Enumerable.Range(1, 500).Where(MatchTrend.IsMilestone).ToArray();
+        Assert.Equal(new[] { 1, 5, 10, 25, 50, 100, 250, 500 }, milestones);
+        // No GC in the span: no floor. A GC: the lowest reading after it (not the readings before it).
+        Assert.Null(MatchTrend.PostGcFloor(new[] { M(6, 3), M(7, 3), M(8, 3) }));
+        Assert.Equal(5.5, MatchTrend.PostGcFloor(new[] { M(4, 3), M(9, 3), M(6, 4), M(5.5, 4), M(7, 4) }));
+        // Rule: the last N floors each higher and more than X % over the first of them.
+        var rising = new List<(int, double)> { (1, 6.0), (2, 6.2), (3, 6.5), (4, 6.8), (5, 7.0) };
+        Assert.NotNull(MatchTrend.Check(rising, 5, 10));
+        Assert.Null(MatchTrend.Check(rising, 5, 20));                                      // +16.7 % only
+        Assert.Null(MatchTrend.Check(rising.Take(4).ToList(), 5, 10));                     // not enough GCs yet
+        var dip = new List<(int, double)> { (1, 6.0), (2, 7.0), (3, 6.9), (4, 7.5), (5, 8.0) };
+        Assert.Null(MatchTrend.Check(dip, 5, 10));                                         // not monotonic
+        Assert.NotNull(MatchTrend.Check(dip, 3, 10));                                      // the last 3 are
+    }
+
+    [Fact]
+    public async Task MatchLoopRepeatsMatchesRecordsRowsAndWarnsOnARisingFloor()
+    {
+        int finishes = 0;
+        _fake.Match["state"] = "Playing";
+        _fake.Metrics = new { tickP95Ms = 0.2, managedMB = 5.0, workingSetMB = 60.0, gc = new { gen0 = 0, gen1 = 0, gen2 = 0 }, activeSessions = 2, players = 2, alive = 2 };
+        _fake.CommandHandler = (command, _, _) =>
+        {
+            if (command != "forceMatchState") return new CommandResponse(true, null, null, 200);
+            int k = Interlocked.Increment(ref finishes);
+            _fake.Match["state"] = "Finished";
+            // The reset: one GC, and the managed heap left over grows by 1 MB per match.
+            _fake.Metrics = new { tickP95Ms = 0.2, managedMB = 5.0 + k, workingSetMB = 60.0 + k, gc = new { gen0 = k, gen1 = 0, gen2 = 0 }, activeSessions = 2, players = 2, alive = 2 };
+            _ = Task.Delay(150).ContinueWith(_ => _fake.Match["state"] = "Playing");
+            return new CommandResponse(true, null, null, 200);
+        };
+        string file = Write("QA/Scenarios/T/loop.json", """
+        { "schemaVersion": 1, "name": "loop", "seed": 5, "stress": true, "variables": { "matches": 6 },
+          "steps": [
+            { "id": "loop", "action": "matchLoop", "matches": "${matches}", "matchSeconds": 1, "sampleSeconds": 1, "startTimeoutMs": 3000, "finishTimeoutMs": 3000, "saveAs": "l" },
+            { "id": "done", "assert": "var.l.matchesDone", "equals": 6 },
+            { "id": "rows", "assert": "var.l.rows", "equals": 7 },
+            { "id": "warned", "assert": "var.l.trendWarning", "contains": "post-GC managed floor" }
+          ] }
+        """);
+        (int exit, _) = await Cli("run", file, "--attach", "http://127.0.0.1:1", "--report-dir", Reports);
+        Assert.Equal(0, exit);
+        Assert.Equal(6, finishes);
+        string runId = Directory.GetDirectories(Reports).Select(Path.GetFileName).First(n => n!.StartsWith("qa-", StringComparison.Ordinal))!;
+        JsonElement report = Report(Reports, runId);
+        JsonElement loop = report.GetProperty("stress").GetProperty("matchLoop");
+        Assert.Equal("start", loop.GetProperty("rows")[0].GetProperty("label").GetString());
+        Assert.Equal("match_05", loop.GetProperty("rows")[5].GetProperty("label").GetString());
+        Assert.Equal(10.0, loop.GetProperty("rows")[5].GetProperty("postGcFloorMB").GetDouble());
+        Assert.True(loop.GetProperty("rows")[5].GetProperty("milestone").GetBoolean());
+        Assert.Equal(6, report.GetProperty("stress").GetProperty("phases").GetArrayLength());
+        Assert.Contains(report.GetProperty("warnings").EnumerateArray(), w => w.GetString()!.Contains("matchLoop post-GC"));
+        Assert.Contains("Match loop trend", File.ReadAllText(Path.Combine(Reports, runId, "report.html")));
+
+        // A loop whose match never ends fails with what it did so far.
+        _fake.CommandHandler = (_, _, _) => new CommandResponse(true, null, null, 200);
+        _fake.Match["state"] = "Playing";
+        string stuck = Write("QA/Scenarios/T/stuck.json", """
+        { "schemaVersion": 1, "name": "stuck", "seed": 5, "steps": [ { "id": "loop", "action": "matchLoop", "matches": 2, "matchSeconds": 1, "finishTimeoutMs": 1000 } ] }
+        """);
+        (int exit2, string output2) = await Cli("run", stuck, "--attach", "http://127.0.0.1:1", "--report-dir", Reports);
+        Assert.Equal(1, exit2);
+        Assert.Contains("did not end", output2);
+        Assert.Contains(Validate("""{ "schemaVersion": 1, "steps": [ { "action": "matchLoop", "matches": 501, "matchSeconds": 30 } ] }"""), i => i.IsError && i.Message.Contains("'matches'"));
+    }
+
+    // Review fixes: a match that ends by itself, a finish whose 504 already ended it, the phase cap, one tick warning.
+    [Fact]
+    public async Task MatchLoopHandlesMatchesThatEndBeforeTheFinish()
+    {
+        int round = 1, finishes = 0;
+        _fake.Match["state"] = "Playing";
+        _fake.Match["round"] = 1;
+        _fake.Metrics = new { tickP95Ms = 0.2, tickMaxMs = 50.0, managedMB = 5.0, gc = new { gen0 = 0, gen1 = 0, gen2 = 0 }, activeSessions = 2 };
+        void NextRound()
+        {
+            _fake.Match["state"] = "Finished";
+            _ = Task.Delay(150).ContinueWith(_ =>
+            {
+                _fake.Match["round"] = Interlocked.Increment(ref round);
+                _fake.Match["state"] = "Playing";
+            });
+        }
+        int calls = 0;
+        _fake.CommandHandler = (command, _, _) =>
+        {
+            if (command != "forceMatchState") return new CommandResponse(true, null, null, 200);
+            int call = Interlocked.Increment(ref calls);
+            // Match 2's finish: the first attempt times out (504) but ran; the retry is refused (409) because it is over.
+            if (call == 2)
+            {
+                NextRound();
+                return new CommandResponse(false, "not executed in time", null, 504);
+            }
+            if (call == 3) return new CommandResponse(false, "The match is not running (Finished).", null, 409);
+            Interlocked.Increment(ref finishes);
+            NextRound();
+            return new CommandResponse(true, null, null, 200);
+        };
+        // Match 3 ends by itself while it is measured (zone, last participant): the loop must not finish the next one.
+        _ = Task.Run(async () =>
+        {
+            while (Volatile.Read(ref round) < 3) await Task.Delay(20);
+            await Task.Delay(400);
+            NextRound();
+        });
+        StressActions.KeptPhases = 2;
+        try
+        {
+            string file = Write("QA/Scenarios/T/natural.json", """
+            { "schemaVersion": 1, "name": "natural", "seed": 5, "stress": true,
+              "steps": [
+                { "id": "loop", "action": "matchLoop", "matches": 4, "matchSeconds": 1, "sampleSeconds": 1, "startTimeoutMs": 3000, "finishTimeoutMs": 3000, "saveAs": "l" },
+                { "id": "done", "assert": "var.l.matchesDone", "equals": 4 },
+                { "id": "after", "action": "measure", "name": "cooldown", "seconds": 1 }
+              ] }
+            """);
+            (int exit, _) = await Cli("run", file, "--attach", "http://127.0.0.1:1", "--report-dir", Reports);
+            Assert.Equal(0, exit);
+        }
+        finally
+        {
+            StressActions.KeptPhases = StressActions.MatchLoopKeptPhases;
+        }
+        // Finishes that went through: matches 1 and 4 (2 was the 504 that ran; 3 ended by itself and got no command).
+        Assert.Equal(2, finishes);
+        Assert.Equal(4, calls);
+        string runId = Directory.GetDirectories(Reports).Select(Path.GetFileName).First(n => n!.StartsWith("qa-", StringComparison.Ordinal))!;
+        JsonElement report = Report(Reports, runId);
+        JsonElement loop = report.GetProperty("stress").GetProperty("matchLoop");
+        Assert.Equal(1, loop.GetProperty("endedNaturally").GetInt32());
+        Assert.True(loop.GetProperty("rows").EnumerateArray().Single(r => r.GetProperty("label").GetString() == "match_03").GetProperty("endedNaturally").GetBoolean());
+        // Phase cap: 2 match phases kept, 2 rows-only, and the later cooldown still has its slot.
+        Assert.Equal(2, loop.GetProperty("phasesNotKept").GetInt32());
+        string[] phases = report.GetProperty("stress").GetProperty("phases").EnumerateArray().Select(x => x.GetProperty("name").GetString()!).ToArray();
+        Assert.Equal(new[] { "match_01", "match_02", "cooldown" }, phases);
+        // Tick budget: one summary warning for the loop, none per match phase (the cooldown phase warns on its own).
+        string[] warnings = report.GetProperty("warnings").EnumerateArray().Select(w => w.GetString()!).ToArray();
+        Assert.Single(warnings, w => w.Contains("match phase(s) had a tickMax", StringComparison.Ordinal));
+        Assert.DoesNotContain(warnings, w => w.Contains("phase 'match_", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MatchLoopValidationTimeoutsAndDroppedPhases()
+    {
+        string Loop(string extra) => """{ "schemaVersion": 1, "timeoutSeconds": 600, "variables": { "n": 100 }, "steps": [ { "action": "matchLoop", "matches": 2, "matchSeconds": 30""" + extra + " } ] }";
+        Assert.Contains(Validate(Loop(@", ""trendPercent"": 2000")), i => i.IsError && i.Message.Contains("'trendPercent'"));
+        Assert.Contains(Validate(Loop(@", ""sampleSeconds"": 0")), i => i.IsError && i.Message.Contains("'sampleSeconds'"));
+        Assert.Contains(Validate(Loop(@", ""startTimeoutMs"": 10")), i => i.IsError && i.Message.Contains("'startTimeoutMs'"));
+        Assert.Contains(Validate(Loop(@", ""finishTimeoutMs"": 700000")), i => i.IsError && i.Message.Contains("'finishTimeoutMs'"));
+        Assert.Contains(Validate(Loop(@", ""sampleEveryMatches"": 0")), i => i.IsError && i.Message.Contains("'sampleEveryMatches'"));
+        Assert.Contains(Validate("""{ "schemaVersion": 1, "steps": [ { "action": "matchLoop", "matches": 2, "matchSeconds": 300 } ] }"""), i => i.IsError && i.Message.Contains("'matchSeconds'"));
+        Assert.DoesNotContain(Validate(Loop(string.Empty)), i => i.Message.Contains("timeoutSeconds"));
+        // 100 x (30 + 15) s = 4,500 s > 600 s: a warning, from a literal or a variable's default.
+        Assert.Contains(Validate("""{ "schemaVersion": 1, "timeoutSeconds": 600, "variables": { "n": 100 }, "steps": [ { "action": "matchLoop", "matches": "${n}", "matchSeconds": 30 } ] }"""),
+            i => !i.IsError && i.Message.Contains("timeoutSeconds"));
+        // The step's own timeout: per match play + 2 start waits + the end wait + 10 s.
+        ScenarioLoadResult load = ScenarioLoader.Parse("""{ "schemaVersion": 1, "steps": [ { "action": "matchLoop", "matches": 2, "matchSeconds": 30, "startTimeoutMs": 5000, "finishTimeoutMs": 4000 } ] }""", "x.json");
+        Assert.Equal((2 * (30 + 10 + 4 + 10) + 30) * 1000, StressActions.LoopTimeoutMs(load.Scenario!.Steps[0]));
+        // Phases measured after the report's 200 are counted and shown.
+        var stress = new StressReport { PhasesDropped = 3 };
+        var html = new System.Text.StringBuilder();
+        StressReportHtml.Details(html, stress);
+        Assert.Contains("3 more phase(s)", html.ToString());
+        // The scenario's own budget stays inside its timeout at the defaults (10 matches).
+        string repo = ServerLocator.FindRepoRoot(AppContext.BaseDirectory)!;
+        ScenarioLoadResult soak = ScenarioLoader.LoadFile(Path.Combine(repo, "QA", "Scenarios", "Stress", "soak_match_reset.json"));
+        Assert.DoesNotContain(ScenarioValidator.Validate(soak.Scenario!, ActionRegistry.CreateDefault(), MarkerStore.Empty()), i => i.Message.Contains("matchLoop needs"));
+    }
+
     // ---- the phase B files ----
 
     public static readonly string[] PhaseBScenarios =

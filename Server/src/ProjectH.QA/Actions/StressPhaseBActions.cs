@@ -37,6 +37,7 @@ public static partial class StressActions
         r.Add(Group("groupConnect", GroupConnectAsync, new[] { "perSecond", "timeoutMs" }));
         r.Add(Group("groupInvalidPackets", GroupInvalidPacketsAsync, new[] { "ratePerSecond", "kinds", "rejoin" }, check: CheckInvalidKinds));
         r.Add(Group("groupBuildSpam", GroupBuildSpamAsync, new[] { "ratePerSecond", "material", "resources", "rejoin" }));
+        RegisterMatchLoop(r);
     }
 
     private static IEnumerable<string> CheckCount(StepDefinition s)

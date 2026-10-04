@@ -872,6 +872,24 @@ Group 행동은 Actor Pump가 Tick마다 실행하는 `ActorBrain`이다. Actor�
   - Phase B에서 더한 값: `rttMsAvg`·`rttMsMax`(접속 중인 멤버 연결의 RTT), `healthMin`·`healthAvg`(살아 있는 멤버가 자기 Snapshot에서 본 체력. Zone 피해는 DamageTaken 패킷이 없어서 `damageTaken`에 안 잡히고 이것으로 본다), `kicked`(마지막 연결이 Kicked로 닫힌 멤버 수), stats의 `lootPickups·lootDrops·lootUses`, `connects·connectFailures·connectMsAvg/Max`, `abuseSent·kicks·rejoins`.
 - **Phase B Workload**: groupConnect(`connect`)와 Abuse Group의 Rejoin(`rejoin`)도 Re-arm·Churn과 같은 Group Workload다. 같은 상한(Run당 64개)과 정리(stopGroup·Cleanup이 먼저 끝냄)를 따르고, Actor State만 읽고 Actor 명령만 보낸다(Rejoin은 QA 조회도 하지 않는다). 새 행동은 같은 종류의 옛 Workload를 끝내고 시작한다.
 
+### 경기 반복: `matchLoop` (Soak, §59–64)
+
+`{ "action": "matchLoop", "matches": 1-500, "matchSeconds": 1-240, "sampleEveryMatches"?: 1 (1-500), "sampleSeconds"? (1-120), "startTimeoutMs"?: 30000 (1000-600000), "finishTimeoutMs"?: 10000 (1000-600000), "trendMatches"?: 5 (2-100), "trendPercent"?: 10 (0-1000), "saveAs"? }`
+
+- Step을 복사하지 않고 경기를 반복한다. 경기마다: 경기가 Playing이 될 때까지 기다림 → `matchSeconds` 동안 measure 구간 하나(`match_01`…, 100경기 이상이면 `match_001`…; Report에는 앞의 200개 구간만 남는다) → `forceMatchState finish`(흐름 제어 Arrange, 503/504 두 번 재시도) → 경기가 끝나고 다음 경기가 Playing이 될 때까지(서버의 Reset·Countdown) → `/qa/metrics` 한 번 → 추세 행 하나.
+- 그 사이 Group Workload(Re-arm, Churn, Rejoin…)와 Brain은 그대로 돈다(Loop는 건드리지 않는다).
+- 추세 행(`MatchRow`, Report의 `stress.matchLoop.rows`, 최대 520행, 나머지는 개수만): "start"(Loop 전)와 경기마다(`sampleEveryMatches`마다, 이정표와 마지막 경기는 항상). 값: 경기 끝(Reset 뒤)의 Managed·Working Set, 그 경기 구간의 Managed 최소, **Post-GC floor**, GC 0/1/2(누적과 경기 안 증가), 할당 MB, GC Pause, 그 경기 구간의 Tick p95/p99/max, Build Piece(놀이 끝), Session·Player·끝의 생존자.
+- **Post-GC floor**: 한 경기의 범위(그 measure 구간의 시작 읽기·Sample·Reset 뒤 읽기) 안에서 GC가 일어난 뒤(누적 gen0+1+2가 늘어난 뒤)의 가장 낮은 Managed MB. 그 범위에 GC가 없으면 비어 있다. 5 s Sample이라 GC 직후 값을 놓칠 수 있다(그 경우 floor는 실제보다 높게 나온다).
+- **추세 경고(D42, 실패 아님)**: GC가 있었던 경기들의 마지막 `trendMatches`(기본 5)개 floor가 경기마다 매번 올라가고, 마지막 floor가 그중 첫 floor보다 `trendPercent`(기본 10) %보다 많이 높으면 Run 경고 한 번(`Stress: matchLoop post-GC managed floor rose ...`)과 Report 표 위의 Trend warning. 한 번이라도 내려가면 경고하지 않는다. 경고는 누적을 확인하라는 신호이지 Leak 판정이 아니다.
+- Report HTML "Match loop trend": start와 이정표(경기 1/5/10/25/50/100/250/500 뒤)·마지막 경기의 작은 표, 그 아래 접힌 전체 행 표. saveAs = `{matches, matchesDone, rows, rowsDropped, trendWarning, first, last, milestones}`.
+- **`matchSeconds` 상한 240 s**: 경기는 Zone이 닫히면 스스로 끝난다(zones.json의 Phase wait + shrink 합계 285 s, AirDrop이면 수송기 경로가 끝난 뒤부터). 그보다 짧게 둬서 보통은 Loop의 finish가 경기를 끝낸다.
+- **스스로 끝난 경기**: finish 전에 `/qa/match`를 읽어 같은 Round(`round`)가 아직 Playing인지 본다. 아니면(Zone, 마지막 참가자, 이미 다음 Round 시작) finish를 보내지 않고 그 행에 `endedNaturally`를 표시하고 계속한다(Loop 합계 `endedNaturally`). 끝남은 "Playing이 아님 또는 Round가 바뀜"으로 기다린다.
+- **finish 재시도**: 503/504는 두 번 다시 보낸다. 504는 서버에서 이미 실행됐을 수 있어서, 거절(409 등)이 오면 `/qa/match`를 다시 읽고 그 Round가 더 이상 Playing이 아니면 끝난 것으로 본다(504 뒤면 Loop가 끝낸 것, 아니면 스스로 끝난 것).
+- **구간 상한**: Loop는 Report의 measure 구간을 150개(`MatchLoopKeptPhases`)까지만 채우고 그 뒤 경기는 행만 남긴다(`phasesNotKept`). 그래서 뒤의 measure Step(cooldown 등)도 자리가 있다. Report 전체 상한(200)을 넘은 구간은 `stress.phasesDropped`로 세고 report.html "Measure phases"에 표시한다(전에는 말없이 버렸다).
+- **Tick 예산 경고**: Loop 안의 경기 구간은 구간마다 경고하지 않고, 끝에 "N of M match phase(s) had a tickMax over the 33 ms" 경고 하나로 모은다(Run 경고 200개 상한이 추세 경고를 밀어내지 않게).
+- **Timeout**: Step 기본 Timeout = 경기 수 × (matchSeconds + 2 × startTimeoutMs + finishTimeoutMs + 10 s) + 30 s. Validator는 `matches × (matchSeconds + 15 s)`(15 s = finish·Result 10 s·Countdown 3 s·대기의 추정치)가 시나리오 `timeoutSeconds`보다 크면 경고한다(리터럴과 변수 기본값으로 계산하고 `--set` 값은 보지 못한다).
+- 실패: 경기가 시간 안에 Playing이 되지 않음, 끝나지 않음, finish 거절(그 Round가 아직 Playing인데), 서버 무응답. 그때까지의 행은 Report에 남는다.
+
 ### 대량 Build Piece: `spawnBuildPieces` (Phase B, §24–29)
 
 `{ "action": "spawnBuildPieces", "count": 20010, "layout": "field" | "hanging", "center"?: {x,z}, "side"?: 3-10, "material"?: "wood", "parallel"?: 1-16, "saveAs": "b" }`
@@ -897,7 +915,7 @@ Group 행동은 Actor Pump가 Tick마다 실행하는 `ActorBrain`이다. Actor�
 | `reconnect_churn.json` | 36–38, 114 | 경기 중 6 s마다 15 % 끊김(반은 패킷 없이) → Grace 안 재접속 × 20, 모두 걷기. Zone이 사람을 죽이기 전(약 2분)에 끝낸다 | 경기(Grace), StartCountdownSeconds 8, DisconnectTimeoutMs 2000 | 25/50/100 |
 | `final_zone.json` | 54–55, 115 | 반경 25 m에 몰림: 전투 50 %(6 m 짝), 건설 20 %, 나머지 달리기 | DevRespawn, BuildInfiniteResources | 30/40/50 |
 | `soak.json` | 59–64, 116 | mixed 작업을 `soakSeconds`(기본 300) 동안, 10 s Sample. start/soak/end/cooldown 구간 | DevRespawn | 50 (`--set players=`) |
-| `soak_match_reset.json` | 59–64 | 같은 Client로 경기 10번(Start → 30 s → finish → Reset), 경기마다 구간 | 경기, StartCountdownSeconds 3 | 50 |
+| `soak_match_reset.json` | 59–64 | 같은 Client로 경기 `matches`번(기본 10, `matchLoop`: Start → `matchSeconds`(30) s → finish → Reset), 경기마다 구간과 추세 행. 누적 판단은 `--set matches=50`(약 36분)·`100`(약 72분, 추정: 경기당 30 s + Result 10 s + Countdown 3 s). timeoutSeconds 21600으로 matchSeconds 30이면 480경기까지(그 이상은 Validator 경고) | 경기, StartCountdownSeconds 3 | 50 |
 | `lag_compensation.json` | 18–19 | 4개 Group(25 %씩)이 각자 Proxy로 0/50/100/200 ms(한 방향, latency_sweep 관례) + 5 ms Jitter, Group마다 맵 사분면에서 짝 전투(60 % 가슴 조준). Group별 hitsLanded·pressesSent·RTT 저장. 0/50/100은 명중 단언, 200은 기록만(왕복이 되감기 창 0.4 s 경계) | DevRespawn | 20/50/100 |
 | `turbo_build.json` | 23 | 75 %가 9/s Turbo 건설(Recycle), 나머지 걷기. RateLimited·Bad Packet 0 단언(한도 안) | DevRespawn, BuildInfiniteResources | 10/25/40 |
 | `build_count.json` | 24–26 | `spawnBuildPieces` field로 1,000/2,500/5,000/10,000/20,010개 → 서 있는 조각 수별 구간. 마지막 세트는 20,000에서 BudgetFull 10개를 확인(실제 상한 = building.json maxBuildPiecesPerMatch). 'empty' 구간(조각 0)과 비교. 50명이 중앙 60 m 안을 걷는다 | DevRespawn | 50 (조각 수가 파라미터) |
@@ -929,7 +947,7 @@ Group 행동은 Actor Pump가 Tick마다 실행하는 `ActorBrain`이다. Actor�
 |---|---|---|
 | `stress-quick` | baseline·movement·combat·building·mixed를 50명, steady 30 s | 4 min 20 s(실측, 5개 PASS, 2026-10-02 Phase B 코드) |
 | `stress-gameplay` | movement·combat·building 50명, mixed 50·100명, final_zone 40명, loot 50, zone 50, elimination_burst 60, hotspot 두 세트 | 약 20 min(추정: 각 파일을 따로 잰 시간의 합) |
-| `stress-soak` | soak(5분) + soak_match_reset(10경기) | 약 12 min(추정: 따로 잰 5.6 + 6.0 min) |
+| `stress-soak` | soak(5분) + soak_match_reset(10경기, `matchLoop`) | 약 12 min(추정: 따로 잰 5.6 + 6.0 min) |
 | `stress-network` | reconnect_churn 25/50/100, lag_compensation 50, join_ramp 5/10/20 per s, join_spike 100, disconnect_spike 50, invalid_packets 5/s·50/s, network_fault_mixed 50 | 약 25 min(추정) |
 | `stress-building` | building 10/25/50, final_zone 50, turbo_build 40, build_count 1,000–20,000, build_destruction 100/500/1,000, build_spam 15/s·40/s | 약 25 min(추정) |
 | `stress-fault` | reconnect_churn 50, disconnect_spike 50, input_timeout, invalid_packets 50/s, network_fault_mixed 50, db_persistence, db_down(DB 컨테이너가 없으면 SKIPPED) | 약 13 min(추정) |
@@ -1104,6 +1122,7 @@ Baseline Player Count 비교(D40 묶음, steady 30 s, `batch-20261002-202122-417
    - `Actions/FaultActions.cs`: 장애 주입(QA-3)
    - `Actions/StressActions.cs`: 측정 구간(`measure`)과 Actor Group(Stress). Group 행동은 `Stress/Brains.cs`의 `ActorBrain`이다(Pump Thread에서 Tick마다 의도를 정한다)
    - `Actions/StressPhaseBActions.cs`: Stress Phase B(`spawnBuildPieces`, `groupFireAt`, `groupConnect`, `groupInvalidPackets`, `groupBuildSpam`). 조각 Layout은 `Stress/BuildLayouts.cs`
+   - `Actions/MatchLoopAction.cs`: `matchLoop`(Soak 경기 반복). 추세 계산은 `Stress/Measurement.cs`의 `MatchTrend`(순수)
 2. **`ActionSpec`을 채운다.** Validator와 QA-2 Editor가 이것을 읽는다.
 
 | 필드 | 의미 |

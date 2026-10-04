@@ -37,9 +37,46 @@ public static class StressReportHtml
           .Append("</td></tr></table>");
     }
 
+    // matchLoop (soak): the trend over matches. The table shows "start", the milestones (after match 1/5/10/25/50/100...)
+    // and the last match; every recorded row is in the collapsed table below it.
+    public static void MatchLoop(StringBuilder sb, MatchLoopReport loop)
+    {
+        sb.Append("<h2>Match loop trend</h2><p class=\"muted\">").Append(loop.MatchesDone).Append(" of ").Append(loop.Matches).Append(" matches of ").Append(F(loop.MatchSeconds))
+          .Append(" s; ").Append(loop.EndedNaturally).Append(" ended by themselves before the finish; ").Append(loop.PhasesNotKept).Append(" match phases not kept in the phase table (rows only); ")
+          .Append(loop.OverTickBudget).Append(" over the 33 ms tick budget. Post-GC floor = the lowest managed MB in a match's span after a GC in that span (empty: no GC). ").Append(E(loop.TrendRule)).Append("</p>");
+        if (loop.TrendWarning != null) sb.Append("<p class=\"fail\"><b>Trend warning:</b> ").Append(E(loop.TrendWarning)).Append("</p>");
+        IEnumerable<MatchRow> compact = loop.Rows.Where(r => r.Milestone || ReferenceEquals(r, loop.Rows[^1]));
+        Rows(sb, compact);
+        if (loop.Rows.Count > 0)
+        {
+            sb.Append("<details><summary>All ").Append(loop.Rows.Count).Append(" rows").Append(loop.RowsDropped > 0 ? $" ({loop.RowsDropped} more not kept)" : string.Empty).Append("</summary>");
+            Rows(sb, loop.Rows);
+            sb.Append("</details>");
+        }
+    }
+
+    private static void Rows(StringBuilder sb, IEnumerable<MatchRow> rows)
+    {
+        sb.Append("<table><tr><th>Row</th><th>s</th><th>Post-GC floor MB</th><th>Managed end / min MB</th><th>WS MB</th><th>GC 0/1/2 in match</th><th>GC 0/1/2 total</th><th>Alloc MB</th><th>GC pause ms</th>")
+          .Append("<th>Tick p95 / p99 / max</th><th>Build pieces</th><th>Sessions</th><th>Players</th><th>Alive at end</th></tr>");
+        foreach (MatchRow r in rows)
+        {
+            sb.Append("<tr><td>").Append(E(r.Label)).Append(r.EndedNaturally ? " (ended by itself)" : string.Empty).Append("</td><td>").Append(F(r.Seconds)).Append("</td><td>").Append(r.PostGcFloorMB is double f ? F(f) : "-")
+              .Append("</td><td>").Append(F(r.ManagedMB)).Append(" / ").Append(F(r.ManagedMinMB)).Append("</td><td>").Append(F(r.WorkingSetMB))
+              .Append("</td><td>").Append(r.Gen0Delta).Append('/').Append(r.Gen1Delta).Append('/').Append(r.Gen2Delta)
+              .Append("</td><td>").Append(r.Gen0).Append('/').Append(r.Gen1).Append('/').Append(r.Gen2)
+              .Append("</td><td>").Append(F(r.AllocatedMB)).Append("</td><td>").Append(F(r.GcPauseMs))
+              .Append("</td><td>").Append(F(r.TickP95Ms)).Append(" / ").Append(F(r.TickP99Ms)).Append(" / ").Append(F(r.TickMaxMs))
+              .Append("</td><td>").Append(r.BuildPieces).Append("</td><td>").Append(r.Sessions).Append("</td><td>").Append(r.Players).Append("</td><td>").Append(r.AliveAtEnd).Append("</td></tr>");
+        }
+        sb.Append("</table>");
+    }
+
     public static void Details(StringBuilder sb, StressReport s)
     {
+        if (s.MatchLoop != null) MatchLoop(sb, s.MatchLoop);
         sb.Append("<h2>Measure phases</h2>");
+        if (s.PhasesDropped > 0) sb.Append("<p class=\"fail\">").Append(s.PhasesDropped).Append(" more phase(s) were measured after the report's limit of ").Append(StressReport.MaxPhases).Append(" phases and are not listed.</p>");
         if (s.Phases.Count == 0) sb.Append("<p class=\"muted\">None.</p>");
         else
         {
