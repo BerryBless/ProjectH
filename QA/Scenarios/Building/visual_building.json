@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "name": "Building Visuals On A Unity Client (Screenshots)",
+  "description": "Roadmap 2026-10-05 STEP 2 §10, automated part: a Unity Development player watches a headless builder from 15 m and the report gets screenshots of a wall under construction (real build input), the same wall finished, wood / stone / metal walls, a floor, a ramp and a roof, the material HUD, a wall damaged by real fire (two damage stages), and a two-floor bridge collapsing when the wall under it is destroyed (dust puffs, then nothing left in the air). The build preview, turbo build and walking on pieces need the player's own input (Manual/editor_building.json). Needs --unity-exe; SKIPPED without it.",
+  "tags": ["building", "unity", "slow"],
+  "seed": 1302,
+  "timeoutSeconds": 240,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [
+    { "id": "builder", "type": "HeadlessClient" },
+    { "id": "viewer", "type": "UnityClient", "unity": { "width": 1600, "height": 900 } }
+  ],
+  "steps": [
+    { "id": "builder_connect", "phase": "arrange", "action": "connect", "actor": "builder" },
+    { "id": "viewer_launch", "action": "connect", "actor": "viewer" },
+    { "id": "viewer_joined", "action": "waitForUnity", "actor": "viewer", "condition": "joined", "equals": true, "timeoutMilliseconds": 30000 },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+    { "id": "in_game", "action": "waitForUnity", "actor": "viewer", "condition": "screen", "equals": "InGame", "timeoutMilliseconds": 10000 },
+
+    { "id": "viewer_place", "action": "setPosition", "actor": "viewer", "position": { "x": 17.5, "z": -30, "yaw": 0 } },
+    { "id": "viewer_wood", "action": "giveResource", "actor": "viewer", "material": "wood", "amount": 120 },
+    { "id": "viewer_stone", "action": "giveResource", "actor": "viewer", "material": "stone", "amount": 80 },
+    { "id": "viewer_metal", "action": "giveResource", "actor": "viewer", "material": "metal", "amount": 40 },
+    { "id": "builder_place", "action": "setPosition", "actor": "builder", "position": { "x": 12.5, "z": -11, "yaw": 180 } },
+    { "id": "builder_wood", "action": "giveResource", "actor": "builder", "material": "wood", "amount": 50 },
+    { "id": "builder_has_wood", "action": "waitFor", "condition": "player.resources.wood", "actor": "builder", "equals": 50, "timeoutMilliseconds": 2000 },
+
+    { "id": "stone_wall", "action": "spawnBuildPiece", "piece": "wall", "material": "stone", "cellX": 16, "level": 0, "cellZ": 13, "rotation": 0 },
+    { "id": "metal_wall", "action": "spawnBuildPiece", "piece": "wall", "material": "metal", "cellX": 17, "level": 0, "cellZ": 13, "rotation": 0 },
+    { "id": "ramp", "action": "spawnBuildPiece", "piece": "ramp", "material": "wood", "cellX": 16, "level": 0, "cellZ": 12, "rotation": 0 },
+    { "id": "floor", "action": "spawnBuildPiece", "piece": "floor", "material": "stone", "cellX": 18, "level": 0, "cellZ": 12 },
+    { "id": "roof", "action": "spawnBuildPiece", "piece": "roof", "material": "metal", "cellX": 17, "level": 0, "cellZ": 13, "description": "A roof caps its level (eaves at 3 m): on the metal wall of cell 17" },
+    { "id": "support", "action": "spawnBuildPiece", "piece": "wall", "material": "stone", "cellX": 20, "level": 0, "cellZ": 13, "rotation": 0, "saveAs": "support" },
+    { "id": "bridge1", "action": "spawnBuildPiece", "piece": "floor", "material": "wood", "cellX": 20, "level": 1, "cellZ": 13, "saveAs": "bridge1" },
+    { "id": "bridge2", "action": "spawnBuildPiece", "piece": "floor", "material": "wood", "cellX": 21, "level": 1, "cellZ": 13, "saveAs": "bridge2" },
+    { "id": "spawned_settle", "action": "wait", "milliseconds": 2500, "description": "Spawned pieces finish their construction" },
+
+    { "id": "real_build", "phase": "act", "action": "build", "actor": "builder", "piece": "wall", "material": "wood", "cellX": 18, "level": 0, "cellZ": 13, "rotation": 0, "saveAs": "woodWall", "description": "Real build input: a wood wall on the south edge of cell (18, 13), between the builder and the viewer" },
+    { "id": "wood_wall_up", "phase": "assert", "action": "waitFor", "condition": "build.exists", "pieceId": "${woodWall.pieceId}", "equals": true, "timeoutMilliseconds": 2000 },
+    { "id": "shot_construction", "phase": "act", "action": "captureScreenshot", "actor": "viewer", "name": "construction" },
+    { "id": "construction_done", "action": "wait", "milliseconds": 2000, "description": "Wood fills its health over 1.5 s" },
+    { "id": "shot_pieces", "action": "captureScreenshot", "actor": "viewer", "name": "pieces_and_materials" },
+
+    { "id": "builder_rifle", "phase": "arrange", "action": "giveWeapon", "actor": "builder", "weapon": "Vesper AR" },
+    { "id": "builder_ammo", "action": "giveAmmo", "actor": "builder", "type": "medium", "amount": 60 },
+    { "id": "wall_center", "action": "save", "path": "build.piece.center", "pieceId": "${woodWall.pieceId}", "saveAs": "wc" },
+    { "id": "wall_hp", "action": "save", "path": "build.piece.health", "pieceId": "${woodWall.pieceId}", "saveAs": "wallHp" },
+    { "id": "builder_aim", "action": "aim", "actor": "builder", "at": "${wc}" },
+    { "id": "builder_fire", "phase": "act", "action": "fire", "actor": "builder", "slot": 0, "count": 3, "description": "Slot 1 takes the rifle out of build mode, then 3 shots: 150 - 3 x 20 = 90, under two thirds (the darker stage)" },
+    { "id": "wall_damaged", "phase": "assert", "action": "waitFor", "condition": "build.piece.health", "pieceId": "${woodWall.pieceId}", "lessThan": "${wallHp}", "timeoutMilliseconds": 3000 },
+    { "id": "damage_settle", "phase": "act", "action": "wait", "milliseconds": 300 },
+    { "id": "shot_damaged", "action": "captureScreenshot", "actor": "viewer", "name": "wall_damaged" },
+    { "id": "builder_fire_more", "action": "fire", "actor": "builder", "count": 3, "description": "3 more: 150 - 6 x 20 = 30, under a third (the reddish stage)" },
+    { "id": "wall_nearly_broken", "phase": "assert", "action": "waitFor", "condition": "build.piece.health", "pieceId": "${woodWall.pieceId}", "lessThan": 50, "timeoutMilliseconds": 3000 },
+    { "id": "nearly_settle", "phase": "act", "action": "wait", "milliseconds": 300 },
+    { "id": "shot_nearly_broken", "action": "captureScreenshot", "actor": "viewer", "name": "wall_nearly_broken" },
+
+    { "id": "break_support", "phase": "arrange", "action": "damageBuild", "pieceId": "${support.pieceId}", "amount": 100000 },
+    { "id": "collapse_moment", "phase": "act", "action": "wait", "milliseconds": 150 },
+    { "id": "shot_collapse", "action": "captureScreenshot", "actor": "viewer", "name": "collapse" },
+    { "id": "bridge_gone", "phase": "assert", "action": "waitFor", "condition": "build.exists", "pieceId": "${bridge2.pieceId}", "equals": false, "timeoutMilliseconds": 3000 },
+    { "id": "after_settle", "phase": "act", "action": "wait", "milliseconds": 1500 },
+    { "id": "shot_after_collapse", "action": "captureScreenshot", "actor": "viewer", "name": "after_collapse" }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "name": "Game Screens On A Unity Client (Screenshots)",
+  "description": "Roadmap 2026-10-05 STEP 2 §9, automated part: a Unity Development player joins a 3-player match and the report gets one screenshot per screen for a person (or an agent reading the images) to judge: HUD with rival names, Esc menu, F1 debug lines, kill feed, result, statistics window, the reconnect attempt after a server crash, and the game again after the server is back on the same port. The title screen and Korean IME need a person (Manual/editor_ui.json). Needs --unity-exe; SKIPPED without it.",
+  "tags": ["ui", "unity", "slow"],
+  "seed": 1102,
+  "timeoutSeconds": 300,
+  "server": {
+    "mode": "launch",
+    "options": {
+      "Server:Port": "7791",
+      "Server:MinPlayers": "3",
+      "Server:ResultSeconds": "60"
+    }
+  },
+  "actors": [
+    { "id": "rival1", "type": "HeadlessClient" },
+    { "id": "rival2", "type": "HeadlessClient" },
+    { "id": "viewer", "type": "UnityClient", "unity": { "width": 960, "height": 540 } }
+  ],
+  "steps": [
+    { "id": "rival1_connect", "phase": "arrange", "action": "connect", "actor": "rival1" },
+    { "id": "rival2_connect", "action": "connect", "actor": "rival2" },
+    { "id": "viewer_launch", "action": "connect", "actor": "viewer" },
+    { "id": "viewer_joined", "action": "waitForUnity", "actor": "viewer", "condition": "joined", "equals": true, "timeoutMilliseconds": 30000 },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+    { "id": "in_game", "action": "waitForUnity", "actor": "viewer", "condition": "screen", "equals": "InGame", "timeoutMilliseconds": 10000 },
+    { "id": "viewer_place", "action": "setPosition", "actor": "viewer", "position": { "x": 0, "z": -12, "yaw": 0 } },
+    { "id": "rival1_place", "action": "setPosition", "actor": "rival1", "position": { "x": -2, "z": -4, "yaw": 180 } },
+    { "id": "rival2_place", "action": "setPosition", "actor": "rival2", "position": { "x": 3, "z": -3, "yaw": 180 } },
+    { "id": "settle", "action": "wait", "milliseconds": 1000, "description": "Let the remote players interpolate to their new places" },
+
+    { "id": "shot_hud_names", "phase": "act", "action": "captureScreenshot", "actor": "viewer", "name": "hud_names" },
+    { "id": "menu_open", "action": "uiCommand", "actor": "viewer", "command": "openMenu" },
+    { "id": "menu_shown", "action": "waitForUnity", "actor": "viewer", "condition": "screen", "equals": "Menu", "timeoutMilliseconds": 3000 },
+    { "id": "shot_menu", "action": "captureScreenshot", "actor": "viewer", "name": "esc_menu" },
+    { "id": "menu_close", "action": "uiCommand", "actor": "viewer", "command": "closeMenu" },
+    { "id": "debug_on", "action": "uiCommand", "actor": "viewer", "command": "toggleDebug" },
+    { "id": "debug_shown", "action": "waitForUnity", "actor": "viewer", "condition": "debugVisible", "equals": true, "timeoutMilliseconds": 3000 },
+    { "id": "shot_debug", "action": "captureScreenshot", "actor": "viewer", "name": "f1_debug" },
+    { "id": "debug_off", "action": "uiCommand", "actor": "viewer", "command": "toggleDebug" },
+
+    { "id": "kill_rival1", "phase": "arrange", "action": "killPlayer", "actor": "rival1" },
+    { "id": "feed_settle", "phase": "act", "action": "wait", "milliseconds": 500 },
+    { "id": "shot_kill_feed", "action": "captureScreenshot", "actor": "viewer", "name": "kill_feed" },
+
+    { "id": "kill_rival2", "phase": "arrange", "action": "killPlayer", "actor": "rival2" },
+    { "id": "result_shown", "phase": "assert", "action": "waitForUnity", "actor": "viewer", "condition": "screen", "equals": "Result", "timeoutMilliseconds": 10000 },
+    { "id": "shot_result", "phase": "act", "action": "captureScreenshot", "actor": "viewer", "name": "result" },
+    { "id": "stats_open", "action": "uiCommand", "actor": "viewer", "command": "openStats" },
+    { "id": "stats_wait", "action": "wait", "milliseconds": 2000, "description": "The database is off: the window should give up waiting and say so" },
+    { "id": "shot_stats", "action": "captureScreenshot", "actor": "viewer", "name": "statistics" },
+    { "id": "stats_close", "action": "uiCommand", "actor": "viewer", "command": "closeStats" },
+
+    { "id": "crash", "phase": "arrange", "action": "killServer" },
+    { "id": "reconnecting_wait", "phase": "act", "action": "wait", "milliseconds": 6000, "description": "No shutdown notice: the client notices the silence (network timeout 5 s) and starts reconnecting" },
+    { "id": "shot_reconnecting", "action": "captureScreenshot", "actor": "viewer", "name": "reconnecting" },
+    { "id": "restart", "phase": "arrange", "action": "startServer" },
+    { "id": "rejoined", "phase": "assert", "action": "waitForUnity", "actor": "viewer", "condition": "joined", "equals": true, "timeoutMilliseconds": 60000 },
+    { "id": "back_settle", "phase": "act", "action": "wait", "milliseconds": 1500 },
+    { "id": "shot_after_reconnect", "action": "captureScreenshot", "actor": "viewer", "name": "after_reconnect" }
+  ]
+}

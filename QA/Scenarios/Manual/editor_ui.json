@@ -26,7 +26,7 @@
     { "id": "you_joined", "phase": "assert", "action": "waitFor", "condition": "match.playerCount", "equals": 3, "timeoutMilliseconds": 600000 },
     { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 30000 },
 
-    { "id": "names", "phase": "act", "action": "manualCheck", "description": "Look at the two rivals: a name (qa-rival1 / qa-rival2) floats over each one and stays readable while you move the camera." },
+    { "id": "names", "phase": "act", "action": "manualCheck", "description": "The two rivals are visible as orange capsules (no name over their heads by design, Phase 11 D9: names show in the kill feed, the spectator line and the result). The POI name (top left) and the alive count (top centre) are readable." },
     { "id": "esc_menu", "action": "manualCheck", "description": "Esc opens the menu (cursor free, the game stops reading mouse and keys); Esc again or 'continue' closes it and a click locks the cursor again." },
     { "id": "f1_debug", "action": "manualCheck", "description": "F1 shows the debug lines (tick, ping, movement, build line) and F1 again hides them. The lines do not overlap the POI labels or the HUD." },
 

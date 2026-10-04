@@ -330,6 +330,10 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
   - Player 시작부터 join까지 5~13 s 걸렸다.
   - **PC 화면이 잠겨 있으면(LogonUI) PNG는 생기지만 전부 회색이다.** 실제 화면은 잠기지 않은 데스크톱에서 확인한다.
   - 자동 이미지 판정은 하지 않는다(§85).
+- **수정**(2026-10-05): Player 수신기 요청의 약 8 %(GET)·3 %(POST)가 "원격 호스트에 의해 강제로 끊겼습니다"로 실패해 Unity 시나리오가 아무 Step에서나 떨어졌다.
+  - 원인: 수신기가 응답마다 `KeepAlive = false`로 자기 쪽에서 연결을 닫았고, Mono HttpListener의 그 닫기가 Windows에서 가끔 RST가 됐다. curl만으로도 재현됐다(직렬 GET 100번에 8–9번).
+  - 수정: 연결을 유지한다(408·413만 닫는다). Mono가 유휴 연결을 90 s 뒤 닫고, 도구는 Actor가 끝날 때 자기 연결을 닫는다. 수정 뒤 curl 300번 실패 0, `UI/visual_screens.json` 5번 연속 PASS.
+  - 도구 쪽 오류 메시지에 안쪽 예외를 붙였다(전송 오류의 실제 이유가 보인다).
 
 ## Manual Check (QA-4, D30)
 
@@ -385,6 +389,8 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `Network/input_timeout.json` | 75 | pauseInput → 연결은 유지된 채 7 s 뒤 서버가 InputTimeout으로 닫음 → Grace 없이 PlayerLeft | ~10 s |
 | `Smoke/unity_client.json` | 83–87 | Unity Player(`--unity-exe`)가 join → HUD·Menu·Stats Screenshot, UI 명령 | ~8 s |
 | `UI/kill_feed.json` | 84 | Headless B가 A를 실제 사격으로 제거하는 동안 Unity Player가 보고, Kill Feed Screenshot | ~18 s |
+| `UI/visual_screens.json` | 로드맵 §9 | Unity Player가 3인 경기에 들어가 HUD, Esc 메뉴, F1, Kill Feed, 결과, 전적 창(DB 꺼짐 안내), 서버 Crash 뒤 재접속 화면, 같은 Port로 다시 뜬 서버에 재입장한 화면을 찍는다 | ~20 s |
+| `Building/visual_building.json` | 로드맵 §10 | Unity Player가 15 m 앞의 건설을 본다. 실제 입력으로 짓는 나무 벽(짓는 중 → 완성), 돌·나무·금속 벽, 바닥·경사로·지붕, 자원 줄(1600×900), 실제 사격 피해 두 단계, 지지벽 파괴 뒤 다리 붕괴(먼지)와 그 뒤를 찍는다 | ~17 s |
 | `Manual/ime_name.json` | 88–90 | 한글 IME 이름 입력 Manual Check 2개(CI에서는 SKIPPED) | 사람 |
 | `Manual/editor_ui.json` | 로드맵 §9 | Editor 수동 검증(Phase 11 UI). 서버를 127.0.0.1:7777(Editor 기본 주소)에 띄우고 Headless 상대 2명을 둔다. 사람이 Editor로 접속해 타이틀·한글 글꼴·IME·접속·이름·ESC 메뉴·F1·Kill Feed·결과·전적·끊김·재접속을 PASS/FAIL로 답한다. Kill Feed와 결과 화면은 상대를 `killPlayer`로 제거해 만든다. 끊김은 `stopServer`, 재접속은 같은 Port로 `startServer` | 사람 |
 | `Manual/editor_building.json` | 로드맵 §10 | Editor 수동 검증(Phase 13 건설). DevRespawn 서버를 7777에 띄우고 QA_Build_Test 근처에 돌·나무·금속 벽과 두 칸 다리를 놓는다. 사람이 채집·미리보기(유효/무효)·벽·바닥·경사로·지붕·Turbo·건설 중 표시·충돌·피해를 확인한다. 마지막에 도구가 다리 밑 돌벽을 부수고(`damageBuild`) 붕괴 연출을 묻는다 | 사람 |
@@ -1114,6 +1120,33 @@ Baseline Player Count 비교(D40 묶음, steady 30 s, `batch-20261002-202122-417
 - Warning 1건: build_spam 40/s 재실행(qa-20261002-225621-e474)에서 `stress.managedMB (steady) 6.253 → 16.427 (+162.7 %)` Baseline Warning. 그 시나리오는 구간 안에 GC가 한 번 일어나 Managed 끝값이 GC 시점에 따라 크게 달라진다(첫 실행도 6.3/17.6 MB 끝/최대). 실패가 아니고 GC 시점 차이로 본다(§136).
 
 **다음 후보**: 조각 수에 따른 Tick 증가의 원인 Profiling(이동 충돌·관심 영역 계산 중 어느 것인지), 100명 전투·Rejoin의 할당 출처, 동시 접속 첫 Tick 18.9 ms의 내역, 30분 이상 Soak, Release 빌드로 같은 표 다시 재기.
+
+## Editor 검증 (로드맵 STEP 2, 2026-10-05)
+
+로드맵(`Docs/requests/2026-10-05-roadmap-phase13_5-19-request.md`) §9·§10의 화면 항목. Development Player(main 0492bb0 + 아래 수신기 수정)로 Unity 시나리오 2개를 돌리고 스크린샷을 한 장씩 보고 판정했다. 화면이 잠기지 않은 데스크톱에서 찍었다(실제 렌더링). 판정은 사람이 아니라 스크린샷을 읽은 에이전트가 했다.
+
+| 항목 | 결과 | 근거 |
+|---|---|---|
+| Title, 한글 글꼴 | PASS | 타이틀(주소·포트·이름·버튼·키 안내) 한글이 모두 보인다 |
+| Connect, In Game HUD | PASS | `visual_screens` hud_names: 생존 수, 자기장 시간, POI 이름, 체력·실드, 슬롯 |
+| Player Name | PASS(설계대로) | 머리 위 이름은 없다(Phase 11 D9). Kill Feed와 결과의 승자 이름에 나온다 |
+| ESC Menu | PASS | 메뉴 4버튼(계속하기, 내 전적, 접속 끊기, 게임 종료) |
+| F1 Debug | PASS | 상태·이동·건설 세 줄, POI 이름과 겹치지 않는다 |
+| Kill Feed | PASS | "자기장 ▸ qa-rival1"(QA killPlayer는 처치자가 없어 자기장으로 표시된다. 규칙대로) |
+| Result | PASS | 승리, 순위 1/3, 처치, 승자, 다음 판까지 60초, 버튼 2개 |
+| Statistics | PASS | DB가 꺼져 있어 "기록을 볼 수 없음"과 닫기(무한 대기 아님) |
+| Disconnect / Reconnect | PASS | 서버 Crash 6초 뒤 "연결이 끊겼습니다 · 서버의 응답이 끊겼습니다 · 재접속 중 (1/3)"; 같은 Port로 다시 띄우자 재입장(대기 1/3) |
+| Construction Visual | PASS | 실제 입력으로 지은 나무 벽이 낮게 보였다가 2초 뒤 다 자랐다. 피해로 보이지 않는다 |
+| Wall / Floor / Ramp / Roof, Wood / Stone / Metal | PASS | 재료 3색이 구분되고 magenta가 없다. 지붕은 그 층을 덮는다(벽 위 level 0) |
+| Material HUD | PASS(다듬기 필요) | "나무 120 돌 80 금속 40"이 오른쪽 아래에 나온다. Development Build 워터마크와 겹친다(Editor·Release에는 워터마크가 없다) |
+| Structure Damage | PASS(다듬기 필요) | 실제 사격 3발(150→90): 25 % 어두워짐(대비가 약하다). 6발(→30): 붉은 단계가 뚜렷하다 |
+| Collapse Visual | PASS | 지지벽 파괴 150 ms 뒤 다리 두 칸이 사라지고 먼지가 보인다. 1.5초 뒤 공중에 남은 조각이 없다 |
+| Korean IME, Build Preview(유효/무효), Turbo Build, 채집 손맛, Build Collision 느낌 | 사람 확인 남음 | Unity Actor는 게임 입력을 받지 않는다(§87). `Manual/editor_ui.json`·`Manual/editor_building.json`으로 확인한다. 충돌 계산 자체는 서버·예측 테스트가 본다 |
+
+발견한 문제:
+- **수정함(High, QA 도구):** Unity 수신기의 무작위 연결 끊김(위 "Unity Client Actor"의 수정). Unity 시나리오가 아무 Step에서나 실패했다.
+- **다듬기(Known Issue):** 타이틀 키 안내에 Phase 12·13 키(C 웅크리기, Q 건축, F 채집, Z/X/V/B 조각, T 재료)가 없다. 자원 줄이 Development 빌드 워터마크와 겹친다. 손상 1단계(25 % 어둡게)의 대비가 약하다.
+- Critical·High 게임플레이 문제는 없다.
 
 ## Adding New Actions
 
