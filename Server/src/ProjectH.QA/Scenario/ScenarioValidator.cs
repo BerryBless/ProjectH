@@ -122,6 +122,9 @@ public static partial class ScenarioValidator
                 Error(where, $"'{step.Action}' is not allowed in a stress scenario (D39: no screenshots, Unity players or manual steps).");
             if (eventsOff && (step.Action == "waitForEvent" || step.Params.Any(p => p.Key is "path" or "condition" && p.Value.ValueKind == JsonValueKind.String && p.Value.GetString()!.StartsWith("event.", StringComparison.Ordinal))))
                 Warn(where, "QA events are off in a stress scenario (Qa:Events=false): this step sees no events. Set server.options Qa:Events to \"true\" if it needs them.");
+            // Soak: a matchLoop longer than the scenario timeout would be cut short (values from literals or variable defaults).
+            if (step.Action == "matchLoop" && StressActions.LoopSeconds(step, s.Variables) is double loopSeconds && loopSeconds > s.TimeoutSeconds)
+                Warn(where, $"matchLoop needs about {loopSeconds:0} s (matches x (matchSeconds + {StressActions.MatchOverheadSeconds} s per match)) but timeoutSeconds is {s.TimeoutSeconds:0}: raise timeoutSeconds or lower matches.");
             // Stress D38: group actions name a group an earlier actorGroup made ("all" for stopGroup).
             if (step.Action == "actorGroup" && step.Params.TryGetValue("groups", out JsonElement defined) && defined.ValueKind == JsonValueKind.Array)
             {

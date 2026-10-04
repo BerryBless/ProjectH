@@ -240,11 +240,110 @@ public sealed class StressReport
 
     public bool StressMode { get; set; }
     public List<MeasureResult> Phases { get; } = new();
+    // Phases measured after Phases was full (MaxPhases): not in the report, counted (shown in report.html).
+    public int PhasesDropped { get; set; }
     public StressSummary? Summary { get; set; }
     public List<StallRecord> Stalls { get; } = new();
     public int StallsDropped { get; set; }
     public CrashRecord? Crash { get; set; }
     public object? Groups { get; set; }
+    // matchLoop (soak, request §59-64): one row per match end; null when the run had no match loop.
+    public MatchLoopReport? MatchLoop { get; set; }
+}
+
+// One matchLoop row: the server at the end of a match (after its reset), or "start" before the first one. Managed and
+// working set from /qa/metrics (GC.GetTotalMemory(false) and the process working set). PostGcFloorMB: the lowest managed
+// reading in this match's span (its measure samples and the reading after the reset) taken after a GC happened in that
+// span (the cumulative gen0+1+2 count went up); null when no GC happened in the span.
+public sealed class MatchRow
+{
+    public string Label { get; set; } = string.Empty;
+    public int Match { get; set; }
+    public bool Milestone { get; set; }
+    // The match ended by itself (zone, last participant) before the loop's finish: no forceMatchState was needed.
+    public bool EndedNaturally { get; set; }
+    public double Seconds { get; set; }            // since the loop started
+    public double ManagedMB { get; set; }
+    public double ManagedMinMB { get; set; }
+    public double? PostGcFloorMB { get; set; }
+    public double WorkingSetMB { get; set; }
+    public long Gen0 { get; set; }                 // cumulative, at the row
+    public long Gen1 { get; set; }
+    public long Gen2 { get; set; }
+    public long Gen0Delta { get; set; }            // in this match's span
+    public long Gen1Delta { get; set; }
+    public long Gen2Delta { get; set; }
+    public double AllocatedMB { get; set; }        // in this match's span
+    public double GcPauseMs { get; set; }
+    public double TickP95Ms { get; set; }          // the match's measure phase
+    public double TickP99Ms { get; set; }
+    public double TickMaxMs { get; set; }
+    public int BuildPieces { get; set; }           // at the end of play (the reset clears them)
+    public int Sessions { get; set; }
+    public int Players { get; set; }
+    public int AliveAtEnd { get; set; }
+}
+
+public sealed class MatchLoopReport
+{
+    public const int MaxRows = 520;                // 500 matches + "start" + room; the rest are counted
+    public int Matches { get; set; }
+    public int MatchesDone { get; set; }
+    public double MatchSeconds { get; set; }
+    public int SampleEveryMatches { get; set; }
+    public List<MatchRow> Rows { get; } = new();
+    public int RowsDropped { get; set; }
+    public string TrendRule { get; set; } = string.Empty;
+    public int EndedNaturally { get; set; }
+    public int PhasesNotKept { get; set; }       // match phases measured but not kept in the report (after MatchLoopKeptPhases)
+    public int OverTickBudget { get; set; }      // matches whose phase tickMax was over 33 ms (one summary warning)
+    public string? TrendWarning { get; set; }
+}
+
+// matchLoop's pure parts (tests): milestones, a match span's post-GC floor and the trend rule.
+public static class MatchTrend
+{
+    // "after match 1/5/10/25/50/100/250/500/1000..." (1, 5, then 10, 25, 50 x powers of ten... 2.5 and 5 steps).
+    public static bool IsMilestone(int match)
+    {
+        if (match is 1 or 5) return true;
+        for (long p = 10; p <= 1_000_000; p *= 10)
+        {
+            if (match == p || match == p * 25 / 10 || match == p * 5) return true;
+        }
+        return false;
+    }
+
+    // The lowest managed reading after the first GC in the span (readings in time order; the first is the span's start).
+    public static double? PostGcFloor(IReadOnlyList<MeasureSample> span)
+    {
+        if (span.Count < 2) return null;
+        long before = Gc(span[0]);
+        double? floor = null;
+        for (int i = 1; i < span.Count; i++)
+        {
+            if (Gc(span[i]) <= before) continue;
+            if (floor == null || span[i].ManagedMB < floor) floor = span[i].ManagedMB;
+        }
+        return floor;
+    }
+
+    private static long Gc(MeasureSample s) => s.Gen0 + s.Gen1 + s.Gen2;
+
+    // D42-style warning rule (not a failure): the last `count` post-GC floors (matches without a GC skipped) each higher
+    // than the one before, and the last more than `percent` % above the first of them. Null = no warning.
+    public static string? Check(IReadOnlyList<(int Match, double Floor)> floors, int count, double percent)
+    {
+        if (count < 2 || floors.Count < count) return null;
+        var last = floors.Skip(floors.Count - count).ToArray();
+        for (int i = 1; i < last.Length; i++)
+            if (!(last[i].Floor > last[i - 1].Floor)) return null;
+        double first = last[0].Floor;
+        if (first <= 0) return null;
+        double rise = (last[^1].Floor - first) / first * 100.0;
+        if (rise <= percent) return null;
+        return $"post-GC managed floor rose in each of the last {count} matches with a GC (match {last[0].Match} {MeasureMath.F(first)} MB -> match {last[^1].Match} {MeasureMath.F(last[^1].Floor)} MB, +{MeasureMath.F(rise)}% > {MeasureMath.F(percent)}%)";
+    }
 }
 
 // §103, D40: the line the report header, the console and the batch table show.
