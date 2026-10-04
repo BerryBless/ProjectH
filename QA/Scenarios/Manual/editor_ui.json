@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "name": "Editor Check: Game UI (Manual)",
+  "description": "Roadmap 2026-10-05 STEP 2 §9: the Phase 11 screens a person judges in the Unity Editor. The tool starts the server on 127.0.0.1:7777 (the Editor's default address) with two headless rivals; you press Play in the Editor and connect. Each manualCheck pauses the run for PASS / FAIL (web UI, or p/f on a terminal). Statistics need the database: with Persistence off (the QA default) the window shows its 'unavailable' message, which is the expected result here.",
+  "tags": ["manual", "ui", "editor"],
+  "seed": 1101,
+  "timeoutSeconds": 3600,
+  "server": {
+    "mode": "launch",
+    "options": {
+      "Server:Port": "7777",
+      "Server:MinPlayers": "3",
+      "Server:StartCountdownSeconds": "5",
+      "Server:ResultSeconds": "30"
+    }
+  },
+  "actors": [ { "id": "rival1" }, { "id": "rival2" } ],
+  "steps": [
+    { "id": "mark", "action": "mark", "text": "editor UI check ${runId}" },
+    { "id": "rival1_connect", "phase": "arrange", "action": "connect", "actor": "rival1" },
+    { "id": "rival2_connect", "action": "connect", "actor": "rival2" },
+
+    { "id": "title_font", "phase": "act", "action": "manualCheck", "description": "Press Play in the Unity Editor. Title screen: every Korean label is readable (no empty boxes), the address field shows 127.0.0.1 and the port 7777." },
+    { "id": "title_ime", "action": "manualCheck", "description": "Type a Korean name (테스트) with the IME. While composing, the syllable shows inside the name field; after committing, the field holds exactly 테스트 (no leftover jamo, no doubled syllable)." },
+    { "id": "connect_screen", "action": "manualCheck", "description": "Press Connect. The connecting screen shows, then the game. (Answer after you are in the game; the match starts 5 s after you join.)" },
+    { "id": "you_joined", "phase": "assert", "action": "waitFor", "condition": "match.playerCount", "equals": 3, "timeoutMilliseconds": 600000 },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 30000 },
+
+    { "id": "names", "phase": "act", "action": "manualCheck", "description": "Look at the two rivals: a name (qa-rival1 / qa-rival2) floats over each one and stays readable while you move the camera." },
+    { "id": "esc_menu", "action": "manualCheck", "description": "Esc opens the menu (cursor free, the game stops reading mouse and keys); Esc again or 'continue' closes it and a click locks the cursor again." },
+    { "id": "f1_debug", "action": "manualCheck", "description": "F1 shows the debug lines (tick, ping, movement, build line) and F1 again hides them. The lines do not overlap the POI labels or the HUD." },
+
+    { "id": "kill_rival1", "phase": "arrange", "action": "killPlayer", "actor": "rival1" },
+    { "id": "kill_feed", "phase": "act", "action": "manualCheck", "description": "The kill feed (top right) shows qa-rival1 eliminated, in Korean, and the line fades after about 6 s." },
+
+    { "id": "kill_rival2", "phase": "arrange", "action": "killPlayer", "actor": "rival2" },
+    { "id": "match_over", "phase": "assert", "action": "waitFor", "condition": "match.state", "equals": "Finished", "timeoutMilliseconds": 10000 },
+    { "id": "result_screen", "phase": "act", "action": "manualCheck", "description": "The result screen shows you in 1st place with your Korean name, and its buttons respond. (It stays 30 s, then the next lobby starts.)" },
+    { "id": "statistics", "action": "manualCheck", "description": "Open 'my statistics' from the result screen or the menu. With the database off it shows the unavailable message (not an endless wait); Esc closes the window first, then the screen." },
+
+    { "id": "stop_server", "action": "stopServer" },
+    { "id": "disconnect_screen", "action": "manualCheck", "description": "The game shows the disconnect screen with a Korean reason and a reconnect / title button (after the automatic reconnect attempts give up)." },
+    { "id": "start_server", "action": "startServer" },
+    { "id": "reconnect", "action": "manualCheck", "description": "Press reconnect (or go to the title and connect again). You join the restarted server on 7777 and the lobby shows." },
+    { "id": "back_in", "phase": "assert", "action": "waitFor", "condition": "match.playerCount", "greaterThan": 0, "timeoutMilliseconds": 120000 }
+  ]
+}

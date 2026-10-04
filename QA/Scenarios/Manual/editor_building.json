@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "name": "Editor Check: Harvesting And Building (Manual)",
+  "description": "Roadmap 2026-10-05 STEP 2 §10: the Phase 13 visuals a person judges in the Unity Editor. The tool starts a sandbox server (DevRespawn: no match flow) on 127.0.0.1:7777; you press Play in the Editor and connect. A headless helper stands at QA_Build_Test (12.5, -12.5) next to a stone, a wood and a metal wall and a two-floor bridge; walk there (F1 shows your position). Each manualCheck pauses the run for PASS / FAIL. Keys: Q build mode, Z wall, X floor, V ramp, B roof, T material, R rotate, F harvest tool, 1-3 weapons.",
+  "tags": ["manual", "building", "editor"],
+  "seed": 1301,
+  "timeoutSeconds": 3600,
+  "server": {
+    "mode": "launch",
+    "options": {
+      "Server:Port": "7777",
+      "Server:DevRespawn": "true"
+    }
+  },
+  "actors": [ { "id": "helper" } ],
+  "steps": [
+    { "id": "mark", "action": "mark", "text": "editor building check ${runId}" },
+    { "id": "helper_connect", "phase": "arrange", "action": "connect", "actor": "helper" },
+    { "id": "helper_place", "action": "setPosition", "actor": "helper", "x": 12.5, "z": -18, "yaw": 0 },
+    { "id": "stone_wall", "action": "spawnBuildPiece", "piece": "wall", "material": "stone", "cellX": 18, "level": 0, "cellZ": 13, "rotation": 0, "saveAs": "stoneWall" },
+    { "id": "bridge1", "action": "spawnBuildPiece", "piece": "floor", "material": "wood", "cellX": 18, "level": 1, "cellZ": 13, "saveAs": "bridge1" },
+    { "id": "bridge2", "action": "spawnBuildPiece", "piece": "floor", "material": "wood", "cellX": 19, "level": 1, "cellZ": 13, "saveAs": "bridge2" },
+    { "id": "wood_wall", "action": "spawnBuildPiece", "piece": "wall", "material": "wood", "cellX": 21, "level": 0, "cellZ": 13, "rotation": 0, "saveAs": "woodWall" },
+    { "id": "metal_wall", "action": "spawnBuildPiece", "piece": "wall", "material": "metal", "cellX": 23, "level": 0, "cellZ": 13, "rotation": 0, "saveAs": "metalWall" },
+    { "id": "pieces_up", "phase": "assert", "action": "waitFor", "condition": "build.count", "at": "QA_Build_Test", "radius": 30, "equals": 5, "timeoutMilliseconds": 3000 },
+
+    { "id": "connect", "phase": "act", "action": "manualCheck", "description": "Press Play in the Unity Editor and connect to 127.0.0.1:7777. Walk to the helper at (12.5, -18) (F1 shows your position). Answer once you see the three walls and the bridge." },
+    { "id": "you_joined", "phase": "assert", "action": "waitFor", "condition": "match.playerCount", "equals": 2, "timeoutMilliseconds": 600000 },
+
+    { "id": "materials_look", "phase": "act", "action": "manualCheck", "description": "Wood, stone and metal walls look different from each other, with no magenta material and no flicker." },
+    { "id": "harvest", "action": "manualCheck", "description": "F (harvest tool): hit a tree, a rock and a metal object. Each hit adds to wood / stone / metal on the material HUD, a weak-point hit gives more, and the object shows hit feedback." },
+    { "id": "preview_valid", "action": "manualCheck", "description": "Q (build mode), Z wall: a preview ghost follows your aim in the valid colour; T switches the material on the HUD; R rotates the wall." },
+    { "id": "preview_invalid", "action": "manualCheck", "description": "Aim at a slot that is taken (the stone wall) or out of reach: the preview turns the invalid colour and a click places nothing." },
+    { "id": "piece_kinds", "action": "manualCheck", "description": "Place a wall (Z), a floor (X), a ramp (V) and a roof (B). Each appears at once (predicted), stays after the server confirms, and costs material on the HUD." },
+    { "id": "construction", "action": "manualCheck", "description": "A freshly placed piece shows that it is still building up (and fills over about 1.5 s for wood). It does NOT look damaged." },
+    { "id": "turbo", "action": "manualCheck", "description": "Hold the left button and sweep the aim: pieces go down along the sweep (turbo build), never twice in the same slot, and no stutter." },
+    { "id": "collision", "action": "manualCheck", "description": "Walk into your walls (blocked), run up the ramp, stand on the floor and on the roof slope, jump on the bridge: no sinking, no jitter, no getting stuck." },
+    { "id": "damage", "action": "manualCheck", "description": "1 (weapon): shoot the wood wall at cell (21, 13), east of the bridge. Its damage shows (cracks or health) and more fire destroys it." },
+
+    { "id": "break_support", "phase": "arrange", "action": "damageBuild", "pieceId": "${stoneWall.pieceId}", "amount": 100000, "saveAs": "broken" },
+    { "id": "collapsed", "phase": "assert", "action": "waitFor", "condition": "build.exists", "pieceId": "${bridge2.pieceId}", "equals": false, "timeoutMilliseconds": 3000 },
+    { "id": "collapse_visual", "phase": "act", "action": "manualCheck", "description": "The stone wall under the bridge was just destroyed by the tool: the two bridge floors collapsed with it (dust puffs, no pieces left floating, nothing left in the air to stand on)." }
+  ]
+}

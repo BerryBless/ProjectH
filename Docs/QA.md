@@ -386,6 +386,8 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `Smoke/unity_client.json` | 83–87 | Unity Player(`--unity-exe`)가 join → HUD·Menu·Stats Screenshot, UI 명령 | ~8 s |
 | `UI/kill_feed.json` | 84 | Headless B가 A를 실제 사격으로 제거하는 동안 Unity Player가 보고, Kill Feed Screenshot | ~18 s |
 | `Manual/ime_name.json` | 88–90 | 한글 IME 이름 입력 Manual Check 2개(CI에서는 SKIPPED) | 사람 |
+| `Manual/editor_ui.json` | 로드맵 §9 | Editor 수동 검증(Phase 11 UI). 서버를 127.0.0.1:7777(Editor 기본 주소)에 띄우고 Headless 상대 2명을 둔다. 사람이 Editor로 접속해 타이틀·한글 글꼴·IME·접속·이름·ESC 메뉴·F1·Kill Feed·결과·전적·끊김·재접속을 PASS/FAIL로 답한다. Kill Feed와 결과 화면은 상대를 `killPlayer`로 제거해 만든다. 끊김은 `stopServer`, 재접속은 같은 Port로 `startServer` | 사람 |
+| `Manual/editor_building.json` | 로드맵 §10 | Editor 수동 검증(Phase 13 건설). DevRespawn 서버를 7777에 띄우고 QA_Build_Test 근처에 돌·나무·금속 벽과 두 칸 다리를 놓는다. 사람이 채집·미리보기(유효/무효)·벽·바닥·경사로·지붕·Turbo·건설 중 표시·충돌·피해를 확인한다. 마지막에 도구가 다리 밑 돌벽을 부수고(`damageBuild`) 붕괴 연출을 묻는다 | 사람 |
 | `Stress/bots_50.json` | 133–134 | 50 Client가 60 s 경기 → tick p95 < 5 ms(느슨한 기준, 사용자가 조정). 측정값 0.15 ms | ~62 s |
 | `Network/latency_loss_combat.json` | 73 | B가 Proxy로 양방향 200 ms 지연 + 10% 손실(RTT 측정 ≈330 ms) → 정지한 A를 4발 사격 → 4발 모두 명중(서버 피해). B는 끊기지 않고 재접속도 없음(connections 1, graceStarts 0). 장애를 지우면 RTT가 돌아온다 | ~11 s |
 | `Combat/lag_compensation.json` | 119 | B RTT ≈150 ms(양방향 75 ms). A가 B 시야를 가로질러 달리고(≈5 m/s) B가 자기 Client가 본 A 위치를 쏜다 → 5발 중 5발 명중(4발 이상 기준). 대조: RTT ≈650–800 ms(되감기 창 0.4 s 밖)에서는 같은 사격이 1/5만 맞는다(2발 이하 기준) | ~15 s |
