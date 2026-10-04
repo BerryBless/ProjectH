@@ -34,8 +34,11 @@ public sealed class UnityQaClient : IDisposable
 
     public void Dispose() => _http.Dispose();
 
+    // 기능: Unity Player의 QA 수신기에 요청 하나를 보내고 응답을 읽는다.
+    // 입력: method·path - 보낼 HTTP 요청, body - JSON 본문(없으면 null), token - 실행 취소.
+    // 출력: 상태 코드와 JSON을 담은 UnityAnswer. 전송 실패나 시간 초과는 QaApiException(안쪽 예외 메시지 포함).
     // Never throws for an HTTP status: the answer carries it (409 for a UI command that does not apply is a step
-    // failure, not an error). A transport failure or timeout throws QaApiException.
+    // failure, not an error).
     private async Task<UnityAnswer> SendAsync(HttpMethod method, string path, object? body, CancellationToken token)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -64,7 +67,7 @@ public sealed class UnityQaClient : IDisposable
         }
         catch (Exception e) when (e is HttpRequestException || (e is OperationCanceledException && !token.IsCancellationRequested))
         {
-            throw new QaApiException($"Unity QA {method} /{path} on port {Port}: {(e is OperationCanceledException ? "no answer" : e.Message)}", 0, e);
+            throw new QaApiException($"Unity QA {method} /{path} on port {Port}: {(e is OperationCanceledException ? "no answer" : e.Message + (e.InnerException != null ? " (" + e.InnerException.Message + ")" : ""))}", 0, e);
         }
     }
 }

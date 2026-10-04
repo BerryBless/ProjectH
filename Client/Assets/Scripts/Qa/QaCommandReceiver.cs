@@ -27,13 +27,17 @@ namespace ProjectH.Client.Qa
     //                    coroutine that answers after the PNG is on disk. The answer is a TaskCompletionSource created
     //                    with RunContinuationsAsynchronously, so completing it never runs the network write on the main
     //                    thread.
-    // Bounds: at most MaxInFlight connections are being handled at once (more get 503 at once); the queue holds at most
+    // Bounds: at most MaxInFlight requests are being handled at once (more get 503 at once); the queue holds at most
     // MaxQueued requests (more get 503); a request without an answer after TimeoutMs gets 504, one whose body has not
     // arrived by then gets 408 and its connection is closed; pending screenshots are at most MaxQueued (more get 503).
     // Status codes: 200 ok, 400 bad JSON / bad name / unknown command, 403 not from loopback, 404 unknown path,
     // 405 wrong method (OPTIONS included), 408 body not received within 5 s, 409 UI command does not apply to the current screen, 413 body over 16 KB,
     // 415 POST without Content-Type application/json, 500 capture or write failed, 503 full or shutting down,
     // 504 not answered within 5 s.
+    // Connections stay open after a response (HTTP keep-alive) except after 408 and 413, whose body may be partly
+    // unread. Closing from this side reset the connection on Windows now and then (Mono's HttpListener: about 1 in 12
+    // requests failed with "forcibly closed by the remote host" before the caller read the answer). Mono closes an
+    // idle connection after 90 s itself, and the QA tool closes its own when the actor ends.
     // Lock: _queueLock is the only lock. It guards _queue alone, is held only for one Enqueue/Dequeue/Count, and no
     // other lock is taken inside it, so it cannot deadlock.
     // Lifetime: added by GameBootstrap next to GameClient and UiRoot (only with -qaPort); Shutdown runs from
@@ -88,7 +92,7 @@ namespace ProjectH.Client.Qa
         private HttpListener _listener;
         private Thread _acceptThread;
         private volatile bool _stopping;
-        private int _inFlight;   // Interlocked: connections between accept and response close
+        private int _inFlight;   // Interlocked: requests between accept and response close
         private GameClient _client;
         private UiRoot _ui;
         private string _shotDir;
@@ -341,6 +345,9 @@ namespace ProjectH.Client.Qa
             return request.Done.Task.Result;
         }
 
+        // 기능: 요청 하나에 JSON 응답을 쓰고 응답을 닫는다.
+        // 입력: context - 응답할 요청, status - HTTP 상태 코드, json - 응답 본문.
+        // 출력: 반환값 없음. 응답이 전송되고, 408·413이면 연결도 닫힌다(그 밖에는 다음 요청을 위해 유지된다).
         private static async Task RespondAndCloseAsync(HttpListenerContext context, int status, string json)
         {
             HttpListenerResponse response = context.Response;
@@ -349,8 +356,9 @@ namespace ProjectH.Client.Qa
                 byte[] bytes = Encoding.UTF8.GetBytes(json);
                 response.StatusCode = status;
                 response.ContentType = "application/json; charset=utf-8";
-                // One request per connection: the socket closes with the response, so no idle connection outlives it.
-                response.KeepAlive = false;
+                // Keep-alive (see the class comment): closing from this side made Windows reset the connection at random.
+                // 408 and 413 still close: the rest of their body may not have been read.
+                response.KeepAlive = status != 408 && status != 413;
                 response.ContentLength64 = bytes.Length;
                 await response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
             }
