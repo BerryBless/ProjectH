@@ -79,6 +79,9 @@ public sealed partial class ServerProcessManager : IDisposable
     [GeneratedRegex(@"QA_READY gamePort=(\d+) qaPort=(\d+)")]
     private static partial Regex ReadyLine();
 
+    // 기능: QA가 띄우는 서버의 명령줄 인자를 만든다(QA 기본값 위에 시나리오 override, 마지막에 부모 PID).
+    // 입력: dllPath - 서버 DLL, seed - Loot·Zone·Spawn 시드, overrides - 시나리오가 바꾸는 설정.
+    // 출력: dotnet에 넘길 인자 목록.
     public static IReadOnlyList<string> BuildArguments(string dllPath, int seed, IReadOnlyDictionary<string, string> overrides)
     {
         var options = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -92,6 +95,10 @@ public sealed partial class ServerProcessManager : IDisposable
             ["Server:LootSeed"] = seed.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["Server:ZoneSeed"] = seed.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["Server:SpawnSeed"] = seed.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            // Every QA actor connects from 127.0.0.1, so the server's per-IP connect limit (default burst 20) would refuse a
+            // 50-100 player stress join. A burst larger than any scenario's joins and reconnects keeps the limiter on
+            // (its path still runs) without refusing them; a scenario may still override it.
+            ["Server:ConnectBurstPerIp"] = "1000",
         };
         foreach (var pair in overrides) options[pair.Key] = pair.Value;
         // Backstop for every launch path (CLI and UI): the server's QA watchdog stops it when this process is gone, so a
