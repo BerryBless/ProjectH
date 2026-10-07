@@ -40,8 +40,9 @@ public class StructureDamageTests
         foreach (SandboxHarness.Sent sent in _h.To(peer, PacketId.BuildEvents))
         {
             PacketReader r = SandboxHarness.Body(sent);
-            Assert.True(BuildEventsPacket.TryReadHeader(ref r, out _, out int placed, out int health, out _));
+            Assert.True(BuildEventsPacket.TryReadHeader(ref r, out _, out int placed, out int edited, out int health, out _));
             for (int i = 0; i < placed; i++) BuildPieceRecord.TryReadPlaced(ref r, out _);
+            for (int i = 0; i < edited; i++) BuildEventsPacket.TryReadEdited(ref r, out _, out _);
             for (int i = 0; i < health; i++)
             {
                 Assert.True(BuildEventsPacket.TryReadHealth(ref r, out uint id, out ushort damage));
@@ -57,8 +58,9 @@ public class StructureDamageTests
         foreach (SandboxHarness.Sent sent in _h.To(peer, PacketId.BuildEvents))
         {
             PacketReader r = SandboxHarness.Body(sent);
-            Assert.True(BuildEventsPacket.TryReadHeader(ref r, out _, out int placed, out int health, out int destroyed));
+            Assert.True(BuildEventsPacket.TryReadHeader(ref r, out _, out int placed, out int edited, out int health, out int destroyed));
             for (int i = 0; i < placed; i++) BuildPieceRecord.TryReadPlaced(ref r, out _);
+            for (int i = 0; i < edited; i++) BuildEventsPacket.TryReadEdited(ref r, out _, out _);
             for (int i = 0; i < health; i++) BuildEventsPacket.TryReadHealth(ref r, out _, out _);
             for (int i = 0; i < destroyed; i++)
             {

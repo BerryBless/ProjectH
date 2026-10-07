@@ -142,7 +142,7 @@ flowchart TB
 
 ## 네트워크
 
-Protocol v11. 건설 패킷은 채널 1(`ProtocolConstants.BuildChannel`, ReliableOrdered)로만 다닌다. 플레이어 Snapshot(채널 0, Sequenced)에는 건설을 싣지 않는다.
+Protocol v12(Phase 13.5 편집, 아래 "편집"). 건설 패킷은 채널 1(`ProtocolConstants.BuildChannel`, ReliableOrdered)로만 다닌다. 플레이어 Snapshot(채널 0, Sequenced)에는 건설을 싣지 않는다.
 
 ```mermaid
 flowchart LR
@@ -152,7 +152,7 @@ flowchart LR
     end
     subgraph Ch1[Channel 1: build stream, ReliableOrdered]
         Res[BuildResult]
-        Ev[BuildEvents: placed, health, destroyed, only on change]
+        Ev[BuildEvents: placed, edited, health, destroyed, only on change]
         Int[BuildInterest: window mask]
         Sync[BuildSync: pieces of entered cells, paced]
     end
@@ -169,17 +169,37 @@ flowchart LR
 | `BuildCatalog` (26) | S→C | 49 B | 재료 3개(비용·최대·처음 체력·건설 Tick), 최대 자원, 사거리, 시야각, 채집 사거리·간격, 최소 간격 Tick, 관심 칸 크기·반지름·여유. Join·Resume 때 채널 1의 첫 패킷(reset Sync 바로 앞) |
 | `BuildRequest` (27) | C→S | 9 B | 번호 u16, 조각, 재료, x, y, z, 회전 |
 | `BuildResult` (28) | S→C 본인 | 8 B | 번호, 코드, 조각 id |
-| `BuildEvents` (29) | S→C | 헤더 8 B + Placed 14 B / Health 6 B / Destroyed 4 B | Tick 끝, 받는 사람의 관심 칸에 든 것만. 1200 B로 나눈다 |
+| `BuildEvents` (29) | S→C | 헤더 9 B + Placed 14 B / Edited 6 B / Health 6 B / Destroyed 4 B | Tick 끝, 받는 사람의 관심 칸에 든 것만, 이 순서로. 1200 B로 나눈다 |
 | `BuildSync` (30) | S→C | 헤더 7 B + 조각 16 B × 최대 74 = 1191 B | 새로 들어온 관심 칸의 조각(체력 포함). reset 플래그는 모두 버리라는 뜻 |
 | `BuildInterest` (31) | S→C | 9 B | 관심 칸 64비트 마스크 |
 | `ResourcesState` (32) | S→C 본인 | 7 B | 나무·돌·금속 |
 | `HarvestHit` (33) | S→C 본인 | 18 B | 대상, 남은 체력, 약점 위치, 얻은 양, 플래그 |
 | `HarvestStates` (34) | S→C | 9 B | 부서진 채집 대상 마스크 |
+| `BuildEditRequest` (35) | C→S | 9 B | 번호 u16(배치와 같은 카운터), 조각 id u32, 상태 u16(Edit 12비트 + 회전 2비트 ≪ 12) |
 
 - 받는 쪽 규칙(`BuildStore`): 모두 id로 적용한다. 같은 Placed가 두 번 와도 하나다. 모르는 id의 Health·Destroyed는 무시한다. 관심 칸 밖의 조각은 저장하지 않는다. 그래서 순서가 어긋나거나 늦은 이벤트가 사라진 조각을 되살리지 않는다.
 - 재접속(Resume)과 늦은 합류: `BuildCatalog` → reset Sync → 다음 Tick 끝에 `BuildInterest` → 그 칸들의 Sync. 채널 0과 1은 서로 순서를 지키지 않으므로 카탈로그를 채널 1에 먼저 실어, 관심 칸 크기를 모르는 채로 창이나 조각을 읽는 일이 없다. 요청 번호도 1부터 다시 센다. 유예 중(연결이 끊긴) 플레이어의 대기 요청은 버린다.
 - 밀린 연결: 건설 채널의 신뢰 대기열이 32개(`Match.MaxBuildBacklog`)를 넘으면 그 Tick의 Sync를 건너뛴다(사건·창·결과는 간다, Health `syncDeferred`). 두 채널의 대기열이 512개를 넘은 채 10초가 지나면 `Congested`로 끊는다(`Server.md` "관측").
 - 보안: 연결마다 초당 20개(`maxRequestsPerSecond`)를 넘는 요청은 잘못된 패킷 `BuildRate`로 센다(잘못된 패킷이 연결마다 20개 쌓이면 `Kicked`로 끊는다, `BadPacketDisconnectThreshold`). Fuzz 테스트가 새 파서 모두를 거친다.
+
+## 편집 (Phase 13.5)
+
+Spec: `Docs/specs/2026-10-07-phase13_5-building-edit-design.md`(D1–D14). Build → Edit → Open → Shoot → Reset 흐름이다.
+
+- **상태:** 조각마다 12비트 `BuildPieceShape.Edit`(0 = 원래 모양). 슬롯 키에 들어가지 않아 편집해도 같은 자리다.
+  - 벽: 비트 0–8 = 3 × 3 칸 중 뚫린 칸. 칸 = 열 + 3 × 행(행 0이 아래, 열은 회전 0이면 +X, 1이면 +Z). 뚫린 칸이 4방향으로 이어진 한 덩어리이고 1칸 이상 남아야 한다(창 16, 문 18, Half Wall 448, 가운데 열 146, 눈높이 행 56 등).
+  - 바닥: 비트 0–3 = 뚫린 사분면(사분면 = x 절반 + 2 × z 절반), 0–14.
+  - 지붕: 0 사각뿔, 1–4 한쪽 경사(높아지는 방향 = Edit − 1: +Z, +X, −Z, −X, 기울기 0.3), 5 평지붕, 6 통로(가운데 2.5 m 구멍).
+  - 경사로: Edit는 항상 0이고 편집은 회전(오르는 방향)만 바꾼다.
+  - 규칙은 Shared `BuildEdit`(`IsValid`, `TryApply`, Client 선택 → 상태 `FromSelection`, 칸 기하 `TileBox`·`TileAt`)에 하나다. Client 미리보기와 서버 검증이 같은 코드를 쓴다.
+- **모양:** `BuildGrid.PartsOf`가 남은 칸을 행마다 구간으로 묶고 위아래 같은 구간을 합친 상자(최대 6개)를 낸다(Half Wall 1, 문 3, 창 4). 이동(`CollisionWorld`), 사격·채집(`PieceTrace`), 배치·편집 검사(`BuildRules`)가 모두 이 함수를 쓴다. 경사 지붕은 `SlopeKind.RoofSlope` 평면이고 천장까지 찬 고체다. `BoundsOf`(사거리·시선·위치 기준)는 벽·바닥이면 편집과 관계없이 틀 상자다.
+- **요청:** `BuildEditRequest`는 배치와 같은 순번·같은 큐(`BuildRequestQueue` 8개, 종류 태그 `BuildQueueItem`)·같은 0.1초 간격·같은 초당 20개 상한을 쓴다. 상태를 실제로 바꾼 편집만 간격을 쓴다. Reset은 Edit 0 요청이다.
+- **검증(`Match.TryEdit`, 처음 걸린 이유로 답):** 1 살아 있음·경기 진행·지상 모드(도구는 보지 않는다, 무기를 든 채 편집하고 바로 쏜다) → `InvalidState`, 2 조각 있음 → `NotFound`(11), 3 `BuildRules.CanEdit`(지금은 소유자 본인. Phase 14 팀 공유는 이 함수만 고친다. QA가 놓은 소유자 0 조각은 아무도 못 고친다) → `NotOwner`(10), 4 `BuildEdit.TryApply`(유효한 상태, 경사로 외 회전 불변) → `InvalidRequest`. 지금과 같은 상태면 여기서 `Ok`(아무것도 바꾸지 않음, 이벤트 없음, 반복 확정 멱등). 5 배치와 같은 `InReach` → `OutOfRange`, 6 맵·문·지형(`BehindAWall`) 또는 대상이 아닌 조각(`BehindAPiece`, `PieceTrace`가 대상을 빼고 본다)이 시선을 막음 → `Blocked`, 7 새로 막히는 부분(다시 채워지는 칸만, 지붕·경사로는 새 모양)이 몸 중심을 가르거나 Vault 경로를 가로지르거나 올린 몸이 들어가지 않음 → `Blocked`, 8 경사로 회전 뒤 접지도 이웃도 없음 → `Unsupported`. 결과의 조각 id는 Ok면 대상 id, 거절이면 0이다.
+- **유지되는 것:** id, 소유자, 재료, `CreatedTick`(건설 진행), `Damage`. 짓는 중인 조각도 편집된다. `BuildWorld.SetShape`·`PieceGrid.SetShape`가 같은 slot·같은 칸을 지킨 채 모양만 바꾼다(slot으로 묶인 지지·복제 배열이 어긋나지 않는다).
+- **지지:** 벽·바닥·지붕 편집은 지지 모서리를 바꾸지 않는다(틀이 지지 단위, 문을 낸 벽도 위층을 받친다). 경사로 회전은 `BuildSupport.Reshape`가 모서리를 다시 쓰고 `Grounded`를 다시 계산하며, 잃은 이웃과 그 경사로를 Tick 끝 붕괴 탐색 시작점에 넣는다(파괴와 같은 탐색 한 번).
+- **복제:** Edited 기록(id + 상태, 6 B)을 Tick 끝에 조각마다 마지막 상태 하나로 보낸다(Health처럼 합친다). 같은 Tick에 파괴되면 Destroyed만 간다. Placed·Sync 기록은 격자 u32의 비트 20–31에 Edit를 실어 재접속·늦은 합류·관심 칸 진입이 최종 상태를 받는다(크기 그대로). 리더는 그 종류에 유효하지 않은 상태를 거부한다.
+- **성능(server-hotpath):** 편집 상태는 조각마다 상자 수만 늘린다. 이동 한 번(`Gather` + `Step`)은 모든 슬롯에 벽·바닥이 있는 3 × 3칸 × 5층 블록 안을 무작위로 걷는 측정(Release, 200k Step)에서 편집 전 코드 1.96 µs → 이번 코드 Edit 0 2.20 µs, 모든 벽이 문 4.8 µs, 창 5.6 µs, 최악(5상자) 6.7 µs였다(수집 상자 평균 72 → 197–306개). 100명이 모두 그런 블록 안에 있어도 Tick(33 ms)당 0.7 ms 아래다. 상자 버퍼는 고정 크기(`MaxPieces × MaxPartsPerPiece`)라 할당이 없다. 문제가 되면 열 방향 합치기를 시도한다(Spec D3).
+- **카운터:** Health 줄 `edits=`, `notOwner=`, `notFound=`, Meter `projecth.build.edits`, `projecth.build.requests{result=NotOwner|NotFound}`. 편집 요청은 `requests=`·`accepted=`에 배치와 같이 센다.
 
 ## 관심 영역
 
@@ -203,7 +223,8 @@ PROJECTH_BUILD_STRESS=1 dotnet test Server/ProjectH.Server.slnx -c Release --fil
 
 ## 테스트
 
-- Shared: `BuildGridTests`, `CollisionWorldTests`, `PieceCollisionTests`(맞닿은 조각 사이 이동, 무작위 1000건 이상), `BuildPacketTests`, `HarvestPacketTests`, `HarvestableMapTests`
-- Server: `HarvestTests`, `ToolTests`(Client 복사본 비교 포함), `BuildPlacementTests`, `StructureDamageTests`, `SupportTests`, `BuildReplicationTests`(서버가 보낸 실제 바이트를 Client의 `BuildStore`에 넣어 같은 조각·관심 칸·자리 판정을 갖는지 본다), `BuildIntegrationTests`(실제 UDP 채널 1, 속도 제한), `MaterialItemTests`, `BuildingCatalogTests`, `BuildStressTests`(환경 변수), `UiTextBuildTests`
+- Shared: `BuildGridTests`, `CollisionWorldTests`, `PieceCollisionTests`(맞닿은 조각 사이 이동, 무작위 1000건 이상, Phase 13.5 편집된 조각 배치 포함), `BuildEditTests`(편집 상태·선택 변환, 모든 유효 상태의 `PartsOf`가 남은 칸을 정확히 덮음, Edit 0 = 기존 모양), `EditedPieceCollisionTests`(문 통과, 창·Half Wall에 막힘, 바닥 사분면·지붕 통로로 떨어짐, 경사 지붕 오르기, 편집된 상자 안 무작위 이동 갇힘 0), `BuildPacketTests`(편집 요청·Edited·격자 비트 왕복, 거부), `HarvestPacketTests`, `HarvestableMapTests`
+- Server: `HarvestTests`, `ToolTests`(Client 복사본 비교 포함), `BuildPlacementTests`, `StructureDamageTests`, `SupportTests`, `BuildReplicationTests`(서버가 보낸 실제 바이트를 Client의 `BuildStore`에 넣어 같은 조각·관심 칸·자리 판정을 갖는지 본다), `BuildIntegrationTests`(실제 UDP 채널 1, 속도 제한, 편집 요청), Game `BuildEditTests`(검증 코드별, 유지되는 것, 멱등, 같은 Tick 편집+피해, 파괴 뒤 편집, 경사로 회전 붕괴, 공용 큐·순번·간격, 유예 중 편집 뒤 재접속 Sync, 사격이 창으로 지나감), `MaterialItemTests`, `BuildingCatalogTests`, `BuildStressTests`(환경 변수), `UiTextBuildTests`
 - Bots: `BotBuilderTests`
-- Client EditMode: `ToolStateTests`, `BuildTargetingTests`(격자 미리보기, Turbo), `BuildStoreTests`(중복, 늦은 이벤트, 관심 칸 나감·들어옴, reset), `BuildControllerTests`(대기, 시간 초과, 번호), `BuildPieceLookTests`, `MovementPredictionTests`(조각 위 예측 일치)
+- Client EditMode: `ToolStateTests`, `BuildTargetingTests`(격자 미리보기, Turbo), `BuildStoreTests`(중복, 늦은 이벤트, 관심 칸 나감·들어옴, reset), `BuildControllerTests`(대기, 시간 초과, 번호), `BuildPieceLookTests`, `MovementPredictionTests`(조각 위 예측 일치), Phase 13.5 `BuildEditControllerTests`(선택 → 미리보기, 확정 → 예측 → 거절 롤백·Ok 확정, 편집 중 Fire 제거)
+- QA: `building` Suite(`QA/Suites/building.json`): 편집 시나리오 6개(`building_edit_*`, 아래 QA.md "Scenario Library")

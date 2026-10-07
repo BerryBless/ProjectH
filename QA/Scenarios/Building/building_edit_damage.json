@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "name": "Edit A Damaged Wall",
+  "description": "Phase 13.5 D13: a damaged wall keeps its health through an edit; an edit followed at once by damage (the edit burst-sent, damageBuild as soon as it is answered, a few ticks apart) both apply: the new state and the extra damage. The exact same-tick case is the server test BuildEditTests.AnEditAndDamage_InTheSameTick_BothArrive_AndTheHealthIsKept (QA steps cannot pick a server tick).",
+  "tags": ["building", "edit"],
+  "seed": 9303,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 12.5, "z": -11, "yaw": 180 } },
+    { "id": "a_wood", "action": "giveResource", "actor": "playerA", "material": "wood", "amount": 50 },
+    { "id": "a_wood_in", "action": "waitFor", "condition": "player.resources.wood", "actor": "playerA", "greaterThan": 0, "timeoutMilliseconds": 2000 },
+    { "id": "a_build", "action": "build", "actor": "playerA", "piece": "wall", "material": "wood", "cellX": 18, "level": 0, "cellZ": 13, "rotation": 0, "saveAs": "wall" },
+    { "id": "construction", "action": "wait", "milliseconds": 2000 },
+    { "id": "hit", "action": "damageBuild", "pieceId": "${wall.pieceId}", "amount": 30 },
+    { "id": "hp1", "action": "save", "path": "build.piece.health", "pieceId": "${wall.pieceId}", "saveAs": "hp1" },
+
+    { "id": "a_window", "phase": "act", "action": "buildEdit", "actor": "playerA", "pieceId": "${wall.pieceId}", "preset": "window" },
+    { "id": "window_open", "phase": "assert", "action": "waitFor", "condition": "build.piece.edit", "pieceId": "${wall.pieceId}", "equals": 16, "timeoutMilliseconds": 2000 },
+    { "id": "hp_kept", "assert": "build.piece.health", "pieceId": "${wall.pieceId}", "equals": "${hp1}" },
+
+    { "id": "wall_center", "action": "save", "path": "build.piece.center", "pieceId": "${wall.pieceId}", "saveAs": "wc" },
+    { "id": "a_aim_wall", "action": "aim", "actor": "playerA", "at": "${wc}", "description": "A burst is sent without aim ticks: keep the aim on the wall" },
+    { "id": "a_door_now", "phase": "act", "action": "buildEdit", "actor": "playerA", "pieceId": "${wall.pieceId}", "preset": "door", "burst": true, "saveAs": "door" },
+    { "id": "hit_now", "action": "damageBuild", "pieceId": "${wall.pieceId}", "amount": 30 },
+    { "id": "door_open", "phase": "assert", "action": "waitFor", "condition": "build.piece.edit", "pieceId": "${wall.pieceId}", "equals": 18, "timeoutMilliseconds": 2000 },
+    { "id": "hp_dropped", "action": "waitFor", "condition": "build.piece.health", "pieceId": "${wall.pieceId}", "lessThan": "${hp1}", "timeoutMilliseconds": 2000 },
+    { "id": "still_there", "assert": "build.exists", "pieceId": "${wall.pieceId}", "equals": true },
+    { "id": "client_door", "action": "waitFor", "condition": "actor.watchedPieces.${wall.pieceId}.edit", "actor": "playerA", "equals": 18, "timeoutMilliseconds": 2000 }
+  ]
+}

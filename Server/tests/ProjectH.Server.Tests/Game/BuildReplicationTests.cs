@@ -44,6 +44,7 @@ public class BuildReplicationTests
         public uint Version;
         public int SyncPackets;
         public int Resets;
+        public int EditedRecords;
 
         public void Apply(byte[] data)
         {
@@ -68,13 +69,23 @@ public class BuildReplicationTests
                     }
                     break;
                 case PacketId.BuildEvents:
-                    Assert.True(BuildEventsPacket.TryReadHeader(ref r, out version, out int placed, out int health, out int destroyed));
+                    Assert.True(BuildEventsPacket.TryReadHeader(ref r, out version, out int placed, out int edited, out int health, out int destroyed));
                     Assert.True(version >= Version);
                     Version = version;
                     for (int i = 0; i < placed; i++)
                     {
                         Assert.True(BuildPieceRecord.TryReadPlaced(ref r, out BuildPieceRecord p));
                         Pieces[p.Id] = p;
+                    }
+                    for (int i = 0; i < edited; i++)
+                    {
+                        Assert.True(BuildEventsPacket.TryReadEdited(ref r, out uint eid, out ushort state));
+                        EditedRecords++;
+                        if (Pieces.TryGetValue(eid, out var piece))
+                        {
+                            Assert.True(BuildEdit.TryApply(piece.Shape, state, out BuildPieceShape shape));
+                            Pieces[eid] = piece with { Shape = shape };
+                        }
                     }
                     for (int i = 0; i < health; i++)
                     {
@@ -123,11 +134,16 @@ public class BuildReplicationTests
                 }
                 break;
             case PacketId.BuildEvents:
-                Assert.True(BuildEventsPacket.TryReadHeader(ref r, out version, out int placed, out int health, out int destroyed));
+                Assert.True(BuildEventsPacket.TryReadHeader(ref r, out version, out int placed, out int edited, out int health, out int destroyed));
                 for (int i = 0; i < placed; i++)
                 {
                     Assert.True(BuildPieceRecord.TryReadPlaced(ref r, out BuildPieceRecord p));
                     store.ApplyPiece(p, version);
+                }
+                for (int i = 0; i < edited; i++)
+                {
+                    Assert.True(BuildEventsPacket.TryReadEdited(ref r, out uint eid, out ushort state));
+                    Assert.True(store.ApplyEdited(eid, state, version));
                 }
                 for (int i = 0; i < health; i++)
                 {
@@ -183,7 +199,8 @@ public class BuildReplicationTests
         Assert.Equal(server.Count, store.Grid.Count);
         foreach (var kv in server)
         {
-            Assert.True(store.TryGet(kv.Key, out BuildPieceRecord piece));
+            // The confirmed record: what the server's bytes said (not a local edit prediction).
+            Assert.True(store.TryGetConfirmed(kv.Key, out BuildPieceRecord piece));
             Assert.Equal(kv.Value, piece.Shape);
             Assert.Equal(m.Pieces[kv.Key].Damage, piece.Damage);
         }
@@ -191,6 +208,44 @@ public class BuildReplicationTests
 
     private uint Add(int x, int y, int z, BuildPieceType type = BuildPieceType.Floor, int rotation = 0) =>
         SandboxHarness.AddPiece(_match, new BuildPieceShape(type, x, y, z, rotation));
+
+    // Phase 13.5 D8: an edit reaches every client as one Edited record (the mirror and the client's real store hold the
+    // edited shape), and a client joining later gets the final state in its sync (the grid word's bits 20-31).
+    [Fact]
+    public void AnEdit_ReachesTheStore_AndALateJoinerSyncsTheFinalState()
+    {
+        PlayerEntity p = Join(1, new Vector3(2.5f, 0f, -3f));
+        uint wall = SandboxHarness.AddPiece(_match, new BuildPieceShape(BuildPieceType.Wall, 16, 0, 16, 0), owner: p.EntityId);
+        uint floor = SandboxHarness.AddPiece(_match, new BuildPieceShape(BuildPieceType.Floor, 17, 1, 16, 0), owner: p.EntityId);
+        _match.Tick();
+        // The default aim (yaw 0, pitch 0) looks north at the wall.
+        const int door = (1 << 1) | (1 << 4);
+        _match.EnqueueEdit(1, new BuildEditRequest { Sequence = 1, PieceId = wall, State = BuildEdit.PackState(door, 0) });
+        _match.Tick();
+        Assert.Equal(door, _match.Build.At(_match.Build.Grid.SlotOf(wall)).Shape.Edit);
+        AssertMirrorMatches(1);
+        Assert.Equal(1, MirrorOf(1).EditedRecords);
+        Assert.True(StoreOf(1).TryGetConfirmed(wall, out BuildPieceRecord stored));
+        Assert.Equal(door, stored.Shape.Edit);
+
+        // Several changes of one piece in one tick: one record, the last state.
+        int slot = _match.Build.Grid.SlotOf(floor);
+        BuildPieceShape f = _match.Build.At(slot).Shape;
+        _match.Build.SetShape(slot, f.WithEdit(0b0001, 0));
+        _match.Replication.Edited(slot);
+        _match.Build.SetShape(slot, f.WithEdit(0b0110, 0));
+        _match.Replication.Edited(slot);
+        _match.Tick();
+        Assert.Equal(2, MirrorOf(1).EditedRecords);
+        AssertMirrorMatches(1);
+
+        Join(2, new Vector3(-3f, 0f, -3f));
+        for (int i = 0; i < 5; i++) _match.Tick();
+        AssertMirrorMatches(2);
+        Assert.Equal(0, MirrorOf(2).EditedRecords);
+        Assert.Equal(door, MirrorOf(2).Pieces[wall].Shape.Edit);
+        Assert.Equal(0b0110, MirrorOf(2).Pieces[floor].Shape.Edit);
+    }
 
     // The client files a piece under the same interest cell as the server, and sees the same slots taken.
     [Fact]

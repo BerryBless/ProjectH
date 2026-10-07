@@ -1,0 +1,15 @@
+{
+  "name": "building",
+  "description": "Phase 13 building and Phase 13.5 editing over the real protocol (headless, about 4 min): placement, collapse, turbo build, and the six edit scenarios (wall, reset, damage, destroy race, reconnect, spam). The Unity input and visual scenarios are in the unity suite.",
+  "scenarios": [
+    "Building/basic_wall.json",
+    "Building/support_collapse.json",
+    "Building/turbo_build.json",
+    "Building/building_edit_wall.json",
+    "Building/building_edit_reset.json",
+    "Building/building_edit_damage.json",
+    "Building/building_edit_destroy_race.json",
+    "Building/building_edit_reconnect.json",
+    "Building/building_edit_spam.json"
+  ]
+}

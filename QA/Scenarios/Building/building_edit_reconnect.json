@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "name": "Edit Survives A Reconnect",
+  "description": "Phase 13.5 D13 (D8): A opens a door in its wall and drops. While A is away the door becomes a window. A comes back within the grace time: the resume's BuildSync carries the final edit state in the piece record (grid bits 20-31), so A's client holds the window without having seen the Edited record.",
+  "tags": ["building", "edit", "reconnect"],
+  "seed": 9305,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 12.5, "z": -11, "yaw": 180 } },
+    { "id": "a_wood", "action": "giveResource", "actor": "playerA", "material": "wood", "amount": 50 },
+    { "id": "a_wood_in", "action": "waitFor", "condition": "player.resources.wood", "actor": "playerA", "greaterThan": 0, "timeoutMilliseconds": 2000 },
+    { "id": "a_build", "action": "build", "actor": "playerA", "piece": "wall", "material": "wood", "cellX": 18, "level": 0, "cellZ": 13, "rotation": 0, "saveAs": "wall" },
+    { "id": "a_door", "action": "buildEdit", "actor": "playerA", "pieceId": "${wall.pieceId}", "preset": "door" },
+    { "id": "client_door", "action": "waitFor", "condition": "actor.watchedPieces.${wall.pieceId}.edit", "actor": "playerA", "equals": 18, "timeoutMilliseconds": 2000 },
+
+    { "id": "a_drop", "phase": "act", "action": "disconnect", "actor": "playerA" },
+    { "id": "a_graced", "action": "waitFor", "condition": "player.graced", "actor": "playerA", "equals": true, "timeoutMilliseconds": 3000 },
+    { "id": "edit_while_away", "action": "editBuild", "pieceId": "${wall.pieceId}", "edit": 16, "description": "QA Control: the server edits the piece while A is away (the owner is graced and cannot send)" },
+    { "id": "server_window", "action": "waitFor", "condition": "build.piece.edit", "pieceId": "${wall.pieceId}", "equals": 16, "timeoutMilliseconds": 2000 },
+    { "id": "a_away", "action": "wait", "milliseconds": 1500 },
+    { "id": "a_reconnect", "action": "reconnect", "actor": "playerA" },
+
+    { "id": "resumed_event", "phase": "assert", "action": "waitForEvent", "event": "PlayerResumed", "actor": "playerA", "timeoutMilliseconds": 3000 },
+    { "id": "client_synced", "action": "waitFor", "condition": "actor.watchedPieces.${wall.pieceId}.edit", "actor": "playerA", "equals": 16, "timeoutMilliseconds": 3000 },
+    { "id": "client_known", "assert": "actor.watchedPieces.${wall.pieceId}.known", "actor": "playerA", "equals": true },
+    { "id": "a_edits_again", "phase": "act", "action": "buildEdit", "actor": "playerA", "pieceId": "${wall.pieceId}", "preset": "reset", "description": "The resumed connection numbers its requests from 1 again and is answered" },
+    { "id": "reset_done", "phase": "assert", "action": "waitFor", "condition": "build.piece.edit", "pieceId": "${wall.pieceId}", "equals": 0, "timeoutMilliseconds": 2000 }
+  ]
+}

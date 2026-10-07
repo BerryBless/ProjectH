@@ -103,6 +103,7 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
 `Building.md`가 규칙이다. Client 쪽:
 
 - **조작:** F 채집 도구, Q 건축 모드(다시 누르면 이전 도구), 1–3 무기. 건축 모드에서 Z 벽, X 바닥, V 경사로, B 지붕(누르면 건축 모드로 들어간다), T 재료(나무 → 돌 → 금속), R 회전(재장전 대신), 좌클릭 배치(누르고 있으면 Turbo).
+- **편집(Phase 13.5, `Building.md` "편집"):** H로 조준한 내 조각의 편집을 시작하고 다시 H로 확정한다. 칸 격자(벽 3 × 3, 나머지 2 × 2)에서 좌클릭(끌면 칠하기)으로 칸을 고르면 `BuildEdit.FromSelection`으로 바로 미리보기 모양이 된다(잘못된 모양은 빨강, 확정 불가). 편집 중 우클릭은 Reset을 바로 보낸다. Esc(메뉴를 열지 않음)·무기 키·Q·F는 취소다. 도구는 바뀌지 않고 편집 중에는 Fire·Aim을 뺀다. 파일: `Game/Build/BuildEditController`(편집 상태, 순수 코드), `BuildEditOverlay`(칸 격자·유령), `BuildRequestCounter`(배치·편집이 같이 쓰는 순번과 초당 20개 상한). `BuildStore`가 편집 예측 덧씌우기(최대 8개)를 갖고 거절이면 롤백한다. Mesh는 (종류, Edit)마다 처음 쓸 때 만들어 캐시하고, 편집된 조각의 Collider는 `PartsOf` 상자마다 BoxCollider다.
 - **예측:** 도구는 입력마다 예측한다(`ToolState`). 이동은 확정 조각과 충돌한다(`LocalPlayerPredictor.Pieces = BuildStore.Grid`). 대기 중인 배치는 그리기만 하고 충돌하지 않는다. 받아들여진 배치는 확정 조각이 도착할 때까지(최대 1초 시간 초과) 대기로 계속 보인다. 요청은 초당 20개까지만 보낸다(`BuildController.MaxRequestsPerSecond`).
 - **HUD:** 오른쪽 아래 "나무 n   돌 n   금속 n"(서버 값 − 대기 비용), 건축 모드에서 "건축: 벽 · 나무"와 키 안내, 거절 이유("자원이 부족합니다" 등, `UiText.BuildRefusal`).
 - **카탈로그:** `BuildCatalog`는 건설 채널(1)의 첫 패킷으로 온다(최종 리뷰 A3). 받는 순서대로 적용하므로 Client 코드는 바뀌지 않았다. `BuildStore.MaxPieces`(20,000)는 기본 경기 상한이고 카탈로그에서 받지 않는다(충돌 격자를 한 번 잡는다). 넘는 조각은 저장하지 않고 `Ignored`로 센다. `BuildStore.Reset`은 Version과 `Ignored`도 0으로 되돌린다.
@@ -300,7 +301,7 @@ Editor에는 Play마다 다른 명령줄이 없다. 그래서 명령줄에 없�
   | `{"lookX":120,"lookY":-30,"ms":300}` | 마우스 이동(픽셀)을 ms(0–5000, 정수, 0 = 한 프레임) 동안 시간에 맞게 나눠 보낸다. 합계는 프레임 속도와 상관없이 정확하다. 절댓값 20000 이하 |
   | `{"releaseAll":true}` | 눌린 키·버튼을 모두 떼고 진행 중인 이동을 멈춘다. Join 전에도 된다(200) |
 
-  - 허용 키: `w a s d space leftShift leftCtrl c q f z x v b t r e g 1 2 3 4 5 escape f1`(Input System 이름, 대소문자 구분. 숫자는 윗줄 숫자키).
+  - 허용 키: `w a s d space leftShift leftCtrl c q f z x v b t r e g 1 2 3 4 5 escape f1 h`(Input System 이름, 대소문자 구분. 숫자는 윗줄 숫자키).
   - key·button·look 중 정확히 하나만 온다. holdMs와 action은 함께 쓸 수 없고, ms는 look에만, 다른 필드는 받지 않는다(오타가 누름으로 처리되지 않게). 어기면 400이다.
   - 성공하면 `{"ok":true,"applied":"press q"}`(`hold w 1500ms`, `down left`, `look 120,-30 300ms`, `releaseAll`)로 답한다. 키·버튼은 답하기 전에 Input System 큐에 들어가 있고, hold와 look은 그 뒤에도 이어진다.
   - Join 전이면 409(releaseAll 제외), 누르고 있는 키·버튼과 진행 중인 look이 이미 16칸을 쓰고 있으면 503이다. 같은 키·버튼은 한 칸을 같이 쓰고 새 요청이 해제 시각을 바꾼다. look은 요청마다 한 칸이다.
@@ -359,4 +360,4 @@ Phase 11의 순수 코드 `UI/UiFlow.cs`, `UiText.cs`, `KillFeedModel.cs`는 서
 ```
 (Editor가 프로젝트를 열고 있지 않을 때)
 
-Phase 13: EditMode에 `ToolStateTests`, `BuildTargetingTests`, `BuildStoreTests`, `BuildControllerTests`, `BuildPieceLookTests`가 더해졌다(모두 순수 코드라 `EditTests` 도구로도 돈다). `MovementPredictionTests`에 조각 위 일치 3개가 더해졌다. 조각 뷰·유령·효과·HUD는 위 "Unity 확인 순서 (Phase 13)"가 본다.
+Phase 13: EditMode에 `ToolStateTests`, `BuildTargetingTests`, `BuildStoreTests`, `BuildControllerTests`, `BuildPieceLookTests`가 더해졌다(모두 순수 코드라 `EditTests` 도구로도 돈다). Phase 13.5: `BuildEditControllerTests`(13개)와 `BuildStoreTests` 편집 예측 4개가 더해졌고 `QaInputProtocolTests`의 키 수가 26이다. `MovementPredictionTests`에 조각 위 일치 3개가 더해졌다. 조각 뷰·유령·효과·HUD는 위 "Unity 확인 순서 (Phase 13)"가 본다.

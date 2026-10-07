@@ -23,6 +23,7 @@ namespace ProjectH.Client.Game
         private int _stone = -1;
         private int _metal = -1;
         private bool _modeShown;
+        private bool _editShown;
         private BuildPieceType _piece;
         private BuildMaterialType _material;
         private float _noticeHideTime = -1f;
@@ -59,10 +60,25 @@ namespace ProjectH.Client.Game
             _resources.text = UiText.ResourcesLine(wood, stone, metal);
         }
 
-        public void SetMode(bool buildMode, BuildPieceType piece, BuildMaterialType material)
+        // 기능: 건설·편집 모드 안내 줄과 키 줄을 정한다. 보이는 값이 바뀔 때만 문자열을 다시 만든다.
+        // 입력: buildMode - 건설 모드, piece·material - 고른 조각과 재료, editing - 편집 모드(Phase 13.5 D10, 건설 모드보다 우선),
+        //   editPiece - 편집하는 조각 종류.
+        // 출력: 반환값 없음. 편집 중이면 "편집: …"과 편집 키, 건설 모드면 건설 줄과 건설 키, 아니면 빈 줄.
+        public void SetMode(bool buildMode, BuildPieceType piece, BuildMaterialType material, bool editing = false, BuildPieceType editPiece = BuildPieceType.Wall)
         {
             if (_root == null) return;
-            if (buildMode == _modeShown && (!buildMode || (piece == _piece && material == _material))) return;
+            if (editing)
+            {
+                if (_editShown && editPiece == _piece) return;
+                _editShown = true;
+                _modeShown = false;
+                _piece = editPiece;
+                _mode.text = UiText.EditModeLine(editPiece);
+                _keys.text = UiText.EditKeys;
+                return;
+            }
+            if (!_editShown && buildMode == _modeShown && (!buildMode || (piece == _piece && material == _material))) return;
+            _editShown = false;
             _modeShown = buildMode;
             _piece = piece;
             _material = material;

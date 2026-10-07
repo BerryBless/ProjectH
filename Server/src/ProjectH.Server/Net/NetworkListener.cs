@@ -5,6 +5,7 @@ using System.Threading;
 using LiteNetLib;
 using Microsoft.Extensions.Logging;
 using ProjectH.Server.Diagnostics;
+using ProjectH.Server.Game.Build;
 using ProjectH.Server.Persistence;
 using ProjectH.Shared.Protocol;
 
@@ -322,7 +323,10 @@ public sealed class NetworkListener : INetEventListener
                 break;
 
             case PacketId.BuildRequest:
+            case PacketId.BuildEditRequest:
                 // Phase 13 D8: only from a joined connection (like input). The game loop queues it per player.
+                // Phase 13.5 D4: an edit goes the same way: the same per-second count (one budget for both kinds) and
+                // the same channel and queue.
                 if (peer.Tag is not PeerState buildState || !buildState.JoinRequested)
                 {
                     OnBadPacket(peer, BadPacketReason.InputBeforeJoin);
@@ -333,8 +337,10 @@ public sealed class NetworkListener : INetEventListener
                     OnBadPacket(peer, BadPacketReason.BuildRate);
                     break;
                 }
-                if (BuildRequest.TryRead(ref packet, out var build))
-                    _channels.Build.Writer.TryWrite(new BuildMessage(peer.Id, peer, build));
+                if (id == PacketId.BuildRequest && BuildRequest.TryRead(ref packet, out var build))
+                    _channels.Build.Writer.TryWrite(new BuildMessage(peer.Id, peer, new BuildQueueItem(build)));
+                else if (id == PacketId.BuildEditRequest && BuildEditRequest.TryRead(ref packet, out var edit))
+                    _channels.Build.Writer.TryWrite(new BuildMessage(peer.Id, peer, new BuildQueueItem(edit)));
                 else
                     OnBadPacket(peer, BadPacketReason.Malformed);
                 break;

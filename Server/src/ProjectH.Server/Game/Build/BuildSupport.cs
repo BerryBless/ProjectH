@@ -10,7 +10,8 @@ namespace ProjectH.Server.Game.Build;
 //    sloped sides. So a wall holds the floor on its top edge, walls meet at corners and stack, a ramp meets the floor at
 //    its low or high edge, and a ramp's side lies on the wall beside it (the wall's diagonal).
 //  - Grounded: a piece whose bottom touches the terrain or the top of a map box (not a harvestable: it can be destroyed)
-//    within GroundTolerance. Fixed for the piece's life (neither ever changes).
+//    within GroundTolerance. The terrain and map boxes never change, so it is set at placement and recomputed only when
+//    an edit turns a ramp (Match.ApplyEdit, Phase 13.5 D7: its low edge moves).
 //  - Placement needs a grounded piece or a neighbour (every piece standing is supported).
 //  - After a piece goes, each former neighbour's connected component is searched (breadth first, through shared edges
 //    only, never the whole map, request §76, §77); a component with no grounded piece collapses at once.
@@ -181,6 +182,60 @@ public sealed class BuildSupport
         return false;
     }
 
+    // 기능: 편집 뒤 모양이 자기 자신을 뺀 다른 서 있는 조각과 모서리를 나누는지 본다(Phase 13.5 D5-8, Ramp 회전 변경).
+    // 입력: shape - 편집 뒤 모양, self - 그 조각의 slot(자기 옛 모서리는 이웃으로 치지 않는다).
+    // 출력: 다른 조각과 모서리 하나라도 나누면 true.
+    public bool HasNeighbourOtherThan(in BuildPieceShape shape, int self)
+    {
+        Span<uint> keys = stackalloc uint[MaxEdges];
+        int n = Edges(shape, keys);
+        for (int k = 0; k < n; k++)
+        {
+            for (int node = _heads.TryGetValue(keys[k], out int head) ? head : -1; node >= 0; node = _next[node])
+            {
+                if (node / MaxEdges != self) return true;
+            }
+        }
+        return false;
+    }
+
+    // 기능: 조각의 모서리를 새 모양으로 다시 쓴다(Phase 13.5 D7). Wall·Floor·Roof 편집은 모서리가 같아 아무것도 하지 않는다.
+    //   모서리가 바뀌면(Ramp 회전) 옛 이웃 중 새 이웃에 없는 조각과 그 조각 자신을 이번 Tick 끝 붕괴 탐색 시작점에 넣는다.
+    // 입력: slot - 조각의 slot, before - 옛 모양, after - 새 모양.
+    // 출력: 모서리가 바뀌었으면 true(호출자가 Grounded를 다시 계산한다).
+    public bool Reshape(int slot, in BuildPieceShape before, in BuildPieceShape after)
+    {
+        Span<uint> oldKeys = stackalloc uint[MaxEdges];
+        Span<uint> newKeys = stackalloc uint[MaxEdges];
+        int oldCount = Edges(before, oldKeys);
+        int newCount = Edges(after, newKeys);
+        if (oldCount == newCount && oldKeys.Slice(0, oldCount).SequenceEqual(newKeys.Slice(0, newCount))) return false;
+
+        Span<int> oldAround = stackalloc int[MaxNeighbours];
+        int oldNeighbours = Neighbours(slot, oldAround);
+        Remove(slot);
+        Add(slot, after);
+        Span<int> newAround = stackalloc int[MaxNeighbours];
+        int newNeighbours = Neighbours(slot, newAround);
+        for (int i = 0; i < oldNeighbours; i++)
+        {
+            if (newAround.Slice(0, newNeighbours).IndexOf(oldAround[i]) < 0) QueueStart(oldAround[i]);
+        }
+        // The piece itself: its new neighbours may hang only from what it no longer touches.
+        QueueStart(slot);
+        return true;
+    }
+
+    // 기능: slot 하나를 이번 Tick 끝 붕괴 탐색 시작점에 넣는다(slot마다 한 번).
+    // 입력: slot - 조각의 slot.
+    // 출력: 반환값 없음.
+    private void QueueStart(int slot)
+    {
+        if (_queued[slot]) return;
+        _queued[slot] = true;
+        _starts[_startCount++] = slot;
+    }
+
     public void Add(int slot, in BuildPieceShape shape)
     {
         EnsureSlot(slot);
@@ -233,13 +288,7 @@ public sealed class BuildSupport
     {
         Span<int> around = stackalloc int[MaxNeighbours];
         int n = Neighbours(slot, around);
-        for (int i = 0; i < n; i++)
-        {
-            int start = around[i];
-            if (_queued[start]) continue;
-            _queued[start] = true;
-            _starts[_startCount++] = start;
-        }
+        for (int i = 0; i < n; i++) QueueStart(around[i]);
     }
 
     // End of the tick: the pieces the queued starts no longer hold up (see Unsupported); the queue is empty afterwards.

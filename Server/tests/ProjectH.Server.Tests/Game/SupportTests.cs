@@ -124,8 +124,9 @@ public class SupportTests
         foreach (SandboxHarness.Sent sent in _h.To(1, PacketId.BuildEvents))
         {
             PacketReader r = SandboxHarness.Body(sent);
-            Assert.True(BuildEventsPacket.TryReadHeader(ref r, out _, out int placed, out int health, out int destroyed));
+            Assert.True(BuildEventsPacket.TryReadHeader(ref r, out _, out int placed, out int edited, out int health, out int destroyed));
             for (int i = 0; i < placed; i++) BuildPieceRecord.TryReadPlaced(ref r, out _);
+            for (int i = 0; i < edited; i++) BuildEventsPacket.TryReadEdited(ref r, out _, out _);
             for (int i = 0; i < health; i++) BuildEventsPacket.TryReadHealth(ref r, out _, out _);
             for (int i = 0; i < destroyed; i++)
             {

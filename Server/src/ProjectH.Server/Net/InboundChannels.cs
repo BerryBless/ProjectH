@@ -8,7 +8,7 @@ namespace ProjectH.Server.Net;
 // | Channel | Producer               | Consumer  | Capacity               | When full                          |
 // | Control | LiteNetLib event threads | GameLoop | ServerOptions.ControlChannelCapacity: 3 * (MaxPlayers + ConnectBurstPerIp + ceil(ConnectsPerIpPerSecond / SimHz)), 3 * MaxPlayers with the per-IP limit off | TryWrite fails -> caller disconnects the peer |
 // | Input   | LiteNetLib event threads | GameLoop | MaxPlayers * InputBuffer | DropOldest (newest input matters most) |
-// | Build   | LiteNetLib event threads | GameLoop | MaxPlayers * BuildRequestQueue.Capacity | DropOldest (Phase 13 D8; the client's prediction of a dropped one times out) |
+// | Build   | LiteNetLib event threads | GameLoop | MaxPlayers * BuildRequestQueue.Capacity | DropOldest (Phase 13 D8; placements and, Phase 13.5, edits; the client's prediction of a dropped one times out) |
 //
 // SingleWriter is false: with UnsyncedEvents LiteNetLib may raise events from more than one thread.
 public sealed class InboundChannels

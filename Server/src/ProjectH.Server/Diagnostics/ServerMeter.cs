@@ -69,6 +69,7 @@ public sealed class ServerMeter : IDisposable
         _meter.CreateObservableCounter("projecth.build.sync_deferred", () => h.Build.SyncDeferred,
             description: "Ticks a client's building sync waited for its backed-up building channel");
         _meter.CreateObservableCounter("projecth.build.inbox_drops", () => h.BuildInboxDrops, description: "Build requests dropped by the full inbound channel");
+        _meter.CreateObservableCounter("projecth.build.edits", () => h.Build.Edits, description: "Edits that changed a building piece (Phase 13.5)");
         _meter.CreateObservableCounter("projecth.harvest.hits", () => h.Build.HarvestHits);
         _meter.CreateObservableCounter("projecth.harvest.destroyed", () => h.Build.EnvironmentDestroyed);
         _meter.CreateObservableCounter("projecth.db_records", () => DbRecords(h));
@@ -103,9 +104,9 @@ public sealed class ServerMeter : IDisposable
     // Accepted, each refusal reason, and duplicates.
     private static Measurement<long>[] BuildRequests(HealthCounters h)
     {
-        var result = new Measurement<long>[(int)BuildResultCode.BudgetFull + 2];
+        var result = new Measurement<long>[(int)BuildResultCode.NotFound + 2];
         result[0] = new Measurement<long>(h.Build.Accepted, Tag("result", "Ok"));
-        for (int code = 1; code <= (int)BuildResultCode.BudgetFull; code++)
+        for (int code = 1; code <= (int)BuildResultCode.NotFound; code++)
             result[code] = new Measurement<long>(h.BuildRejects((BuildResultCode)code), Tag("result", ((BuildResultCode)code).ToString()));
         result[^1] = new Measurement<long>(h.Build.Duplicates, Tag("result", "Duplicate"));
         return result;

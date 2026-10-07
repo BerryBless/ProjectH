@@ -90,6 +90,8 @@ namespace ProjectH.Client.Net
         public event Action<BuildResult> BuildResultReceived;
         public event Action<BuildPieceRecord, uint> BuildPieceReceived;
         public event Action<uint, ushort, uint> BuildHealthReceived;
+        // Phase 13.5 D8: a piece's state after its last edit of a tick (id, BuildEdit state, version). Applied by id.
+        public event Action<uint, ushort, uint> BuildEditedReceived;
         public event Action<uint, uint> BuildDestroyedReceived;
         public event Action<uint> BuildResetReceived;
         public event Action<ulong> BuildInterestReceived;
@@ -176,6 +178,18 @@ namespace ProjectH.Client.Net
             if (State != ClientState.Joined) return false;
             var writer = new PacketWriter(_sendBuffer);
             BuildRequest.Write(ref writer, request);
+            _server.Send(writer.WrittenSpan, ProtocolConstants.BuildChannel, DeliveryMethod.ReliableOrdered);
+            return true;
+        }
+
+        // 기능: 조각 편집 요청 하나를 건설 채널(1)로 보낸다(Phase 13.5 D4, Reset도 같은 요청).
+        // 입력: request - 순번(배치와 같은 카운터), 조각 id, 상태(BuildEdit.PackState).
+        // 출력: 보냈으면 true, 참가 중이 아니면 false(아무것도 보내지 않음).
+        public bool SendBuildEdit(in BuildEditRequest request)
+        {
+            if (State != ClientState.Joined) return false;
+            var writer = new PacketWriter(_sendBuffer);
+            BuildEditRequest.Write(ref writer, request);
             _server.Send(writer.WrittenSpan, ProtocolConstants.BuildChannel, DeliveryMethod.ReliableOrdered);
             return true;
         }
@@ -269,6 +283,9 @@ namespace ProjectH.Client.Net
             }
         }
 
+        // 기능: 받은 패킷 하나를 읽어 해당 이벤트를 올린다(Phase 13.5: BuildEvents의 Edited 기록 포함). 메인 스레드에서 Poll이 부른다.
+        // 입력: peer - 보낸 쪽(지금 연결이 아니면 무시), reader - 패킷, channelNumber·deliveryMethod - 쓰지 않는다.
+        // 출력: 반환값 없음. 읽기에 실패한 기록이 있으면 그 패킷의 나머지는 버린다.
         void INetEventListener.OnNetworkReceive(NetPeer peer, NetPacketReader reader, byte channelNumber, DeliveryMethod deliveryMethod)
         {
             if (peer != _server) return;
@@ -404,11 +421,17 @@ namespace ProjectH.Client.Net
                     break;
 
                 case PacketId.BuildEvents:
-                    if (!BuildEventsPacket.TryReadHeader(ref packet, out uint version, out int placed, out int health, out int gone)) return;
+                    // Phase 13.5 D8: Placed -> Edited -> Health -> Destroyed. A bad record stops the packet, as before.
+                    if (!BuildEventsPacket.TryReadHeader(ref packet, out uint version, out int placed, out int edited, out int health, out int gone)) return;
                     for (int i = 0; i < placed; i++)
                     {
                         if (!BuildPieceRecord.TryReadPlaced(ref packet, out var piece)) return;
                         BuildPieceReceived?.Invoke(piece, version);
+                    }
+                    for (int i = 0; i < edited; i++)
+                    {
+                        if (!BuildEventsPacket.TryReadEdited(ref packet, out uint editedId, out ushort editedState)) return;
+                        BuildEditedReceived?.Invoke(editedId, editedState, version);
                     }
                     for (int i = 0; i < health; i++)
                     {

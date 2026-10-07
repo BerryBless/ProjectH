@@ -36,9 +36,14 @@ namespace ProjectH.Client.Input
         private readonly InputAction _pieceRamp;
         private readonly InputAction _pieceRoof;
         private readonly InputAction _material;
+        // Phase 13.5 D10: H starts edit mode on the aimed piece and confirms it (G is the drop key).
+        private readonly InputAction _edit;
         // Phase 12 D7: C turns crouch on and off; a jump or a sprint press turns it off again.
         private bool _crouchToggled;
 
+        // 기능: 게임 입력 Action을 코드로 만들고 켠다(Phase 13.5: H 편집 포함).
+        // 입력: 없음.
+        // 출력: 모든 Action이 켜진 InputReader(Dispose가 해제한다).
         public InputReader()
         {
             _move = new InputAction("Move", InputActionType.Value);
@@ -75,6 +80,7 @@ namespace ProjectH.Client.Input
             _pieceRamp = new InputAction("PieceRamp", InputActionType.Button, "<Keyboard>/v");
             _pieceRoof = new InputAction("PieceRoof", InputActionType.Button, "<Keyboard>/b");
             _material = new InputAction("Material", InputActionType.Button, "<Keyboard>/t");
+            _edit = new InputAction("Edit", InputActionType.Button, "<Keyboard>/h");
 
             _move.Enable();
             _look.Enable();
@@ -101,6 +107,7 @@ namespace ProjectH.Client.Input
             _pieceRamp.Enable();
             _pieceRoof.Enable();
             _material.Enable();
+            _edit.Enable();
         }
 
         public Vector2 Move => _move.ReadValue<Vector2>();
@@ -109,6 +116,9 @@ namespace ProjectH.Client.Input
         public bool FirePressed => _fire.WasPressedThisFrame();
         public bool FireHeld => _fire.IsPressed();
         public bool AimHeld => _aim.IsPressed();
+        // Phase 13.5 D10: right click this frame (edit mode's Reset) and H this frame (start or confirm an edit).
+        public bool AimPressed => _aim.WasPressedThisFrame();
+        public bool EditPressed => _edit.WasPressedThisFrame();
         public bool EscapePressed => _escape.WasPressedThisFrame();
         public bool DebugTogglePressed => _debugToggle.WasPressedThisFrame();
         // Phase 12 D7: the Crouch button: toggled with C or held with Ctrl.
@@ -153,6 +163,9 @@ namespace ProjectH.Client.Input
             if (_toolHarvest.WasPressedThisFrame()) QueuedButtons |= InputButtons.ToolHarvest;
         }
 
+        // 기능: 만든 Input Action을 모두 해제한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void Dispose()
         {
             _move.Dispose();
@@ -180,6 +193,7 @@ namespace ProjectH.Client.Input
             _pieceRamp.Dispose();
             _pieceRoof.Dispose();
             _material.Dispose();
+            _edit.Dispose();
         }
     }
 }

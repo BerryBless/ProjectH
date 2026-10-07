@@ -98,7 +98,7 @@ namespace ProjectH.Client.Tests
         {
             foreach (string name in QaInput.KeyNames)
                 Assert.AreEqual(name, QaInput.KeyNames[Parse("{\"key\":\"" + name + "\"}").Code]);
-            Assert.AreEqual(25, QaInput.KeyNames.Length);
+            Assert.AreEqual(26, QaInput.KeyNames.Length);
             AssertRejected("{\"key\":\"W\"}");
             AssertRejected("{\"key\":\"leftAlt\"}");
             AssertRejected("{\"key\":\"6\"}");

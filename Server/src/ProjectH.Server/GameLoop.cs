@@ -800,9 +800,10 @@ public sealed class GameLoop : IDisposable
             "tickFailures={TickFailures} loopFailures={LoopFailures} matchResets={Resets} stalls={Stalls} movementAnomalies={MovementAnomalies} " +
             "networkErrors={NetworkErrors} playerFailures={PlayerFailures} stallExits={StallExits} callbackErrors={CallbackErrors} " +
             "build pieces={BuildPieces} cells={BuildCells} requests={BuildRequests} accepted={BuildAccepted} destroyed={BuildDestroyed} " +
-            "collapsed={BuildCollapsed} duplicates={BuildDuplicates} eventPackets={BuildEventPackets} syncPackets={BuildSyncPackets} " +
+            "collapsed={BuildCollapsed} duplicates={BuildDuplicates} edits={BuildEdits} eventPackets={BuildEventPackets} syncPackets={BuildSyncPackets} " +
             "buildRejects noResource={RejectNoResource} outOfRange={RejectRange} blocked={RejectBlocked} unsupported={RejectUnsupported} " +
             "occupied={RejectOccupied} rateLimited={RejectRate} invalidState={RejectState} invalidRequest={RejectRequest} budgetFull={RejectBudget} " +
+            "notOwner={RejectNotOwner} notFound={RejectNotFound} " +
             "harvest hits={HarvestHits} envDestroyed={HarvestDestroyed} syncDeferred={BuildSyncDeferred} " +
             "buildInboxDrops={BuildInboxDrops} " +
             "db saved={DbSaved} failed={DbFailed} discarded={DbDiscarded} dropped={DbDropped} " +
@@ -818,10 +819,11 @@ public sealed class GameLoop : IDisposable
             h.BadPackets(BadPacketReason.HandlerException), h.BadPackets(BadPacketReason.BuildRate),
             h.TickFailures, h.LoopFailures, h.MatchResets, h.Stalls, h.MovementAnomalies,
             h.NetworkErrors, h.PlayerFailures, h.StallExits, h.CallbackErrors,
-            b.Pieces, b.Cells, b.Requests, b.Accepted, b.Destroyed, b.Collapsed, b.Duplicates, b.EventPackets, b.SyncPackets,
+            b.Pieces, b.Cells, b.Requests, b.Accepted, b.Destroyed, b.Collapsed, b.Duplicates, b.Edits, b.EventPackets, b.SyncPackets,
             h.BuildRejects(BuildResultCode.NoResource), h.BuildRejects(BuildResultCode.OutOfRange), h.BuildRejects(BuildResultCode.Blocked),
             h.BuildRejects(BuildResultCode.Unsupported), h.BuildRejects(BuildResultCode.Occupied), h.BuildRejects(BuildResultCode.RateLimited),
             h.BuildRejects(BuildResultCode.InvalidState), h.BuildRejects(BuildResultCode.InvalidRequest), h.BuildRejects(BuildResultCode.BudgetFull),
+            h.BuildRejects(BuildResultCode.NotOwner), h.BuildRejects(BuildResultCode.NotFound),
             b.HarvestHits, b.EnvironmentDestroyed, b.SyncDeferred,
             h.BuildInboxDrops,
             db.Saved, db.Failed, db.Discarded, db.Dropped,

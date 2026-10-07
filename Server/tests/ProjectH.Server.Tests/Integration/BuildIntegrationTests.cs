@@ -36,6 +36,26 @@ public sealed class BuildIntegrationTests
         Assert.Contains(client.BuildPackets, p => p.Id == PacketId.BuildSync);   // the join's reset
     }
 
+    // Phase 13.5 D4: an edit request travels the same way (parsed, queued, answered on channel 1); edits and placements
+    // share the per-second limit.
+    [Fact]
+    public void AnEditRequest_IsAnsweredOnTheBuildChannel_AndSharesTheLimit()
+    {
+        using GameLoop server = StartServer();
+        using HeadlessClient client = Join(server, "editor");
+        client.SendBuildEdit(new BuildEditRequest { Sequence = 1, PieceId = 12345, State = 0 });
+        Assert.True(Pump.Until(() => client.BuildResults.Count == 1, 3000, client), "result");
+        Assert.Equal((BuildResultCode.NotFound, 0u), (client.BuildResults[0].Code, client.BuildResults[0].PieceId));
+        Assert.Equal(0, server.Health.BadPackets(BadPacketReason.UnknownId) + server.Health.BadPackets(BadPacketReason.WrongDirection) +
+            server.Health.BadPackets(BadPacketReason.Malformed));
+        // A short edit packet is malformed.
+        client.SendRaw(new byte[] { (byte)PacketId.BuildEditRequest, 1, 0 });
+        Assert.True(Pump.Until(() => server.Health.BadPackets(BadPacketReason.Malformed) == 1, 3000, client), "malformed");
+        for (int i = 0; i < 12; i++) client.SendBuild(new BuildRequest { Sequence = (ushort)(i + 2), Piece = 9 });
+        for (int i = 0; i < 12; i++) client.SendBuildEdit(new BuildEditRequest { Sequence = (ushort)(i + 20), PieceId = 1 });
+        Assert.True(Pump.Until(() => server.Health.BadPackets(BadPacketReason.BuildRate) >= 4, 3000, client), "rate");
+    }
+
     [Fact]
     public void AFullInboundBuildChannel_CountsTheDroppedRequests()
     {

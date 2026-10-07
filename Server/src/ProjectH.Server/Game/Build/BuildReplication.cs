@@ -6,7 +6,8 @@ using ProjectH.Shared.Simulation;
 namespace ProjectH.Server.Game.Build;
 
 // Phase 13 D13: one tick's building events, collected while the tick runs and written at its end as BuildEvents packets
-// (placed, then health, then destroyed; at most MaxPacketSize bytes each). Each event knows its interest cell (D14), so
+// (placed, then edited (Phase 13.5 D8, coalesced like health: one record per piece per tick), then health, then
+// destroyed; at most MaxPacketSize bytes each). Each event knows its interest cell (D14), so
 // a packet holds only the events a client's window covers. Health is coalesced: a piece hit several times in a tick
 // sends one record with its damage at the end (request §85). Placed holds one piece per player (a player places at most
 // one per tick); the damaged, health and destroyed lists grow with the pieces up to the match's piece limit (a collapse
@@ -25,6 +26,15 @@ public sealed class BuildReplication
     private ushort[] _healthDamage;
     private byte[] _healthCell;
     private int _healthCount;
+    // Phase 13.5 D8: the pieces edited this tick (each slot once), and written by Collect: the ones still standing with
+    // their state then. Same growth and bound as the damaged and health lists (at most every piece).
+    private int[] _editedSlots;
+    private bool[] _editedFlag;
+    private int _editedSlotCount;
+    private uint[] _editedIds;
+    private ushort[] _editedStates;
+    private byte[] _editedCell;
+    private int _editedCount;
     private uint[] _destroyed;
     private byte[] _destroyedCell;
     private int _destroyedCount;
@@ -42,6 +52,11 @@ public sealed class BuildReplication
         _healthIds = new uint[pieces];
         _healthDamage = new ushort[pieces];
         _healthCell = new byte[pieces];
+        _editedSlots = new int[pieces];
+        _editedFlag = new bool[pieces];
+        _editedIds = new uint[pieces];
+        _editedStates = new ushort[pieces];
+        _editedCell = new byte[pieces];
         _destroyed = new uint[pieces];
         _destroyedCell = new byte[pieces];
         _cellsPerInterest = (int)(catalog.InterestCellSize / BuildGrid.CellSize);
@@ -52,8 +67,9 @@ public sealed class BuildReplication
     public uint Version { get; private set; }
     public int PlacedCount => _placedCount;
     public int HealthCount => _healthCount;
+    public int EditedCount => _editedCount;
     public int DestroyedCount => _destroyedCount;
-    public bool HasEvents => _placedCount > 0 || _healthCount > 0 || _destroyedCount > 0;
+    public bool HasEvents => _placedCount > 0 || _editedCount > 0 || _healthCount > 0 || _destroyedCount > 0;
     // The interest grid: InterestPerSide x InterestPerSide cells of CellsPerInterest x CellsPerInterest build cells.
     public int InterestPerSide => _interestPerSide;
     // D14: sync packets a client gets per tick at most (about 4.8 kB): a big window arrives over a few ticks instead of in
@@ -199,22 +215,29 @@ public sealed class BuildReplication
         _damagedSlots[_damagedCount++] = slot;
     }
 
+    // 기능: 조각이 이번 Tick에 편집되었음을 기록한다(Phase 13.5 D8). Edited 기록은 Tick 끝에 조각마다 한 번, 그때 상태로 간다.
+    // 입력: slot - 편집된 조각의 slot.
+    // 출력: 반환값 없음.
+    public void Edited(int slot)
+    {
+        if (slot >= _editedFlag.Length) Array.Resize(ref _editedFlag, Grown(_editedFlag.Length, slot + 1));
+        if (_editedFlag[slot]) return;
+        _editedFlag[slot] = true;
+        if (_editedSlotCount == _editedSlots.Length) Array.Resize(ref _editedSlots, Grown(_editedSlots.Length, _editedSlotCount + 1));
+        _editedSlots[_editedSlotCount++] = slot;
+    }
+
     // Doubling, at least to need, never past the match's piece limit (no list holds more than every piece).
     private int Grown(int length, int need) => Math.Min(_world.Capacity, Math.Max(need, length * 2));
 
-    // A piece left the world this tick (destroyed or collapsed). Its pending health record is dropped.
+    // 기능: 조각이 이번 Tick에 World를 떠났음을 기록한다(파괴 또는 붕괴). 그 slot의 대기 중인 Health·Edited 기록은 버린다
+    //   (같은 Tick에 slot이 새 조각에 다시 쓰여도 옛 조각의 기록이 새 조각에 붙지 않게).
+    // 입력: slot - 조각의 slot, id - 조각 id, shape - 관심 칸을 정할 모양.
+    // 출력: 반환값 없음. Destroyed 기록이 하나 는다.
     public void Destroyed(int slot, uint id, in BuildPieceShape shape)
     {
-        if (slot < _damagedFlag.Length && _damagedFlag[slot])
-        {
-            _damagedFlag[slot] = false;
-            for (int i = 0; i < _damagedCount; i++)
-            {
-                if (_damagedSlots[i] != slot) continue;
-                _damagedSlots[i] = _damagedSlots[--_damagedCount];
-                break;
-            }
-        }
+        Unflag(_damagedFlag, _damagedSlots, ref _damagedCount, slot);
+        Unflag(_editedFlag, _editedSlots, ref _editedSlotCount, slot);
         if (_destroyedCount == _destroyed.Length)
         {
             if (_destroyed.Length == _world.Capacity) return;   // unreachable: at most every piece once per tick
@@ -227,9 +250,45 @@ public sealed class BuildReplication
         Version++;
     }
 
-    // End of the tick: the damaged pieces' health records, from their damage now.
+    // 기능: slot의 표시를 지우고 대기 목록에서 뺀다(순서는 지키지 않는다).
+    // 입력: flags - slot별 표시, slots - 대기 목록, count - 목록 길이, slot - 지울 slot.
+    // 출력: 반환값 없음.
+    private static void Unflag(bool[] flags, int[] slots, ref int count, int slot)
+    {
+        if (slot >= flags.Length || !flags[slot]) return;
+        flags[slot] = false;
+        for (int i = 0; i < count; i++)
+        {
+            if (slots[i] != slot) continue;
+            slots[i] = slots[--count];
+            break;
+        }
+    }
+
+    // 기능: Tick 끝에 대기 중인 Edited·Health 기록을 지금 상태로 만든다(아직 서 있는 조각만).
+    // 입력: 없음.
+    // 출력: 반환값 없음. Edited·Health 목록이 채워지고 대기 표시가 지워진다.
     public void Collect()
     {
+        if (_editedSlotCount > _editedIds.Length)
+        {
+            int size = Grown(_editedIds.Length, _editedSlotCount);
+            Array.Resize(ref _editedIds, size);
+            Array.Resize(ref _editedStates, size);
+            Array.Resize(ref _editedCell, size);
+        }
+        for (int i = 0; i < _editedSlotCount; i++)
+        {
+            int slot = _editedSlots[i];
+            _editedFlag[slot] = false;
+            ref BuildPiece edited = ref _world.At(slot);
+            if (edited.Id == 0) continue;
+            _editedIds[_editedCount] = edited.Id;
+            _editedStates[_editedCount] = BuildEdit.StateOf(edited.Shape);
+            _editedCell[_editedCount++] = (byte)InterestCell(edited.Shape);
+            Version++;
+        }
+        _editedSlotCount = 0;
         if (_damagedCount > _healthIds.Length)
         {
             int size = Grown(_healthIds.Length, _damagedCount);
@@ -255,17 +314,20 @@ public sealed class BuildReplication
     public struct Cursor
     {
         public int Placed;
+        public int Edited;
         public int Health;
         public int Destroyed;
     }
 
-    // Writes the next BuildEvents packet into buffer from cursor, with only the events whose interest cell is in cells,
-    // and returns its length (0: no more events for these cells). At most buffer.Length bytes.
+    // 기능: cursor부터 다음 BuildEvents 패킷을 쓴다. 관심 칸이 cells에 든 이벤트만, Placed → Edited → Health → Destroyed 순서로.
+    // 입력: buffer - 쓸 곳(최대 길이), cursor - 종류별 다음 위치(갱신된다), cells - 받는 Client의 관심 창.
+    // 출력: 패킷 길이. 이 칸들에 남은 이벤트가 없으면 0.
     public int NextPacket(Span<byte> buffer, ref Cursor cursor, ulong cells)
     {
         var writer = new PacketWriter(buffer);
         BuildEventsPacket.WriteHeader(ref writer, Version);
         int placed = 0;
+        int edited = 0;
         int health = 0;
         int destroyed = 0;
         int room = buffer.Length - BuildEventsPacket.HeaderSize;
@@ -279,6 +341,17 @@ public sealed class BuildReplication
         }
         if (cursor.Placed == _placedCount)
         {
+            for (; cursor.Edited < _editedCount && edited < 255; cursor.Edited++)
+            {
+                if ((cells & (1UL << _editedCell[cursor.Edited])) == 0) continue;
+                if (room < BuildEventsPacket.EditedSize) break;
+                BuildEventsPacket.WriteEdited(ref writer, _editedIds[cursor.Edited], _editedStates[cursor.Edited]);
+                room -= BuildEventsPacket.EditedSize;
+                edited++;
+            }
+        }
+        if (cursor.Placed == _placedCount && cursor.Edited == _editedCount)
+        {
             for (; cursor.Health < _healthCount && health < 255; cursor.Health++)
             {
                 if ((cells & (1UL << _healthCell[cursor.Health])) == 0) continue;
@@ -288,7 +361,7 @@ public sealed class BuildReplication
                 health++;
             }
         }
-        if (cursor.Placed == _placedCount && cursor.Health == _healthCount)
+        if (cursor.Placed == _placedCount && cursor.Edited == _editedCount && cursor.Health == _healthCount)
         {
             for (; cursor.Destroyed < _destroyedCount && destroyed < 255; cursor.Destroyed++)
             {
@@ -299,8 +372,8 @@ public sealed class BuildReplication
                 destroyed++;
             }
         }
-        if (placed + health + destroyed == 0) return 0;
-        BuildEventsPacket.Patch(buffer, placed, health, destroyed);
+        if (placed + edited + health + destroyed == 0) return 0;
+        BuildEventsPacket.Patch(buffer, placed, edited, health, destroyed);
         return writer.Length;
     }
 
@@ -308,6 +381,7 @@ public sealed class BuildReplication
     public void Clear()
     {
         _placedCount = 0;
+        _editedCount = 0;
         _healthCount = 0;
         _destroyedCount = 0;
     }
@@ -317,6 +391,8 @@ public sealed class BuildReplication
     {
         for (int i = 0; i < _damagedCount; i++) _damagedFlag[_damagedSlots[i]] = false;
         _damagedCount = 0;
+        for (int i = 0; i < _editedSlotCount; i++) _editedFlag[_editedSlots[i]] = false;
+        _editedSlotCount = 0;
         Clear();
     }
 }

@@ -23,23 +23,27 @@ namespace ProjectH.Client.Game
     // and, while the build button is held, sends it through TurboGate. Requests are numbered from 1 per connection; a
     // placement is shown at once as pending (at most MaxPending, the server's queue). The resources shown are the server's
     // minus the pending costs (request §107). Pure, no UnityEngine; sending is a delegate. Main thread only.
+    // Phase 13.5 D4: the numbering and the per-second cap are a BuildRequestCounter shared with edits; GameClient routes a
+    // BuildResult here only when it is not an edit's (BuildEditController.OwnsSequence).
     public sealed class BuildController
     {
         public const int MaxPending = 8;
         public const float TimeoutSeconds = 1f;
-        // The server's building.maxRequestsPerSecond default (BuildingCatalog.MaxRequestsPerSecond): never send more in a second.
-        public const int MaxRequestsPerSecond = 20;
+        // The server's building.maxRequestsPerSecond default: never send more in a second (placements and edits together).
+        public const int MaxRequestsPerSecond = BuildRequestCounter.MaxRequestsPerSecond;
 
         private readonly Action<BuildRequest> _send;
         private readonly PendingBuild[] _pending = new PendingBuild[MaxPending];
         private int _pendingCount;
-        private ushort _sequence;
-        private readonly float[] _sendTimes = new float[MaxRequestsPerSecond];
-        private int _sendTotal;
+        private readonly BuildRequestCounter _counter;
 
-        public BuildController(Action<BuildRequest> send)
+        // 기능: 배치 쪽 컨트롤러를 만든다.
+        // 입력: send - 요청을 보내는 함수, counter - 편집과 같이 쓰는 순번·전송 상한(null이면 혼자 쓰는 새 카운터).
+        // 출력: 대기 배치가 없고 순번이 0인 컨트롤러.
+        public BuildController(Action<BuildRequest> send, BuildRequestCounter counter = null)
         {
             _send = send ?? throw new ArgumentNullException(nameof(send));
+            _counter = counter ?? new BuildRequestCounter();
         }
 
         public BuildSelection Selection { get; } = new BuildSelection();
@@ -73,6 +77,10 @@ namespace ProjectH.Client.Game
             return Math.Max(0, value);
         }
 
+        // 기능: 건설 모드 한 프레임: 후보를 고르고 판정하며, 버튼을 누르고 있으면 배치 요청을 보낸다.
+        // 입력: now - 현재 시각, inBuildMode - 예측 도구가 Build이고 살아서 지상에 있으며 편집 중이 아님, pressed·held - 건설 버튼,
+        //   feet·eye·yaw·pitch - 서버 기준 발·눈 위치와 시점, store - 확정 조각.
+        // 출력: 요청을 보냈으면 true. 순번과 1초 상한은 편집과 같이 쓰는 카운터에서 받는다.
         // One frame. inBuildMode: the predicted tool is Build and the player is alive and on foot; eye: the server's eye
         // (feet + eye height of the mode). Returns true when a request went out.
         public bool Update(float now, bool inBuildMode, bool pressed, bool held, Vector3 feet, Vector3 eye, float yaw, float pitch, BuildStore store)
@@ -89,17 +97,15 @@ namespace ProjectH.Client.Game
             Candidate = shape;
             // A slot already waiting for its answer is not offered again.
             CandidateState = IsPending(shape) ? BuildPreviewState.Invalid : Judge(shape, eye, store);
-            if (held && !RateAllows(now)) return false;   // the rolling-second cap
+            if (held && !_counter.Allows(now)) return false;   // the rolling-second cap (shared with edits)
             if (Catalog != null) Turbo.Interval = Math.Max(0.05f, Catalog.MinBuildIntervalTicks / (float)SimHz);
             if (!Turbo.ShouldSend(now, pressed, held, CandidateState == BuildPreviewState.Valid && _pendingCount < MaxPending, BuildGrid.SlotKey(shape)))
                 return false;
             var request = new BuildRequest
             {
-                Sequence = ++_sequence, Piece = (byte)shape.Type, Material = (byte)Selection.Material, X = shape.X, Y = shape.Y, Z = shape.Z,
+                Sequence = _counter.Next(now), Piece = (byte)shape.Type, Material = (byte)Selection.Material, X = shape.X, Y = shape.Y, Z = shape.Z,
                 Rotation = shape.Rotation,
             };
-            _sendTimes[_sendTotal % MaxRequestsPerSecond] = now;
-            _sendTotal++;
             _pending[_pendingCount++] = new PendingBuild { Sequence = request.Sequence, Shape = shape, Material = Selection.Material, SentAt = now };
             PendingVersion++;
             Sent++;
@@ -139,19 +145,18 @@ namespace ProjectH.Client.Game
             }
         }
 
-        // A new connection numbers its requests from 1 again (the server's sequence starts over at a join and a resume).
+        // 기능: 새 연결의 처음 상태로 되돌린다(서버 순번은 참가·재개마다 새로 시작한다).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 대기 배치·후보·선택·자원이 비고, 같이 쓰는 카운터도 1부터 다시 센다.
         public void Reset()
         {
-            _sequence = 0;
+            _counter.Reset();
             _pendingCount = 0;
-            _sendTotal = 0;
             PendingVersion++;
             HasCandidate = false;
             Selection.Reset();
             Resources = default;
         }
-
-        private bool RateAllows(float now) => _sendTotal < MaxRequestsPerSecond || now - _sendTimes[_sendTotal % MaxRequestsPerSecond] >= 1f;
 
         private void DropConfirmed(BuildStore store)
         {

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ProjectH.QA;
+using ProjectH.Shared.Simulation;
 
 namespace ProjectH.QA.Tests;
 
@@ -79,6 +80,62 @@ public class GapTests
         """, refusal: "NoResource");
         Assert.Equal("b", r.Failure!.StepId);
         Assert.Equal("NoResource", r.Failure.Actual);
+    }
+
+    // Phase 13.5 D13: buildEdit sends the state and target it was given and checks the codes.
+    [Fact]
+    public async Task BuildEditSendsThePresetAndReportsTheCodes()
+    {
+        (RunReport r, _, MockActor a) = await Run("""
+        [ { "action": "connect", "actor": "playerA" },
+          { "action": "buildEdit", "actor": "playerA", "pieceId": 42, "preset": "door", "saveAs": "e" },
+          { "assert": "var.e.pieceId", "equals": 42 },
+          { "assert": "var.e.counts.Ok", "equals": 1 },
+          { "action": "buildEdit", "actor": "playerA", "piece": "wall", "cellX": 3, "level": 0, "cellZ": 4, "rotation": 2, "edit": 0, "count": 3, "burst": true },
+          { "action": "buildEdit", "actor": "playerA", "pieceId": 42, "preset": "reset", "duplicate": true } ]
+        """);
+        Assert.Equal(RunStatus.Passed, r.Status);
+        BuildEditCommand[] edits = a.Commands.OfType<BuildEditCommand>().ToArray();
+        Assert.Equal(3, edits.Length);
+        Assert.Equal(new EditPlan(42, null, (1 << 1) | (1 << 4), -1, -1), edits[0].Edits.Single());
+        Assert.False(edits[0].Burst);
+        Assert.Equal(3, edits[1].Edits.Count);
+        Assert.True(edits[1].Burst);
+        // A north wall is its neighbour's south wall (the canonical slot).
+        Assert.Equal((BuildPieceType.Wall, (byte)3, (byte)5, (byte)0), (edits[1].Edits[0].Slot!.Value.Type, edits[1].Edits[0].Slot!.Value.X,
+            edits[1].Edits[0].Slot!.Value.Z, edits[1].Edits[0].Slot!.Value.Rotation));
+        Assert.True(edits[2].ReuseSequence);
+    }
+
+    [Fact]
+    public async Task ARefusedEditFailsWithTheCode_UnlessExpected()
+    {
+        (RunReport r, _, _) = await Run("""
+        [ { "action": "connect", "actor": "playerA" },
+          { "action": "buildEdit", "actor": "playerA", "pieceId": 7, "edit": 16, "expect": "NotOwner" },
+          { "id": "e", "action": "buildEdit", "actor": "playerA", "pieceId": 7, "edit": 16 } ]
+        """, refusal: "NotOwner");
+        Assert.Equal("e", r.Failure!.StepId);
+        Assert.Equal("NotOwner", r.Failure.Actual);
+    }
+
+    [Fact]
+    public void BuildEditValidation()
+    {
+        ScenarioLoadResult load = ScenarioLoader.Parse("""
+        { "schemaVersion": 1, "name": "e", "actors": [ { "id": "playerA" } ],
+          "steps": [ { "action": "buildEdit", "actor": "playerA", "pieceId": 1, "preset": "arch" },
+                     { "action": "buildEdit", "actor": "playerA", "pieceId": 1 },
+                     { "action": "buildEdit", "actor": "playerA", "cellX": 1, "edit": 1 },
+                     { "action": "buildEdit", "actor": "playerA", "pieceId": 1, "edit": 4096, "expect": "Maybe", "count": 17 } ] }
+        """);
+        var issues = ScenarioValidator.Validate(load.Scenario!, ActionRegistry.CreateDefault(), MarkerStore.Empty());
+        Assert.Contains(issues, i => i.IsError && i.Message.Contains("Unknown preset 'arch'"));
+        Assert.Contains(issues, i => i.IsError && i.Message.Contains("exactly one of 'edit', 'preset' or 'rawState'"));
+        Assert.Contains(issues, i => i.IsError && i.Message.Contains("'cellX' needs 'level', 'cellZ' and 'piece'"));
+        Assert.Contains(issues, i => i.IsError && i.Message.Contains("'edit' must be"));
+        Assert.Contains(issues, i => i.IsError && i.Message.Contains("Unknown result 'Maybe'"));
+        Assert.Contains(issues, i => i.IsError && i.Message.Contains("'count' must be"));
     }
 
     [Fact]

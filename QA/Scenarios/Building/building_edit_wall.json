@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "name": "Edit A Wall, Shoot Through The Opening",
+  "description": "Phase 13.5 D13 (request §30): A builds a wood wall with real input, then edits it with real BuildEditRequest packets (no build tool needed): the eye-level row opens (Edit 56) and a shot from A at B behind the wall passes through the opening (B is hit, the wall is not). Then a door (Edit 18): the wall keeps its id and health.",
+  "tags": ["building", "edit", "combat"],
+  "seed": 9301,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 12.5, "z": -11, "yaw": 180 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": 12.5, "z": -18.5, "yaw": 0 } },
+    { "id": "a_wood", "action": "giveResource", "actor": "playerA", "material": "wood", "amount": 50 },
+    { "id": "a_wood_in", "action": "waitFor", "condition": "player.resources.wood", "actor": "playerA", "greaterThan": 0, "timeoutMilliseconds": 2000 },
+    { "id": "a_rifle", "action": "giveWeapon", "actor": "playerA", "weapon": "Vesper AR" },
+    { "id": "a_ammo", "action": "giveAmmo", "actor": "playerA", "type": "medium", "amount": 60 },
+
+    { "id": "a_build", "phase": "act", "action": "build", "actor": "playerA", "piece": "wall", "material": "wood", "cellX": 18, "level": 0, "cellZ": 13, "rotation": 0, "saveAs": "wall", "description": "A wood wall on the south edge of cell (18, 13), between A and B" },
+    { "id": "wall_exists", "phase": "assert", "action": "waitFor", "condition": "build.exists", "pieceId": "${wall.pieceId}", "equals": true, "timeoutMilliseconds": 2000 },
+    { "id": "construction", "phase": "arrange", "action": "wait", "milliseconds": 2000, "description": "Wood reaches its full health in 1.5 s" },
+    { "id": "a_back_to_rifle", "action": "switchWeapon", "actor": "playerA", "slot": 0, "description": "Edits need no build tool (§29): edit with the rifle in hand" },
+
+    { "id": "a_open_row", "phase": "act", "action": "buildEdit", "actor": "playerA", "pieceId": "${wall.pieceId}", "preset": "eyeRow", "saveAs": "opened" },
+    { "id": "row_open", "phase": "assert", "action": "waitFor", "condition": "build.piece.edit", "pieceId": "${wall.pieceId}", "equals": 56, "timeoutMilliseconds": 2000 },
+    { "id": "same_id", "assert": "var.opened.pieceId", "equals": "${wall.pieceId}" },
+    { "id": "wall_hp", "action": "save", "path": "build.piece.health", "pieceId": "${wall.pieceId}", "saveAs": "wallHp" },
+    { "id": "b_hp", "action": "save", "path": "player.health", "actor": "playerB", "saveAs": "bHp" },
+
+    { "id": "a_aim_b", "phase": "act", "action": "aim", "actor": "playerA", "target": "playerB" },
+    { "id": "a_fire", "action": "fire", "actor": "playerA", "count": 3 },
+    { "id": "b_hit", "phase": "assert", "action": "waitFor", "condition": "player.health", "actor": "playerB", "lessThan": "${bHp}", "timeoutMilliseconds": 3000 },
+    { "id": "wall_untouched", "assert": "build.piece.health", "pieceId": "${wall.pieceId}", "equals": "${wallHp}" },
+    { "id": "a_clear_aim", "action": "aim", "actor": "playerA", "clear": true },
+
+    { "id": "a_door", "phase": "act", "action": "buildEdit", "actor": "playerA", "pieceId": "${wall.pieceId}", "preset": "door" },
+    { "id": "door_open", "phase": "assert", "action": "waitFor", "condition": "build.piece.edit", "pieceId": "${wall.pieceId}", "equals": 18, "timeoutMilliseconds": 2000 },
+    { "id": "door_hp", "assert": "build.piece.health", "pieceId": "${wall.pieceId}", "equals": "${wallHp}" },
+    { "id": "edited_view", "action": "waitFor", "condition": "actor.watchedPieces.${wall.pieceId}.edit", "actor": "playerA", "equals": 18, "timeoutMilliseconds": 2000, "description": "A's own client got the Edited record" }
+  ]
+}

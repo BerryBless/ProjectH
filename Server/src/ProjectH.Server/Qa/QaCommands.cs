@@ -26,7 +26,7 @@ internal static class QaCommands
     public static readonly string[] Names =
     {
         "mark", "setPosition", "setHealth", "setShield", "giveWeapon", "giveAmmo", "giveItem", "giveResource",
-        "damagePlayer", "killPlayer", "forceMatchState", "setZone", "spawnLoot", "spawnBuildPiece", "damageBuild",
+        "damagePlayer", "killPlayer", "forceMatchState", "setZone", "spawnLoot", "spawnBuildPiece", "damageBuild", "editBuild",
     };
 
     public static QaResult Execute(QaTick t, string command, string? player, string? runId, JsonElement args, ILogger logger)
@@ -41,6 +41,7 @@ internal static class QaCommands
             case "spawnLoot": return SpawnLoot(t, a);
             case "spawnBuildPiece": return SpawnBuildPiece(m, a);
             case "damageBuild": return DamageBuild(m, a);
+            case "editBuild": return EditBuild(m, a);
         }
 
         if (Array.IndexOf(Names, command) < 0)
@@ -367,6 +368,23 @@ internal static class QaCommands
         BuildResultCode code = m.PlacePiece(shape, (BuildMaterialType)material, out uint id);
         if (code != BuildResultCode.Ok) return QaResult.Error(409, $"The piece was refused: {code}.");
         return QaResult.Ok(new { pieceId = (long)id, cellX = (int)shape.X, level = (int)shape.Y, cellZ = (int)shape.Z, rotation = (int)shape.Rotation });
+    }
+
+    // 기능: Phase 13.5 editBuild: 조각의 편집 상태를 바꾼다(Match.EditPieceById, 소유자·사거리 검사 없음). 회전을 안 주면 지금 회전.
+    // 입력: m - 경기, a - 인자(pieceId, edit 0-4095, rotation 0-3 선택).
+    // 출력: Ok면 { code, edit, rotation }, 없는 조각 404, 거절 409.
+    private static QaResult EditBuild(Match m, QaArgs a)
+    {
+        long id = a.RequiredInteger("pieceId", 1, uint.MaxValue);
+        long edit = a.RequiredInteger("edit", 0, ProjectH.Shared.Simulation.BuildEdit.Mask);
+        long? rotation = a.Integer("rotation", 0, 3);
+        if (a.Error != null) return Bad(a);
+        if (!m.Build.TryGetSlot((uint)id, out int slot)) return QaResult.Error(404, $"No piece {id}.");
+        int turn = (int)(rotation ?? m.Build.At(slot).Shape.Rotation);
+        BuildResultCode code = m.EditPieceById((uint)id, ProjectH.Shared.Simulation.BuildEdit.PackState((int)edit, turn));
+        if (code != BuildResultCode.Ok) return QaResult.Error(409, $"The edit was refused: {code}.");
+        ProjectH.Shared.Simulation.BuildPieceShape shape = m.Build.At(slot).Shape;
+        return QaResult.Ok(new { code = code.ToString(), edit = (int)shape.Edit, rotation = (int)shape.Rotation });
     }
 
     private static QaResult DamageBuild(Match m, QaArgs a)

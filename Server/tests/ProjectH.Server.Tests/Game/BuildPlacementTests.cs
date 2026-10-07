@@ -69,7 +69,7 @@ public class BuildPlacementTests
         foreach (SandboxHarness.Sent sent in _h.To(peer, PacketId.BuildEvents))
         {
             PacketReader r = SandboxHarness.Body(sent);
-            Assert.True(BuildEventsPacket.TryReadHeader(ref r, out _, out int placed, out _, out _));
+            Assert.True(BuildEventsPacket.TryReadHeader(ref r, out _, out int placed, out _, out _, out _));
             for (int i = 0; i < placed; i++)
             {
                 Assert.True(BuildPieceRecord.TryReadPlaced(ref r, out BuildPieceRecord p));

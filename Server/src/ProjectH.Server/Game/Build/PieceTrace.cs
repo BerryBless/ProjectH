@@ -8,14 +8,20 @@ namespace ProjectH.Server.Game.Build;
 // Phase 13 D11: the first building piece along a ray (a shot or a harvest swing). Walks only the build cells the ray's
 // ground track crosses (2D DDA, request §126), nearest first, testing the pieces of each cell plus the walls of the next
 // cells east and north (a wall stands across its edge, half in each cell), and stops once the next cell starts beyond the
-// best hit. Walls and floors are boxes; a ramp is its slab (a convex solid between two planes), a roof its pyramid down
-// to the ceiling. Pieces are tested as they are now: shots are not rewound for building (D11, like doors). Pure, no
+// best hit. Walls and floors are boxes (Phase 13.5: an edited piece is its BuildGrid.PartsOf boxes, so a shot passes an
+// opening); a ramp is its slab (a convex solid between two planes), a roof its pyramid (or one-way plane) down to the
+// ceiling. Pieces are tested as they are now: shots are not rewound for building (D11, like doors). Pure, no
 // allocation.
 public static class PieceTrace
 {
     private const float ParallelEpsilon = 1e-8f;
 
-    public static bool Trace(Vector3 origin, Vector3 direction, float range, BuildWorld world, out uint id, out int slot, out float distance)
+    // 기능: 광선이 처음 맞히는 조각을 찾는다(사격·채집·편집 시선). Phase 13.5: 편집된 조각은 PartsOf의 부분으로 본다(창·문으로는 지나간다).
+    // 입력: origin·direction - 광선(direction은 단위 벡터), range - 최대 거리, world - 조각들, id·slot·distance - 결과,
+    //   ignoreId - 보지 않을 조각 id(0 = 모두 본다, 편집 시선에서 대상 자신).
+    // 출력: 맞혔으면 true와 조각 id·slot·거리, 아니면 false(distance = range).
+    public static bool Trace(Vector3 origin, Vector3 direction, float range, BuildWorld world, out uint id, out int slot, out float distance,
+        uint ignoreId = 0)
     {
         id = 0;
         slot = -1;
@@ -47,9 +53,9 @@ public static class PieceTrace
         float cellStart = tStart;
         while (cellStart <= distance && cellStart <= tEnd)
         {
-            TestColumn(grid, i, j, false, origin, direction, ref distance, ref slot);
-            TestColumn(grid, i + 1, j, true, origin, direction, ref distance, ref slot);
-            TestColumn(grid, i, j + 1, true, origin, direction, ref distance, ref slot);
+            TestColumn(grid, i, j, false, origin, direction, ignoreId, ref distance, ref slot);
+            TestColumn(grid, i + 1, j, true, origin, direction, ignoreId, ref distance, ref slot);
+            TestColumn(grid, i, j + 1, true, origin, direction, ignoreId, ref distance, ref slot);
             if (nextX <= nextZ)
             {
                 cellStart = nextX;
@@ -69,12 +75,17 @@ public static class PieceTrace
         return true;
     }
 
-    private static void TestColumn(PieceGrid grid, int x, int z, bool wallsOnly, Vector3 o, Vector3 d, ref float best, ref int bestSlot)
+    // 기능: 한 칸 기둥의 조각들을 광선과 시험해 가장 가까운 것을 남긴다.
+    // 입력: grid - 조각 칸 색인, x·z - 칸, wallsOnly - 이웃 칸의 벽만 볼지, o·d - 광선, ignoreId - 건너뛸 조각 id(0 = 없음),
+    //   best·bestSlot - 지금까지의 최선(갱신된다).
+    // 출력: 반환값 없음.
+    private static void TestColumn(PieceGrid grid, int x, int z, bool wallsOnly, Vector3 o, Vector3 d, uint ignoreId, ref float best, ref int bestSlot)
     {
         for (int s = grid.First(x, z); s >= 0; s = grid.Next(s))
         {
             ref readonly BuildPieceShape shape = ref grid.ShapeAt(s);
             if (wallsOnly && shape.Type != BuildPieceType.Wall) continue;
+            if (ignoreId != 0 && grid.IdAt(s) == ignoreId) continue;
             if (Hit(shape, o, d, best, out float t) && t < best)
             {
                 best = t;
@@ -83,13 +94,28 @@ public static class PieceTrace
         }
     }
 
-    // The ray against one piece within maxDistance: where it enters the piece's solid (0 when it starts inside).
+    // 기능: 광선과 조각 하나의 교차를 구한다. 벽·바닥·평지붕·통로는 PartsOf의 상자들(가장 가까운 것), Ramp는 판, 사각뿔 지붕은
+    //   천장까지 찬 피라미드, 한쪽 경사 지붕(Phase 13.5 RoofSlope)은 천장까지 찬 경사 평면 아래 고체다.
+    // 입력: shape - 조각 모양, o·d - 광선, maxDistance - 최대 거리, t - 결과.
+    // 출력: maxDistance 안에서 고체에 들어가면 true와 들어가는 거리(시작점이 안이면 0), 아니면 false.
     public static bool Hit(in BuildPieceShape shape, Vector3 o, Vector3 d, float maxDistance, out float t)
     {
-        if (!BuildGrid.IsSlope(shape.Type))
+        Span<Box> parts = stackalloc Box[BuildGrid.MaxPartsPerPiece];
+        int count = BuildGrid.PartsOf(shape, parts, out bool isSlope);
+        if (!isSlope)
         {
-            Box box = BuildGrid.BoxOf(shape);
-            return HitScan.IntersectAabb(o, d, box.Min, box.Max, maxDistance, out t);
+            bool hit = false;
+            t = maxDistance;
+            for (int p = 0; p < count; p++)
+            {
+                if (HitScan.IntersectAabb(o, d, parts[p].Min, parts[p].Max, t, out float tp) && (!hit || tp < t))
+                {
+                    t = tp;
+                    hit = true;
+                }
+            }
+            if (!hit) t = 0f;
+            return hit;
         }
         Slope slope = BuildGrid.SlopeOf(shape);
         float t0 = 0f;
@@ -97,8 +123,8 @@ public static class PieceTrace
         t = 0f;
         if (!Slab(o.X, d.X, slope.MinX, slope.MaxX, ref t0, ref t1)) return false;
         if (!Slab(o.Z, d.Z, slope.MinZ, slope.MaxZ, ref t0, ref t1)) return false;
-        const float rise = BuildGrid.RampRise / BuildGrid.CellSize;   // 0.6, the roof's slope too
-        if (slope.Kind == SlopeKind.Ramp)
+        const float rise = BuildGrid.RampRise / BuildGrid.CellSize;   // 0.6, the pyramid's slope too
+        if (slope.IsPlane)
         {
             // along(p) = a . (x, z) + c for the rising direction; the slab: base - T <= y - rise x along <= base.
             float ax = 0f, az = 0f, c;
@@ -110,9 +136,19 @@ public static class PieceTrace
                 default: ax = -1f; c = slope.MaxX; break;
             }
             // g(t) = y - rise x along at the ray's point t, linear in t.
-            float g0 = o.Y - rise * (ax * o.X + az * o.Z + c);
-            float gd = d.Y - rise * (ax * d.X + az * d.Z);
-            if (!Slab(g0, gd, slope.BaseY - BuildGrid.SlopeThickness, slope.BaseY, ref t0, ref t1)) return false;
+            float planeRise = slope.Rise / BuildGrid.CellSize;   // ramp 0.6, one-way roof 0.3
+            float g0 = o.Y - planeRise * (ax * o.X + az * o.Z + c);
+            float gd = d.Y - planeRise * (ax * d.X + az * d.Z);
+            if (slope.Kind == SlopeKind.Ramp)
+            {
+                if (!Slab(g0, gd, slope.BaseY - BuildGrid.SlopeThickness, slope.BaseY, ref t0, ref t1)) return false;
+            }
+            else
+            {
+                // A one-way roof: under its plane and down to the ceiling, like the pyramid.
+                if (!Below(g0, gd, slope.BaseY, ref t0, ref t1)) return false;
+                if (!Below(-o.Y, -d.Y, -(slope.BaseY - BuildGrid.SlopeThickness), ref t0, ref t1)) return false;
+            }
         }
         else
         {

@@ -52,8 +52,13 @@ public sealed class BotView
     public ResourcesState Resources;
     public int DamageTakenCount;
     public Vector3 LastDamageDirection;
-    public readonly long[] BuildResults = new long[(int)BuildResultCode.BudgetFull + 1];
+    public readonly long[] BuildResults = new long[(int)BuildResultCode.NotFound + 1];
     public readonly HashSet<uint> Pieces = new(MaxPieces);
+    // Phase 13.5 D8: each kept piece's latest shape (edit state included), in step with Pieces (QA buildEdit and the
+    // reconnect check read it). Same bound and same removal as Pieces.
+    public readonly Dictionary<uint, BuildPieceShape> PieceShapes = new(MaxPieces);
+    // Grows with every change to Pieces or PieceShapes (readers republish only on a change).
+    public long PieceVersion;
 
     // QA tool: the latest BuildResults in arrival order (a ring of RecentBuildResultCount; BuildResultCount counts
     // every one received, so a reader that remembers the count it saw finds the new ones).
@@ -73,10 +78,46 @@ public sealed class BotView
         LastDamageDirection = damage.FromDirection;
     }
 
-    // A building packet's pieces (placed or synced: kept up to MaxPieces; destroyed or out of the window: forgotten).
-    public void AddPiece(uint id)
+    // 기능: 건설 패킷의 조각(배치 또는 동기화)을 기억한다. 이미 있는 id면 모양만 새로 쓴다(재접속 Sync의 최종 편집 상태).
+    // 입력: piece - 받은 조각 기록.
+    // 출력: 반환값 없음. Pieces와 PieceShapes가 갱신된다(MaxPieces까지만, 넘으면 새 id는 버린다).
+    public void AddPiece(in BuildPieceRecord piece)
     {
-        if (Pieces.Count < MaxPieces) Pieces.Add(id);
+        if (!Pieces.Contains(piece.Id) && Pieces.Count >= MaxPieces) return;
+        Pieces.Add(piece.Id);
+        PieceShapes[piece.Id] = piece.Shape;
+        PieceVersion++;
+    }
+
+    // 기능: Edited 기록을 아는 조각에 적용한다(Phase 13.5 D8).
+    // 입력: id - 조각 id, state - 편집 뒤 상태(BuildEdit.PackState).
+    // 출력: 아는 조각이고 상태가 그 종류에 유효하면 true(모양 갱신), 모르는 조각(창 밖)이거나 잘못된 상태면 false.
+    public bool ApplyEdited(uint id, ushort state)
+    {
+        if (!PieceShapes.TryGetValue(id, out BuildPieceShape shape)) return false;
+        if (!BuildEdit.TryApply(shape, state, out BuildPieceShape edited)) return false;
+        PieceShapes[id] = edited;
+        PieceVersion++;
+        return true;
+    }
+
+    // 기능: 조각 하나를 잊는다(파괴).
+    // 입력: id - 조각 id.
+    // 출력: 반환값 없음.
+    public void RemovePiece(uint id)
+    {
+        Pieces.Remove(id);
+        if (PieceShapes.Remove(id)) PieceVersion++;
+    }
+
+    // 기능: 아는 조각을 모두 잊는다(Sync reset, 관심 창 이동).
+    // 입력: 없음.
+    // 출력: 반환값 없음. Pieces와 PieceShapes가 빈다.
+    public void ClearPieces()
+    {
+        Pieces.Clear();
+        PieceShapes.Clear();
+        PieceVersion++;
     }
 
     // The other player with this entity id in the latest snapshot.

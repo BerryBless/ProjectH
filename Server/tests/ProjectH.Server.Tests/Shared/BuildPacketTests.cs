@@ -54,7 +54,7 @@ public class BuildPacketTests
         {
             new BuildResult { Code = BuildResultCode.Ok, PieceId = 0 },
             new BuildResult { Code = BuildResultCode.Occupied, PieceId = 3 },
-            new BuildResult { Code = (BuildResultCode)10 },
+            new BuildResult { Code = (BuildResultCode)12 },
         })
         {
             writer = new PacketWriter(_buffer);
@@ -109,38 +109,139 @@ public class BuildPacketTests
             var r = new PacketReader(new ReadOnlySpan<byte>(_buffer, 0, writer.Length));
             Assert.False(BuildPieceRecord.TryReadPlaced(ref r, out _));
         }
+        // Phase 13.5 D8: bits 20-31 are the edit state; one the piece's type does not allow is refused.
         var unused = new byte[14];
         unused[0] = 1;
-        unused[7] = 0x10;   // grid bit 28
+        unused[6] = 0x02;   // type Ramp (grid bits 16-17)
+        unused[7] = 0x10;   // grid bit 28: a ramp's edit is always 0
         var reader = new PacketReader(unused);
         Assert.False(BuildPieceRecord.TryReadPlaced(ref reader, out _));
+        foreach ((BuildPieceType type, int edit) in new[]
+        {
+            (BuildPieceType.Floor, 15), (BuildPieceType.Roof, 7), (BuildPieceType.Wall, 0b101), (BuildPieceType.Wall, 511), (BuildPieceType.Wall, 512),
+        })
+        {
+            var writer = new PacketWriter(_buffer);
+            var shape = new BuildPieceShape(type, 1, 1, 1, 0, edit);
+            BuildPieceRecord.WritePlaced(ref writer, new BuildPieceRecord { Id = 3, Shape = shape });
+            // 512 does not fit the 9 wall tiles: it is written as bit 9 of the 12-bit field.
+            var r = new PacketReader(new ReadOnlySpan<byte>(_buffer, 0, writer.Length));
+            Assert.False(BuildPieceRecord.TryReadPlaced(ref r, out _));
+        }
+    }
+
+    // Phase 13.5 D8: an edited piece's state rides in the grid word and survives the trip, in Placed and in Sync.
+    [Fact]
+    public void AnEditedRecord_RoundTrips_WithTheSameSize()
+    {
+        foreach (BuildPieceShape shape in new[]
+        {
+            new BuildPieceShape(BuildPieceType.Wall, 4, 2, 5, 1, 0b000_010_010),   // a door
+            new BuildPieceShape(BuildPieceType.Wall, 4, 2, 5, 0, 0b111_000_000),   // a half wall
+            new BuildPieceShape(BuildPieceType.Floor, 4, 2, 5, 0, 0b0110),
+            new BuildPieceShape(BuildPieceType.Roof, 4, 2, 5, 0, BuildEdit.RoofPassage),
+            new BuildPieceShape(BuildPieceType.Roof, 4, 2, 5, 0, BuildEdit.RoofSlopeLast),
+        })
+        {
+            var p = new BuildPieceRecord { Id = 9, Shape = shape, Material = BuildMaterialType.Stone, Owner = 3, CreatedTick = 77, Damage = 12 };
+            var writer = new PacketWriter(_buffer);
+            BuildPieceRecord.WritePlaced(ref writer, p);
+            Assert.Equal(14, writer.Length);
+            var r = new PacketReader(new ReadOnlySpan<byte>(_buffer, 0, writer.Length));
+            Assert.True(BuildPieceRecord.TryReadPlaced(ref r, out BuildPieceRecord back));
+            Assert.Equal(shape, back.Shape);
+            writer = new PacketWriter(_buffer);
+            BuildPieceRecord.WriteSync(ref writer, p);
+            Assert.Equal(16, writer.Length);
+            r = new PacketReader(new ReadOnlySpan<byte>(_buffer, 0, writer.Length));
+            Assert.True(BuildPieceRecord.TryReadSync(ref r, out back));
+            Assert.Equal((shape, (ushort)12), (back.Shape, back.Damage));
+        }
+    }
+
+    // Phase 13.5 D4: the edit request is 9 bytes and round-trips; any other length is refused.
+    [Fact]
+    public void BuildEditRequest_Is9Bytes_AndRoundTrips()
+    {
+        var writer = new PacketWriter(_buffer);
+        BuildEditRequest.Write(ref writer, new BuildEditRequest { Sequence = 65535, PieceId = 123456, State = BuildEdit.PackState(16, 2) });
+        Assert.Equal(BuildEditRequest.Size, writer.Length);
+        Assert.Equal(9, writer.Length);
+        Assert.Equal((byte)PacketId.BuildEditRequest, _buffer[0]);
+        Assert.Equal(35, (byte)PacketId.BuildEditRequest);
+        var r = After(writer.Length, PacketId.BuildEditRequest);
+        Assert.True(BuildEditRequest.TryRead(ref r, out BuildEditRequest back));
+        Assert.Equal(((ushort)65535, 123456u, BuildEdit.PackState(16, 2)), (back.Sequence, back.PieceId, back.State));
+        for (int length = 1; length < 12; length++)
+        {
+            if (length == 9) continue;
+            var reader = new PacketReader(new ReadOnlySpan<byte>(_buffer, 1, length - 1));
+            Assert.False(BuildEditRequest.TryRead(ref reader, out _));
+        }
+    }
+
+    // Phase 13.5 D9: the two new codes read back; a refusal still carries id 0 and an Ok an id.
+    [Fact]
+    public void TheEditResults_ReadBack_AndKeepTheIdRule()
+    {
+        foreach (BuildResultCode code in new[] { BuildResultCode.NotOwner, BuildResultCode.NotFound })
+        {
+            var writer = new PacketWriter(_buffer);
+            BuildResult.Write(ref writer, new BuildResult { Sequence = 4, Code = code, PieceId = 0 });
+            var r = After(writer.Length, PacketId.BuildResult);
+            Assert.True(BuildResult.TryRead(ref r, out BuildResult back));
+            Assert.Equal(code, back.Code);
+            writer = new PacketWriter(_buffer);
+            BuildResult.Write(ref writer, new BuildResult { Sequence = 4, Code = code, PieceId = 8 });
+            r = After(writer.Length, PacketId.BuildResult);
+            Assert.False(BuildResult.TryRead(ref r, out _));
+        }
+    }
+
+    // Phase 13.5 D8: an Edited record refuses id 0 and bits 14-15.
+    [Fact]
+    public void AnEditedRecord_RefusesIdZero_AndTheTopBits()
+    {
+        foreach ((uint id, ushort state, bool ok) in new[] { (5u, (ushort)0x3FFF, true), (0u, (ushort)1, false), (5u, (ushort)0x4000, false), (5u, (ushort)0x8000, false) })
+        {
+            var writer = new PacketWriter(_buffer);
+            BuildEventsPacket.WriteEdited(ref writer, id, state);
+            var r = new PacketReader(new ReadOnlySpan<byte>(_buffer, 0, writer.Length));
+            Assert.Equal(ok, BuildEventsPacket.TryReadEdited(ref r, out _, out _));
+        }
     }
 
     [Fact]
-    public void Destroyed_Is4Bytes_Health6_AndTheHeader8()
+    public void Destroyed_Is4Bytes_Edited6_Health6_AndTheHeader9()
     {
         var writer = new PacketWriter(_buffer);
         BuildEventsPacket.WriteHeader(ref writer, 99);
+        Assert.Equal(9, BuildEventsPacket.HeaderSize);
         Assert.Equal(BuildEventsPacket.HeaderSize, writer.Length);
         int before = writer.Length;
+        BuildEventsPacket.WriteEdited(ref writer, 5, BuildEdit.PackState(16, 1));
+        Assert.Equal(6, writer.Length - before);
+        before = writer.Length;
         BuildEventsPacket.WriteHealth(ref writer, 7, 120);
         Assert.Equal(6, writer.Length - before);
         before = writer.Length;
         BuildEventsPacket.WriteDestroyed(ref writer, 8);
         Assert.Equal(4, writer.Length - before);
-        BuildEventsPacket.Patch(_buffer, 0, 1, 1);
+        BuildEventsPacket.Patch(_buffer, 0, 1, 1, 1);
         var r = After(writer.Length, PacketId.BuildEvents);
-        Assert.True(BuildEventsPacket.TryReadHeader(ref r, out uint version, out int placed, out int health, out int destroyed));
-        Assert.Equal((99u, 0, 1, 1), (version, placed, health, destroyed));
+        Assert.True(BuildEventsPacket.TryReadHeader(ref r, out uint version, out int placed, out int edited, out int health, out int destroyed));
+        Assert.Equal((99u, 0, 1, 1, 1), (version, placed, edited, health, destroyed));
+        Assert.True(BuildEventsPacket.TryReadEdited(ref r, out uint eid, out ushort state));
+        Assert.Equal((5u, BuildEdit.PackState(16, 1)), (eid, state));
         Assert.True(BuildEventsPacket.TryReadHealth(ref r, out uint hid, out ushort damage));
         Assert.Equal((7u, (ushort)120), (hid, damage));
         Assert.True(BuildEventsPacket.TryReadDestroyed(ref r, out uint did));
         Assert.Equal(8u, did);
 
         // Counts that do not match the bytes are refused.
-        BuildEventsPacket.Patch(_buffer, 1, 1, 1);
+        BuildEventsPacket.Patch(_buffer, 1, 1, 1, 1);
         r = After(writer.Length, PacketId.BuildEvents);
-        Assert.False(BuildEventsPacket.TryReadHeader(ref r, out _, out _, out _, out _));
+        Assert.False(BuildEventsPacket.TryReadHeader(ref r, out _, out _, out _, out _, out _));
     }
 
     [Fact]
@@ -236,11 +337,12 @@ public class BuildPacketTests
                 Assert.True(length <= ProtocolConstants.MaxPacketSize);
                 var r = new PacketReader(new ReadOnlySpan<byte>(buffer, 0, length));
                 Assert.True(r.TryReadPacketId(out _));
-                Assert.True(BuildEventsPacket.TryReadHeader(ref r, out uint version, out int p, out int h, out int d));
+                Assert.True(BuildEventsPacket.TryReadHeader(ref r, out uint version, out int p, out int e, out int h, out int d));
                 Assert.Equal(replication.Version, version);
                 // Inside one packet, and across packets, placed come before health before destroyed.
                 if (h > 0 || d > 0) Assert.Equal(cells == ulong.MaxValue ? 100 : 16, placed + p);
                 for (int i = 0; i < p; i++) Assert.True(BuildPieceRecord.TryReadPlaced(ref r, out _));
+                Assert.Equal(0, e);
                 for (int i = 0; i < h; i++) Assert.True(BuildEventsPacket.TryReadHealth(ref r, out _, out _));
                 for (int i = 0; i < d; i++)
                 {

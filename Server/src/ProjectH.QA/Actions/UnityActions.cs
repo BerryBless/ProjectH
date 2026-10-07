@@ -21,7 +21,7 @@ public static partial class UnityActions
     public static readonly string[] InputKeys =
     {
         "w", "a", "s", "d", "space", "leftShift", "leftCtrl", "c", "q", "f", "z", "x", "v", "b", "t", "r", "e", "g",
-        "1", "2", "3", "4", "5", "escape", "f1",
+        "1", "2", "3", "4", "5", "escape", "f1", "h",
     };
     public static readonly string[] InputButtons = { "left", "right" };
     public static readonly string[] InputPhases = { "down", "up" };
@@ -117,7 +117,7 @@ public static partial class UnityActions
     public static readonly string[] HeadlessOnly =
     {
         "reconnect", "moveTo", "moveVector", "look", "aim", "fire", "stopFire", "press", "release", "switchWeapon", "jump", "sprint",
-        "crouch", "build", "pauseInput", "resumeInput", "playInputs",
+        "crouch", "build", "buildEdit", "pauseInput", "resumeInput", "playInputs",
     };
 
     private static IEnumerable<string> CheckName(StepDefinition s)

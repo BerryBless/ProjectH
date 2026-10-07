@@ -97,7 +97,8 @@ public sealed class Match
     // never backed up, tests). Above MaxBuildBacklog its sync waits; events, interest and results still go.
     private readonly Func<int, int>? _buildBacklog;
     public const int MaxBuildBacklog = 32;
-    private readonly long[] _buildResults = new long[(int)BuildResultCode.BudgetFull + 1];
+    // Every result code (Phase 13.5 D9: up to NotFound), placements and edits together (one queue, one sequence).
+    private readonly long[] _buildResults = new long[(int)BuildResultCode.NotFound + 1];
     private readonly bool _infiniteResources;
     private readonly BuildCatalogData _buildCatalogWire;
     // Participants who left during the current match, recorded when they left (they are no longer in _players).
@@ -249,6 +250,8 @@ public sealed class Match
     // without a result (a sequence already processed).
     public long BuildResults(BuildResultCode code) => _buildResults[(int)code];
     public long BuildDuplicates { get; private set; }
+    // Phase 13.5: edits that changed a piece (an Ok whose state was already the piece's is not counted here).
+    public long BuildEdits { get; private set; }
     // Phase 13 D18: pieces destroyed (by damage or, Phase 13 D12, collapse) since this match object was made, and of
     // those the ones that collapsed.
     public long PiecesDestroyed { get; private set; }
@@ -266,7 +269,7 @@ public sealed class Match
         for (int i = 1; i < _buildResults.Length; i++) rejected += _buildResults[i];
         return new BuildCounts(_build.Count, _build.Grid.OccupiedColumns, rejected + _buildResults[0] + BuildDuplicates, _buildResults[0],
             rejected, PiecesDestroyed, PiecesCollapsed, BuildDuplicates, HarvestHits, EnvironmentDestroyed, BuildEventPackets, BuildSyncPackets,
-            PiecesDestroyed - PiecesCollapsed, SyncsDeferred);
+            PiecesDestroyed - PiecesCollapsed, SyncsDeferred, BuildEdits);
     }
     internal BuildSupport Support => _support;
     public int BuildPieces => _build.Count;
@@ -398,9 +401,11 @@ public sealed class Match
         for (int i = 0; i < packet.Count; i++) player.Inputs.Add(packet.Get(i));
     }
 
-    // Phase 13 D8: a build request from the network (GameLoop.DrainBuild). It waits in the player's queue for the next
-    // tick; a full queue refuses it at once (RateLimited), so a flood costs one small answer each and no memory.
-    public void EnqueueBuild(int peerId, in BuildRequest request)
+    // 기능: 네트워크에서 온 건설 요청(배치 또는 편집, GameLoop.DrainBuild)을 플레이어 큐에 넣는다. 다음 Tick에 처리된다.
+    //   큐가 가득 차면 바로 RateLimited로 답한다(홍수는 작은 답 하나씩만 들고 메모리는 늘지 않는다).
+    // 입력: peerId - 연결 id, request - 요청.
+    // 출력: 반환값 없음. 큐에 들어가거나 RateLimited 결과가 전송된다.
+    public void EnqueueBuild(int peerId, in BuildQueueItem request)
     {
         if (!_playersByPeer.TryGetValue(peerId, out var player)) return;
         if (!player.BuildQueue.TryAdd(request))
@@ -409,6 +414,16 @@ public sealed class Match
             SendBuildResult(player, request.Sequence, BuildResultCode.RateLimited, 0);
         }
     }
+
+    // 기능: 배치 요청을 큐에 넣는다(테스트·호환용, EnqueueBuild(BuildQueueItem)과 같다).
+    // 입력: peerId - 연결 id, request - 배치 요청.
+    // 출력: 반환값 없음.
+    public void EnqueueBuild(int peerId, in BuildRequest request) => EnqueueBuild(peerId, new BuildQueueItem(request));
+
+    // 기능: 편집 요청을 큐에 넣는다(Phase 13.5 D4, 배치와 같은 큐).
+    // 입력: peerId - 연결 id, request - 편집 요청.
+    // 출력: 반환값 없음.
+    public void EnqueueEdit(int peerId, in BuildEditRequest request) => EnqueueBuild(peerId, new BuildQueueItem(request));
 
     public void Tick()
     {
@@ -578,31 +593,179 @@ public sealed class Match
         return _collision;
     }
 
-    // Phase 13 D8, D9: each player's waiting requests, oldest first. One placement per player per MinBuildInterval: once a
-    // piece is placed the rest wait for a later tick (not refused); a refused request does not use the interval. A
-    // sequence that is not newer than the last one processed is dropped (a replay or a duplicate, request §149).
+    // 기능: 플레이어마다 기다리는 건설 요청(배치·편집)을 오래된 순서로 처리한다(Phase 13 D8, D9, Phase 13.5 D4).
+    //   MinBuildInterval마다 하나만 반영한다: 조각을 놓거나 바꾼 요청 뒤의 요청은 다음 Tick까지 기다린다(거절하지 않는다).
+    //   거절된 요청과 상태가 같아 아무것도 바꾸지 않은 편집(Ok)은 간격을 쓰지 않는다. 마지막으로 처리한 순번보다 새롭지
+    //   않은 순번은 버린다(재전송·중복, 요청서 §149). 배치와 편집은 같은 순번 공간을 쓴다.
+    // 입력: now - 마지막으로 끝난 Tick.
+    // 출력: 반환값 없음. 조각이 놓이거나 편집되고 요청마다 BuildResult가 전송된다.
     private void ProcessBuildRequests(uint now)
     {
         foreach (var player in _players)
         {
             while (player.BuildQueue.Count > 0 && now >= player.NextBuildTick)
             {
-                player.BuildQueue.TryTake(out BuildRequest request);
-                if (player.HasBuildSequence && !BuildRequest.IsNewer(request.Sequence, player.LastBuildSequence))
+                player.BuildQueue.TryTake(out BuildQueueItem request);
+                ushort sequence = request.Sequence;
+                if (player.HasBuildSequence && !BuildRequest.IsNewer(sequence, player.LastBuildSequence))
                 {
                     BuildDuplicates++;
                     continue;
                 }
-                player.LastBuildSequence = request.Sequence;
+                player.LastBuildSequence = sequence;
                 player.HasBuildSequence = true;
-                BuildResultCode code = TryBuild(player, request, now + 1, out uint id);
+                BuildResultCode code;
+                uint id;
+                bool changed;
+                if (request.IsEdit)
+                {
+                    code = TryEdit(player, request.Edit, out id, out changed);
+                }
+                else
+                {
+                    code = TryBuild(player, request.Place, now + 1, out id);
+                    changed = code == BuildResultCode.Ok;
+                }
                 _buildResults[(int)code]++;
-                SendBuildResult(player, request.Sequence, code, id);
-                if (code != BuildResultCode.Ok) continue;
+                SendBuildResult(player, sequence, code, id);
+                if (!changed) continue;
                 player.NextBuildTick = now + _building.MinBuildIntervalTicks;
                 break;
             }
         }
+    }
+
+    // 기능: 편집 요청을 검증하고 맞으면 조각 모양을 바꾼다(Phase 13.5 D5). 순서대로 보고 처음 걸린 이유로 답한다:
+    //   1 살아 있음·경기 진행·행동 가능 모드(도구는 보지 않는다, §29) → InvalidState, 2 조각 있음 → NotFound,
+    //   3 BuildRules.CanEdit → NotOwner, 4 BuildEdit.TryApply(유효한 상태, Ramp 외 회전 불변) → InvalidRequest,
+    //   (상태가 지금과 같으면 여기서 Ok, 아무것도 바꾸지 않음), 5 InReach → OutOfRange, 6 맵·문·지형 또는 대상 외 조각이 시선을
+    //   막음 → Blocked, 7 새로 막히는 부분이 캐릭터를 가르거나 Vault 경로를 가로지르거나 올린 몸이 들어가지 않음 → Blocked,
+    //   8 Ramp 회전 변경 뒤 접지도 이웃도 없음 → Unsupported. 성공하면 id·소유자·재료·진행·피해는 그대로 두고 모양만 바꾼다(D6).
+    // 입력: player - 요청한 플레이어, request - 편집 요청, id - 결과 조각 id, changed - 결과 변경 여부.
+    // 출력: 결과 코드. Ok면 id = 대상 id(changed = 모양이 실제로 바뀌었는지), 거절이면 id 0과 changed false.
+    private BuildResultCode TryEdit(PlayerEntity player, in BuildEditRequest request, out uint id, out bool changed)
+    {
+        id = 0;
+        changed = false;
+        if (!player.Alive || _flow.State == MatchFlowState.Finished || _flow.State == MatchFlowState.Closing || !ActionsAllowed(player.State.Mode))
+            return BuildResultCode.InvalidState;
+        if (request.PieceId == 0 || !_build.TryGetSlot(request.PieceId, out int slot)) return BuildResultCode.NotFound;
+        BuildPiece piece = _build.At(slot);
+        if (!BuildRules.CanEdit(player.EntityId, piece)) return BuildResultCode.NotOwner;
+        BuildPieceShape before = piece.Shape;
+        if (!BuildEdit.TryApply(before, request.State, out BuildPieceShape after)) return BuildResultCode.InvalidRequest;
+        if (after.Equals(before))
+        {
+            // D5: confirming the state the piece already has is Ok and changes nothing (no event, no interval): a resent
+            // or repeated confirm is idempotent.
+            id = piece.Id;
+            return BuildResultCode.Ok;
+        }
+
+        Vector3 eye = player.State.Position + new Vector3(0f, CombatRules.EyeHeightOf(player.State.Mode), 0f);
+        if (!CombatRules.TryAimDirection(player.LastInput.AimYaw, player.LastInput.AimPitch, out Vector3 aim) ||
+            !BuildRules.InReach(eye, aim, before, _building.BuildRange, _building.ViewAngleDegrees))
+            return BuildResultCode.OutOfRange;
+        if (BuildRules.BehindAWall(eye, before, _doors.World, GameMap.Terrain) || BuildRules.BehindAPiece(eye, before, piece.Id, _build) ||
+            EditCutsAPlayer(piece.Id, before, after))
+            return BuildResultCode.Blocked;
+
+        if (!ApplyEdit(slot, before, after)) return BuildResultCode.Unsupported;
+        id = piece.Id;
+        changed = true;
+        return BuildResultCode.Ok;
+    }
+
+    // 기능: 검증이 끝난 편집을 반영한다(D5-8 지지 확인 포함). 모양만 바꾸고(D6), Ramp 회전이면 지지 모서리·Grounded를 다시
+    //   쓰며 잃은 이웃을 Tick 끝 붕괴 탐색에 넣고(D7), Edited 이벤트를 남긴다(D8).
+    // 입력: slot - 조각의 slot, before - 지금 모양, after - 편집 뒤 모양(같은 슬롯 키, 다름).
+    // 출력: 반영했으면 true. Ramp 회전 뒤 접지도 이웃도 없으면 false(아무것도 바뀌지 않는다).
+    private bool ApplyEdit(int slot, in BuildPieceShape before, in BuildPieceShape after)
+    {
+        bool reshaped = after.Type == BuildPieceType.Ramp && after.Rotation != before.Rotation;
+        bool grounded = _build.At(slot).Grounded;
+        if (reshaped)
+        {
+            grounded = BuildSupport.IsGrounded(after, GameMap.Terrain, GameMap.Boxes);
+            if (!grounded && !_support.HasNeighbourOtherThan(after, slot)) return false;
+        }
+        _build.SetShape(slot, after);
+        // D7: only a ramp's turn changes its lattice edges; its lost neighbours and itself are searched at the end of the
+        // tick (CollapseUnsupported), with this tick's destroys.
+        if (_support.Reshape(slot, before, after)) _build.At(slot).Grounded = grounded;
+        _replication.Edited(slot);
+        BuildEdits++;
+        return true;
+    }
+
+    // 기능: QA-1 editBuild: 플레이어 없이 조각을 편집한다(소유자·사거리·시선·몸 검사 없음, 상태 유효성과 Ramp 지지는 본다).
+    //   Tick 사이에 부르고, 이벤트는 다음 Tick의 BuildEvents로, 붕괴 탐색은 곧바로 돈다(DamagePieceById와 같은 규칙).
+    // 입력: id - 조각 id, state - 새 상태(BuildEdit.PackState).
+    // 출력: Ok(바뀌었거나 이미 같은 상태), NotFound, InvalidRequest, Unsupported.
+    internal BuildResultCode EditPieceById(uint id, ushort state)
+    {
+        if (!_build.TryGetSlot(id, out int slot)) return BuildResultCode.NotFound;
+        BuildPieceShape before = _build.At(slot).Shape;
+        if (!BuildEdit.TryApply(before, state, out BuildPieceShape after)) return BuildResultCode.InvalidRequest;
+        if (after.Equals(before)) return BuildResultCode.Ok;
+        if (!ApplyEdit(slot, before, after)) return BuildResultCode.Unsupported;
+        CollapseUnsupported();
+        return BuildResultCode.Ok;
+    }
+
+    // 기능: 편집으로 새로 막히는 부분이 살아 있는 캐릭터를 가두는지 본다(Phase 13.5 D5-7, 배치의 CutsAPlayer를 새 부분에만).
+    //   벽·바닥: 다시 채워지는 칸들(합친 상자)이 몸 중심을 품거나 진행 중인 Vault 경로를 가로지르면 true. 뚫기만 하는 편집은
+    //   공간을 넓힐 뿐이라 false. 지붕: 새 모양 전체(평지붕·통로는 어떤 지붕의 부피 안이라 몸 중심 검사만 의미가 있다).
+    //   경사면(Ramp 회전, 경사 지붕): 배치처럼 Vault 경로와, 몸을 올린 자리에 새 모양을 넣은 World에서 몸이 들어가는지.
+    // 입력: id - 대상 조각 id, before - 지금 모양, after - 편집 뒤 모양.
+    // 출력: 누군가를 가두면 true.
+    private bool EditCutsAPlayer(uint id, in BuildPieceShape before, in BuildPieceShape after)
+    {
+        Span<Box> parts = stackalloc Box[BuildGrid.MaxPartsPerPiece];
+        int count;
+        bool slope;
+        if (after.Type == BuildPieceType.Wall || after.Type == BuildPieceType.Floor)
+        {
+            int tileMask = (1 << BuildEdit.TileCount(after.Type)) - 1;
+            int refilled = before.Edit & ~after.Edit & tileMask;
+            if (refilled == 0) return false;
+            // Only the refilled tiles: the shape whose holes are every other tile (PartsOf merges them into few boxes).
+            var newPart = new BuildPieceShape(after.Type, after.X, after.Y, after.Z, after.Rotation, ~refilled & tileMask);
+            count = BuildGrid.PartsOf(newPart, parts, out slope);
+        }
+        else
+        {
+            count = BuildGrid.PartsOf(after, parts, out slope);
+        }
+        Box bounds = BuildGrid.BoundsOf(after);
+        foreach (var p in _players)
+        {
+            if (!p.Alive) continue;
+            float height = MovementSimulation.CollisionHeight(p.State.Mode);
+            bool vaulting = p.State.Mode == MovementMode.Vault && p.State.ModeTicks > 0;
+            for (int i = 0; i < count; i++)
+            {
+                if (BuildRules.BoxHoldsBodyCentre(parts[i], p.State.Position, height)) return true;
+                if (vaulting && VaultPathOverlaps(p.State, height, parts[i])) return true;
+            }
+            if (!slope) continue;
+            if (vaulting && VaultPathOverlaps(p.State, height, bounds)) return true;
+            if (BuildRules.Lifts(after, p.State.Position, height, out Vector3 lifted) && LiftedPenetrates(id, before, after, lifted, height, p.State.Position))
+                return true;
+        }
+        return false;
+    }
+
+    // 기능: 편집 뒤 모양을 잠깐 Grid에 넣고 올린 몸이 어딘가에 박히는지 본 뒤 원래 모양으로 되돌린다(옛 경사면 때문에 잘못
+    //   거부하지 않게). Game Loop 스레드에서만 부르며 사이에 다른 코드가 Grid를 읽지 않는다.
+    // 입력: id - 조각 id, before·after - 지금·편집 뒤 모양, lifted - 올린 발 위치, height - 몸 높이, feet - 원래 발 위치(수집 중심).
+    // 출력: 몸이 들어가지 않으면 true.
+    private bool LiftedPenetrates(uint id, in BuildPieceShape before, in BuildPieceShape after, Vector3 lifted, float height, Vector3 feet)
+    {
+        _build.Grid.SetShape(id, after);
+        bool penetrates = MovementSimulation.Penetrates(lifted, height, GatherAround(feet));
+        _build.Grid.SetShape(id, before);
+        return penetrates;
     }
 
     // D9 (request §45): every check in order; the first that fails is the answer, and nothing changes then. On success the

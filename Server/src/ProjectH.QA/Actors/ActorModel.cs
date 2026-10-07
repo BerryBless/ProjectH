@@ -80,6 +80,11 @@ public sealed record ActorState
     public int BuildsQueued { get; init; }
     public IReadOnlyList<BuildResultInfo> BuildResults { get; init; } = Array.Empty<BuildResultInfo>();
     public const int MaxBuildResults = 64;
+    // Phase 13.5 buildEdit: the pieces this actor's edit commands named (at most MaxWatchedPieces, by id as text), as its
+    // own client view holds them now (known = in the view; edit and rotation from Placed, Sync and Edited records).
+    // actor.watchedPieces.<id>.edit reads the client's state, e.g. after a reconnect's sync.
+    public IReadOnlyDictionary<string, WatchedPiece> WatchedPieces { get; init; } = new Dictionary<string, WatchedPiece>();
+    public const int MaxWatchedPieces = 32;
     // QA-4 UnityClient actors: the player's latest GET /qa/status body (null for headless actors). Assertions read it as
     // actor.unity.<field> (screen, joined, statsOpen, debugVisible, fps...).
     public JsonElement? Unity { get; init; }
@@ -135,6 +140,19 @@ public sealed record PauseInputCommand(bool Paused) : ActorCommand;
 public sealed record BuildCommand(IReadOnlyList<BuildPlan> Pieces) : ActorCommand;
 public readonly record struct BuildPlan(BuildPieceType Piece, BuildMaterialType Material, byte X, byte Y, byte Z, byte Rotation, Vec3 AimAt);
 public readonly record struct BuildResultInfo(int Sequence, string Code, uint PieceId);
+// Phase 13.5 D13: real edit requests over the game protocol. Paced (Burst false): per edit AimTicksPerBuild ticks aiming
+// at the piece, then the request after the input that carries the aim (no tool needed, §29). Burst: every request sent
+// at once in the pump tick that applies the command (a client ignoring the interval: RateLimited when the server queue is
+// full). ReuseSequence: sent with the last sequence again (duplicates, which the server drops without an answer).
+public sealed record BuildEditCommand(IReadOnlyList<EditPlan> Edits, bool Burst, bool ReuseSequence) : ActorCommand
+{
+    public const int MaxEdits = 16;
+}
+// One edit. The target: PieceId, or (PieceId 0) the piece in Slot's slot as this actor's view knows it (none known: id 0,
+// which the server answers NotFound). State: RawState when >= 0 (sent as is, for refusals), else Edit with Rotation
+// (-1 = the piece's current rotation in the view, else 0).
+public readonly record struct EditPlan(uint PieceId, BuildPieceShape? Slot, int Edit, int Rotation, int RawState);
+public readonly record struct WatchedPiece(bool Known, int Edit, int Rotation);
 // QA-3 (D14): raw packets sent as they are over the live connection (invalid-packet tests). At most MaxRawPackets.
 public sealed record SendRawCommand(IReadOnlyList<byte[]> Packets) : ActorCommand
 {

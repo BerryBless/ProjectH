@@ -58,6 +58,23 @@ public static class BuildRules
         return wall < entry - LineOfSightSlack;
     }
 
+    // 기능: 눈에서 조각 중심까지의 선분이 대상이 아닌 다른 조각을 대상보다 먼저 맞히는지 본다(Phase 13.5 D5-6 편집 시선).
+    //   대상 자신은 보지 않으므로 창·문 너머의 중심도 대상 탓에 막히지 않는다.
+    // 입력: eye - 눈 위치, shape - 대상 모양, targetId - 대상 조각 id, world - 조각들.
+    // 출력: 다른 조각이 먼저 맞으면 true.
+    public static bool BehindAPiece(Vector3 eye, in BuildPieceShape shape, uint targetId, BuildWorld world)
+    {
+        Box bounds = BuildGrid.BoundsOf(shape);
+        Vector3 toCenter = bounds.Center - eye;
+        float distance = toCenter.Length();
+        if (distance < 1e-4f) return false;
+        Vector3 direction = toCenter / distance;
+        if (!HitScan.IntersectAabb(eye, direction, bounds.Min, bounds.Max, distance, out float entry)) entry = distance;
+        float range = entry - LineOfSightSlack;
+        if (!(range > 0f)) return false;
+        return PieceTrace.Trace(eye, direction, range, world, out _, out _, out _, targetId);
+    }
+
     // D9: the piece's top is buried under the terrain at its centre.
     public static bool Buried(in BuildPieceShape shape, HeightField terrain)
     {
@@ -80,22 +97,44 @@ public static class BuildRules
                z > MathF.Min(MaxMapOverlap, size.Z * 0.5f);
     }
 
-    // D9: a wall or floor whose box holds a character's body centre would cut through it. Ramps and roofs lift a character
-    // standing in them onto their surface instead (D2), so they never count.
+    // 기능: 조각의 상자 부분(PartsOf) 중 하나가 캐릭터의 몸 중심을 품는지 본다(D9: 그 몸을 가른다). 경사면(Ramp, 사각뿔·한쪽
+    //   경사 지붕)은 몸을 표면 위로 올리므로(D2, Lifts) 세지 않는다. Phase 13.5: 편집된 벽은 남은 부분만 본다.
+    // 입력: shape - 조각 모양, feet - 발 위치, height - 몸 높이.
+    // 출력: 몸 중심이 상자 부분 안에 있으면 true.
     public static bool HoldsBodyCentre(in BuildPieceShape shape, Vector3 feet, float height)
     {
-        if (BuildGrid.IsSlope(shape.Type)) return false;
-        Box b = BuildGrid.BoxOf(shape);
+        Span<Box> parts = stackalloc Box[BuildGrid.MaxPartsPerPiece];
+        int count = BuildGrid.PartsOf(shape, parts, out _);
+        for (int i = 0; i < count; i++)
+        {
+            if (BoxHoldsBodyCentre(parts[i], feet, height)) return true;
+        }
+        return false;
+    }
+
+    // 기능: 상자 하나가 캐릭터의 몸 중심을 품는지 본다(경계는 열린 구간).
+    // 입력: b - 상자, feet - 발 위치, height - 몸 높이.
+    // 출력: 몸 중심이 상자 안에 있으면 true.
+    public static bool BoxHoldsBodyCentre(in Box b, Vector3 feet, float height)
+    {
         Vector3 c = feet + new Vector3(0f, height * 0.5f, 0f);
         return c.X > b.Min.X && c.X < b.Max.X && c.Y > b.Min.Y && c.Y < b.Max.Y && c.Z > b.Min.Z && c.Z < b.Max.Z;
     }
 
-    // Final review B6: a ramp or roof whose slab holds part of a character's body lifts it onto its surface (D2). Returns
-    // true and the feet up there when it does; the caller refuses the piece if the body does not fit there.
+    // 기능: 플레이어가 이 조각을 편집할 수 있는지 본다(Phase 13.5 D5-3, 요청서 §12). 지금은 소유자 본인만. Phase 14 팀 공유는
+    //   이 함수만 고친다.
+    // 입력: editor - 편집하려는 플레이어의 Entity id, piece - 대상 조각.
+    // 출력: 편집할 수 있으면 true.
+    public static bool CanEdit(ushort editor, in BuildPiece piece) => piece.Owner != 0 && piece.Owner == editor;
+
+    // 기능: 경사면 조각의 판이 캐릭터 몸 일부를 품으면 표면 위로 올린 발 위치를 낸다(Final review B6, D2). 호출자는 그 자리에
+    //   몸이 들어가지 않으면 배치·편집을 거부한다. Phase 13.5: 평지붕·통로는 경사면이 아니다(HasSlope).
+    // 입력: shape - 조각 모양, feet - 발 위치, height - 몸 높이, lifted - 결과.
+    // 출력: 올리면 true와 올린 발 위치, 아니면 false(lifted = feet).
     public static bool Lifts(in BuildPieceShape shape, Vector3 feet, float height, out Vector3 lifted)
     {
         lifted = feet;
-        if (!BuildGrid.IsSlope(shape.Type)) return false;
+        if (!BuildGrid.HasSlope(shape)) return false;
         Slope slope = BuildGrid.SlopeOf(shape);
         const float w = MoveSettings.HalfWidth;
         if (!slope.Range(feet.X - w, feet.Z - w, feet.X + w, feet.Z + w, out _, out float high, out float bottom)) return false;

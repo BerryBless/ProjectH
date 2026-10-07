@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "name": "Edit Then Reset",
+  "description": "Phase 13.5 D13: A builds a stone wall, it takes damage, A opens a door and then resets it (the same request with Edit 0): the wall is back to its original shape with the same id and the damaged health it had (D6: edits keep id, owner, material, progress and health).",
+  "tags": ["building", "edit"],
+  "seed": 9302,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 12.5, "z": -11, "yaw": 180 } },
+    { "id": "a_stone", "action": "giveResource", "actor": "playerA", "material": "stone", "amount": 50 },
+    { "id": "a_stone_in", "action": "waitFor", "condition": "player.resources.stone", "actor": "playerA", "greaterThan": 0, "timeoutMilliseconds": 2000 },
+    { "id": "a_build", "action": "build", "actor": "playerA", "piece": "wall", "material": "stone", "cellX": 18, "level": 0, "cellZ": 13, "rotation": 0, "saveAs": "wall" },
+    { "id": "construction", "action": "wait", "milliseconds": 3500, "description": "Stone reaches its full health (building.json constructionTime)" },
+    { "id": "hit", "action": "damageBuild", "pieceId": "${wall.pieceId}", "amount": 40 },
+    { "id": "hp_after_hit", "action": "save", "path": "build.piece.health", "pieceId": "${wall.pieceId}", "saveAs": "hp" },
+
+    { "id": "a_door", "phase": "act", "action": "buildEdit", "actor": "playerA", "pieceId": "${wall.pieceId}", "preset": "door" },
+    { "id": "door_open", "phase": "assert", "action": "waitFor", "condition": "build.piece.edit", "pieceId": "${wall.pieceId}", "equals": 18, "timeoutMilliseconds": 2000 },
+    { "id": "a_reset", "phase": "act", "action": "buildEdit", "actor": "playerA", "pieceId": "${wall.pieceId}", "preset": "reset", "saveAs": "reset" },
+    { "id": "reset_done", "phase": "assert", "action": "waitFor", "condition": "build.piece.edit", "pieceId": "${wall.pieceId}", "equals": 0, "timeoutMilliseconds": 2000 },
+    { "id": "same_id", "assert": "var.reset.pieceId", "equals": "${wall.pieceId}" },
+    { "id": "hp_kept", "assert": "build.piece.health", "pieceId": "${wall.pieceId}", "equals": "${hp}" },
+    { "id": "material_kept", "assert": "build.piece.material", "pieceId": "${wall.pieceId}", "equals": "Stone" },
+    { "id": "client_reset", "action": "waitFor", "condition": "actor.watchedPieces.${wall.pieceId}.edit", "actor": "playerA", "equals": 0, "timeoutMilliseconds": 2000 },
+    { "id": "reset_again", "phase": "act", "action": "buildEdit", "actor": "playerA", "pieceId": "${wall.pieceId}", "preset": "reset", "description": "Confirming the same state is Ok and changes nothing (idempotent)" },
+    { "id": "still_reset", "phase": "assert", "assert": "build.piece.edit", "pieceId": "${wall.pieceId}", "equals": 0 }
+  ]
+}

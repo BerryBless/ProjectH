@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "name": "Edit Versus Destroy And Collapse",
+  "description": "Phase 13.5 D13: an edit of a piece destroyed just before is answered NotFound. A floor held up only by a wall is edited (burst) and the wall is broken right after: the floor collapses and nothing of it is left (no piece, no client state), and a late edit of it is NotFound. The same-tick edit-then-destroy case is the server test BuildEditTests.AnEditedPieceDestroyedInTheSameTick_SendsOnlyItsDestroy.",
+  "tags": ["building", "edit"],
+  "seed": 9304,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 12.5, "z": -11, "yaw": 180 } },
+    { "id": "a_wood", "action": "giveResource", "actor": "playerA", "material": "wood", "amount": 100 },
+    { "id": "a_wood_in", "action": "waitFor", "condition": "player.resources.wood", "actor": "playerA", "greaterThan": 0, "timeoutMilliseconds": 2000 },
+
+    { "id": "a_wall1", "action": "build", "actor": "playerA", "piece": "wall", "material": "wood", "cellX": 18, "level": 0, "cellZ": 13, "rotation": 0, "saveAs": "gone" },
+    { "id": "break1", "phase": "act", "action": "damageBuild", "pieceId": "${gone.pieceId}", "amount": 100000 },
+    { "id": "gone_1", "phase": "assert", "action": "waitFor", "condition": "build.exists", "pieceId": "${gone.pieceId}", "equals": false, "timeoutMilliseconds": 2000 },
+    { "id": "edit_gone", "phase": "act", "action": "buildEdit", "actor": "playerA", "pieceId": "${gone.pieceId}", "preset": "door", "expect": "NotFound" },
+
+    { "id": "a_wall2", "phase": "arrange", "action": "build", "actor": "playerA", "piece": "wall", "material": "wood", "cellX": 18, "level": 0, "cellZ": 13, "rotation": 0, "saveAs": "wall" },
+    { "id": "a_floor", "action": "build", "actor": "playerA", "piece": "floor", "material": "wood", "cellX": 18, "level": 1, "cellZ": 13, "saveAs": "floor", "description": "A floor over A's head, held only by the wall's top edge" },
+    { "id": "two_pieces", "action": "waitFor", "condition": "build.count", "at": "QA_Build_Test", "radius": 15, "equals": 2, "timeoutMilliseconds": 2000 },
+
+    { "id": "floor_center", "action": "save", "path": "build.piece.center", "pieceId": "${floor.pieceId}", "saveAs": "fc" },
+    { "id": "a_aim_floor", "action": "aim", "actor": "playerA", "at": "${fc}", "description": "A burst is sent without aim ticks: keep the aim on the floor" },
+    { "id": "edit_floor_now", "phase": "act", "action": "buildEdit", "actor": "playerA", "pieceId": "${floor.pieceId}", "preset": "floorQuarter", "burst": true, "expect": "any", "saveAs": "race" },
+    { "id": "break_wall_now", "action": "damageBuild", "pieceId": "${wall.pieceId}", "amount": 100000 },
+    { "id": "collapse", "phase": "assert", "action": "waitFor", "condition": "build.exists", "pieceId": "${floor.pieceId}", "equals": false, "timeoutMilliseconds": 3000 },
+    { "id": "nothing_left", "action": "waitFor", "condition": "build.count", "at": "QA_Build_Test", "radius": 15, "equals": 0, "timeoutMilliseconds": 2000 },
+    { "id": "client_forgot", "action": "waitFor", "condition": "actor.watchedPieces.${floor.pieceId}.known", "actor": "playerA", "equals": false, "timeoutMilliseconds": 2000 },
+    { "id": "edit_fallen", "phase": "act", "action": "buildEdit", "actor": "playerA", "pieceId": "${floor.pieceId}", "preset": "reset", "expect": "NotFound" }
+  ]
+}

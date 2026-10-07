@@ -240,7 +240,7 @@ namespace ProjectH.Client.Qa
         public static readonly string[] KeyNames =
         {
             "w", "a", "s", "d", "space", "leftShift", "leftCtrl", "c", "q", "f", "z", "x", "v", "b", "t", "r", "e", "g",
-            "1", "2", "3", "4", "5", "escape", "f1",
+            "1", "2", "3", "4", "5", "escape", "f1", "h",
         };
 
         // Every field a body may carry; any other field is a 400, so a typo ("holdms") is not silently a press.

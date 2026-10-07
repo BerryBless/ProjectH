@@ -210,6 +210,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `look` | actor, `yaw`, `pitch?`(-90..90, 양수 = 아래) | 고정 방향 |
 | `aim` | actor, `target`(Actor) \| `at`(위치) \| `clear: true` | `target`은 사수의 최신 Snapshot에 있는 그 Entity의 가슴을 눈 높이에서 조준한다. 보일 때까지 최대 3 s 기다린다. `at`에 y가 없으면 그 지점 지면 + 1.2 m를 조준한다 |
 | `fire` | actor, `count?`(1–500, 기본 1) \| `holdMilliseconds?`, `slot?`(0–2), `target?` | 무기가 오고(UDP) 무기 Tool이 될 때까지 최대 3 s 기다린다. 필요하면 슬롯 키를 누른다. 한 번 누름 = Fire 1 Tick 후, 무기 FireIntervalTicks만큼 뗀다. 반자동 Edge를 만들고 Cooldown 때문에 누름을 잃지 않게 하려는 것이다. 다 누른 뒤 HitConfirmed 수가 150 ms 동안 그대로일 때까지(최대 500 ms) 기다린 다음 `hits`를 읽는다. saveAs = `{presses, hits, ammoBefore, ammoAfter, weapon}` |
+| `buildEdit` | actor, 대상 `pieceId`(예: `${wall.pieceId}`) 또는 `cellX`,`level`,`cellZ`,`piece`,`rotation?`(이 Actor의 Client가 아는 그 칸의 조각), 상태 하나: `preset`(reset, window, door, halfWall, tallOpening, eyeRow, floorHalf, floorQuarter, floorDiagonal, roofFlat, roofPassage) / `edit`(0–4095, 벽 칸 = 열 + 3 × 행, 행 0이 아래) / `rawState`(그대로 보냄, 거절 시험), `editRotation?`(경사로의 새 방향, 기본 지금 회전), `count?`(1–16), `burst?`, `alternate?`, `duplicate?`, `expect?`(Ok, 다른 코드, `any`) | Phase 13.5 실제 `BuildEditRequest`. 도구를 바꾸지 않는다(무기를 든 채 편집).<br>기본: 편집마다 2 Tick 조각 중심을 조준하고 다음 Tick에 Input 뒤에 보낸다.<br>`burst`: 모두 한 번에 보낸다(조준 Tick 없음: 앞에 `aim` 단계를 둔다). 서버 큐 8개가 차면 RateLimited.<br>`alternate`: 짝수 번째를 Reset으로 보내 요청마다 상태가 바뀐다(같은 상태 반복은 간격을 쓰지 않아 큐가 차지 않는다).<br>`duplicate`: 직전 순번으로 다시 보낸다(서버가 답 없이 버린다, 결과를 기다리지 않는다).<br>saveAs = `{sent, codes[], counts{코드: 수}, pieceId}`. 명령에 쓴 조각은 `actor.watchedPieces.<id>.{known, edit, rotation}`(Client가 아는 상태, 최대 32개)로 볼 수 있다 |
 | `build` | actor, `piece`(wall/floor/ramp/roof), `material?`(wood), `cellX`,`level`,`cellZ` 또는 `position`, `rotation?`(0–3), `count?`(1–8), `dx?`,`dz?`(셀 간격), `expect?`(Ok, 또는 `any`나 다른 코드) | 실제 건설 입력이다(BotBuilder와 같은 순서).<br>1. Snapshot이 Build Tool을 보일 때까지 Q(`ToolBuild`)를 누른다(0.5 s 간격).<br>2. 조각마다 2 Tick 동안 조각 중심을 조준하고, 다음 Tick에 Input 뒤에 BuildRequest를 보낸다. 3 Tick = 서버 minimumBuildInterval 0.1 s.<br>3. 마지막 조각 뒤에도 10 Tick 동안 조준을 유지한다.<br>모든 BuildResult를 받으면 끝난다. saveAs = `{sent, accepted, pieceId, pieceIds[], codes[]}`. 끝난 뒤에도 Build Tool에 그대로 있다. `fire`는 슬롯 키로 무기를 다시 꺼낸다 |
 | `pauseInput` / `resumeInput` | actor | 연결은 유지하고 Input만 멈춘다. 다시 시작하면 원래대로 보낸다. 서버의 InputTimeout을 확인할 때 쓴다(§75) |
 | `playInputs` | actor, `file`(시나리오 옆 `.jsonl`, QA/ 밖 금지), `speed?`(0.25–4, 기본 1) (기본 Timeout 60 s) | QA-5 D34: Unity 녹화의 InputCommand를 Tick마다 하나씩 보낸다. 아래 "QA-5" |
@@ -256,6 +257,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `spawnLoot` | `kind`, `position` 또는 `x`,`z`, `id?`, `rarity?`, `amount?` → `result.itemId` |
 | `spawnBuildPiece` | `piece`, `material`, `cellX`,`level`,`cellZ` 또는 `position`, `rotation?` → `result.pieceId` |
 | `damageBuild` | `pieceId`, `amount` → `{destroyed, health, standing}` |
+| `editBuild` | `pieceId`, `edit`(0–4095), `rotation?` → `{code, edit, rotation}` | Phase 13.5. 플레이어 없이 편집한다(소유자·사거리·시선 검사 없음, 상태 유효성과 경사로 지지는 본다). 거절은 409 |
 
 ## Assertions
 
@@ -267,12 +269,12 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `match.<필드…>` | `GET /qa/match` | `match.state`, `match.alive`, `match.winner`, `match.zone.phase`, `match.zone.center` |
 | `match.playerCount`·`aliveCount`·`zonePhase`·`playing` | 별칭 | `playing` = Playing 또는 FinalPhase |
 | `build.count`, `build.<필드>` | `GET /qa/build`(`at`·`radius` 선택) | |
-| `build.exists`, `build.piece.<필드>` | 위 + `pieceId` | `build.piece.health` |
+| `build.exists`, `build.piece.<필드>` | 위 + `pieceId` | `build.piece.health`, `build.piece.edit`(Phase 13.5 편집 상태) |
 | `server.running` | `/qa/health` ok. 응답이 없으면 false | |
 | `server.tickP50Ms`·`tickP95Ms`·`tickP99Ms`·`tickMaxMs`·`memoryMB`·`activeSessions` | `/qa/metrics`(`windowSeconds` 선택) | |
 | `server.health.<…>`, `server.metrics.<…>` | 원본 | `server.metrics.health.tickFailures` |
 | `network.connected`·`joined`·`disconnected`·`rtt`·`packetsIn`·`bytesIn`·`inputsSent`·`disconnectReason`·`disconnectCode` | Actor 연결 | |
-| `actor.<ActorState 필드>` | Actor가 받은 것(Client 시점) | `actor.hitsLanded`, `actor.weaponName`, `actor.position.x` |
+| `actor.<ActorState 필드>` | Actor가 받은 것(Client 시점) | `actor.hitsLanded`, `actor.weaponName`, `actor.position.x`, `actor.watchedPieces.${wall.pieceId}.edit`(buildEdit가 지정한 조각의 Client 상태) |
 | `event.<Type>` | 이번 실행에서 받은 이벤트 수(최근 200개, `actor`가 있으면 그 플레이어만) | |
 | `var.<name…>` | 변수 | `var.shots.hits` |
 | `group.<name>.<…>` | Stress: Actor Group(Tool 쪽, 서버 조회 없음) | `group.combat.hitsLanded`, `group.builders.buildResults.Ok`, `group.churn.stats.reconnectFailures`, `group.all.size` |
@@ -331,7 +333,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `captureScreenshot` | actor, `name`(`[A-Za-z0-9_-]{1,64}`) | `screenshots/<Step 번호>_<alias>_<name>.png`(64자 이내).<br>Step 번호가 있어서, 영문이 아닌 Alias가 같은 문자로 바뀌거나 잘려도 파일이 겹치지 않는다. 다시 실행한 Step은 `_2`가 붙는다.<br>Report에는 썸네일과 링크로 나온다(상대 경로). UI에서 연 Report도 `/reports/<runId>/screenshots/<file>.png`로 이미지를 보인다. 실행당 최대 200장 |
 | `uiCommand` | actor, `command`(openMenu, closeMenu, openStats, closeStats, toggleDebug) | 지금 화면에 맞지 않으면(409) 실패한다. 화면 이름이 메시지에 나온다 |
 | `waitForUnity` | actor, `condition`(status 필드, 예: `joined`, `screen`, `unity.statsOpen`, `tool`, `preview`), 연산자 하나, `timeoutMilliseconds` | Player 상태를 직접 읽으며 기다린다 |
-| `unityKey` | actor, `key`(w a s d space leftShift leftCtrl c q f z x v b t r e g 1 2 3 4 5 escape f1), `holdMs?`(1–10000), `state?`(down\|up), `async?` | 키 입력. 없으면 한 번 누름(이번 Frame 누르고 다음 Frame 뗌), `holdMs`면 그동안 누름, `state`면 누름·뗌만(뗌 없는 down은 Player가 10 s 뒤 뗀다). `holdMs`와 `state`는 함께 쓰지 않는다 |
+| `unityKey` | actor, `key`(w a s d space leftShift leftCtrl c q f z x v b t r e g 1 2 3 4 5 escape f1 h), `holdMs?`(1–10000), `state?`(down\|up), `async?` | 키 입력. 없으면 한 번 누름(이번 Frame 누르고 다음 Frame 뗌), `holdMs`면 그동안 누름, `state`면 누름·뗌만(뗌 없는 down은 Player가 10 s 뒤 뗀다). `holdMs`와 `state`는 함께 쓰지 않는다 |
 | `unityClick` | actor, `button?`(left\|right, 기본 left), `holdMs?`, `state?`, `async?` | 마우스 버튼. 규칙은 `unityKey`와 같다 |
 | `unityReleaseAll` | actor | 눌린 키·버튼과 진행 중인 시점 이동을 모두 뗀다(`{"releaseAll":true}`). 약 2 Frame 뒤 PASS |
 | `unityLook` | actor, `dx`·`dy`(픽셀, 하나 이상, \|값\| ≤ 20000), `ms?`(0–5000, 기본 0 = 한 Frame), `async?` | 마우스 이동량을 `ms` 동안의 Frame에 고르게 나눠 넣는다 |
@@ -396,12 +398,18 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `Building/basic_wall.json` | 130 | 실제 건설 입력으로 나무 벽(비용 지불) → 실제 사격으로 체력 감소 → 파괴(BuildDestroyed) | ~8 s |
 | `Building/turbo_build.json` | 132 | 벽 3개를 연속 요청 → 3개 모두 Ok, 조각 수 3, 나무 정확히 30 감소 → 같은 줄을 다시 요청하면 Occupied이고 비용 없음 | ~3.5 s |
 | `Building/support_collapse.json` | 131 | 벽 하나 위 바닥 3개 → 벽 파괴 → 바닥 3개 붕괴(collapsed 3) | ~3 s |
+| `Building/building_edit_wall.json` | 13.5 D13 | 실제 입력으로 벽 → 무기를 든 채 눈높이 행을 연다(Edit 56) → 벽 뒤 B를 쏘면 B만 맞고 벽 체력 그대로 → 문(18), id·체력 유지, A의 Client도 Edited를 받음 | ~6 s |
+| `Building/building_edit_reset.json` | 13.5 D13 | 돌 벽에 피해 → 문 → Reset(Edit 0): 원래 모양, 같은 id·체력·재료, 같은 상태 다시 확정은 Ok이고 변화 없음 | ~7 s |
+| `Building/building_edit_damage.json` | 13.5 D13 | 피해 받은 벽의 창 편집에서 체력 유지 → 편집(burst) 직후 피해: 둘 다 반영(정확히 같은 Tick은 서버 테스트) | ~5 s |
+| `Building/building_edit_destroy_race.json` | 13.5 D13 | 파괴된 조각 편집은 NotFound → 벽 하나에 걸린 바닥을 편집(burst)하고 곧바로 벽 파괴: 바닥 붕괴, 조각·Client 상태가 남지 않음, 늦은 편집은 NotFound | ~4 s |
+| `Building/building_edit_reconnect.json` | 13.5 D13 | 문을 낸 A가 끊김 → 유예 중 서버가 창으로 편집(`editBuild`) → A 재접속: Resume의 Sync가 최종 상태(16)를 실어 A의 Client가 창을 안다 → 새 순번으로 Reset Ok | ~5 s |
+| `Building/building_edit_spam.json` | 13.5 D13 | 같은 상태 반복 확정 Ok(변화 없음), 옛 순번 재전송은 무시, B가 A의 벽 편집은 NotOwner, 번갈아 12개 burst(초당 20개 아래)는 큐 8개를 넘겨 RateLimited와 Ok가 섞이고 연결은 유지 | ~6 s |
 | `Network/input_timeout.json` | 75 | pauseInput → 연결은 유지된 채 7 s 뒤 서버가 InputTimeout으로 닫음 → Grace 없이 PlayerLeft | ~10 s |
 | `Smoke/unity_client.json` | 83–87 | Unity Player(`--unity-exe`)가 join → HUD·Menu·Stats Screenshot, UI 명령 | ~8 s |
 | `UI/kill_feed.json` | 84 | Headless B가 A를 실제 사격으로 제거하는 동안 Unity Player가 보고, Kill Feed Screenshot | ~18 s |
 | `UI/visual_screens.json` | 로드맵 §9 | Unity Player가 3인 경기에 들어가 HUD, Esc 메뉴, F1, Kill Feed, 결과, 전적 창(DB 꺼짐 안내), 서버 Crash 뒤 재접속 화면, 같은 Port로 다시 뜬 서버에 재입장한 화면을 찍는다 | ~20 s |
 | `Building/visual_building.json` | 로드맵 §10 | Unity Player가 15 m 앞의 건설을 본다. 실제 입력으로 짓는 나무 벽(짓는 중 → 완성), 돌·나무·금속 벽, 바닥·경사로·지붕, 자원 줄(1600×900), 실제 사격 피해 두 단계, 지지벽 파괴 뒤 다리 붕괴(먼지)와 그 뒤를 찍는다 | ~17 s |
-| `Building/unity_build_input.json` | 로드맵 §10, §87 | Unity Player를 가상 키보드·마우스로 움직인다(`unityKey`·`unityClick`·`unityLook`). W 걷기, Q 건축 모드(Player·서버 둘 다 Build), Z 벽 → 미리보기 Valid, 클릭 배치(서버 조각 1, 나무 차감) → 같은 자리 Invalid, 자기 벽에 막힘, F 채집(나무 증가), 버튼을 누른 채 회전하는 Turbo(조각 증가), 1 무기 | ~15 s |
+| `Building/unity_build_input.json` | 로드맵 §10, §87 | Unity Player를 가상 키보드·마우스로 움직인다(`unityKey`·`unityClick`·`unityLook`). W 걷기, Q 건축 모드(Player·서버 둘 다 Build), Z 벽 → 미리보기 Valid, 클릭 배치(서버 조각 1, 나무 차감) → 같은 자리 Invalid, 자기 벽에 막힘, Phase 13.5 H 편집 → 칸 클릭 → H 확정(서버 Edit > 0) → H, 우클릭 Reset(Edit 0), F 채집(나무 증가), 버튼을 누른 채 회전하는 Turbo(조각 증가), 1 무기 | ~18 s |
 | `Manual/ime_name.json` | 88–90 | 한글 IME 이름 입력 Manual Check 2개(CI에서는 SKIPPED) | 사람 |
 | `Manual/editor_ui.json` | 로드맵 §9 | Editor 수동 검증(Phase 11 UI). 서버를 127.0.0.1:7777(Editor 기본 주소)에 띄우고 Headless 상대 2명을 둔다. 사람이 Editor로 접속해 타이틀·한글 글꼴·IME·접속·이름·ESC 메뉴·F1·Kill Feed·결과·전적·끊김·재접속을 PASS/FAIL로 답한다. Kill Feed와 결과 화면은 상대를 `killPlayer`로 제거해 만든다. 끊김은 `stopServer`, 재접속은 같은 Port로 `startServer` | 사람 |
 | `Manual/editor_building.json` | 로드맵 §10 | Editor 수동 검증(Phase 13 건설). DevRespawn 서버를 7777에 띄우고 QA_Build_Test 근처에 돌·나무·금속 벽과 두 칸 다리를 놓는다. 사람이 채집·미리보기(유효/무효)·벽·바닥·경사로·지붕·Turbo·건설 중 표시·충돌·피해를 확인한다. 마지막에 도구가 다리 밑 돌벽을 부수고(`damageBuild`) 붕괴 연출을 묻는다 | 사람 |
@@ -424,6 +432,7 @@ Stress Test 시나리오(baseline, movement, combat, building, mixed_match, reco
 | Suite | 내용 | 시간 |
 |---|---|---|
 | `smoke` | connect, move_to, basic_hit | ~16 s |
+| `building` | Phase 13 건설 3개 + Phase 13.5 편집 6개(헤드리스) | ~50 s |
 | `pre-push` | §93: connect, move, shoot, pickup, death, reconnect | ~30 s |
 | `full-regression` | 모든 카테고리. Stress, Persistence, ServerProcess, Recorded 포함 | ~6 min |
 | `faults` | QA-3: latency_loss_combat, lag_compensation, network_drop, invalid_packet, input_timeout, shutdown, restart, db_down | ~1 min |
@@ -493,7 +502,7 @@ dotnet run --project Server/src/ProjectH.QA -- convert-recording rec.jsonl --out
   - 여러 시나리오를 실행하면 가장 큰 값을 돌려준다. 마지막 줄에 결과별 수를 낸다: `8 scenarios: 7 passed, 0 failed, 1 skipped, 0 errors; exit code 0.`
 - **SKIPPED**(QA-3): 환경 때문에 시나리오의 나머지를 할 수 없을 때(예: Docker나 DB 컨테이너가 없음)의 결과다. 실행된 Step은 모두 통과했지만 끝까지 실행된 것은 아니므로 PASSED로 보고하지 않는다. 콘솔 요약 줄, Report 제목, Web UI 배지에 SKIPPED와 이유가 나온다.
 - **Launch 모드**는 서버를 `DOTNET_ENVIRONMENT=Development`로 띄우고, 아래 인자를 준 뒤 시나리오 `server.options`를 붙인다.
-  - `--qa-mode --Server:Port=0 --Qa:Port=0 --Persistence:Enabled=false --Server:AirDrop=false --Server:StartCountdownSeconds=1 --Server:ResultSeconds=1 --Server:LootSeed/ZoneSeed/SpawnSeed=<seed>`
+  - `--qa-mode --Server:Port=0 --Qa:Port=0 --Persistence:Enabled=false --Server:AirDrop=false --Server:StartCountdownSeconds=1 --Server:ResultSeconds=1 --Server:LootSeed/ZoneSeed/SpawnSeed=<seed> --Server:ConnectBurstPerIp=1000`. 모든 Actor가 127.0.0.1에서 접속하므로 IP당 접속 제한(기본 20)이 stress 접속을 거절하지 않게 한다. 제한기는 켜진 채이고 `server.options`로 바꿀 수 있다.
   - Ready 조건은 `QA_READY` 줄과 `/qa/health`(20 s 이내)다. 고정 sleep을 쓰지 않는다(§81).
   - 끝나면 `/qa/server/stop` → 최대 10 s 종료 대기 → 그래도 남으면 자기 자식 프로세스만 Kill한다.
 - **Ctrl+C**: 현재 Step을 멈추고 Cleanup(Actor 종료, 서버 정지)을 한 뒤 Report를 쓴다.

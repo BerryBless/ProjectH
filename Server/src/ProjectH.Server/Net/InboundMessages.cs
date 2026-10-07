@@ -1,4 +1,5 @@
 using LiteNetLib;
+using ProjectH.Server.Game.Build;
 using ProjectH.Shared.Protocol;
 
 namespace ProjectH.Server.Net;
@@ -29,10 +30,13 @@ public readonly struct ControlMessage
     public string? DevPlayerId { get; }
 }
 
-// Phase 13 D8: one parsed build request.
+// Phase 13 D8: one parsed build request. Phase 13.5 D4: a placement or an edit (BuildQueueItem).
 public readonly struct BuildMessage
 {
-    public BuildMessage(int peerId, NetPeer peer, in BuildRequest request)
+    // 기능: 파싱된 건설 요청(배치 또는 편집)을 Game Loop로 넘길 메시지로 만든다.
+    // 입력: peerId - 연결 id, peer - 연결(같은 id 재사용 구분용), request - 요청.
+    // 출력: 메시지.
+    public BuildMessage(int peerId, NetPeer peer, in BuildQueueItem request)
     {
         PeerId = peerId;
         Peer = peer;
@@ -41,7 +45,7 @@ public readonly struct BuildMessage
 
     public int PeerId { get; }
     public NetPeer Peer { get; }
-    public BuildRequest Request { get; }
+    public BuildQueueItem Request { get; }
 }
 
 public readonly struct InputMessage

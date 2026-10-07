@@ -44,6 +44,11 @@ public static class ActorActions
         r.Add(Actor("build", BuildAsync, required: new[] { "piece", "cellX|position" },
             optional: new[] { "material", "level", "cellZ", "rotation", "count", "dx", "dz", "expect" }, positions: new[] { "position" },
             check: CheckBuild));
+        // Phase 13.5 D13: editing a piece with real BuildEditRequest packets.
+        r.Add(Actor("buildEdit", BuildEditAsync, required: new[] { "pieceId|cellX" },
+            optional: new[] { "pieceId", "cellX", "level", "cellZ", "piece", "rotation", "edit", "preset", "editRotation", "rawState", "count", "burst",
+                "alternate", "duplicate", "expect" },
+            check: CheckBuildEdit));
         // QA-5 D34. The recording's length is not known before the run: give a long recording timeoutMilliseconds
         // (convert-recording writes it).
         r.Add(Actor("playInputs", PlayInputsAsync, required: new[] { "file" }, optional: new[] { "speed" }, check: CheckPlayInputs, timeoutMs: 60_000));
@@ -559,6 +564,146 @@ public static class ActorActions
             if (!s.Params.TryGetValue(name, out JsonElement v) || Variables.HasReference(v)) continue;
             int min = name == "count" ? 1 : 0;
             if (!Comparison.TryNumber(v, out double d) || d < min || d > max || d != Math.Floor(d)) yield return $"'{name}' must be an integer {min}-{max}.";
+        }
+    }
+
+    // ---- editing (real BuildEditRequest packets, Phase 13.5 D13) ----
+
+    // Named edit states (BuildEdit tile numbering: wall tile = column + 3 x row, rows bottom to top; floor quadrant =
+    // x half + 2 x z half; roof 0-6).
+    private static readonly Dictionary<string, int> s_editPresets = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["reset"] = 0,
+        ["window"] = 1 << 4,
+        ["door"] = (1 << 1) | (1 << 4),
+        ["halfWall"] = 0b111_000_000,
+        ["tallOpening"] = (1 << 1) | (1 << 4) | (1 << 7),
+        ["eyeRow"] = 0b000_111_000,
+        ["floorHalf"] = 0b0011,
+        ["floorQuarter"] = 0b0001,
+        ["floorDiagonal"] = 0b1001,
+        ["roofFlat"] = BuildEdit.RoofFlat,
+        ["roofPassage"] = BuildEdit.RoofPassage,
+    };
+
+    // 기능: buildEdit 단계의 정적 검사(대상, 상태, 개수, 기대 코드).
+    // 입력: s - 단계 정의.
+    // 출력: 문제 설명들(없으면 빈 목록).
+    private static IEnumerable<string> CheckBuildEdit(StepDefinition s)
+    {
+        if (s.Has("pieceId") && s.Has("cellX")) yield return "Give 'pieceId' or the cell (cellX, level, cellZ, piece), not both.";
+        if (s.Has("cellX") && !(s.Has("level") && s.Has("cellZ") && s.Has("piece"))) yield return "'cellX' needs 'level', 'cellZ' and 'piece'.";
+        int states = (s.Has("edit") ? 1 : 0) + (s.Has("preset") ? 1 : 0) + (s.Has("rawState") ? 1 : 0);
+        if (states != 1) yield return "Give exactly one of 'edit', 'preset' or 'rawState'.";
+        if (s.Params.TryGetValue("preset", out JsonElement p) && p.ValueKind == JsonValueKind.String && !Variables.HasReference(p)
+            && !s_editPresets.ContainsKey(p.GetString()!))
+            yield return $"Unknown preset '{p.GetString()}' ({string.Join(", ", s_editPresets.Keys)}).";
+        if (s.Params.TryGetValue("piece", out JsonElement t) && t.ValueKind == JsonValueKind.String && !Variables.HasReference(t)
+            && !TryEnum(t.GetString()!, out BuildPieceType _))
+            yield return $"Unknown piece '{t.GetString()}' (wall, floor, ramp, roof).";
+        if (s.Params.TryGetValue("expect", out JsonElement e) && e.ValueKind == JsonValueKind.String && !Variables.HasReference(e)
+            && !e.GetString()!.Equals("any", StringComparison.OrdinalIgnoreCase) && !TryEnum(e.GetString()!, out BuildResultCode _))
+            yield return $"Unknown result '{e.GetString()}' (a BuildResultCode or 'any').";
+        foreach ((string name, int min, int max) in new[]
+        {
+            ("cellX", 0, BuildGrid.CellsX - 1), ("cellZ", 0, BuildGrid.CellsZ - 1), ("level", 0, BuildGrid.Levels - 1), ("rotation", 0, 3),
+            ("edit", 0, BuildEdit.Mask), ("editRotation", 0, 3), ("rawState", 0, ushort.MaxValue), ("count", 1, BuildEditCommand.MaxEdits),
+        })
+        {
+            if (!s.Params.TryGetValue(name, out JsonElement v) || Variables.HasReference(v)) continue;
+            if (!Comparison.TryNumber(v, out double d) || d < min || d > max || d != Math.Floor(d)) yield return $"'{name}' must be an integer {min}-{max}.";
+        }
+    }
+
+    // 기능: 조각을 플레이어처럼 편집한다(Phase 13.5 D13). 대상: pieceId(예: 직전 build의 ${wall.pieceId}) 또는 칸(cellX, level,
+    //   cellZ, piece, rotation)으로 이 Actor의 Client가 아는 조각. 상태: preset/edit(+editRotation, 기본은 조각의 지금 회전) 또는
+    //   rawState(그대로, 거절 시험용). count번 보낸다. burst는 간격 없이 한 번에(서버 큐가 차면 RateLimited), duplicate는 직전
+    //   순번을 다시 써서 보낸다(서버가 답 없이 버린다: 결과를 기다리지 않는다). alternate는 짝수 번째를 Reset(Edit 0)으로 바꿔
+    //   요청마다 상태가 실제로 바뀌게 한다(같은 상태 반복은 간격을 쓰지 않아 큐가 차지 않는다). 도구는 바꾸지 않는다(§29).
+    // 입력: ctx - 단계 문맥, token - 취소.
+    // 출력: 모든 요청이 결과를 받고 각 코드가 expect(기본 Ok, "any"는 모두)면 통과. saveAs: { sent, codes[], counts{code: n},
+    //   pieceId }.
+    private static async Task<StepOutcome> BuildEditAsync(StepContext ctx, CancellationToken token)
+    {
+        IQaActor actor = ctx.Actor();
+        if (RequireJoined(actor) is { } notJoined) return notJoined;
+        uint pieceId = 0;
+        BuildPieceShape? slot = null;
+        if (ctx.Double("pieceId") is double id)
+        {
+            if (id < 0 || id > uint.MaxValue || id != Math.Floor(id)) throw new QaStepException($"'pieceId' must be a piece id (got {id}).");
+            pieceId = (uint)id;
+        }
+        else
+        {
+            string pieceText = ctx.RequireString("piece");
+            if (!TryEnum(pieceText, out BuildPieceType piece)) throw new QaStepException($"Unknown piece '{pieceText}'.");
+            int x = ctx.Int("cellX", 0, BuildGrid.CellsX - 1)!.Value;
+            int y = ctx.Int("level", 0, BuildGrid.Levels - 1) ?? throw new QaStepException("'level' is required with 'cellX'.");
+            int z = ctx.Int("cellZ", 0, BuildGrid.CellsZ - 1) ?? throw new QaStepException("'cellZ' is required with 'cellX'.");
+            if (!BuildGrid.TryNormalize(piece, x, y, z, ctx.Int("rotation", 0, 3) ?? 0, out BuildPieceShape shape))
+                throw new QaStepException($"Cell ({x}, {y}, {z}) is off the build grid.");
+            slot = shape;
+        }
+        int raw = ctx.Int("rawState", 0, ushort.MaxValue) ?? -1;
+        int edit = 0;
+        if (raw < 0)
+        {
+            if (ctx.String("preset") is string preset)
+            {
+                if (!s_editPresets.TryGetValue(preset, out edit)) throw new QaStepException($"Unknown preset '{preset}'.");
+            }
+            else
+            {
+                edit = ctx.Int("edit", 0, BuildEdit.Mask) ?? throw new QaStepException("Give 'edit', 'preset' or 'rawState'.");
+            }
+        }
+        int rotation = ctx.Int("editRotation", 0, 3) ?? -1;
+        int count = ctx.Int("count", 1, BuildEditCommand.MaxEdits) ?? 1;
+        bool burst = ctx.Bool("burst") ?? false;
+        bool duplicate = ctx.Bool("duplicate") ?? false;
+        string expect = ctx.String("expect") ?? nameof(BuildResultCode.Ok);
+
+        bool alternate = ctx.Bool("alternate") ?? false;
+        var plans = Enumerable.Range(0, count)
+            .Select(i => alternate && i % 2 == 1 ? new EditPlan(pieceId, slot, 0, rotation, -1) : new EditPlan(pieceId, slot, edit, rotation, raw))
+            .ToArray();
+        bool done = false;
+        try
+        {
+            var command = new BuildEditCommand(plans, burst || duplicate, duplicate);
+            if (!await SendAppliedAsync(ctx, actor, command, token).ConfigureAwait(false))
+                return StepOutcome.Fail("The actor did not apply the edit command.");
+            if (actor.State.Error is string error && error.StartsWith("Edit command", StringComparison.Ordinal)) return StepOutcome.Fail(error);
+            if (duplicate)
+            {
+                // The server drops a sequence it already processed without an answer: nothing to wait for.
+                done = true;
+                return StepOutcome.Pass($"{count} duplicate edit request(s) sent", JsonPath.From(new { sent = count, duplicate = true }));
+            }
+            ushort first = (ushort)actor.State.BuildFirstSequence;
+            var expected = new HashSet<int>(Enumerable.Range(0, count).Select(i => (int)(ushort)(first + i)));
+            BuildResultInfo[] Results() => actor.State.BuildResults.Where(r => expected.Contains(r.Sequence)).ToArray();
+            done = await ctx.WaitUntilAsync(() => Results().Select(r => r.Sequence).Distinct().Count() == count || !actor.State.Joined, token).ConfigureAwait(false);
+            BuildResultInfo[] results = Results();
+            var value = new
+            {
+                sent = count,
+                codes = results.Select(r => r.Code).ToArray(),
+                counts = results.GroupBy(r => r.Code).ToDictionary(g => g.Key, g => g.Count()),
+                pieceId = results.Where(r => r.Code == nameof(BuildResultCode.Ok)).Select(r => (uint?)r.PieceId).FirstOrDefault(),
+            };
+            string actual = string.Join(", ", value.codes);
+            if (!done || results.Length < count)
+                return StepOutcome.Fail($"{results.Length}/{count} edit results within {ctx.TimeoutMs} ms ({actual}).", $"{count} results", $"{results.Length}: {actual}");
+            bool ok = string.Equals(expect, "any", StringComparison.OrdinalIgnoreCase) || results.All(r => string.Equals(r.Code, expect, StringComparison.OrdinalIgnoreCase));
+            return ok
+                ? StepOutcome.Pass($"edit x{count}: {actual}", JsonPath.From(value))
+                : StepOutcome.Fail($"Edit answered: {actual}", $"all {expect}", actual);
+        }
+        finally
+        {
+            if (!done) await TrySendAsync(actor, new ClearInputQueueCommand()).ConfigureAwait(false);
         }
     }
 

@@ -118,7 +118,7 @@ namespace ProjectH.Client.Qa
         private static readonly Key[] InputKeys =
         {
             Key.W, Key.A, Key.S, Key.D, Key.Space, Key.LeftShift, Key.LeftCtrl, Key.C, Key.Q, Key.F, Key.Z, Key.X, Key.V,
-            Key.B, Key.T, Key.R, Key.E, Key.G, Key.Digit1, Key.Digit2, Key.Digit3, Key.Digit4, Key.Digit5, Key.Escape, Key.F1,
+            Key.B, Key.T, Key.R, Key.E, Key.G, Key.Digit1, Key.Digit2, Key.Digit3, Key.Digit4, Key.Digit5, Key.Escape, Key.F1, Key.H,
         };
 
         private enum HoldKind : byte

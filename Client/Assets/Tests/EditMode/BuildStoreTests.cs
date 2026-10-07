@@ -131,6 +131,78 @@ namespace ProjectH.Client.Tests
             Assert.IsFalse(store.Occupied(new BuildPieceShape(BuildPieceType.Roof, 3, 0, 2, 0)));
         }
 
+        // Phase 13.5 D8: an Edited record changes the shape in place; one that does not fit the piece changes nothing.
+        [Test]
+        public void AnEditedRecord_ChangesTheShapeInPlace_AndABadOneIsIgnored()
+        {
+            BuildStore store = Store();
+            store.ApplyPiece(Piece(1, 3, 3, BuildPieceType.Wall), 1);
+            store.ApplyHealth(1, 40, 2);
+            store.ClearChanged();
+            int slot = store.Grid.SlotOf(1);
+            Assert.IsTrue(store.ApplyEdited(1, BuildEdit.PackState(0b000010010, 0), 3));   // a door
+            Assert.IsTrue(store.TryGet(1, out BuildPieceRecord door));
+            Assert.AreEqual(0b000010010, door.Shape.Edit);
+            Assert.AreEqual(40, door.Damage);
+            Assert.AreEqual(10u, door.CreatedTick);
+            Assert.AreEqual(slot, store.Grid.SlotOf(1));
+            CollectionAssert.AreEqual(new[] { 1u }, store.Changed);
+            Assert.IsFalse(store.ApplyEdited(1, BuildEdit.PackState(0b101, 0), 4));     // two holes apart
+            Assert.IsFalse(store.ApplyEdited(1, BuildEdit.PackState(0, 1), 4));         // a wall's rotation never changes
+            Assert.IsTrue(store.TryGet(1, out door));
+            Assert.AreEqual(0b000010010, door.Shape.Edit);
+            Assert.IsTrue(store.ApplyEdited(99, BuildEdit.PackState(1, 0), 5));         // unknown: ignored
+            Assert.AreEqual(3, store.Ignored);
+        }
+
+        // Phase 13.5 D11: a refusal of an older edit does not roll back a newer one of the same piece.
+        [Test]
+        public void AnOlderRefusal_DoesNotRollBackANewerPrediction()
+        {
+            BuildStore store = Store();
+            store.ApplyPiece(Piece(1, 3, 3, BuildPieceType.Wall), 1);
+            Assert.IsTrue(store.PredictEdit(1, BuildEdit.PackState(1 << 4, 0), 1, 0f));
+            Assert.IsTrue(store.PredictEdit(1, BuildEdit.PackState(1 << 7, 0), 2, 0.1f));
+            Assert.AreEqual(1, store.PredictionCount);
+            Assert.IsFalse(store.OnEditResult(new BuildResult { Sequence = 1, Code = BuildResultCode.Blocked }));
+            Assert.IsTrue(store.TryGet(1, out BuildPieceRecord shown));
+            Assert.AreEqual(1 << 7, shown.Shape.Edit);
+        }
+
+        [Test]
+        public void APrediction_GoesWithItsPiece_AndWithAReset()
+        {
+            BuildStore store = Store();
+            store.ApplyPiece(Piece(1, 3, 3, BuildPieceType.Wall), 1);
+            store.ApplyPiece(Piece(2, 5, 3, BuildPieceType.Wall), 1);
+            store.PredictEdit(1, BuildEdit.PackState(1 << 4, 0), 1, 0f);
+            store.PredictEdit(2, BuildEdit.PackState(1 << 4, 0), 2, 0f);
+            store.ApplyDestroyed(1, 2);
+            Assert.IsFalse(store.IsPredicted(1));
+            Assert.AreEqual(1, store.PredictionCount);
+            store.Reset();
+            Assert.AreEqual(0, store.PredictionCount);
+        }
+
+        [Test]
+        public void Predictions_AreBounded_AndAPlacedRecordAfterAnOkSettlesOne()
+        {
+            BuildStore store = Store();
+            for (uint id = 1; id <= BuildStore.MaxPredictions + 1; id++) store.ApplyPiece(Piece(id, (int)id, 3, BuildPieceType.Wall), 1);
+            for (uint id = 1; id <= BuildStore.MaxPredictions; id++)
+                Assert.IsTrue(store.PredictEdit(id, BuildEdit.PackState(1 << 4, 0), (ushort)id, 0f));
+            Assert.IsFalse(store.PredictEdit(BuildStore.MaxPredictions + 1, BuildEdit.PackState(1 << 4, 0), 99, 0f));
+            Assert.IsFalse(store.PredictEdit(1, BuildEdit.PackState(0b101, 0), 100, 0f));   // not a valid wall state
+
+            Assert.IsTrue(store.OnEditResult(new BuildResult { Sequence = 1, Code = BuildResultCode.Ok, PieceId = 1 }));
+            Assert.IsTrue(store.IsPredicted(1));
+            BuildPieceRecord resent = Piece(1, 1, 3, BuildPieceType.Wall);
+            store.ApplyPiece(resent, 2);   // a sync from before the edit, after the Ok: the server's word
+            Assert.IsFalse(store.IsPredicted(1));
+            Assert.IsTrue(store.TryGet(1, out BuildPieceRecord shown));
+            Assert.AreEqual(0, shown.Shape.Edit);
+        }
+
         [Test]
         public void CellOf_FollowsTheCatalogsInterestCellSize()
         {

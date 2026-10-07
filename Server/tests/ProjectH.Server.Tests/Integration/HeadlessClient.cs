@@ -138,6 +138,14 @@ public sealed class HeadlessClient : IDisposable
         _peer.Send(writer.WrittenSpan, ProtocolConstants.BuildChannel, DeliveryMethod.ReliableOrdered);
     }
 
+    // Phase 13.5 D4: an edit request on the building channel.
+    public void SendBuildEdit(in BuildEditRequest request)
+    {
+        var writer = new PacketWriter(_buffer);
+        BuildEditRequest.Write(ref writer, request);
+        _peer.Send(writer.WrittenSpan, ProtocolConstants.BuildChannel, DeliveryMethod.ReliableOrdered);
+    }
+
     public void SendStatsRequest()
     {
         var writer = new PacketWriter(_buffer);

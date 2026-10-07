@@ -47,6 +47,12 @@ namespace ProjectH.Client.Game
         private readonly ToolState _tools = new ToolState();
         private readonly BuildStore _buildStore = new BuildStore();
         private BuildController _build;
+        // Phase 13.5 D4, D10: the request numbering and send cap placements and edits share, and edit mode (H).
+        private readonly BuildRequestCounter _buildCounter = new BuildRequestCounter();
+        private BuildEditController _edit;
+        private BuildEditOverlay _editOverlay;
+        // The newest refusal of either kind (F1).
+        private BuildResultCode _lastBuildRefusal;
         // Phase 13 D16: building and harvesting on screen.
         private PieceMeshes _pieceMeshes;
         private BuildPieceViews _pieceViews;
@@ -233,7 +239,9 @@ namespace ProjectH.Client.Game
         }
 
         // D4, D5: Esc and F1 of this frame, read by UiRoot (InputReader stays the only Input System user).
-        public bool EscapePressed => _input.EscapePressed;
+        // Phase 13.5 D10: in edit mode Esc only cancels the edit (LateUpdate), so the menu does not see it. Every Update runs
+        // before every LateUpdate, so UiRoot reads this before the edit can end in the same frame.
+        public bool EscapePressed => _input.EscapePressed && !_edit.Active;
         public bool DebugTogglePressed => _input.DebugTogglePressed;
 
         // D5: UiRoot passes UiFlow's outputs every frame. Without a screen up a click locks the cursor as before; with
@@ -298,6 +306,9 @@ namespace ProjectH.Client.Game
             _reconnectPending = false;
         }
 
+        // 기능: 월드·입력·카메라·HUD·건설 표시(Phase 13.5: 편집 오버레이)·네트워크를 만들고 네트워크 이벤트를 구독한다.
+        // 입력: 없음(Unity가 한 번 부른다).
+        // 출력: 반환값 없음. 만든 것은 모두 OnDestroy가 해제한다. 배치와 편집은 순번 카운터 하나를 같이 쓴다.
         private void Awake()
         {
             _world = MapWorld.Build(out _worldMaterials, out _terrainMesh);
@@ -330,6 +341,7 @@ namespace ProjectH.Client.Game
             _pieceMeshes = new PieceMeshes();
             _pieceViews = new BuildPieceViews(_pieceMeshes, _buildSource);
             _buildPreview = new BuildPreview(_pieceMeshes, _buildSource);
+            _editOverlay = new BuildEditOverlay(_pieceMeshes, _buildSource);
             _harvestEffects = new HarvestEffects(_buildSource);
             _buildHud = new BuildHud();
 
@@ -337,7 +349,8 @@ namespace ProjectH.Client.Game
             _qaRecorder = Qa.QaInputRecorder.FromLaunch();
 #endif
             _net = new NetClient();
-            _build = new BuildController(request => _net.SendBuild(request));
+            _build = new BuildController(request => _net.SendBuild(request), _buildCounter);
+            _edit = new BuildEditController(request => _net.SendBuildEdit(request), _buildCounter);
             _net.Connected += OnConnected;
             _net.Joined += OnJoined;
             _net.SpawnReceived += OnSpawned;
@@ -367,6 +380,7 @@ namespace ProjectH.Client.Game
             _net.BuildResultReceived += OnBuildResult;
             _net.BuildPieceReceived += OnBuildPiece;
             _net.BuildHealthReceived += OnBuildHealth;
+            _net.BuildEditedReceived += OnBuildEdited;
             _net.BuildDestroyedReceived += OnBuildDestroyed;
             _net.BuildResetReceived += OnBuildReset;
             _net.BuildInterestReceived += OnBuildInterest;
@@ -402,6 +416,7 @@ namespace ProjectH.Client.Game
             if (!blocked && _input.Sprint) held |= InputButtons.Sprint;
             if (!blocked && _input.CrouchHeld) held |= InputButtons.Crouch;   // Phase 12 D7
             if (_fireHeld) held |= InputButtons.Fire;
+            held = _edit.MaskHeld(held);   // Phase 13.5 D10: no shot while the left button picks edit tiles
             if (blocked) _input.QueuedButtons = InputButtons.None;
             if (!blocked) UpdateBuildKeys();
             InputButtons queued = _input.QueuedButtons;
@@ -411,6 +426,9 @@ namespace ProjectH.Client.Game
             _localView.Place(_predictor.RenderPosition, _predictor.RenderYaw, _predictor.Mode, _predictor.Sprinting);
         }
 
+        // 기능: 카메라가 움직인 뒤의 프레임 처리: 조준점(과 맞힌 Collider), 입력 전송, 사격 효과, 편집 모드(Phase 13.5), 건설, 표시, HUD.
+        // 입력: 없음(Unity가 매 프레임 부른다).
+        // 출력: 반환값 없음. 예측 입력이 전송되고 화면이 갱신된다.
         private void LateUpdate()
         {
             // Before the early return: items spin (and are visible) before the local player has spawned. No allocation.
@@ -440,7 +458,7 @@ namespace ProjectH.Client.Game
             _crosshair.SetVisible(alive && !_blockedThisFrame);
 
             // After the camera moved, so aim, tracer and the sent inputs all use the crosshair of this frame.
-            Vector3 aimPoint = FindAimPoint();
+            Vector3 aimPoint = FindAimPoint(out Collider aimCollider);
             int shots = 0;
             if (_pendingSteps > 0)
             {
@@ -469,6 +487,7 @@ namespace ProjectH.Client.Game
 
             if (alive && shots > 0) _fireEffects.FireLocal(shots, aimPoint, _predictor.RenderPosition, _camera.Yaw, now);
             _fireEffects.Tick(now);
+            UpdateEdit(alive, LocalPlayerPredictor.ActionsAllowed(_predictor.Mode), now, aimCollider);
             UpdateBuild(alive, LocalPlayerPredictor.ActionsAllowed(_predictor.Mode), now);
             UpdateBuildPresentation(alive, now);
 
@@ -489,8 +508,11 @@ namespace ProjectH.Client.Game
             UpdateMatchHud(alive);
         }
 
-        // Phase 13 D16: piece keys select (and enter build mode), T cycles the material; in build mode R turns the piece
-        // instead of reloading (the Reload press is taken back before it reaches an input).
+        // 기능: 건설 키를 처리한다(Update, 입력이 막히지 않았을 때). 조각 키는 고르고 건설 모드로 들어가며, T는 재료를 바꾸고,
+        //   건설 모드의 R은 재장전 대신 회전한다(Reload 누름을 입력에 들어가기 전에 되돌린다).
+        //   Phase 13.5 D10: 무기 키·Q·F(또는 건설 모드로 들어가는 조각 키)가 대기 중이면 편집 모드를 취소한다. 그 키는 그대로 서버로 가서 도구를 바꾼다.
+        // 입력: 없음(InputReader의 이번 프레임 키와 대기 버튼).
+        // 출력: 반환값 없음. 선택·대기 버튼·편집 모드가 바뀔 수 있다.
         private void UpdateBuildKeys()
         {
             int piece = _input.PiecePressed;
@@ -499,6 +521,8 @@ namespace ProjectH.Client.Game
                 _build.Selection.Select((BuildPieceType)piece);
                 if (_tools.Current != ToolKind.Build) _input.QueuedButtons |= InputButtons.ToolBuild;
             }
+            const InputButtons cancelsEdit = InputButtons.Slot1 | InputButtons.Slot2 | InputButtons.Slot3 | InputButtons.ToolBuild | InputButtons.ToolHarvest;
+            if ((_input.QueuedButtons & cancelsEdit) != 0) _edit.Cancel();
             if (_tools.Current != ToolKind.Build) return;
             if (_input.MaterialPressed) _build.Selection.NextMaterial();
             if ((_input.QueuedButtons & InputButtons.Reload) != 0)
@@ -508,23 +532,74 @@ namespace ProjectH.Client.Game
             }
         }
 
-        // Phase 13 D16: build mode this frame: the candidate, its look, and a placement while the button is held.
+        // 기능: 편집 모드 한 프레임(Phase 13.5 D10, D11): H로 조준한 내 조각의 편집을 시작하거나 확정하고, Esc로 취소, 오른쪽 클릭으로
+        //   Reset을 보내며, 왼쪽 버튼으로 칸을 고른다. 편집이 끝날 때 왼쪽 버튼이 눌려 있으면 떼기 전까지 쏘지 않게 막는다.
+        //   보낸 지 오래된 편집 예측도 여기서 지운다.
+        // 입력: alive - 살아 있음, onFoot - 행동 가능 모드, now - 현재 시각, aimCollider - 이번 프레임 조준 Raycast가 맞힌 Collider(null 가능).
+        // 출력: 반환값 없음. 편집 모드·선택·예측이 바뀌고, 요청이 나갈 수 있다. 할당 없음(안내 문구는 상수).
+        private void UpdateEdit(bool alive, bool onFoot, float now, Collider aimCollider)
+        {
+            bool wasActive = _edit.Active;
+            bool canAct = alive && onFoot && !_blockedThisFrame && !_spectator.Active;
+            var eye = _predictor.PredictedPosition.ToNumerics() + new System.Numerics.Vector3(0f, AimSolver.EyeHeightOf(_predictor.Mode), 0f);
+            float range = _build.Catalog != null ? _build.Catalog.BuildRange : 7f;
+            if (canAct && _input.EditPressed)
+            {
+                if (_edit.Active)
+                {
+                    EditSendResult sent = _edit.Confirm(now, _buildStore);
+                    if (sent == EditSendResult.Invalid) _buildHud.ShowNotice(UiText.EditInvalid, now);
+                    else if (sent == EditSendResult.Busy) _buildHud.ShowNotice(UiText.BuildRefusal(BuildResultCode.RateLimited), now);
+                }
+                else if (_pieceViews.TryGetPieceId(aimCollider, out uint pieceId))
+                {
+                    EditBeginResult begin = _edit.TryBegin(pieceId, _buildStore, MyEntityId, eye, range);
+                    if (begin == EditBeginResult.NotOwner) _buildHud.ShowNotice(UiText.BuildRefusal(BuildResultCode.NotOwner), now);
+                    else if (begin == EditBeginResult.OutOfRange) _buildHud.ShowNotice(UiText.BuildRefusal(BuildResultCode.OutOfRange), now);
+                }
+            }
+            if (_edit.Active)
+            {
+                if (canAct && _input.EscapePressed)
+                {
+                    _edit.Cancel();
+                }
+                else if (canAct && _input.AimPressed)
+                {
+                    if (_edit.ResetPiece(now, _buildStore) == EditSendResult.Busy)
+                        _buildHud.ShowNotice(UiText.BuildRefusal(BuildResultCode.RateLimited), now);
+                }
+                Ray ray = _camera.AimRay;
+                _edit.Update(canAct, _buildStore, eye, range, ray.origin.ToNumerics(), ray.direction.ToNumerics(),
+                    canAct && _input.FirePressed, canAct && _input.FireHeld);
+            }
+            // Fire comes back with the next press, not with the button held for painting or confirming (D10, request §29).
+            if (wasActive && !_edit.Active && _input.FireHeld) _fireBlockedUntilRelease = true;
+            _buildStore.ExpirePredictions(now);
+        }
+
+        // 기능: 건설 모드 한 프레임: 후보, 그 판정, 버튼을 누르고 있으면 배치 요청.
+        // 입력: alive - 살아 있음, onFoot - 행동 가능 모드, now - 현재 시각.
+        // 출력: 반환값 없음. 편집 모드(Phase 13.5) 중에는 건설 모드로 보지 않는다(후보 없음, 배치 없음).
         private void UpdateBuild(bool alive, bool onFoot, float now)
         {
-            bool inBuildMode = alive && onFoot && _tools.Current == ToolKind.Build && !_blockedThisFrame;
+            bool inBuildMode = alive && onFoot && _tools.Current == ToolKind.Build && !_blockedThisFrame && !_edit.Active;
             Vector3 feet = _predictor.PredictedPosition;
             var eye = feet.ToNumerics() + new System.Numerics.Vector3(0f, AimSolver.EyeHeightOf(_predictor.Mode), 0f);
             bool pressed = inBuildMode && _input.FirePressed && !_fireBlockedUntilRelease;
             _build.Update(now, inBuildMode, pressed, inBuildMode && _fireHeld, feet.ToNumerics(), eye, _camera.Yaw, _camera.Pitch, _buildStore);
         }
 
-        // Phase 13 D16: the confirmed pieces (only those that changed, and those still being built), the ghosts, the swing
-        // and harvest effects, and the HUD. The store's change list is taken here, every frame.
+        // 기능: 건설 표시 한 프레임: 바뀐 조각과 짓는 중인 조각, 유령, 편집 오버레이(Phase 13.5), 휘두르기·채집 효과, HUD.
+        //   저장소의 변경 목록은 여기서 매 프레임 비운다.
+        // 입력: alive - 살아 있음, now - 현재 시각.
+        // 출력: 반환값 없음. 화면 Object와 HUD가 갱신된다.
         private void UpdateBuildPresentation(bool alive, float now)
         {
             _pieceViews.Apply(_buildStore, _build.Catalog, EstimatedServerTick());
             _buildStore.ClearChanged();
             _buildPreview.Update(_build);
+            _editOverlay.Update(_edit);
             bool onFoot = LocalPlayerPredictor.ActionsAllowed(_predictor.Mode);
             if (alive && onFoot && _tools.Current == ToolKind.Harvest && _fireHeld && !_blockedThisFrame && now >= _nextSwingAt)
             {
@@ -537,7 +612,7 @@ namespace ProjectH.Client.Game
             _buildHud.SetVisible(alive);
             _buildHud.SetResources(_build.ShownResource(BuildMaterialType.Wood), _build.ShownResource(BuildMaterialType.Stone),
                 _build.ShownResource(BuildMaterialType.Metal));
-            _buildHud.SetMode(alive && _tools.Current == ToolKind.Build, _build.Selection.Piece, _build.Selection.Material);
+            _buildHud.SetMode(alive && _tools.Current == ToolKind.Build, _build.Selection.Piece, _build.Selection.Material, _edit.Active, _edit.Target.Type);
             _buildHud.Tick(now);
         }
 
@@ -546,11 +621,15 @@ namespace ProjectH.Client.Game
             _clock != null && _clock.IsReady && _simHz > 0 ? _renderTick + _interpolationDelaySeconds * _simHz : 0;
 
         // Phase 13 D16: the F1 build line (UiRoot owns the overlay). Request §190: Development Builds (and the Editor) only.
+        // 기능: F1 건설 줄을 갱신한다(Development Build·Editor만).
+        // 입력: overlay - 디버그 오버레이, now - 현재 시각.
+        // 출력: 반환값 없음. 요청·거절 수는 배치와 편집을 합친 값이다(서버의 초당 상한을 같이 쓴다).
         public void TickBuildDebug(DebugOverlay overlay, float now)
         {
             if (!Debug.isDebugBuild) return;
+            // Phase 13.5: requests and refusals of both kinds (they share the server's per-second cap).
             overlay.TickBuild(now, _tools.Current, _build.Selection.Piece, _build.Selection.Material, _buildStore.Count, _pieceViews.Count,
-                _buildStore.Ignored, _build.Sent, _build.Refused, _build.LastRefusal);
+                _buildStore.Ignored, _build.Sent + _edit.Sent, _build.Refused + _edit.Refused, _lastBuildRefusal);
         }
 
         // Phase 12 D14: aboard (inside the jump window) "jump", in freefall "glider", next to a door "open"/"close".
@@ -648,6 +727,9 @@ namespace ProjectH.Client.Game
             return "?";
         }
 
+        // 기능: 구독을 풀고 만든 것을 만든 역순으로 해제한다(편집 오버레이는 공유 Mesh보다 먼저).
+        // 입력: 없음(Unity가 부른다, 종료 때도).
+        // 출력: 반환값 없음.
         private void OnDestroy()
         {
             _net.Connected -= OnConnected;
@@ -679,6 +761,7 @@ namespace ProjectH.Client.Game
             _net.BuildResultReceived -= OnBuildResult;
             _net.BuildPieceReceived -= OnBuildPiece;
             _net.BuildHealthReceived -= OnBuildHealth;
+            _net.BuildEditedReceived -= OnBuildEdited;
             _net.BuildDestroyedReceived -= OnBuildDestroyed;
             _net.BuildResetReceived -= OnBuildReset;
             _net.BuildInterestReceived -= OnBuildInterest;
@@ -693,6 +776,7 @@ namespace ProjectH.Client.Game
             _buildHud.Dispose();
             _harvestEffects.Dispose();
             _buildPreview.Dispose();
+            _editOverlay.Dispose();
             _pieceViews.Dispose();
             _pieceMeshes.Dispose();
             _harvestables.Dispose();
@@ -724,6 +808,7 @@ namespace ProjectH.Client.Game
         // 기능: 커서 잠금과 발사·조준 버튼 상태를 이번 프레임 값으로 정한다.
         // 입력: 없음(InputReader, UI 제어 값, 관전 상태를 읽는다).
         // 출력: 반환값 없음. Cursor.lockState, _fireHeld, _aiming, _fireBlockedUntilRelease가 바뀌고 관전 중 클릭이면 대상이 넘어간다.
+        //       Phase 13.5: 편집 모드 중에는 _fireHeld와 _aiming이 false다(왼쪽은 칸 선택, 오른쪽은 Reset).
         // Left click locks a free cursor (only once joined) and fires while it is locked (D12).
         // Aim and fire only count while the cursor is locked, i.e. while the mouse controls the game.
         // Phase 5 D5: while spectating, a left click on a locked cursor moves to the next player and never fires;
@@ -761,22 +846,30 @@ namespace ProjectH.Client.Game
             }
 
             if (!_input.FireHeld) _fireBlockedUntilRelease = false;
-            _fireHeld = locked && !_inputBlocked && _input.FireHeld && !_fireBlockedUntilRelease && !_spectator.Active;
-            _aiming = locked && !_inputBlocked && _input.AimHeld;
+            // Phase 13.5 D10: in edit mode the left button picks tiles and the right one resets: neither fires nor aims, so
+            // Fire never reaches an input (the server does not shoot) and the camera does not zoom.
+            _fireHeld = locked && !_inputBlocked && _input.FireHeld && !_fireBlockedUntilRelease && !_spectator.Active && !_edit.Active;
+            _aiming = locked && !_inputBlocked && _input.AimHeld && !_edit.Active;
         }
 
-        // What the crosshair is on. Remote players have colliders on PlayerViewFactory.RemoteHitLayer, so the
-        // point can be on a player; the server then shoots from our eye towards it (D2).
-        private Vector3 FindAimPoint()
+        // 기능: 조준선이 가리키는 점과 그곳의 Collider를 낸다. 원격 플레이어는 PlayerViewFactory.RemoteHitLayer에 Collider가 있어
+        //   점이 플레이어 위일 수 있고, 서버는 우리 눈에서 그 점으로 쏜다(D2).
+        // 입력: hitCollider - 결과(Phase 13.5 D10: 편집 대상 조각을 찾는 데 쓴다).
+        // 출력: 맞으면 맞은 점과 그 Collider, 아니면 사거리 끝 점과 null.
+        private Vector3 FindAimPoint(out Collider hitCollider)
         {
             float range = _weapons != null && _weapons.HasWeapon ? _weapons.Current.Range : DefaultAimRange;
             Ray ray = _camera.AimRay;
             // Remote views moved in Update. Physics.autoSyncTransforms is off by default, so without this the
             // ray would test their colliders where the last physics step left them.
             Physics.SyncTransforms();
-            return Physics.Raycast(ray, out RaycastHit hit, range, PlayerViewFactory.AimRaycastMask, QueryTriggerInteraction.Ignore)
-                ? hit.point
-                : ray.GetPoint(range);
+            if (Physics.Raycast(ray, out RaycastHit hit, range, PlayerViewFactory.AimRaycastMask, QueryTriggerInteraction.Ignore))
+            {
+                hitCollider = hit.collider;
+                return hit.point;
+            }
+            hitCollider = null;
+            return ray.GetPoint(range);
         }
 
         // Runs the local weapon copy over this frame's new inputs, oldest first. Returns how many of them
@@ -842,6 +935,9 @@ namespace ProjectH.Client.Game
             _reconnectPending = false;   // this attempt got through: no next slot unless it drops again
         }
 
+        // 기능: 참가 응답을 처리한다. 성공(또는 재개)이면 Entity·Tick 정보와 시계를 정하고 건설·편집·도구 상태를 처음으로 되돌린다.
+        // 입력: response - 서버의 참가 응답.
+        // 출력: 반환값 없음. 거절이면 자동 재접속을 멈춘다.
         private void OnJoined(JoinMatchResponse response)
         {
             // Phase 10 D2: Resumed is our own character back; everything else arrives as after a join.
@@ -857,7 +953,9 @@ namespace ProjectH.Client.Game
             MyEntityId = response.MyEntityId;
             _simHz = response.SimHz;
             // Phase 13 D8: a new connection numbers its build requests from 1; the server resends the tool and the pieces.
+            // Phase 13.5 D4: edits share that numbering (BuildController.Reset restarts the shared counter).
             _build.Reset();
+            _edit.Reset();
             _build.SimHz = response.SimHz;
             _tools.Reset();
             _interpolationDelaySeconds = InterpolationSnapshots / response.SnapshotHz;
@@ -1012,6 +1110,9 @@ namespace ProjectH.Client.Game
             else _hud.ShowDeath(Time.time);
         }
 
+        // 기능: 부활(경기 시작·라운드 초기화 포함)을 처리한다. 남이면 순간이동만, 나면 예측·입력·도구·편집 모드·관전을 새 생명으로 되돌린다.
+        // 입력: respawned - 부활 이벤트.
+        // 출력: 반환값 없음.
         private void OnPlayerRespawned(PlayerRespawned respawned)
         {
             // Other players' alive state follows their snapshot flags (RemotePlayers.Push). Their teleport is told
@@ -1028,6 +1129,7 @@ namespace ProjectH.Client.Game
             _input.QueuedButtons = InputButtons.None;
             _input.ResetCrouch();
             _tools.Reset();   // Phase 13: a new life starts with the weapons out
+            _edit.Cancel();
             _spectator.End();
             _died = false;
             _killedByZone = false;
@@ -1101,15 +1203,20 @@ namespace ProjectH.Client.Game
 
         private void OnResources(ResourcesState resources) => _build.Resources = resources;
 
+        // 기능: 건설·편집 요청의 BuildResult를 순번으로 주인에게 보낸다(Phase 13.5 D9: 편집이면 편집 예측, 아니면 배치 대기).
+        // 입력: result - 서버 결과.
+        // 출력: 반환값 없음. 거절이면 롤백·안내 문구·소리, Ok면 소리.
         private void OnBuildResult(BuildResult result)
         {
-            _build.OnResult(result);
+            // An edit's result never reaches BuildController, so it cannot take an edit's Ok as a placement.
+            if (!_edit.OnResult(result, _buildStore, Time.time)) _build.OnResult(result);
             Vector3 at = _predictor != null ? _predictor.RenderPosition : Vector3.zero;
             if (result.Code == BuildResultCode.Ok)
             {
                 _buildAudio.Play(BuildSound.Placed, at);
                 return;
             }
+            _lastBuildRefusal = result.Code;
             _buildHud.ShowNotice(UiText.BuildRefusal(result.Code), Time.time);
             _buildAudio.Play(BuildSound.Refused, at);
         }
@@ -1126,6 +1233,11 @@ namespace ProjectH.Client.Game
         private void OnBuildPiece(BuildPieceRecord piece, uint version) => _buildStore.ApplyPiece(piece, version);
 
         private void OnBuildHealth(uint id, ushort damage, uint version) => _buildStore.ApplyHealth(id, damage, version);
+
+        // 기능: Edited 기록(Phase 13.5 D8)을 저장소에 적용한다.
+        // 입력: id - 조각 id, state - 편집 뒤 상태, version - 건설 스트림 버전.
+        // 출력: 반환값 없음. 그 조각에 맞지 않는 상태는 저장소가 무시하고 Ignored로 센다(F1).
+        private void OnBuildEdited(uint id, ushort state, uint version) => _buildStore.ApplyEdited(id, state, version);
 
         private void OnBuildDestroyed(uint id, uint version)
         {
@@ -1191,6 +1303,9 @@ namespace ProjectH.Client.Game
             Debug.Log($"Reconnecting in {Mathf.Max(0f, _reconnectAt - Time.unscaledTime):F1} s (attempt {_reconnectAttempt + 1}/{DisconnectCodes.MaxReconnectAttempts})");
         }
 
+        // 기능: 경기 상태 전체를 비운다(끊김, 종료). 조각·편집 예측·편집 모드와 오버레이도 비운다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 화면 Object는 숨기거나 풀로 돌아간다.
         private void ClearMatchState()
         {
             _predictor = null;
@@ -1229,6 +1344,9 @@ namespace ProjectH.Client.Game
             _harvestEffects.HideAll();
             _buildHud.SetVisible(false);
             _build.Reset();
+            _edit.Reset();
+            _editOverlay.Hide();
+            _lastBuildRefusal = BuildResultCode.Ok;
             _tools.Reset();
             _nextSwingAt = 0f;
             _hasRoute = false;

@@ -58,6 +58,15 @@ public sealed class MockActor : IQaActor
                 BuildResults = s.BuildResults.Concat(b.Pieces.Select((p, i) => new BuildResultInfo(s.BuildLastSequence + 1 + i,
                     BuildRefusal ?? "Ok", BuildRefusal == null ? (uint)(100 + s.BuildLastSequence + i) : 0u))).ToArray(),
             },
+            // Phase 13.5: edits answer like builds (BuildRefusal or Ok with the target id); duplicates get no answer.
+            BuildEditCommand { ReuseSequence: true } => s,
+            BuildEditCommand e => s with
+            {
+                BuildFirstSequence = s.BuildLastSequence + 1,
+                BuildLastSequence = s.BuildLastSequence + e.Edits.Count,
+                BuildResults = s.BuildResults.Concat(e.Edits.Select((p, i) => new BuildResultInfo(s.BuildLastSequence + 1 + i,
+                    BuildRefusal ?? "Ok", BuildRefusal == null ? p.PieceId : 0u))).ToArray(),
+            },
             PlayInputsCommand play => s with { PlaybackCommandId = play.Id, PlaybackActive = false, PlaybackCompleted = !NeverFinishPlayback, PlaybackSent = NeverFinishPlayback ? 0 : HeadlessActor.PlaybackTicks(play.Inputs.Count, play.Speed) },
             ScriptCommand sc => s with { PressesSent = s.PressesSent + sc.Steps.Count(x => x.FirePress || x.Buttons != 0), ScriptSteps = 0 },
             AimAtActorCommand a => s with { VisibleEntityIds = s.VisibleEntityIds.Append(a.EntityId).ToArray() },

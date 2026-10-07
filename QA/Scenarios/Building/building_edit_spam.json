@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "name": "Edit Spam, Duplicates And Ownership",
+  "description": "Phase 13.5 D13 (D4, D5, D9): repeated confirms of the same state are Ok and change nothing; a request resent with an old sequence is dropped without an answer; B editing A's wall is refused NotOwner; a burst of 12 alternating edits in one moment (under the 20/s packet limit, so no BuildRate) overflows the shared 8-request queue: the rest is answered RateLimited and nothing is lost or left half-done.",
+  "tags": ["building", "edit", "network"],
+  "seed": 9306,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 12.5, "z": -11, "yaw": 180 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": 13.5, "z": -11, "yaw": 180 } },
+    { "id": "a_wood", "action": "giveResource", "actor": "playerA", "material": "wood", "amount": 50 },
+    { "id": "a_wood_in", "action": "waitFor", "condition": "player.resources.wood", "actor": "playerA", "greaterThan": 0, "timeoutMilliseconds": 2000 },
+    { "id": "a_build", "action": "build", "actor": "playerA", "piece": "wall", "material": "wood", "cellX": 18, "level": 0, "cellZ": 13, "rotation": 0, "saveAs": "wall" },
+
+    { "id": "a_door", "phase": "act", "action": "buildEdit", "actor": "playerA", "pieceId": "${wall.pieceId}", "preset": "door" },
+    { "id": "a_confirm_again", "action": "buildEdit", "actor": "playerA", "pieceId": "${wall.pieceId}", "preset": "door", "count": 3, "saveAs": "again" },
+    { "id": "all_ok", "phase": "assert", "assert": "var.again.counts.Ok", "equals": 3 },
+    { "id": "still_door", "assert": "build.piece.edit", "pieceId": "${wall.pieceId}", "equals": 18 },
+
+    { "id": "a_duplicate", "phase": "act", "action": "buildEdit", "actor": "playerA", "pieceId": "${wall.pieceId}", "preset": "reset", "duplicate": true, "description": "The last sequence again: dropped as a duplicate" },
+    { "id": "dup_settle", "action": "wait", "milliseconds": 500 },
+    { "id": "dup_ignored", "phase": "assert", "assert": "build.piece.edit", "pieceId": "${wall.pieceId}", "equals": 18 },
+
+    { "id": "b_tries", "phase": "act", "action": "buildEdit", "actor": "playerB", "pieceId": "${wall.pieceId}", "preset": "reset", "expect": "NotOwner" },
+    { "id": "b_refused", "phase": "assert", "assert": "build.piece.edit", "pieceId": "${wall.pieceId}", "equals": 18 },
+
+    { "id": "wall_center", "phase": "arrange", "action": "save", "path": "build.piece.center", "pieceId": "${wall.pieceId}", "saveAs": "wc" },
+    { "id": "a_aim_wall", "action": "aim", "actor": "playerA", "at": "${wc}", "description": "A burst is sent without aim ticks: keep the aim on the wall" },
+    { "id": "rate_window", "action": "wait", "milliseconds": 1200, "description": "A fresh 1 s packet window: the burst stays under the 20/s limit" },
+    { "id": "a_burst", "phase": "act", "action": "buildEdit", "actor": "playerA", "pieceId": "${wall.pieceId}", "preset": "window", "count": 12, "burst": true, "alternate": true, "expect": "any", "saveAs": "burst", "timeoutMilliseconds": 10000 },
+    { "id": "some_limited", "phase": "assert", "assert": "var.burst.counts.RateLimited", "greaterThan": 0 },
+    { "id": "some_ok", "assert": "var.burst.counts.Ok", "greaterThan": 0 },
+    { "id": "a_connected", "assert": "actor.joined", "actor": "playerA", "equals": true },
+    { "id": "wall_standing", "assert": "build.exists", "pieceId": "${wall.pieceId}", "equals": true },
+    { "id": "client_agrees", "action": "waitFor", "condition": "actor.watchedPieces.${wall.pieceId}.known", "actor": "playerA", "equals": true, "timeoutMilliseconds": 2000 }
+  ]
+}

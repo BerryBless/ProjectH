@@ -57,7 +57,8 @@ namespace ProjectH.Shared.Simulation
         // Every slot of the gathered cells and levels: (2r + 1)^2 cells x (2r + 1) levels x 5 slots.
         public const int MaxPieces = (2 * PieceCellRadius + 1) * (2 * PieceCellRadius + 1) * (2 * PieceLevelRadius + 1) * BuildGrid.SlotKinds;
         public const int MaxStaticAndDoors = 128 + GameMap.DoorCount;
-        public const int MaxBoxes = MaxStaticAndDoors + GameMap.MaxHarvestables + MaxPieces;
+        // Phase 13.5 D3: an edited piece is up to BuildGrid.MaxPartsPerPiece boxes.
+        public const int MaxBoxes = MaxStaticAndDoors + GameMap.MaxHarvestables + MaxPieces * BuildGrid.MaxPartsPerPiece;
 
         private readonly Box[] _boxes = new Box[MaxBoxes];
         private readonly ColliderId[] _boxIds = new ColliderId[MaxBoxes];
@@ -75,8 +76,11 @@ namespace ProjectH.Shared.Simulation
         // Pieces gathered by the last Gather (boxes and slopes together), for counters and tests.
         public int PieceCount { get; private set; }
 
-        // openDoors: bit i = GameMap.Doors[i] is open (DoorStates). destroyedHarvestables: bit i = GameMap.Harvestables[i]
-        // is gone (HarvestStates). pieces: null = no building pieces.
+        // 기능: 발 주변에서 한 걸음이 닿을 수 있는 충돌체(정적 상자, 닫힌 문, 남은 채집 대상, 주변 조각)를 정한 순서로 모은다.
+        //   Phase 13.5: 조각은 PartsOf의 상자들(편집된 벽은 여러 개) 또는 경사면 하나로 들어간다.
+        // 입력: feet - 발 위치, openDoors - bit i = GameMap.Doors[i] 열림(DoorStates), destroyedHarvestables - bit i =
+        //   GameMap.Harvestables[i] 없어짐(HarvestStates), pieces - 아는 조각(null = 조각 없음).
+        // 출력: 반환값 없음. Boxes·BoxIds·Slopes·SlopeIds·PieceCount가 새로 채워진다(할당 없음).
         public void Gather(Vector3 feet, byte openDoors, ulong destroyedHarvestables, PieceGrid pieces)
         {
             _boxCount = 0;
@@ -141,15 +145,17 @@ namespace ProjectH.Shared.Simulation
             {
                 ref readonly BuildPieceShape shape = ref pieces.ShapeAt(_pieceSlots[i]);
                 var id = new ColliderId(ColliderKind.Piece, _pieceIds[i]);
-                if (BuildGrid.IsSlope(shape.Type))
+                // Phase 13.5 D3: the piece's parts straight into the box buffer (an edited wall is several boxes, in
+                // PartsOf's fixed order), or its slope.
+                int parts = BuildGrid.PartsOf(shape, new Span<Box>(_boxes, _boxCount, BuildGrid.MaxPartsPerPiece), out bool slope);
+                if (slope)
                 {
                     _slopes[_slopeCount] = BuildGrid.SlopeOf(shape);
                     _slopeIds[_slopeCount++] = id;
+                    continue;
                 }
-                else
-                {
-                    AddBox(BuildGrid.BoxOf(shape), id);
-                }
+                for (int p = 0; p < parts; p++) _boxIds[_boxCount + p] = id;
+                _boxCount += parts;
             }
             PieceCount = count;
         }

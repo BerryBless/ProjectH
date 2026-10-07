@@ -32,7 +32,10 @@ namespace ProjectH.Client.UI
         public const string HintDoorOpen = "[E] 문 열기";
         public const string HintDoorClose = "[E] 문 닫기";
         // Phase 13 D16: the build mode keys.
-        public const string BuildKeys = "[Z] 벽  [X] 바닥  [V] 경사로  [B] 지붕  [T] 재료  [R] 회전  [Q] 나가기";
+        public const string BuildKeys = "[Z] 벽  [X] 바닥  [V] 경사로  [B] 지붕  [T] 재료  [R] 회전  [H] 편집  [Q] 나가기";
+        // Phase 13.5 D10: edit mode's keys, and why an edit could not start or be confirmed.
+        public const string EditKeys = "[클릭] 칸 선택  [H] 확정  [우클릭] 원래대로  [Esc] 취소";
+        public const string EditInvalid = "이 모양으로는 편집할 수 없습니다";
         public const string Connecting = "접속하는 중...";
         public const string StatsLoading = "불러오는 중...";
         public const string StatsNoAnswer = "응답 없음";
@@ -279,7 +282,14 @@ namespace ProjectH.Client.UI
         public static string BuildModeLine(BuildPieceType piece, BuildMaterialType material) =>
             "건축: " + PieceName(piece) + " · " + MaterialName(material);
 
-        // A refused placement (BuildResult). Constants; null for Ok.
+        // 기능: 편집 모드의 안내 줄(Phase 13.5 D10).
+        // 입력: piece - 편집하는 조각 종류.
+        // 출력: "편집: 벽" 같은 문자열(상수 이어 붙이기: 편집을 시작할 때만 만든다).
+        public static string EditModeLine(BuildPieceType piece) => "편집: " + PieceName(piece);
+
+        // 기능: 거절된 건설·편집 요청(BuildResult)의 안내 문구를 낸다(Phase 13.5 D9: NotOwner, NotFound 추가).
+        // 입력: code - 결과 코드.
+        // 출력: 상수 문자열. Ok면 null, 모르는 코드면 일반 문구.
         public static string BuildRefusal(BuildResultCode code)
         {
             switch (code)
@@ -292,6 +302,8 @@ namespace ProjectH.Client.UI
                 case BuildResultCode.Occupied: return "이미 지어져 있습니다";
                 case BuildResultCode.RateLimited: return "너무 빠릅니다";
                 case BuildResultCode.BudgetFull: return "더 지을 수 없습니다";
+                case BuildResultCode.NotOwner: return "내 구조물만 편집할 수 있습니다";
+                case BuildResultCode.NotFound: return "구조물이 없습니다";
                 default: return "지을 수 없습니다";
             }
         }

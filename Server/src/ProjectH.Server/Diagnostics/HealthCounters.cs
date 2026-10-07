@@ -24,7 +24,7 @@ public enum BadPacketReason
 // (final review A4): ticks a client's sync waited for its backed-up building channel.
 public readonly record struct BuildCounts(int Pieces, int Cells, long Requests, long Accepted, long Rejected, long Destroyed, long Collapsed,
     long Duplicates, long HarvestHits, long EnvironmentDestroyed, long EventPackets, long SyncPackets, long DamageDestroyed = 0,
-    long SyncDeferred = 0);
+    long SyncDeferred = 0, long Edits = 0);
 
 // Phase 10 D9: totals since the server started, for the Health line and the "ProjectH.Server" Meter. Written from
 // LiteNetLib's threads and the game loop, read by the game loop (Health line) and by the Meter's observers on
@@ -76,11 +76,13 @@ public sealed class HealthCounters
     private long _buildSyncPackets;
     private long _buildDamageDestroyed;
     private long _buildSyncDeferred;
+    // Phase 13.5: edits that changed a piece.
+    private long _buildEdits;
     // Final review B12 (game loop only): the totals of the matches a reset threw away, added to the current match's.
     private BuildCounts _buildBase;
-    private readonly long[] _buildRejectBase = new long[(int)BuildResultCode.BudgetFull + 1];
+    private readonly long[] _buildRejectBase = new long[(int)BuildResultCode.NotFound + 1];
     private long _buildInboxDrops;
-    private readonly long[] _buildRejects = new long[(int)BuildResultCode.BudgetFull + 1];
+    private readonly long[] _buildRejects = new long[(int)BuildResultCode.NotFound + 1];
     // Gauges, written by the game loop once per tick.
     private int _peers;
     private int _players;
@@ -141,6 +143,7 @@ public sealed class HealthCounters
         Volatile.Write(ref _buildSyncPackets, b.SyncPackets + c.SyncPackets);
         Volatile.Write(ref _buildDamageDestroyed, b.DamageDestroyed + c.DamageDestroyed);
         Volatile.Write(ref _buildSyncDeferred, b.SyncDeferred + c.SyncDeferred);
+        Volatile.Write(ref _buildEdits, b.Edits + c.Edits);
         for (int i = 1; i < _buildRejects.Length; i++) Volatile.Write(ref _buildRejects[i], _buildRejectBase[i] + rejects((BuildResultCode)i));
     }
 
@@ -156,7 +159,7 @@ public sealed class HealthCounters
         Volatile.Read(ref _buildAccepted), Volatile.Read(ref _buildRejected), Volatile.Read(ref _buildDestroyed), Volatile.Read(ref _buildCollapsed),
         Volatile.Read(ref _buildDuplicates), Volatile.Read(ref _harvestHits), Volatile.Read(ref _environmentDestroyed),
         Volatile.Read(ref _buildEventPackets), Volatile.Read(ref _buildSyncPackets), Volatile.Read(ref _buildDamageDestroyed),
-        Volatile.Read(ref _buildSyncDeferred));
+        Volatile.Read(ref _buildSyncDeferred), Volatile.Read(ref _buildEdits));
 
     // Build requests the inbound channel dropped (full, DropOldest); written by LiteNetLib threads.
     public void AddBuildInboxDrop() => Interlocked.Increment(ref _buildInboxDrops);

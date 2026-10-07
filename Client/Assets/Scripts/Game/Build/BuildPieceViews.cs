@@ -15,6 +15,11 @@ namespace ProjectH.Client.Game
     //  - Tick redraws only the pieces still being built (their height and stage grow with the server tick).
     // Pools are per type (the collider kind differs) and bounded by MaxPooled; meshes are shared (PieceMeshes). Main
     // thread only. Dispose destroys the objects and the materials.
+    // Phase 13.5 D10, D12: the body draws the piece's actual (edited, or predicted) shape (PieceMeshes.MeshOf). Box shapes
+    // (walls, floors, flat roofs, roof passages) get one BoxCollider per PartsOf box on the root, so the aim ray goes
+    // through an open window exactly where the server's shot does (a convex MeshCollider would fill it); slopes keep a
+    // convex MeshCollider. Every root is listed (root -> view) so the aim ray's collider tells which piece it hit
+    // (TryGetPieceId, edit mode's target).
     public sealed class BuildPieceViews : System.IDisposable
     {
         public const int MaxPooled = 256;
@@ -31,8 +36,12 @@ namespace ProjectH.Client.Game
             public GameObject Root;
             public Transform Body;
             public MeshRenderer Renderer;
-            public BoxCollider Box;   // walls and floors
+            public MeshFilter Filter;
+            // Phase 13.5 D12: one per PartsOf box (made on first need, the unused ones disabled); ramps never have any.
+            public readonly BoxCollider[] Parts = new BoxCollider[BuildGrid.MaxPartsPerPiece];
+            public MeshCollider Slope;   // ramps and roofs (disabled while a roof is flat or a passage)
             public BuildPieceType Type;
+            public uint Id;              // the piece shown, 0 while pooled
             public int Stage = -1;
             public float Height = -1f;
             public bool Building;
@@ -46,6 +55,9 @@ namespace ProjectH.Client.Game
         private readonly Stack<PieceView>[] _pools = new Stack<PieceView>[4];
         private readonly Dictionary<uint, PieceView> _active = new Dictionary<uint, PieceView>();
         private readonly List<uint> _building = new List<uint>();
+        // Phase 13.5 D10: every view's root (active or pooled) -> its view. An entry goes when its root is destroyed.
+        private readonly Dictionary<GameObject, PieceView> _byRoot = new Dictionary<GameObject, PieceView>();
+        private readonly Box[] _parts = new Box[BuildGrid.MaxPartsPerPiece];
 
         public BuildPieceViews(PieceMeshes meshes, Material source)
         {
@@ -92,6 +104,18 @@ namespace ProjectH.Client.Game
             return false;
         }
 
+        // 기능: 조준 Raycast가 맞힌 Collider가 어느 조각의 것인지 낸다(Phase 13.5 D10: 편집 대상).
+        // 입력: collider - 맞힌 Collider(null 가능), id - 결과.
+        // 출력: 보이는 조각의 Collider면 true와 그 id, 아니면 false.
+        public bool TryGetPieceId(Collider collider, out uint id)
+        {
+            id = 0;
+            if (collider == null || !_byRoot.TryGetValue(collider.gameObject, out PieceView view)) return false;
+            if (view.Id == 0 || view.Root == null || !view.Root.activeSelf) return false;
+            id = view.Id;
+            return true;
+        }
+
         public void Clear()
         {
             _building.Clear();
@@ -99,6 +123,9 @@ namespace ProjectH.Client.Game
             _active.Clear();
         }
 
+        // 기능: 조각 Object 전체와 Material을 파괴하고 표를 비운다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 활성·짓는 중·루트 표가 빈다.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);
@@ -108,6 +135,7 @@ namespace ProjectH.Client.Game
             }
             _active.Clear();
             _building.Clear();
+            _byRoot.Clear();
         }
 
         private void Tick(BuildStore store, BuildCatalogData catalog, double serverTick)
@@ -125,6 +153,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 바뀐 조각 하나를 보이거나 갱신한다. 종류가 바뀌면 다른 풀의 뷰로 바꾸고, 모양이 바뀌면 다시 놓는다(피해만 바뀌면 Collider는 그대로).
+        // 입력: id - 조각 id, piece - 보이는 기록(편집 예측 포함), catalog - 건설 수치, serverTick - 추정 서버 Tick.
+        // 출력: 반환값 없음. 뷰의 Id가 이 조각이 되고, 짓는 중이면 짓는 중 목록에 오른다.
         private void Show(uint id, in BuildPieceRecord piece, BuildCatalogData catalog, double serverTick)
         {
             if (_active.TryGetValue(id, out PieceView view) && view.Type != piece.Shape.Type)
@@ -138,12 +169,16 @@ namespace ProjectH.Client.Game
                 view = Take(piece.Shape.Type);
                 _active.Add(id, view);
             }
+            view.Id = id;
             if (view.Posed && !view.Shape.Equals(piece.Shape)) view.Posed = false;   // a damage-only change leaves the colliders alone
             bool wasBuilding = view.Building;
             Draw(view, piece, catalog, serverTick);
             if (view.Building && !wasBuilding) _building.Add(id);
         }
 
+        // 기능: 조각 하나를 서버 Tick 기준의 건설 높이·피해 단계로 그린다. 모양이 새로 정해지면 자세·Mesh·Collider도 맞춘다.
+        // 입력: view - 조각 뷰, piece - 보이는 기록(편집 예측 포함), catalog - 건설 수치(null 가능), serverTick - 추정 서버 Tick.
+        // 출력: 반환값 없음. view의 Building·Height·Stage가 갱신된다.
         private void Draw(PieceView view, in BuildPieceRecord piece, BuildCatalogData catalog, double serverTick)
         {
             int m = (int)piece.Material;
@@ -156,8 +191,7 @@ namespace ProjectH.Client.Game
                 view.Posed = true;
                 view.Shape = piece.Shape;
                 view.Height = -1f;
-                _meshes.PlaceRoot(view.Root.transform, piece.Shape);
-                if (view.Box != null) view.Box.size = BuildGrid.BoxOf(piece.Shape).Size.ToUnity();
+                Pose(view, piece.Shape);
             }
             if (height != view.Height)
             {
@@ -170,6 +204,43 @@ namespace ProjectH.Client.Game
             {
                 view.Stage = index;
                 view.Renderer.sharedMaterial = _materials[index];
+            }
+        }
+
+        // 기능: 조각 루트의 자세와 그릴 Mesh, Collider를 모양에 맞춘다(Phase 13.5 D12). 모양이 바뀔 때만 부른다.
+        //   상자 모양은 PartsOf 상자마다 BoxCollider(루트 기준 중심·크기), 경사면은 볼록 MeshCollider 하나.
+        // 입력: view - 조각 뷰, shape - 보이는 모양.
+        // 출력: 반환값 없음. 쓰지 않는 BoxCollider는 꺼진다. 처음 필요한 BoxCollider만 새로 붙인다.
+        private void Pose(PieceView view, in BuildPieceShape shape)
+        {
+            Transform root = view.Root.transform;
+            _meshes.PlaceRoot(root, shape);
+            Mesh mesh = _meshes.MeshOf(shape);
+            if (view.Filter.sharedMesh != mesh) view.Filter.sharedMesh = mesh;
+            int count = BuildGrid.PartsOf(shape, _parts, out bool slope);
+            if (view.Slope != null)
+            {
+                if (slope && view.Slope.sharedMesh != mesh) view.Slope.sharedMesh = mesh;
+                if (view.Slope.enabled != slope) view.Slope.enabled = slope;
+            }
+            // Box shapes have an unrotated root (PlaceRoot turns only ramps and one-way roofs), so world offsets are local.
+            Vector3 pivot = root.position;
+            for (int i = 0; i < view.Parts.Length; i++)
+            {
+                BoxCollider part = view.Parts[i];
+                if (i >= count)
+                {
+                    if (part != null && part.enabled) part.enabled = false;
+                    continue;
+                }
+                if (part == null)
+                {
+                    part = view.Root.AddComponent<BoxCollider>();
+                    view.Parts[i] = part;
+                }
+                part.center = _parts[i].Center.ToUnity() - pivot;
+                part.size = _parts[i].Size.ToUnity();
+                if (!part.enabled) part.enabled = true;
             }
         }
 
@@ -187,6 +258,9 @@ namespace ProjectH.Client.Game
             _building.RemoveAt(last);
         }
 
+        // 기능: 종류의 풀에서 뷰를 꺼내거나 새로 만든다. 새 뷰는 루트 표에 오르고, 경사로·지붕에는 볼록 MeshCollider를 붙인다.
+        // 입력: type - 조각 종류.
+        // 출력: 켜진 뷰(Posed false: 다음 Draw가 모양에 맞춰 Mesh·Collider를 정한다).
         private PieceView Take(BuildPieceType type)
         {
             Stack<PieceView> pool = _pools[(int)type];
@@ -204,31 +278,35 @@ namespace ProjectH.Client.Game
             root.transform.SetParent(_root.transform, false);
             var body = new GameObject("Body");
             body.transform.SetParent(root.transform, false);
-            body.AddComponent<MeshFilter>().sharedMesh = _meshes.MeshOf(type);
+            var filter = body.AddComponent<MeshFilter>();
+            filter.sharedMesh = _meshes.MeshOf(type);
             var renderer = body.AddComponent<MeshRenderer>();
             renderer.shadowCastingMode = ShadowCastingMode.Off;
-            BoxCollider box = null;
-            if (type == BuildPieceType.Wall || type == BuildPieceType.Floor)
+            MeshCollider slope = null;
+            if (type == BuildPieceType.Ramp || type == BuildPieceType.Roof)
             {
-                // The root sits at the box centre; the collider is the box's size (set when placed).
-                box = root.AddComponent<BoxCollider>();
+                slope = root.AddComponent<MeshCollider>();
+                slope.sharedMesh = _meshes.MeshOf(type);
+                slope.convex = true;
             }
-            else
-            {
-                var collider = root.AddComponent<MeshCollider>();
-                collider.sharedMesh = _meshes.MeshOf(type);
-                collider.convex = true;
-            }
-            return new PieceView { Root = root, Body = body.transform, Renderer = renderer, Box = box, Type = type };
+            // Box colliders (walls, floors, flat roofs) are added by Pose when the shape is known.
+            var view = new PieceView { Root = root, Body = body.transform, Renderer = renderer, Filter = filter, Slope = slope, Type = type };
+            _byRoot.Add(root, view);
+            return view;
         }
 
+        // 기능: 뷰를 풀로 돌려보낸다. 풀이 MaxPooled면 파괴하고 루트 표에서도 지운다.
+        // 입력: view - 돌려보낼 뷰.
+        // 출력: 반환값 없음. 뷰의 Id가 0이 된다.
         private void Release(PieceView view)
         {
             if (view.Root == null) return;
             view.Building = false;
+            view.Id = 0;
             Stack<PieceView> pool = _pools[(int)view.Type];
             if (pool.Count >= MaxPooled)
             {
+                _byRoot.Remove(view.Root);
                 Object.Destroy(view.Root);
                 return;
             }

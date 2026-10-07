@@ -29,7 +29,7 @@ public sealed record QaMatchDto(
     int Graced, int Participants, int Alive, string? Winner, QaZoneDto Zone, int BuildPieces, int WorldItems, bool AirDropRoute);
 
 public sealed record QaPieceDto(long Id, BuildPieceType Type, BuildMaterialType Material, int CellX, int Level, int CellZ, int Rotation,
-    QaVec3 Center, int Health, int MaxHealth, int Damage, int Owner, long CreatedTick, bool Grounded);
+    QaVec3 Center, int Health, int MaxHealth, int Damage, int Owner, long CreatedTick, bool Grounded, int Edit = 0);
 
 // QA-1: read-only views built on the game loop thread (as work items) into plain DTOs, so the HTTP thread serializes
 // copies, never live game objects.
@@ -167,7 +167,7 @@ internal static class QaQueries
             int maxHealth = m.Building.Material(piece.Material).MaxHealth;
             pieces.Add(new QaPieceDto(piece.Id, piece.Shape.Type, piece.Material, piece.Shape.X, piece.Shape.Y, piece.Shape.Z, piece.Shape.Rotation,
                 new QaVec3(center.X, center.Y, center.Z), world.Health(piece, m.ServerTick), maxHealth, piece.Damage, piece.Owner, piece.CreatedTick,
-                piece.Grounded));
+                piece.Grounded, piece.Shape.Edit));
         }
         return new { count, truncated = count > pieces.Count, total = world.Count, pieces };
     }

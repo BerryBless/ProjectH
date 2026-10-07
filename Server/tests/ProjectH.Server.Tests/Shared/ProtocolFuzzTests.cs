@@ -24,7 +24,7 @@ public class ProtocolFuzzTests
             int length = n % 100 == 0 ? random.Next(buffer.Length + 1) : random.Next(65);
             random.NextBytes(buffer.AsSpan(0, length));
             // Half of them start with a valid packet id, so the body parsers also see plausible headers.
-            if (length > 0 && random.Next(2) == 0) buffer[0] = (byte)random.Next(1, (int)PacketId.HarvestStates + 1);
+            if (length > 0 && random.Next(2) == 0) buffer[0] = (byte)random.Next(1, (int)PacketId.BuildEditRequest + 1);
             ReadOnlySpan<byte> data = buffer.AsSpan(0, length);
 
             serverParsed += ServerSide(data);
@@ -122,14 +122,17 @@ public class ProtocolFuzzTests
         r = new PacketReader(data);
         if (BuildResult.TryRead(ref r, out _)) ok++;
         r = new PacketReader(data);
+        if (BuildEditRequest.TryRead(ref r, out _)) ok++;   // Phase 13.5 D4
+        r = new PacketReader(data);
         if (BuildCatalogPacket.TryRead(ref r, out _)) ok++;
         r = new PacketReader(data);
         if (BuildInterestPacket.TryRead(ref r, out _)) ok++;
         r = new PacketReader(data);
-        if (BuildEventsPacket.TryReadHeader(ref r, out _, out int placed, out int health, out int destroyed))
+        if (BuildEventsPacket.TryReadHeader(ref r, out _, out int placed, out int edited, out int health, out int destroyed))
         {
             ok++;
             for (int i = 0; i < placed && BuildPieceRecord.TryReadPlaced(ref r, out _); i++) ok++;
+            for (int i = 0; i < edited && BuildEventsPacket.TryReadEdited(ref r, out _, out _); i++) ok++;
             for (int i = 0; i < health && BuildEventsPacket.TryReadHealth(ref r, out _, out _); i++) ok++;
             for (int i = 0; i < destroyed && BuildEventsPacket.TryReadDestroyed(ref r, out _); i++) ok++;
         }

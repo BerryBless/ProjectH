@@ -98,6 +98,19 @@ namespace ProjectH.Shared.Simulation
             return true;
         }
 
+        // 기능: 조각의 모양만 바꾼다(Phase 13.5 D6 편집). 같은 id·같은 저장 위치(slot)·같은 칸 목록 자리를 유지하므로 slot으로
+        //   묶인 서버 배열(BuildWorld, BuildSupport)이 어긋나지 않고, 수집 순서(id 순)도 그대로다.
+        // 입력: id - 조각 id, shape - 새 모양(같은 슬롯 키: 종류·칸·층·벽 방향이 같고 편집 상태나 Ramp 회전만 다름).
+        // 출력: 바꿨으면 true. 없는 id이거나 슬롯 키가 다르면 false(아무것도 바뀌지 않는다).
+        public bool SetShape(uint id, in BuildPieceShape shape)
+        {
+            if (!_slotOfId.TryGetValue(id, out int slot)) return false;
+            if (BuildGrid.SlotKey(_shapes[slot]) != BuildGrid.SlotKey(shape) || _shapes[slot].Type != shape.Type) return false;
+            _shapes[slot] = shape;
+            Version++;
+            return true;
+        }
+
         public bool Remove(uint id)
         {
             if (!_slotOfId.TryGetValue(id, out int slot)) return false;

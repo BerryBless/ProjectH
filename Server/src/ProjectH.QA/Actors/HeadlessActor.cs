@@ -67,6 +67,14 @@ public sealed class HeadlessActor : IQaActor
     private int _buildLast;
     private long _buildResultsSeen;
     private readonly Queue<BuildResultInfo> _buildResults = new();
+    // Phase 13.5 buildEdit (pump thread): edits still to send (paced; bounded with the builds by MaxBuildQueue), the
+    // request to send after this tick's input, the watched piece ids (at most ActorState.MaxWatchedPieces, kept for the
+    // actor's life so a reconnect can be checked) and the view version they were last published at.
+    private readonly Queue<EditPlan> _edits = new();
+    private BuildEditRequest? _sendEdit;
+    private readonly List<uint> _watched = new();
+    private long _watchedVersion = -1;
+    private IReadOnlyDictionary<string, WatchedPiece> _watchedPublished = new Dictionary<string, WatchedPiece>();
     // QA-5 playInputs (pump thread): the recording being replayed (null = none; released when it ends or stops), the
     // cursor in recording entries, the last entry sent, and the progress the state publishes.
     private IReadOnlyList<RecordedInput>? _playback;
@@ -89,8 +97,8 @@ public sealed class HeadlessActor : IQaActor
     private uint _latencyAcked;
     private readonly InputLatencyHistogram? _latency;
     // Build results by code over this actor's life (published as a new array only when a result arrives).
-    private readonly long[] _buildCodeCounts = new long[(int)BuildResultCode.BudgetFull + 1];
-    private long[] _buildCodesPublished = new long[(int)BuildResultCode.BudgetFull + 1];
+    private readonly long[] _buildCodeCounts = new long[(int)BuildResultCode.NotFound + 1];
+    private long[] _buildCodesPublished = new long[(int)BuildResultCode.NotFound + 1];
 
     private ActorState _state;
 
@@ -197,6 +205,7 @@ public sealed class HeadlessActor : IQaActor
                 _currentTicks = 0;
                 _pendingRelease = 0;
                 _builds.Clear();
+                _edits.Clear();
                 _buildAimTicks = 0;
                 _buildHold = 0;
                 StopPlayback();
@@ -228,6 +237,9 @@ public sealed class HeadlessActor : IQaActor
                 }
                 break;
             }
+            case BuildEditCommand e:
+                ApplyEdit(e);
+                break;
             case BuildCommand b:
                 if (_builds.Count + b.Pieces.Count > MaxBuildQueue)
                 {
@@ -260,6 +272,7 @@ public sealed class HeadlessActor : IQaActor
                 // Sent every tick even when idle: the server's InputTimeout closes a joined client that goes silent (D8).
                 // pauseInput stops exactly this (and nothing else) to let that timeout happen.
                 _sendBuild = null;
+                _sendEdit = null;
                 if (_playback == null && _brain != null) Think(c.View, now);
                 // A replay advances only here, where an input is really sent: a paused or not yet joined actor does
                 // not "finish" a recording it never sent.
@@ -273,6 +286,7 @@ public sealed class HeadlessActor : IQaActor
                 }
                 // After the input that carries the aim, like BotRunner: the server places with the last input's aim.
                 if (_sendBuild is BuildRequest request) c.SendBuild(request);
+                if (_sendEdit is BuildEditRequest edit) c.SendBuildEdit(edit);
             }
         }
         catch (Exception e)
@@ -370,7 +384,7 @@ public sealed class HeadlessActor : IQaActor
     internal bool MoveGaveUp => _moveGaveUp;
     internal Vector3? MoveTarget => _moveTarget;
     internal bool ScriptIdle => _script.Count == 0 && _currentTicks <= 0 && _pendingRelease <= 0;
-    internal int BuildsQueued => _builds.Count;
+    internal int BuildsQueued => _builds.Count + _edits.Count;
     internal float PumpNow => _pump.Now;
 
     // A new target restarts steering; the same target keeps it going. Null stops walking.
@@ -489,8 +503,97 @@ public sealed class HeadlessActor : IQaActor
         _builds.Clear();
         _buildAimTicks = 0;
         _buildHold = 0;
+        _edits.Clear();
         _inputPaused = false;
         StopPlayback();
+    }
+
+    // 기능: 편집 명령을 적용한다(Phase 13.5 D13). Burst면 지금 모두 보내고, 아니면 큐에 넣어 StepBuild가 하나씩 조준 뒤 보낸다.
+    //   지정한 조각 id는 감시 목록에 넣어 ActorState.WatchedPieces로 Client가 아는 상태를 내보낸다.
+    // 입력: e - 편집 명령.
+    // 출력: 반환값 없음. 순번 범위(BuildFirstSequence..BuildLastSequence)가 정해지고, 넘치거나 연결이 없으면 _error가 남는다.
+    private void ApplyEdit(BuildEditCommand e)
+    {
+        if (e.Edits.Count == 0 || e.Edits.Count > BuildEditCommand.MaxEdits || _builds.Count + _edits.Count + e.Edits.Count > MaxBuildQueue)
+        {
+            _error = $"Edit command of {e.Edits.Count} dropped (at most {BuildEditCommand.MaxEdits}, queue {MaxBuildQueue}).";
+            return;
+        }
+        foreach (EditPlan plan in e.Edits) Watch(plan.PieceId);
+        if (!e.Burst)
+        {
+            _buildFirst = (ushort)(_buildSequence + 1);
+            foreach (EditPlan plan in e.Edits) _edits.Enqueue(plan);
+            _buildLast = (ushort)(_buildSequence + e.Edits.Count);
+            return;
+        }
+        BotConnection? c = _connection;
+        if (c == null || _closed || !c.Connected || c.Disconnected || !c.View.Joined)
+        {
+            _error = "Not joined: edit requests not sent.";
+            return;
+        }
+        _buildFirst = (ushort)(e.ReuseSequence ? _buildSequence : _buildSequence + 1);
+        foreach (EditPlan plan in e.Edits)
+        {
+            ushort sequence = e.ReuseSequence ? _buildSequence : ++_buildSequence;
+            c.SendBuildEdit(EditRequest(c.View, plan, sequence, out _));
+        }
+        _buildLast = _buildSequence;
+    }
+
+    // 기능: 감시할 조각 id를 더한다(같은 id는 한 번, 최대 ActorState.MaxWatchedPieces).
+    // 입력: id - 조각 id(0은 무시).
+    // 출력: 반환값 없음.
+    private void Watch(uint id)
+    {
+        if (id == 0 || _watched.Contains(id) || _watched.Count >= ActorState.MaxWatchedPieces) return;
+        _watched.Add(id);
+        _watchedVersion = -1;
+    }
+
+    // 기능: 편집 계획을 이 Client가 아는 조각에 맞춰 실제 요청으로 만든다(대상 찾기, 상태 묶기, 조준점).
+    // 입력: view - 이 Client의 상태, plan - 편집 계획, sequence - 보낼 순번, aimAt - 결과 조준점(조각 중심, 모르면 null).
+    // 출력: 보낼 BuildEditRequest.
+    private static BuildEditRequest EditRequest(BotView view, in EditPlan plan, ushort sequence, out Vector3? aimAt)
+    {
+        uint id = plan.PieceId;
+        BuildPieceShape? known = null;
+        if (id != 0 && view.PieceShapes.TryGetValue(id, out BuildPieceShape byId)) known = byId;
+        if (id == 0 && plan.Slot is BuildPieceShape slot)
+        {
+            uint key = BuildGrid.SlotKey(slot);
+            foreach (var pair in view.PieceShapes)
+            {
+                if (pair.Value.Type != slot.Type || BuildGrid.SlotKey(pair.Value) != key) continue;
+                id = pair.Key;
+                known = pair.Value;
+                break;
+            }
+        }
+        aimAt = known is BuildPieceShape shape ? BuildGrid.BoundsOf(shape).Center : null;
+        ushort state = plan.RawState >= 0
+            ? (ushort)plan.RawState
+            : BuildEdit.PackState(plan.Edit, plan.Rotation >= 0 ? plan.Rotation : known?.Rotation ?? 0);
+        return new BuildEditRequest { Sequence = sequence, PieceId = id, State = state };
+    }
+
+    // 기능: 감시 중인 조각을 이 Client의 상태에서 읽어 내보낼 표를 만든다. 보기가 바뀌었을 때만 새로 만든다.
+    // 입력: view - 이 Client의 상태.
+    // 출력: id(문자열) → 상태 표.
+    private IReadOnlyDictionary<string, WatchedPiece> WatchedOf(BotView view)
+    {
+        if (_watchedVersion == view.PieceVersion) return _watchedPublished;
+        var result = new Dictionary<string, WatchedPiece>(_watched.Count);
+        foreach (uint id in _watched)
+        {
+            result[id.ToString(System.Globalization.CultureInfo.InvariantCulture)] = view.PieceShapes.TryGetValue(id, out BuildPieceShape s)
+                ? new WatchedPiece(true, s.Edit, s.Rotation)
+                : new WatchedPiece(false, 0, 0);
+        }
+        _watchedPublished = result;
+        _watchedVersion = view.PieceVersion;
+        return result;
     }
 
     // One replay tick (pure, tested): the entry at the cursor (clamped to the last one), with the buttons of every entry
@@ -578,6 +681,7 @@ public sealed class HeadlessActor : IQaActor
     {
         if (_toolPressWait > 0) _toolPressWait--;
         if (!view.Alive) return false;
+        if (_builds.Count == 0 && _edits.Count > 0 && view.Alive) return StepEdit(view, ref buttons, ref aimYaw, ref aimPitch);
         if (_builds.Count == 0)
         {
             if (_buildHold <= 0) return false;
@@ -615,6 +719,35 @@ public sealed class HeadlessActor : IQaActor
             Sequence = ++_buildSequence, Piece = (byte)plan.Piece, Material = (byte)plan.Material,
             X = plan.X, Y = plan.Y, Z = plan.Z, Rotation = plan.Rotation,
         };
+        return true;
+    }
+
+    // 기능: 편집 한 단계(Phase 13.5): 다음 편집의 조각을 AimTicksPerBuild Tick 겨눈 뒤 이번 입력 다음에 요청을 보내게 한다.
+    //   도구는 바꾸지 않는다(§29). 지상 모드가 아니면 기다린다.
+    // 입력: view - 이 Client의 상태, buttons·aimYaw·aimPitch - 이번 입력(겨눔과 Fire 제거가 반영된다).
+    // 출력: 편집 중이면 true.
+    private bool StepEdit(BotView view, ref InputButtons buttons, ref float aimYaw, ref float aimPitch)
+    {
+        MovementMode mode = view.MyMode;
+        if (mode != MovementMode.Ground && mode != MovementMode.Crouch && mode != MovementMode.Slide) return false;
+        EditPlan plan = _edits.Peek();
+        BuildEditRequest request = EditRequest(view, plan, (ushort)(_buildSequence + 1), out Vector3? aimAt);
+        if (aimAt is Vector3 at) BotAim.Solve(BotAim.Eye(view.MyPosition), at, out aimYaw, out aimPitch);
+        buttons &= ~InputButtons.Fire;
+        if (_buildAimTicks < AimTicksPerBuild)
+        {
+            _buildAimTicks++;
+            return true;
+        }
+        _edits.Dequeue();
+        _buildAimTicks = 0;
+        if (aimAt is Vector3 hold)
+        {
+            _buildHold = HoldAimTicks;
+            _buildHoldAim = hold;
+        }
+        _buildSequence++;
+        _sendEdit = request;
         return true;
     }
 
@@ -762,7 +895,7 @@ public sealed class HeadlessActor : IQaActor
             state = new ActorState
             {
                 Alias = Alias, DevPlayerId = DevPlayerId, Status = ActorStatus.Idle, LastCommandId = _lastCommandId, Error = _error,
-                InputPaused = _inputPaused, BuildFirstSequence = _buildFirst, BuildLastSequence = _buildLast, BuildsQueued = _builds.Count,
+                InputPaused = _inputPaused, BuildFirstSequence = _buildFirst, BuildLastSequence = _buildLast, BuildsQueued = _builds.Count + _edits.Count,
                 PlaybackCommandId = _playCommandId, PlaybackActive = _playback != null, PlaybackSent = _playSent, PlaybackCompleted = _playCompleted,
                 Role = _brain?.Role,
             };
@@ -822,8 +955,9 @@ public sealed class HeadlessActor : IQaActor
                 RawPacketsSent = _rawSent,
                 BuildFirstSequence = _buildFirst,
                 BuildLastSequence = _buildLast,
-                BuildsQueued = _builds.Count,
+                BuildsQueued = _builds.Count + _edits.Count,
                 BuildResults = _buildResults.ToArray(),
+                WatchedPieces = WatchedOf(v),
                 PlaybackCommandId = _playCommandId,
                 PlaybackActive = _playback != null,
                 PlaybackSent = _playSent,

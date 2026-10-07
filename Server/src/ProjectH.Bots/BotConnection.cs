@@ -59,6 +59,8 @@ public sealed class BotConnection : IDisposable
     public long InputsSent { get; private set; }
     // Phase 13 D17: build requests sent (on the building channel).
     public long BuildsSent { get; private set; }
+    // Phase 13.5 D4: edit requests sent (QA buildEdit).
+    public long BuildEditsSent { get; private set; }
 
     public void Connect(string host, int port, string devPlayerId)
     {
@@ -106,6 +108,18 @@ public sealed class BotConnection : IDisposable
         BuildRequest.Write(ref writer, request);
         _peer.Send(writer.WrittenSpan, ProtocolConstants.BuildChannel, DeliveryMethod.ReliableOrdered);
         BuildsSent++;
+    }
+
+    // 기능: 편집 요청 하나를 건설 채널로 보낸다(Phase 13.5 D4, ReliableOrdered, 서버 답도 같은 채널).
+    // 입력: request - 편집 요청(순번은 BuildRequest와 같은 카운터).
+    // 출력: 반환값 없음. 연결되어 있으면 패킷이 전송되고 BuildEditsSent가 는다.
+    public void SendBuildEdit(in BuildEditRequest request)
+    {
+        if (_peer == null || !Connected || Disconnected) return;
+        var writer = new PacketWriter(_buffer);
+        BuildEditRequest.Write(ref writer, request);
+        _peer.Send(writer.WrittenSpan, ProtocolConstants.BuildChannel, DeliveryMethod.ReliableOrdered);
+        BuildEditsSent++;
     }
 
     public void Dispose() => _net.Stop();
@@ -241,24 +255,27 @@ public sealed class BotConnection : IDisposable
             case PacketId.BuildResult:
                 if (BuildResult.TryRead(ref r, out var built))
                 {
+                    // TryRead bounds the code (at most NotFound), the array's last index.
                     view.BuildResults[(int)built.Code]++;
                     view.AddBuildResult(built);
                 }
                 break;
             case PacketId.BuildSync:
                 if (!BuildSyncPacket.TryReadHeader(ref r, out _, out bool reset, out int synced)) return;
-                if (reset) view.Pieces.Clear();
-                for (int i = 0; i < synced && BuildPieceRecord.TryReadSync(ref r, out var piece); i++) view.AddPiece(piece.Id);
+                if (reset) view.ClearPieces();
+                for (int i = 0; i < synced && BuildPieceRecord.TryReadSync(ref r, out var piece); i++) view.AddPiece(piece);
                 break;
             case PacketId.BuildEvents:
-                if (!BuildEventsPacket.TryReadHeader(ref r, out _, out int placed, out int health, out int destroyed)) return;
-                for (int i = 0; i < placed && BuildPieceRecord.TryReadPlaced(ref r, out var piece); i++) view.AddPiece(piece.Id);
+                // Phase 13.5 D8: Placed, Edited, Health, Destroyed in that order.
+                if (!BuildEventsPacket.TryReadHeader(ref r, out _, out int placed, out int edited, out int health, out int destroyed)) return;
+                for (int i = 0; i < placed && BuildPieceRecord.TryReadPlaced(ref r, out var piece); i++) view.AddPiece(piece);
+                for (int i = 0; i < edited && BuildEventsPacket.TryReadEdited(ref r, out uint editedId, out ushort state); i++) view.ApplyEdited(editedId, state);
                 for (int i = 0; i < health && BuildEventsPacket.TryReadHealth(ref r, out _, out _); i++) { }
-                for (int i = 0; i < destroyed && BuildEventsPacket.TryReadDestroyed(ref r, out uint gone); i++) view.Pieces.Remove(gone);
+                for (int i = 0; i < destroyed && BuildEventsPacket.TryReadDestroyed(ref r, out uint gone); i++) view.RemovePiece(gone);
                 break;
             case PacketId.BuildInterest:
                 // The window moved: what we keep is not worth tracking per cell for a bot; the next syncs bring it back.
-                if (BuildInterestPacket.TryRead(ref r, out _)) view.Pieces.Clear();
+                if (BuildInterestPacket.TryRead(ref r, out _)) view.ClearPieces();
                 break;
         }
     }

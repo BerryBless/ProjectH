@@ -130,10 +130,16 @@ public class PieceCollisionTests
                 Piece(BuildPieceType.Roof, C, 0, C) },                                                             // a roofed cell with a ramp
             new[] { Piece(BuildPieceType.Ramp, C, 0, C, 1), Piece(BuildPieceType.Floor, C, 1, C), Wall(C, 0, C, 1), Wall(17, 0, C, 1) }, // a ramp under a floor
             new[] { Piece(BuildPieceType.Ramp, C, 0, C, 0), Wall(C, 0, 17, 0), Piece(BuildPieceType.Floor, C, 1, 17), Piece(BuildPieceType.Roof, C, 1, 17) },
+            // Phase 13.5 D3: edited pieces (a door, a window, a half wall, floor quadrants, a roof passage): their parts touch.
+            new[] { Wall(C, 0, C, 0).WithEdit(0b000_010_010, 0), Wall(C, 0, C, 1).WithEdit(0b000_010_000, 1), Wall(C, 0, C, 2).WithEdit(0b111_000_000, 0),
+                Piece(BuildPieceType.Floor, C, 0, C).WithEdit(0b1001, 0) },
+            new[] { Piece(BuildPieceType.Floor, C, 1, C).WithEdit(0b0001, 0), Wall(C, 1, C, 0).WithEdit(0b010_010_010, 0),
+                Piece(BuildPieceType.Roof, 17, 0, C).WithEdit(BuildEdit.RoofPassage, 0), Wall(17, 0, C, 0).WithEdit(0b000_000_101 ^ 0b000_000_111, 0) },
         };
         var world = new CollisionWorld();
         var rng = new Random(1301);
         int cases = 0;
+        Span<Box> parts = stackalloc Box[BuildGrid.MaxPartsPerPiece];
         foreach (BuildPieceShape[] layout in layouts)
         {
             PieceGrid grid = Grid(layout);
@@ -141,8 +147,10 @@ public class PieceCollisionTests
             {
                 // A body overlapping one piece's box (a wall or a floor) through one face by up to 0.35 m, anywhere along that face.
                 BuildPieceShape target = layout[rng.Next(layout.Length)];
-                if (BuildGrid.IsSlope(target.Type)) continue;
-                Box box = BuildGrid.BoxOf(target);
+                // Phase 13.5: one of the piece's parts (an edited wall or floor is several boxes).
+                int partCount = BuildGrid.PartsOf(target, parts, out bool isSlope);
+                if (isSlope || partCount == 0) continue;
+                Box box = parts[rng.Next(partCount)];
                 float depth = 0.002f + (float)rng.NextDouble() * 0.35f;
                 float along = (float)rng.NextDouble();
                 float up = (float)rng.NextDouble();

@@ -28,6 +28,7 @@ public static class ServerCommandActions
         r.Add(Command("spawnBuildPiece", ActorUse.None, new[] { "piece", "material", "position|x|cellX" },
             new[] { "y", "z", "cellZ", "level", "rotation" }, positions: true));
         r.Add(Command("damageBuild", ActorUse.None, new[] { "pieceId", "amount" }));
+        r.Add(Command("editBuild", ActorUse.None, new[] { "pieceId", "edit" }, new[] { "rotation" }));   // Phase 13.5
     }
 
     private static DelegateAction Command(string name, ActorUse actor, string[] required, string[]? optional = null,

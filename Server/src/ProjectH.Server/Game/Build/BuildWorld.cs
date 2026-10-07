@@ -15,7 +15,7 @@ public struct BuildPiece
     public ushort Owner;          // the builder's entity id
     public uint CreatedTick;
     public ushort Damage;         // taken so far
-    public bool Grounded;         // D12: touches the terrain or a map box (fixed: neither ever changes)
+    public bool Grounded;         // D12: touches the terrain or a map box; set at placement, recomputed only by Match.ApplyEdit when an edit turns a ramp (Phase 13.5 D7)
 }
 
 // Phase 13 D10 (request §124, §125): every piece of the current match, with one index per kind of lookup:
@@ -91,6 +91,18 @@ public sealed class BuildWorld
         else _ownerCounts.Remove(piece.Owner);
         Grid.Remove(id);
         piece = default;
+        return true;
+    }
+
+    // 기능: 조각의 모양만 바꾼다(Phase 13.5 D6 편집). id·slot·칸·소유자·재료·CreatedTick·Damage는 그대로라 slot으로 묶인
+    //   BuildSupport·BuildReplication 배열이 어긋나지 않는다. _bySlot 키도 그대로다(편집은 슬롯 키를 바꾸지 않는다).
+    // 입력: slot - 조각의 저장 위치, shape - 새 모양(같은 슬롯 키, BuildEdit.TryApply의 결과).
+    // 출력: 바꿨으면 true. 빈 slot이거나 슬롯 키가 다르면 false(아무것도 바뀌지 않는다).
+    public bool SetShape(int slot, in BuildPieceShape shape)
+    {
+        ref BuildPiece piece = ref _pieces[slot];
+        if (piece.Id == 0 || !Grid.SetShape(piece.Id, shape)) return false;
+        piece.Shape = shape;
         return true;
     }
 

@@ -41,5 +41,7 @@ namespace ProjectH.Shared.Protocol
         ResourcesState = 32,
         HarvestHit = 33,
         HarvestStates = 34,
+        // Phase 13.5 D4: editing a piece (C->S, the building channel).
+        BuildEditRequest = 35,
     }
 }

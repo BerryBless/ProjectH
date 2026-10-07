@@ -16,6 +16,8 @@ namespace ProjectH.Shared.Protocol
         InvalidState = 7,   // dead, spectating, the match finished, not in build mode, in the air
         InvalidRequest = 8, // no such piece, material, rotation or cell
         BudgetFull = 9,     // the match's or the player's piece limit
+        NotOwner = 10,      // Phase 13.5 D9: an edit of a piece the player may not edit (BuildRules.CanEdit)
+        NotFound = 11,      // Phase 13.5 D9: an edit of a piece that is not there (never was, or already destroyed)
     }
 
     // Phase 13 D8: C->S on the build channel, ReliableOrdered: place one piece. Grid coordinates only, never a world
@@ -67,7 +69,47 @@ namespace ProjectH.Shared.Protocol
         }
     }
 
+    // Phase 13.5 D4: C->S on the build channel, ReliableOrdered: edit one piece (also Reset: Edit 0). Sequence is the same
+    // per-connection counter BuildRequest uses (one duplicate check, one queue on the server). State: the piece's new edit
+    // state in bits 0-11 and its rotation in bits 12-13 (a ramp's new direction; every other piece its current rotation),
+    // bits 14-15 zero (BuildEdit.PackState). Values are checked by the server (Match.TryEdit), not here: the reader only
+    // checks the length. Layout: [PacketId 1][Sequence 2][PieceId 4][State 2] = 9 bytes.
+    public struct BuildEditRequest
+    {
+        public const int Size = 9;   // with the packet id
+
+        public ushort Sequence;
+        public uint PieceId;
+        public ushort State;
+
+        // 기능: 편집 요청을 쓴다.
+        // 입력: writer - 쓸 곳, r - 요청.
+        // 출력: 반환값 없음. writer에 9바이트가 쓰인다.
+        public static void Write(ref PacketWriter writer, in BuildEditRequest r)
+        {
+            writer.WriteByte((byte)PacketId.BuildEditRequest);
+            writer.WriteUInt16(r.Sequence);
+            writer.WriteUInt32(r.PieceId);
+            writer.WriteUInt16(r.State);
+        }
+
+        // 기능: 편집 요청을 읽는다(PacketId 다음부터). 길이만 확인한다.
+        // 입력: reader - 남은 바이트가 정확히 8이어야 한다, r - 결과.
+        // 출력: 길이가 맞으면 true와 요청, 아니면 false.
+        public static bool TryRead(ref PacketReader reader, out BuildEditRequest r)
+        {
+            r = default;
+            if (reader.Remaining != Size - 1) return false;
+            reader.TryReadUInt16(out r.Sequence);
+            reader.TryReadUInt32(out r.PieceId);
+            reader.TryReadUInt16(out r.State);
+            return true;
+        }
+    }
+
     // Phase 13 D13: S->C, to the requester: the request's sequence, the result, the new piece's id (0 when refused).
+    // Phase 13.5 D5: an edit's result carries the edited piece's id when Ok (0 when refused), so (Ok) == (PieceId != 0)
+    // holds for both; the client tells them apart by the sequence it is waiting on.
     public struct BuildResult
     {
         public const int Size = 8;   // with the packet id
@@ -92,12 +134,14 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadByte(out byte code);
             reader.TryReadUInt32(out r.PieceId);
             r.Code = (BuildResultCode)code;
-            return code <= (byte)BuildResultCode.BudgetFull && (r.Code == BuildResultCode.Ok) == (r.PieceId != 0);
+            return code <= (byte)BuildResultCode.NotFound && (r.Code == BuildResultCode.Ok) == (r.PieceId != 0);
         }
     }
 
     // Phase 13 D13: one piece as clients learn of it. Placed: Id 4 + grid 4 (x 5, z 5, level 4, rotation 2, type 2,
-    // material 2 bits) + owner 2 + created tick 4 = 14 bytes. A sync record adds the damage taken so far (16 bytes).
+    // material 2 bits, Phase 13.5 D8: edit state 12 bits) + owner 2 + created tick 4 = 14 bytes. A sync record adds the
+    // damage taken so far (16 bytes). The edit state rides in the grid word, so a join, a resume or entering a cell gets
+    // the piece's latest edit without a size change.
     public struct BuildPieceRecord
     {
         public const int PlacedSize = 14;
@@ -114,7 +158,8 @@ namespace ProjectH.Shared.Protocol
         {
             writer.WriteUInt32(p.Id);
             uint grid = (uint)(p.Shape.X & 31) | ((uint)(p.Shape.Z & 31) << 5) | ((uint)(p.Shape.Y & 15) << 10) |
-                        ((uint)(p.Shape.Rotation & 3) << 14) | ((uint)((byte)p.Shape.Type & 3) << 16) | ((uint)((byte)p.Material & 3) << 18);
+                        ((uint)(p.Shape.Rotation & 3) << 14) | ((uint)((byte)p.Shape.Type & 3) << 16) | ((uint)((byte)p.Material & 3) << 18) |
+                        ((uint)(p.Shape.Edit & BuildEdit.Mask) << 20);
             writer.WriteUInt32(grid);
             writer.WriteUInt16(p.Owner);
             writer.WriteUInt32(p.CreatedTick);
@@ -126,7 +171,10 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt16(p.Damage);
         }
 
-        // Refuses id 0, unused bits, a material above Metal and a shape that is not canonical (BuildGrid.TryNormalize).
+        // 기능: Placed 기록을 읽는다.
+        // 입력: reader - 기록이 시작되는 곳, p - 결과.
+        // 출력: 읽고 검증되면 true와 기록. id 0, Metal 위 재료, 정규형이 아닌 모양(BuildGrid.TryNormalize), 그 종류에서
+        //   허용되지 않는 편집 상태(BuildEdit.IsValid, Phase 13.5 D8)면 false.
         public static bool TryReadPlaced(ref PacketReader reader, out BuildPieceRecord p)
         {
             p = default;
@@ -135,7 +183,7 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadUInt32(out uint grid);
             reader.TryReadUInt16(out p.Owner);
             reader.TryReadUInt32(out p.CreatedTick);
-            if (p.Id == 0 || grid >> 20 != 0) return false;
+            if (p.Id == 0) return false;
             int material = (int)(grid >> 18) & 3;
             if (material > (int)BuildMaterialType.Metal) return false;
             p.Material = (BuildMaterialType)material;
@@ -144,8 +192,12 @@ namespace ProjectH.Shared.Protocol
             int z = (int)((grid >> 5) & 31);
             int y = (int)((grid >> 10) & 15);
             int rotation = (int)((grid >> 14) & 3);
-            if (!BuildGrid.TryNormalize(type, x, y, z, rotation, out p.Shape)) return false;
-            return p.Shape.X == x && p.Shape.Z == z && p.Shape.Rotation == rotation;
+            if (!BuildGrid.TryNormalize(type, x, y, z, rotation, out BuildPieceShape shape)) return false;
+            if (shape.X != x || shape.Z != z || shape.Rotation != rotation) return false;
+            int edit = (int)(grid >> 20);
+            if (!BuildEdit.IsValid(type, edit)) return false;
+            p.Shape = shape.WithEdit(edit, rotation);
+            return true;
         }
 
         public static bool TryReadSync(ref PacketReader reader, out BuildPieceRecord p)
@@ -156,19 +208,24 @@ namespace ProjectH.Shared.Protocol
     }
 
     // Phase 13 D13: S->C on the build channel, ReliableOrdered: one tick's building events for one client, in this order:
-    // pieces placed, health changes (the damage a piece has taken so far, once per piece per tick), pieces destroyed.
-    // Layout: [PacketId 1][Version 4][Placed 1][Health 1][Destroyed 1] (8 bytes), then the records: Placed 14, Health 6
-    // (id + damage), Destroyed 4 (id). At most MaxPacketSize bytes; a tick with more is split into several packets that
-    // keep that order. Version is the match's building event count after the tick (debugging and order checks, D14).
+    // pieces placed, Phase 13.5 D8: pieces edited (the piece's state after its last edit of the tick, once per piece),
+    // health changes (the damage a piece has taken so far, once per piece per tick), pieces destroyed.
+    // Layout: [PacketId 1][Version 4][Placed 1][Edited 1][Health 1][Destroyed 1] (9 bytes), then the records: Placed 14,
+    // Edited 6 (id + state: BuildEdit.PackState), Health 6 (id + damage), Destroyed 4 (id). At most MaxPacketSize bytes;
+    // a tick with more is split into several packets that keep that order. Version is the match's building event count
+    // after the tick (debugging and order checks, D14).
     public static class BuildEventsPacket
     {
-        public const int HeaderSize = 8;
+        public const int HeaderSize = 9;
+        public const int EditedSize = 6;
         public const int HealthSize = 6;
         public const int DestroyedSize = 4;
         public const int VersionOffset = 1;
         public const int CountsOffset = 5;
 
-        // Placeholder counts; Patch writes the real ones once the records are in.
+        // 기능: 헤더를 쓴다. 개수는 0으로 두고, 기록을 다 쓴 뒤 Patch가 실제 값을 쓴다.
+        // 입력: writer - 쓸 곳, version - 이 Tick 뒤 경기의 건설 이벤트 수.
+        // 출력: 반환값 없음. writer에 9바이트가 쓰인다.
         public static void WriteHeader(ref PacketWriter writer, uint version)
         {
             writer.WriteByte((byte)PacketId.BuildEvents);
@@ -176,14 +233,27 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte(0);
             writer.WriteByte(0);
             writer.WriteByte(0);
+            writer.WriteByte(0);
         }
 
-        // packet starts with the PacketId byte.
-        public static void Patch(Span<byte> packet, int placed, int health, int destroyed)
+        // 기능: 헤더의 기록 개수를 쓴다.
+        // 입력: packet - PacketId 바이트부터 시작하는 패킷, placed·edited·health·destroyed - 종류별 기록 수(각 255 이하).
+        // 출력: 반환값 없음. 헤더의 개수 4바이트가 바뀐다.
+        public static void Patch(Span<byte> packet, int placed, int edited, int health, int destroyed)
         {
             packet[CountsOffset] = (byte)placed;
-            packet[CountsOffset + 1] = (byte)health;
-            packet[CountsOffset + 2] = (byte)destroyed;
+            packet[CountsOffset + 1] = (byte)edited;
+            packet[CountsOffset + 2] = (byte)health;
+            packet[CountsOffset + 3] = (byte)destroyed;
+        }
+
+        // 기능: Edited 기록 하나를 쓴다.
+        // 입력: writer - 쓸 곳, id - 조각 id, state - 편집 뒤 상태(BuildEdit.PackState).
+        // 출력: 반환값 없음. writer에 6바이트가 쓰인다.
+        public static void WriteEdited(ref PacketWriter writer, uint id, ushort state)
+        {
+            writer.WriteUInt32(id);
+            writer.WriteUInt16(state);
         }
 
         public static void WriteHealth(ref PacketWriter writer, uint id, ushort damage)
@@ -194,19 +264,33 @@ namespace ProjectH.Shared.Protocol
 
         public static void WriteDestroyed(ref PacketWriter writer, uint id) => writer.WriteUInt32(id);
 
-        public static bool TryReadHeader(ref PacketReader reader, out uint version, out int placed, out int health, out int destroyed)
+        // 기능: 헤더를 읽는다(PacketId 다음부터).
+        // 입력: reader - 패킷, version·placed·edited·health·destroyed - 결과.
+        // 출력: 헤더가 있고 남은 길이가 기록 개수와 정확히 맞으면 true.
+        public static bool TryReadHeader(ref PacketReader reader, out uint version, out int placed, out int edited, out int health, out int destroyed)
         {
             version = 0;
-            placed = health = destroyed = 0;
+            placed = edited = health = destroyed = 0;
             if (reader.Remaining < HeaderSize - 1) return false;
             reader.TryReadUInt32(out version);
             reader.TryReadByte(out byte p);
+            reader.TryReadByte(out byte e);
             reader.TryReadByte(out byte h);
             reader.TryReadByte(out byte d);
             placed = p;
+            edited = e;
             health = h;
             destroyed = d;
-            return reader.Remaining == placed * BuildPieceRecord.PlacedSize + health * HealthSize + destroyed * DestroyedSize;
+            return reader.Remaining == placed * BuildPieceRecord.PlacedSize + edited * EditedSize + health * HealthSize + destroyed * DestroyedSize;
+        }
+
+        // 기능: Edited 기록 하나를 읽는다. 종류를 모르므로 편집 상태의 유효성은 받는 쪽이 BuildEdit.TryApply로 확인한다.
+        // 입력: reader - 기록이 시작되는 곳, id·state - 결과.
+        // 출력: 읽혔고 id가 0이 아니며 state의 14–15비트가 0이면 true.
+        public static bool TryReadEdited(ref PacketReader reader, out uint id, out ushort state)
+        {
+            state = 0;
+            return reader.TryReadUInt32(out id) && reader.TryReadUInt16(out state) && id != 0 && (state >> (BuildEdit.RotationShift + 2)) == 0;
         }
 
         public static bool TryReadHealth(ref PacketReader reader, out uint id, out ushort damage)
