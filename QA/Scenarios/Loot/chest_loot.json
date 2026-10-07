@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "name": "Chest Loot",
+  "description": "Phase 16 D2, D5 (request §59, §61): the server rolls a chest's loot from the Chest table of loot.json: three items, one guaranteed weapon first and two of ammo, medkit, shield cell or 30 building resources. Opening chest 14 puts exactly that loot around it: three items, one of them a weapon.",
+  "tags": ["loot", "container"],
+  "seed": 16003,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+    { "id": "some_spawned", "assert": "match.containersSpawned", "greaterThan": 0 },
+
+    { "id": "chest_closed", "phase": "arrange", "action": "setContainer", "container": 14, "state": "closed" },
+    { "id": "rolled_weapon", "assert": "loot.containers.14.loot.0.kind", "equals": "Weapon" },
+    { "id": "rolled_second", "assert": "loot.containers.14.loot.1.kind", "notEquals": "Weapon" },
+    { "id": "rolled_third", "assert": "loot.containers.14.loot.2.kind", "notEquals": "Weapon" },
+    { "id": "rolled_only_three", "assert": "loot.containers.14.loot.3", "notExists": true },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": -20, "z": -20 } },
+    { "id": "a_place", "action": "setPosition", "actor": "playerA", "position": { "x": 15, "z": 14, "yaw": 0 } },
+    { "id": "a_face", "action": "look", "actor": "playerA", "yaw": 0 },
+    { "id": "settle", "action": "wait", "milliseconds": 500 },
+
+    { "id": "a_open", "phase": "act", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "opened", "phase": "assert", "action": "waitFor", "condition": "loot.containers.14.state", "equals": "open", "timeoutMilliseconds": 3000 },
+    { "id": "three_items", "assert": "loot.items.count", "at": { "x": 15, "z": 16 }, "radius": 2, "equals": 3 },
+    { "id": "one_weapon", "assert": "loot.items.weapons", "at": { "x": 15, "z": 16 }, "radius": 2, "equals": 1 }
+  ]
+}

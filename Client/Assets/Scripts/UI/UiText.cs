@@ -31,6 +31,10 @@ namespace ProjectH.Client.UI
         public const string HintGlide = "[Space] 글라이더 펼치기";
         public const string HintDoorOpen = "[E] 문 열기";
         public const string HintDoorClose = "[E] 문 닫기";
+        // Phase 16 D4, D8: the "[E] 열기" hint per loot target kind.
+        public const string HintOpenChest = "[E] 상자 열기";
+        public const string HintOpenAmmoBox = "[E] 탄약 상자 열기";
+        public const string HintOpenSupplyDrop = "[E] 보급품 열기";
         // Phase 13 D16: the build mode keys.
         public const string BuildKeys = "[Z] 벽  [X] 바닥  [V] 경사로  [B] 지붕  [T] 재료  [R] 회전  [H] 편집  [Q] 나가기";
         // Phase 13.5 D10: edit mode's keys, and why an edit could not start or be confirmed.

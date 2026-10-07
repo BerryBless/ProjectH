@@ -72,6 +72,10 @@ public sealed class HeadlessClient : IDisposable
     public List<ushort> ItemsRemoved { get; } = new();
     public List<InventoryState> Inventories { get; } = new();
     public List<PickupResult> PickupResults { get; } = new();
+    // Phase 16 D3, D7: every ContainerStates (spawned, opened) and SupplyDrops count received, in order.
+    public List<(ulong Spawned, ulong Opened)> ContainerStates { get; } = new();
+    public List<int> SupplyDropLists { get; } = new();
+    private readonly SupplyDropInfo[] _supplyDrops = new SupplyDropInfo[SupplyDropsPacket.MaxSupplyDrops];
 
     // Phase 5: every match event in arrival order.
     public List<MatchState> MatchStates { get; } = new();
@@ -174,6 +178,9 @@ public sealed class HeadlessClient : IDisposable
 
     public void Dispose() => _net.Stop();
 
+    // 기능: 받은 서버 패킷을 테스트가 보는 목록에 기록한다(Phase 16: ContainerStates, SupplyDrops).
+    // 입력: peer·reader·channel·method - LiteNetLib 수신 정보.
+    // 출력: 반환값 없음.
     private void OnReceive(NetPeer peer, NetPacketReader reader, byte channel, DeliveryMethod method)
     {
         var r = new PacketReader(reader.GetRemainingBytesSpan());
@@ -276,6 +283,12 @@ public sealed class HeadlessClient : IDisposable
                 break;
             case PacketId.TeamMarkers:
                 if (TeamMarkersPacket.TryRead(ref r, LastPings, LastWaypoints, out int pings, out int waypoints)) TeamMarkers.Add((pings, waypoints));
+                break;
+            case PacketId.ContainerStates:
+                if (ContainerStatesPacket.TryRead(ref r, out ulong spawnedMask, out ulong openedMask)) ContainerStates.Add((spawnedMask, openedMask));
+                break;
+            case PacketId.SupplyDrops:
+                if (SupplyDropsPacket.TryRead(ref r, _supplyDrops, out int drops)) SupplyDropLists.Add(drops);
                 break;
             case PacketId.BuildEvents:
             case PacketId.BuildSync:

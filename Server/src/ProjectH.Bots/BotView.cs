@@ -75,6 +75,15 @@ public sealed class BotView
     public readonly MarkerWaypoint[] Waypoints = new MarkerWaypoint[MapMarkerConstants.MaxWaypoints];
     public int WaypointCount;
     public long TeamMarkersReceived;
+    // Phase 16 D3, D7: the loot containers that spawned and opened (ContainerStates), the match's supply drops as the last
+    // SupplyDrops had them (fixed array; the count says how many are filled), and how many of each packet arrived. The bots
+    // never open containers (D11); the QA tool reads these.
+    public ulong ContainersSpawned;
+    public ulong ContainersOpened;
+    public long ContainerStatesReceived;
+    public readonly SupplyDropInfo[] SupplyDrops = new SupplyDropInfo[SupplyDropsPacket.MaxSupplyDrops];
+    public int SupplyDropCount;
+    public long SupplyDropsReceived;
 
     // 기능: 이 Entity가 우리 팀원(자기 제외)인지 본다(D15: 봇은 팀원을 겨누지 않는다).
     // 입력: id - Entity id.

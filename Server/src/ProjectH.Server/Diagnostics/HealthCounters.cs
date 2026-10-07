@@ -40,6 +40,12 @@ public readonly record struct SquadCounts(long Downs, long Revives, long Reboots
 public readonly record struct MapCounts(long Pings, long EnemyConfirmed, long EnemyDemoted, long Refused, long Replaced, long Expired,
     long Waypoints, long Packets);
 
+// Phase 16: containers opened, supply drops spawned, landed and opened, container loot items put in the world, opens
+// refused for the line of sight, and ContainerStates/SupplyDrops packets sent (since the match object was made; HealthCounters
+// carries them over a match reset).
+public readonly record struct LootCounts(long ContainersOpened, long DropsSpawned, long DropsLanded, long DropsOpened, long LootItems,
+    long OpensBlocked, long Packets);
+
 // Phase 10 D9: totals since the server started, for the Health line and the "ProjectH.Server" Meter. Written from
 // LiteNetLib's threads and the game loop, read by the game loop (Health line) and by the Meter's observers on
 // whatever thread polls them. Interlocked/Volatile only, no lock: each value is independent, so a slightly
@@ -117,6 +123,15 @@ public sealed class HealthCounters
     private long _waypoints;
     private long _markerPackets;
     private MapCounts _mapBase;
+    // Phase 16 (game loop writes, any thread reads): the loot container totals and the base a match reset carried over.
+    private long _containersOpened;
+    private long _dropsSpawned;
+    private long _dropsLanded;
+    private long _dropsOpened;
+    private long _lootItems;
+    private long _opensBlocked;
+    private long _lootPackets;
+    private LootCounts _lootBase;
     // Phase 15 D7 (LiteNetLib threads): MapMarker packets the per-connection bucket dropped, and requests the full inbound
     // Marker channel dropped.
     private long _markerDrops;
@@ -247,6 +262,29 @@ public sealed class HealthCounters
     public MapCounts Map => new(Volatile.Read(ref _pings), Volatile.Read(ref _enemyConfirmed), Volatile.Read(ref _enemyDemoted),
         Volatile.Read(ref _markersRefused), Volatile.Read(ref _pingsReplaced), Volatile.Read(ref _pingsExpired), Volatile.Read(ref _waypoints),
         Volatile.Read(ref _markerPackets));
+
+    // 기능: 지금 경기의 Loot Container·Supply Drop 수치를 시작부터의 합계로 쓴다(리셋으로 넘어온 기준값 + 이 경기 값). Game Loop만 부른다.
+    // 입력: c - 경기 객체의 수치.
+    // 출력: 반환값 없음.
+    public void SetLoot(in LootCounts c)
+    {
+        LootCounts b = _lootBase;
+        Volatile.Write(ref _containersOpened, b.ContainersOpened + c.ContainersOpened);
+        Volatile.Write(ref _dropsSpawned, b.DropsSpawned + c.DropsSpawned);
+        Volatile.Write(ref _dropsLanded, b.DropsLanded + c.DropsLanded);
+        Volatile.Write(ref _dropsOpened, b.DropsOpened + c.DropsOpened);
+        Volatile.Write(ref _lootItems, b.LootItems + c.LootItems);
+        Volatile.Write(ref _opensBlocked, b.OpensBlocked + c.OpensBlocked);
+        Volatile.Write(ref _lootPackets, b.Packets + c.Packets);
+    }
+
+    // 기능: 경기 리셋 때 지금까지 쓴 Loot 합계를 기준값으로 넘긴다(합계가 줄지 않게, CarryMapTotals와 같다).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void CarryLootTotals() => _lootBase = Loot;
+
+    public LootCounts Loot => new(Volatile.Read(ref _containersOpened), Volatile.Read(ref _dropsSpawned), Volatile.Read(ref _dropsLanded),
+        Volatile.Read(ref _dropsOpened), Volatile.Read(ref _lootItems), Volatile.Read(ref _opensBlocked), Volatile.Read(ref _lootPackets));
 
     // 기능: 연결별 토큰 버킷이 버린 MapMarker 패킷 하나를 센다(Phase 15 D7, 수신 스레드).
     // 입력: 없음.

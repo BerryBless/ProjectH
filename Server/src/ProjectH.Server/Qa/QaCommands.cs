@@ -27,10 +27,11 @@ internal static class QaCommands
     {
         "mark", "setPosition", "setHealth", "setShield", "giveWeapon", "giveAmmo", "giveItem", "giveResource",
         "damagePlayer", "killPlayer", "forceMatchState", "setZone", "spawnLoot", "spawnBuildPiece", "damageBuild", "editBuild",
-        "downPlayer", "giveRebootCard", "setStationCooldown",
+        "downPlayer", "giveRebootCard", "setStationCooldown", "spawnSupplyDrop", "setContainer",
     };
+    private static readonly string[] ContainerStates = { "none", "closed", "open" };   // Match.QaSetContainer state
 
-    // 기능: QA Arrange 명령 하나를 실행한다(Phase 14: downPlayer, giveRebootCard, setStationCooldown).
+    // 기능: QA Arrange 명령 하나를 실행한다(Phase 14: downPlayer, giveRebootCard, setStationCooldown, Phase 16: spawnSupplyDrop, setContainer).
     // 입력: t - QA Tick 문맥, command - 이름, player - 대상 DevPlayerId, runId - 실행 id, args - 인자, logger - 로그.
     // 출력: QaResult(200, 400, 404, 409).
     public static QaResult Execute(QaTick t, string command, string? player, string? runId, JsonElement args, ILogger logger)
@@ -47,6 +48,8 @@ internal static class QaCommands
             case "damageBuild": return DamageBuild(m, a);
             case "editBuild": return EditBuild(m, a);
             case "setStationCooldown": return SetStationCooldown(m, a);
+            case "spawnSupplyDrop": return SpawnSupplyDrop(m, a);
+            case "setContainer": return SetContainer(m, a);
         }
 
         if (Array.IndexOf(Names, command) < 0)
@@ -295,6 +298,33 @@ internal static class QaCommands
         return QaResult.Ok(new { station, cooldownEndTick = (long)m.StationEndTick((int)station) });
     }
 
+
+    // 기능: Phase 16 spawnSupplyDrop: 경기 중 Supply Drop을 바로 만든다(x·z를 주면 그 자리, 없으면 서버 위치 규칙).
+    // 입력: m - 경기, a - 인자(x·z 선택, 함께).
+    // 출력: Ok면 칸·위치·시작·착지 Tick, 경기가 아니거나 가득 찼거나 위치 규칙이 자리를 못 찾았으면 409.
+    private static QaResult SpawnSupplyDrop(Match m, QaArgs a)
+    {
+        double? x = a.Number("x", -GameMap.HalfSize, GameMap.HalfSize);
+        double? z = a.Number("z", -GameMap.HalfSize, GameMap.HalfSize);
+        if (a.Error == null && x.HasValue != z.HasValue) a.Invalid("x and z go together.");
+        if (a.Error != null) return Bad(a);
+        int slot = m.QaSpawnSupplyDrop(x.HasValue ? new Vector2((float)x.Value, (float)z!.Value) : null);
+        if (slot < 0) return QaResult.Error(409, $"No supply drop: outside the match, already {SupplyDropsPacket.MaxSupplyDrops} this match, or no clear spot now.");
+        SupplyDropInfo d = m.SupplyDropAt(slot);
+        return QaResult.Ok(new { id = slot, x = d.X, z = d.Z, y = d.LandY, startTick = (long)d.StartTick, landTick = (long)d.LandTick });
+    }
+
+    // 기능: Phase 16 setContainer: 시나리오 준비용으로 Container 상태를 강제한다(closed는 Loot가 없으면 굴린다, open은 Loot를 놓지 않는다).
+    // 입력: m - 경기, a - 인자(container = id, state = none|closed|open).
+    // 출력: Ok면 id·state·Loot 수, 경기·개발 모드가 아니면 409.
+    private static QaResult SetContainer(Match m, QaArgs a)
+    {
+        long id = a.RequiredInteger("container", 0, LootContainers.Count - 1);
+        int state = a.RequiredChoice("state", ContainerStates);
+        if (a.Error != null) return Bad(a);
+        if (!m.QaSetContainer((int)id, state)) return QaResult.Error(409, "Containers can be set only during the match or in the dev sandbox.");
+        return QaResult.Ok(new { container = id, state = ContainerStates[state], loot = m.ContainerLoot((int)id).Length });
+    }
 
     private static QaResult KillPlayer(Match m, PlayerEntity p)
     {

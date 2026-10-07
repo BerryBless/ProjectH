@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "name": "Supply Drop Open",
+  "description": "Phase 16 D4, D6 (request §64): a supply drop at (6, 26) cannot be opened while it falls; once it lands, E opens it and its four items lie around it, among them a weapon of Epic or Legendary rarity (the SupplyDrop table of loot.json).",
+  "tags": ["loot", "supplydrop"],
+  "seed": 16006,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+    { "id": "b_place", "phase": "arrange", "action": "setPosition", "actor": "playerB", "position": { "x": -20, "z": -20 } },
+    { "id": "spawn", "action": "spawnSupplyDrop", "position": { "x": 6, "z": 26 }, "saveAs": "drop" },
+    { "id": "a_place", "action": "setPosition", "actor": "playerA", "position": { "x": 6, "z": 24, "yaw": 0 } },
+    { "id": "a_face", "action": "look", "actor": "playerA", "yaw": 0 },
+    { "id": "settle", "action": "wait", "milliseconds": 500 },
+
+    { "id": "a_early", "phase": "act", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "settle_early", "phase": "assert", "action": "wait", "milliseconds": 500 },
+    { "id": "refused_falling", "assert": "loot.supplyDrops.0.state", "equals": "Falling" },
+    { "id": "none_opened", "assert": "server.health.loot.dropsOpened", "equals": 0 },
+    { "id": "landed", "action": "waitFor", "condition": "loot.supplyDrops.0.state", "equals": "Landed", "timeoutMilliseconds": 18000 },
+
+    { "id": "a_open", "phase": "act", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "opened", "phase": "assert", "action": "waitFor", "condition": "loot.supplyDrops.0.state", "equals": "Opened", "timeoutMilliseconds": 3000 },
+    { "id": "four_items", "assert": "loot.items.count", "at": { "x": 6, "z": 26 }, "radius": 2, "equals": 4 },
+    { "id": "a_weapon", "assert": "loot.items.weapons", "at": { "x": 6, "z": 26 }, "radius": 2, "equals": 1 },
+    { "id": "epic_or_better", "assert": "loot.items.minWeaponRarity", "at": { "x": 6, "z": 26 }, "radius": 2, "greaterThan": 2 },
+    { "id": "a_client_opened", "action": "waitFor", "condition": "actor.supplyDropStates.0", "actor": "playerA", "equals": "Opened", "timeoutMilliseconds": 3000 }
+  ]
+}

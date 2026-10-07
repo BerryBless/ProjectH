@@ -33,7 +33,8 @@ namespace ProjectH.Client.Game.Map
     // Phase 15 D3, D4, D12: the minimap (top right, 200 px, north up, 60 m around the followed player, clipped by RectMask2D)
     // and the full map (centre, 900 px, the whole map, opened with M). Both are code-made uGUI on their own canvases with no
     // GraphicRaycaster (map clicks are read from the pointer, MapSystem). Every icon is in a fixed pool made here (teammates
-    // 3, pings 8, waypoints 4, POIs 5, stations 4, two zone rings, the player, the route line); per frame only positions
+    // 3, pings 8, waypoints 4, POIs 5, stations 4, Phase 16 supply drops 4, two zone rings, the player, the route line); per
+    // frame only positions
     // (written when they move more than half a pixel), angles, ring sizes and colours change, and the full map is skipped
     // while it is closed. Texts are set once (POI names) or when the string reference changes (teammate names). Dispose
     // destroys both canvases; the textures belong to MapTextures.
@@ -65,6 +66,7 @@ namespace ProjectH.Client.Game.Map
         public int TeammatesDrawn => _miniVisible ? _mini.MatesDrawn : 0;
         public int PingsDrawn => _miniVisible ? _mini.PingsDrawn : 0;
         public int WaypointsDrawn => _miniVisible ? _mini.WaypointsDrawn : 0;
+        public int SupplyDropsDrawn => _miniVisible ? _mini.SupplyDropsDrawn : 0;
 
         // 기능: 미니맵과 전체 지도 Canvas, 모든 아이콘 풀을 만든다(모두 숨긴 채).
         // 입력: textures - 지도 그림과 아이콘 텍스처(이 객체보다 오래 산다).
@@ -157,9 +159,9 @@ namespace ProjectH.Client.Game.Map
         }
 
         // 기능: 한 프레임을 그린다: 미니맵 창(uvRect)과 아이콘, 열려 있으면 전체 지도 아이콘. 할당 없음.
-        // 입력: f - 이번 프레임 값, mates·mateCount - 그릴 팀원, markers - 팀 Ping·Waypoint.
+        // 입력: f - 이번 프레임 값, mates·mateCount - 그릴 팀원, markers - 팀 Ping·Waypoint, loot - Supply Drop 목록(Phase 16, null이면 그리지 않음).
         // 출력: 반환값 없음. QA 값(SelfU/V, 자기장, 그린 수)이 갱신된다.
-        public void Draw(in MapFrame f, MapMate[] mates, int mateCount, TeamMarkerState markers)
+        public void Draw(in MapFrame f, MapMate[] mates, int mateCount, TeamMarkerState markers, LootState loot)
         {
             if (_miniCanvas == null || !_miniVisible) return;
             MapProjection.Window(f.Center.x, f.Center.z, WindowMeters, out float minU, out float minV, out float sizeUv);
@@ -172,10 +174,10 @@ namespace ProjectH.Client.Game.Map
             }
             SelfU = minU + sizeUv * 0.5f;
             SelfV = minV + sizeUv * 0.5f;
-            _mini.Draw(f, minU, minV, sizeUv, mates, mateCount, markers);
+            _mini.Draw(f, minU, minV, sizeUv, mates, mateCount, markers, loot);
 
             if (!_fullOpen) return;
-            _full.Draw(f, 0f, 0f, 1f, mates, mateCount, markers);
+            _full.Draw(f, 0f, 0f, 1f, mates, mateCount, markers, loot);
             _route.Show(_hasRoute);
             if (f.HasZone)
             {
@@ -251,6 +253,7 @@ namespace ProjectH.Client.Game.Map
         private const float WaypointIcon = 12f;
         private const float PoiIcon = 7f;
         private const float StationIcon = 10f;
+        private const float SupplyDropIcon = 12f;
         private const int Mates = SquadConstants.MaxTeamSize - 1;
 
         private readonly bool _mini;
@@ -260,6 +263,7 @@ namespace ProjectH.Client.Game.Map
         private readonly MapIcon[] _pois = new MapIcon[5];
         private readonly MapLabel[] _poiNames;
         private readonly MapIcon[] _stations = new MapIcon[RebootStations.Count];
+        private readonly MapIcon[] _drops = new MapIcon[SupplyDropsPacket.MaxSupplyDrops];
         private readonly MapIcon[] _waypoints = new MapIcon[MapMarkerConstants.MaxWaypoints];
         private readonly MapIcon[] _pings = new MapIcon[MapMarkerConstants.MaxTeamPings];
         private readonly MapIcon[] _mates = new MapIcon[Mates];
@@ -272,8 +276,9 @@ namespace ProjectH.Client.Game.Map
         public int MatesDrawn { get; private set; }
         public int PingsDrawn { get; private set; }
         public int WaypointsDrawn { get; private set; }
+        public int SupplyDropsDrawn { get; private set; }
 
-        // 기능: 한 지도의 아이콘 풀을 만든다(그리기 순서: 고리, POI, 스테이션, Waypoint, Ping, 팀원, 나).
+        // 기능: 한 지도의 아이콘 풀을 만든다(그리기 순서: 고리, POI, 스테이션, Supply Drop(Phase 16), Waypoint, Ping, 팀원, 나).
         // 입력: parent - 지도 사각형, size - 한 변(px), textures - 아이콘 텍스처, mini - 미니맵이면 true(전체 지도는 POI·팀원 이름 포함).
         // 출력: 숨겨진 아이콘을 가진 층. 전체 지도의 POI·스테이션은 위치가 변하지 않으므로 여기서 한 번 둔다.
         public MapLayer(RectTransform parent, float size, MapTextures textures, bool mini)
@@ -294,6 +299,8 @@ namespace ProjectH.Client.Game.Map
                 _stations[i] = new MapIcon("Station" + i, parent, null, mini ? StationIcon : StationIcon * 1.4f, MapColors.Station);
                 _stations[i].SetAngle(45f);
             }
+            for (int i = 0; i < _drops.Length; i++)
+                _drops[i] = new MapIcon("SupplyDrop" + i, parent, null, mini ? SupplyDropIcon : SupplyDropIcon * 1.4f, MapColors.SupplyLanded);
             for (int i = 0; i < _waypoints.Length; i++)
             {
                 _waypoints[i] = new MapIcon("Waypoint" + i, parent, null, mini ? WaypointIcon : WaypointIcon * 1.4f, MapColors.TeamWaypoint);
@@ -325,10 +332,13 @@ namespace ProjectH.Client.Game.Map
             }
         }
 
-        // 기능: 이 지도에 한 프레임을 그린다. 미니맵은 창 밖 팀원·Ping·Waypoint를 테두리에 붙이고, 창 밖 POI·스테이션은 숨긴다.
-        // 입력: f - 프레임 값, minU·minV·sizeUv - 보이는 창(전체 지도는 0, 0, 1), mates·mateCount - 팀원, markers - 팀 표시.
-        // 출력: 반환값 없음. 그린 팀원·Ping·Waypoint 수가 갱신된다. 할당 없음.
-        public void Draw(in MapFrame f, float minU, float minV, float sizeUv, MapMate[] mates, int mateCount, TeamMarkerState markers)
+        // 기능: 이 지도에 한 프레임을 그린다. 미니맵은 창 밖 팀원·Ping·Waypoint·닫힌 Supply Drop을 테두리에 붙이고, 창 밖 POI·스테이션·
+        //   열린 Supply Drop은 숨긴다.
+        // 입력: f - 프레임 값, minU·minV·sizeUv - 보이는 창(전체 지도는 0, 0, 1), mates·mateCount - 팀원, markers - 팀 표시,
+        //   loot - Supply Drop 목록(Phase 16, null이면 그리지 않음).
+        // 출력: 반환값 없음. 그린 팀원·Ping·Waypoint·Supply Drop 수가 갱신된다. 할당 없음.
+        public void Draw(in MapFrame f, float minU, float minV, float sizeUv, MapMate[] mates, int mateCount, TeamMarkerState markers,
+            LootState loot)
         {
             _minU = minU;
             _minV = minV;
@@ -359,6 +369,28 @@ namespace ProjectH.Client.Game.Map
             }
 
             int shown = 0;
+            int dropCount = loot != null ? loot.DropCount : 0;
+            for (int i = 0; i < dropCount && shown < _drops.Length; i++)
+            {
+                SupplyDropInfo d = loot.Drop(i);
+                float px, py;
+                // An opened one only matters nearby; a falling or landed one points the way from the edge.
+                if (d.State == SupplyDropState.Opened)
+                {
+                    if (!ToPx(d.X, d.Z, out px, out py)) continue;
+                }
+                else
+                {
+                    ToEdgePx(d.X, d.Z, SupplyDropIcon, out px, out py);
+                }
+                MapIcon icon = _drops[shown++];
+                icon.Place(px, py);
+                icon.SetColor(MapColors.Of(d.State));
+            }
+            SupplyDropsDrawn = shown;
+            for (int i = shown; i < _drops.Length; i++) _drops[i].Show(false);
+
+            shown = 0;
             for (int i = 0; i < markers.WaypointCount && shown < _waypoints.Length; i++)
             {
                 MarkerWaypoint w = markers.Waypoint(i);
@@ -412,13 +444,15 @@ namespace ProjectH.Client.Game.Map
             }
         }
 
-        // 기능: 매 프레임 바뀌는 아이콘(고리, Ping, Waypoint, 팀원, 나)을 숨긴다.
+        // 기능: 매 프레임 바뀌는 아이콘(고리, Supply Drop, Ping, Waypoint, 팀원, 나)을 숨긴다.
         // 입력: 없음.
         // 출력: 반환값 없음. 그린 수가 0이 된다.
         public void HideDynamic()
         {
             _zoneNow.Show(false);
             _zoneNext.Show(false);
+            foreach (MapIcon icon in _drops) icon.Show(false);
+            SupplyDropsDrawn = 0;
             foreach (MapIcon icon in _waypoints) icon.Show(false);
             foreach (MapIcon icon in _pings) icon.Show(false);
             for (int i = 0; i < _mates.Length; i++)

@@ -431,7 +431,7 @@ public sealed class GameLoop : IDisposable
     private const string TickFailuresCause = "ticks failed in a row";
     private const string PlayerFailuresCause = "players' ticks failed (MaxPlayers failures, or 5 ticks with every player failing, within 10 s)";
 
-    // 기능: 경기 객체를 버리고 새로 만든다(모든 연결은 ServerError로 닫는다). 짧은 시간에 너무 많으면 서버를 멈춘다. 건설·분대·지도(Phase 15)
+    // 기능: 경기 객체를 버리고 새로 만든다(모든 연결은 ServerError로 닫는다). 짧은 시간에 너무 많으면 서버를 멈춘다. 건설·분대·지도(Phase 15)·Loot(Phase 16)
     //   합계는 기준값으로 넘겨 줄지 않게 한다.
     // 입력: cause - 리셋 이유(로그).
     // 출력: 반환값 없음. 새 경기가 생기거나 치명 정지 경로로 간다.
@@ -477,6 +477,7 @@ public sealed class GameLoop : IDisposable
         _health.CarryBuildTotals();
         _health.CarrySquadTotals();   // Phase 14
         _health.CarryMapTotals();     // Phase 15
+        _health.CarryLootTotals();    // Phase 16
         // The old match's unlogged sink failure would go with it; LogPeriodic logs it with the next stats line.
         _carriedSinkError ??= _match.TakeSinkError();
         try
@@ -505,7 +506,7 @@ public sealed class GameLoop : IDisposable
         }
     }
 
-    // 기능: 한 Tick: 들어온 메시지 처리(Phase 15 지도 표시 요청 포함), 경기 Tick, Health 수치(Phase 14 분대, Phase 15 지도 수치 포함) 갱신, QA 작업.
+    // 기능: 한 Tick: 들어온 메시지 처리(Phase 15 지도 표시 요청 포함), 경기 Tick, Health 수치(Phase 14 분대, Phase 15 지도, Phase 16 Loot 수치 포함) 갱신, QA 작업.
     // 입력: 없음.
     // 출력: 반환값 없음.
     internal void RunTick()
@@ -524,6 +525,7 @@ public sealed class GameLoop : IDisposable
         _health.SetBuild(_match.BuildCounts(), _buildRejects);
         _health.SetSquad(_match.SquadCounts());   // Phase 14
         _health.SetMap(_match.MapCounts());       // Phase 15
+        _health.SetLoot(_match.LootCounts());     // Phase 16
         // QA-1 D5: last, so QA commands act between ticks on a finished tick. OnTick catches everything itself: a QA
         // failure must never count as a tick failure (that path resets the match).
         _qa?.OnTick(this);
@@ -812,7 +814,7 @@ public sealed class GameLoop : IDisposable
         _listener.ResetLogLimits();
     }
 
-    // 기능: 연결·보호·건설·분대(Phase 14)·지도 표시(Phase 15)·DB 수치를 한 줄로 기록한다(시작부터의 합계).
+    // 기능: 연결·보호·건설·분대(Phase 14)·지도 표시(Phase 15)·Loot(Phase 16)·DB 수치를 한 줄로 기록한다(시작부터의 합계).
     // 입력: 없음.
     // 출력: 반환값 없음. Health 로그 한 줄.
     // Phase 10 D9: connections, protection and database in one line, as totals since the start.
@@ -822,6 +824,7 @@ public sealed class GameLoop : IDisposable
         BuildCounts b = h.Build;
         SquadCounts sc = h.Squad;
         MapCounts mc = h.Map;
+        LootCounts lc = h.Loot;
         PersistenceCounts db = h.Persistence?.Invoke() ?? default;
         StatsQueryCounts sq = h.StatsQueries?.Invoke() ?? default;
         _logger.LogInformation(
@@ -845,6 +848,8 @@ public sealed class GameLoop : IDisposable
             "cardsExpired={SquadCardsExpired} wipes={SquadWipes} channelsCancelled={SquadChannelsCancelled} " +
             "map pings={MapPings} enemyConfirmed={MapEnemyConfirmed} enemyDemoted={MapEnemyDemoted} refused={MapRefused} replaced={MapReplaced} " +
             "expired={MapExpired} waypoints={MapWaypoints} packets={MapPackets} markerDrops={MapMarkerDrops} markerInboxDrops={MapMarkerInboxDrops} " +
+            "loot containersOpened={LootContainersOpened} dropsSpawned={LootDropsSpawned} dropsLanded={LootDropsLanded} dropsOpened={LootDropsOpened} " +
+            "items={LootItems} blocked={LootBlocked} packets={LootPackets} " +
             "db saved={DbSaved} failed={DbFailed} discarded={DbDiscarded} dropped={DbDropped} " +
             "stats requests={StatsRequests} limited={StatsLimited} busy={StatsBusy} unavailable={StatsUnavailable} undelivered={StatsUndelivered}",
             _peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State, _match.Flow.Round,
@@ -867,6 +872,7 @@ public sealed class GameLoop : IDisposable
             h.BuildInboxDrops,
             sc.Downs, sc.Revives, sc.Reboots, sc.BleedOuts, sc.CardsDropped, sc.CardsExpired, sc.Wipes, sc.ChannelsCancelled,
             mc.Pings, mc.EnemyConfirmed, mc.EnemyDemoted, mc.Refused, mc.Replaced, mc.Expired, mc.Waypoints, mc.Packets, h.MarkerDrops, h.MarkerInboxDrops,
+            lc.ContainersOpened, lc.DropsSpawned, lc.DropsLanded, lc.DropsOpened, lc.LootItems, lc.OpensBlocked, lc.Packets,
             db.Saved, db.Failed, db.Discarded, db.Dropped,
             sq.Requests, sq.Limited, sq.Busy, sq.Unavailable, sq.Undelivered);
     }

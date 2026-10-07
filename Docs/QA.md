@@ -78,6 +78,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | GET | `/qa/players`, `/qa/players/{devPlayerId}` | Player DTO. 없으면 404 |
 | GET | `/qa/match` | Match DTO(state, alive, winner, zone{phase, center, radius…}, buildPieces, worldItems…) |
 | GET | `/qa/build?x=&z=&radius=&max=` | `{count, pieces[]}` |
+| GET | `/qa/loot?x=&z=&radius=&max=` | Phase 16: `{containersSpawned, containersOpened, containers[{id, kind, position, yaw, state(none/closed/open), loot[{kind, defId, rarity, amount}]}], supplyDropCount, supplyDrops[{id, state, position, startTick, landTick, loot[], fallTicks, nearestPlayerDistance, insideTargetCircle}], items{count, truncated, weapons, ammo, consumables, materials, minWeaponRarity, maxWeaponRarity, list[{itemId, kind, defId, rarity, amount, position, dropped}]}}`. `x`·`z`·`radius`를 주면 `items`는 그 원 안의 월드 아이템만(없으면 전부, 목록은 `max`개까지) |
 | GET | `/qa/metrics?windowSeconds=` | tick p50/p95/p99/max, workingSetMB, gc, activeSessions, health 카운터 |
 | GET | `/qa/events?after=&max=` | `{next, dropped, events[{seq,tick,utc,type,player,data}]}` |
 | POST | `/qa/server/stop` | 정상 종료 |
@@ -263,6 +264,8 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `downPlayer` | actor (Arrange 전용). Phase 14: 바로 기절시킨다. 같은 팀에 서 있는 구성원이 있어야 한다(없으면 409) |
 | `giveRebootCard` | actor, `owner`(카드 주인 DevPlayerId, 예: `qa-playerA`) (Arrange 전용). 같은 팀의 탈락한 참가자 카드를 준다(월드의 그 카드는 지운다) → `{cards}` |
 | `setStationCooldown` | `station`(0–3), `seconds`(0–3600, 0 = 바로 사용 가능) → `{station, cooldownEndTick}` |
+| `spawnSupplyDrop` | `position` 또는 `x`,`z`(선택: 없으면 서버 위치 규칙) → `{id, x, z, y, startTick, landTick}`. Phase 16: 경기 중에만, 경기당 4개까지(넘으면·경기 밖이면·위치 규칙이 지금 자리를 못 찾으면 409). 일정과 별개다 |
+| `setContainer` | `container`(0–33, `LootContainers.All` 번호), `state`(none/closed/open) → `{container, state, loot}`. Phase 16 시나리오 준비용: closed는 Loot가 없으면 그 경기 흐름으로 굴린다, open은 Loot를 놓지 않고 열린 상태만. 경기 중·개발 모드에서만(아니면 409). Step의 `id`와 겹치지 않게 인자 이름이 `container`다 |
 | `editBuild` | `pieceId`, `edit`(0–4095), `rotation?` → `{code, edit, rotation}` | Phase 13.5. 플레이어 없이 편집한다(소유자·사거리·시선 검사 없음, 상태 유효성과 경사로 지지는 본다). 거절은 409 |
 
 ## Assertions
@@ -278,6 +281,10 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | Phase 15 `actor.*` | Actor가 받은 `TeamMarkers` | `actor.pingCount`, `actor.pings.<i>.kind`·`ownerId`·`position`·`endTick`·`targetId`, `actor.waypointCount`, `actor.waypoints.<i>.ownerId`·`position`, `actor.teamMarkersReceived`, `actor.mapMarkersSent` |
 | Phase 15 `server.health.map.*` | `/qa/health` | `pings`, `enemyConfirmed`, `enemyDemoted`, `refused`, `replaced`, `expired`, `waypoints`, `packets`, `markerDrops`(연결별 속도 제한이 버린 것), `markerInboxDrops`, `markerRateBadPackets`(1초 20개 초과) |
 | Phase 14 `actor.*` | Actor가 받은 것 | `actor.teamId`, `actor.teamIds`, `actor.teamStates`(TeamMemberState 이름), `actor.rebootCards`, `actor.downsSeen`, `actor.channelActive`, `actor.channelKind`, `actor.channelActor`, `actor.stationsCooling`(대기 마스크) |
+| Phase 16 `loot.*` | `GET /qa/loot`(`at`·`radius` 선택: `items`를 그 원 안으로) | `loot.containers.14.state`(none/closed/open), `loot.containers.14.loot.0.kind`, `loot.supplyDropCount`, `loot.supplyDrops.0.state`(Falling/Landed/Opened)·`position`·`landTick`·`fallTicks`·`nearestPlayerDistance`(지금 가장 가까운 살아 있는 플레이어까지 수평 거리)·`insideTargetCircle`(지금 목표 원 반지름 × 0.6 안), `loot.items.count`·`weapons`·`ammo`·`materials`·`minWeaponRarity` |
+| Phase 16 `match.*` | `GET /qa/match` | `match.containersSpawned`, `match.containersOpened`, `match.supplyDrops`(수) |
+| Phase 16 `server.health.loot.*` | `/qa/health` | `containersOpened`, `dropsSpawned`, `dropsLanded`, `dropsOpened`, `lootItems`, `opensBlocked`(시선에 막힌 열기), `packets` |
+| Phase 16 `actor.*` | Actor가 받은 `ContainerStates`·`SupplyDrops` | `actor.containersSpawned`·`containersOpened`(수), `actor.containerStatesReceived`, `actor.supplyDropCount`, `actor.supplyDropStates.<i>`(SupplyDropState 이름), `actor.supplyDropsReceived` |
 | `match.<필드…>` | `GET /qa/match` | `match.state`, `match.alive`, `match.winner`, `match.zone.phase`, `match.zone.center` |
 | `match.playerCount`·`aliveCount`·`zonePhase`·`playing` | 별칭 | `playing` = Playing 또는 FinalPhase |
 | `build.count`, `build.<필드>` | `GET /qa/build`(`at`·`radius` 선택) | |
@@ -404,6 +411,13 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `Reconnect/reconnect.json` | 74, 125 | Grace 중 재접속 → 같은 Entity, 체력, 실드, 무기, 탄약, Medkit | ~6 s |
 | `Reconnect/reconnect_expired.json` | 126 | Grace(2 s)가 지나면 PlayerLeft. 다시 오면 새 Entity로 관전(죽음, 참가자 아님). 경기는 계속된다 | ~5 s |
 | `Loot/pickup_drop.json` | 119–120 | spawnLoot → 실제 Interact로 줍기(InventoryChanged) → 실제 Drop으로 무기 버리기 | ~3 s |
+| `Loot/chest_open.json` | 59, 60, 62 | Phase 16: `setContainer 14 closed` → A가 2 m 앞에서 바라보고 E → 열림, 둘레에 아이템 3개, 두 Client의 `actor.containersOpened` | ~3 s |
+| `Loot/chest_duplicate_open.json` | 60, 62 | A·B가 곧바로 이어서 E, A가 다시 E → 열기 1번, Loot 3개 1번(정확히 같은 Tick은 서버 테스트 `TwoPlayersInOneTick_AndRepeatedPresses_OpenItOnce`) | ~4 s |
+| `Loot/chest_loot.json` | 59, 61 | Chest 표: 미리 굴린 Loot = 무기 1개 먼저 + 무기 아닌 2개, 열면 둘레에 3개·무기 1개 | ~3 s |
+| `Loot/ammo_box.json` | 63 | Ammo Box 19: Loot = 탄약 + 자원 10, 열면 둘레에 2개(탄약 1, 자원 1, 무기 0). 자동 줍기 범위 밖에서 연다 | ~3.5 s |
+| `Loot/supply_drop_spawn.json` | 64–66 | `spawnSupplyDrop`(서버 위치 규칙) → 목록 1개, Falling, ±60 m 안, Loot 4개, 두 Client에 Falling → 10 s 뒤 아직 Falling → 15 s에 Landed(dropsLanded 1, Client도 Landed) | ~18 s |
+| `Loot/supply_drop_open.json` | 64 | (6, 26)의 Supply Drop: 떨어지는 동안 E → 그대로 Falling(dropsOpened 0) → 착지 뒤 E → Opened, 둘레에 4개, 무기 1개 Epic 이상 | ~18 s |
+| `Loot/visual_loot.json` | 59, 63, 64 | Unity Player: 닫힌 Chest·Ammo Box·열린 Chest 스크린샷, Chest 앞 `lootPrompt` = chest, 실제 E로 열기(서버 open + 바닥 Loot), Supply Drop 낙하(낙하산, 38 m 떨어져 25° 위를 봄)·미니맵 아이콘(`mapSupplyDrops` 1)·착지(빛기둥) | ~26 s |
 | `Healing/medkit.json` | 121 | damagePlayer(arrange) → 실제 UseMedkit → 체력 +50 | ~6 s |
 | `Shield/shield_cell.json` | 122 | 실제 UseShieldCell → 실드 +25. 다음 피해는 실드가 먼저 받는다 | ~5 s |
 | `Zone/zone_damage.json` | 123 | Zone을 phase 3으로 → 밖에서 체력 감소 → 중심(`match.zone.center`)에서 멈춤 | ~10 s |
@@ -464,6 +478,7 @@ Stress Test 시나리오(baseline, movement, combat, building, mixed_match, reco
 | `building` | Phase 13 건설 3개 + Phase 13.5 편집 6개(헤드리스) | ~50 s |
 | `pre-push` | §93: connect, move, shoot, pickup, death, reconnect | ~30 s |
 | `squad` | Phase 14 분대 8개(헤드리스, TeamSize 2): duo_basic, dbno, dbno_bleedout, revive, revive_cancel, squad_elimination, reboot, reconnect_dbno. 2026-10-08 8/8 통과 | ~85 s |
+| `loot` | Phase 16 Loot 7개(헤드리스): pickup_drop, chest_open, chest_duplicate_open, chest_loot, ammo_box, supply_drop_spawn, supply_drop_open. Unity 스크린샷 visual_loot(리더가 작성)는 `unity.json`에 넣을 것 | ~50 s |
 | `map` | Phase 15 지도 표시 4개(헤드리스): map_team, ping_world, ping_enemy, ping_rate_limit. 2026-10-08 4/4 통과. Unity 지도 시나리오(minimap_position, map_zone, visual_map)는 Client `/qa/status` 지도 필드가 생긴 뒤 `unity.json`에 들어간다 | ~25 s |
 | `full-regression` | 모든 카테고리. Stress, Persistence, ServerProcess, Recorded 포함 | ~6 min |
 | `faults` | QA-3: latency_loss_combat, lag_compensation, network_drop, invalid_packet, input_timeout, shutdown, restart, db_down | ~1 min |
@@ -1250,6 +1265,22 @@ Development Player(`phase15-map` 작업 트리 복사본, batchmode)로 확인�
 발견한 문제:
 - **수정함(시나리오):** `equals`는 `tolerance`를 무시한다. 오차 비교는 `approximately`를 써야 한다. 반지름(70)처럼 정확히 같은 값만 우연히 통과했다.
 - 다듬기(Known Issue): 전체 지도에서 팀원 이름이 POI 이름과 겹칠 수 있다. 지도 아래 조작 안내가 무기 칸 번호와 살짝 겹친다. 맵 가장자리에서는 미니맵에 맵 밖(검정)이 보인다(설계대로).
+- Critical·High 문제는 없다.
+
+## Phase 16 Unity 검증 (2026-10-08)
+
+Development Player(`phase16-loot` 작업 트리 복사본, batchmode)로 확인했다. 같은 복사본에서 EditMode 326/326이 통과했고 컴파일 오류는 0이다. 스크린샷은 에이전트가 직접 보고 판정했다.
+
+| 항목 | 결과 | 근거 |
+|---|---|---|
+| Container 표시 | PASS | `visual_loot.json`: 닫힌 Chest(갈색, 금색 띠), 작은 녹색 Ammo Box, 뚜껑을 젖힌 열린 Chest |
+| 열기 안내·실제 E | PASS | Chest 앞에서 "[E] 상자 열기"(`lootPrompt` chest), E → 서버 Container 15 open, 둘레에 Loot(줍기 안내 Shield Cell) |
+| Supply Drop 낙하 | PASS | 낙하산(회색 원뿔) 아래 파란 상자가 하늘에 보이고, 미니맵에 하늘색 아이콘 |
+| Supply Drop 착지 | PASS | 파란 상자 + 빛기둥, 미니맵 아이콘이 착지 색으로 바뀜 |
+
+발견한 문제:
+- **수정함(시나리오):** 낙하 중인 Supply Drop은 카메라 위쪽 한계(약 30°) 밖이라 처음에는 찍히지 않았다. 38 m 떨어져 9초 뒤(약 24 m 높이)에 25° 위를 보게 바꿨다.
+- 3인칭 카메라에서 바로 앞의 Chest는 내 몸에 가려진다(안내는 보인다).
 - Critical·High 문제는 없다.
 
 ## Adding New Actions

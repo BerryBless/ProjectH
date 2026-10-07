@@ -17,6 +17,9 @@ public sealed class LootSpawner
     private readonly bool[] _waiting;       // the point's item was taken and a refill is due at _refillAt
     private readonly uint[] _refillAt;
 
+    // 기능: Loot Point 목록과 시드 Random, 재생성 타이머를 만든다. 각 점의 표가 있고 가중치 항목이 1개 이상인지 검사한다(Phase 16 리뷰).
+    // 입력: points - Loot Point, data - 게임 데이터, seed - 시드, respawnTicks - 재생성 Tick(0 = 없음).
+    // 출력: LootSpawner. 표가 없거나 항목이 없거나 점이 너무 많으면 ArgumentException.
     public LootSpawner(ReadOnlySpan<LootPoint> points, GameData data, int seed, uint respawnTicks)
     {
         _data = data;
@@ -26,6 +29,9 @@ public sealed class LootSpawner
         {
             _tables[i] = data.Loot.TableIndex(_points[i].Table);
             if (_tables[i] < 0) throw new ArgumentException($"Loot point {i} names unknown table \"{_points[i].Table}\".", nameof(points));
+            // Phase 16 review (Low): Roll picks one weighted entry, so the point's table needs one (not only guaranteed kinds).
+            if (data.Loot.EntryCount(_tables[i]) == 0)
+                throw new ArgumentException($"Loot point {i} names table \"{_points[i].Table}\" without entries.", nameof(points));
         }
         // Spawn-point items are never evicted (D13), so they must leave most of the store for drops.
         if (_points.Length > WorldItems.Capacity / 2)

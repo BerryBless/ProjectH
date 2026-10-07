@@ -1,0 +1,13 @@
+{
+  "name": "loot",
+  "description": "Phase 16 loot containers and supply drops over the real protocol (headless, about 2 min): pickup and drop, opening a chest, two players and repeated presses opening it once, the chest Loot Table, an ammo box, a supply drop spot, fall and landing, and opening one only after it landed. The Unity screenshot visual_loot (written by the lead) needs a player and belongs in unity.json.",
+  "scenarios": [
+    "Loot/pickup_drop.json",
+    "Loot/chest_open.json",
+    "Loot/chest_duplicate_open.json",
+    "Loot/chest_loot.json",
+    "Loot/ammo_box.json",
+    "Loot/supply_drop_spawn.json",
+    "Loot/supply_drop_open.json"
+  ]
+}

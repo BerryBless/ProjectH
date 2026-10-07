@@ -89,6 +89,9 @@ namespace ProjectH.Client.Game
         // (BuildStore; never the predicted ones). Replays use the newest values, like the doors.
         public ulong DestroyedHarvestables { get; set; }
         public PieceGrid Pieces { get; set; }
+        // Phase 16 D4: the loot containers and supply drops as the server said (null = none). A door is not predicted when
+        // the server would open a nearer container or supply drop with the same E instead.
+        public LootState Loot { get; set; }
 
         // D5: the match's transport route (TransportRoute). Kept until the next one or ClearRoute; it acts only in Transport
         // mode.
@@ -186,10 +189,17 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: E 누름의 문 열기·닫기를 예측한다(서버 Match.ToggleDoor와 같은 순서). Phase 16 D4: 같은 E로 서버가 더 가까운 Container나
+        //   착지한 Supply Drop을 열 경우(ContainerRule.PreferContainer)에는 문을 예측하지 않는다.
+        // 입력: 없음(이번 Step 뒤의 예측 상태).
+        // 출력: 반환값 없음. 예측 문 상태가 바뀔 수 있다.
         private void PredictDoorToggle()
         {
             int door = DoorRule.FindTarget(_state.Position, _state.Yaw, GameMap.Doors);
             if (door < 0) return;
+            if (Loot != null && Loot.FindTarget(_state.Position, _state.Yaw, out float lootSq) >= 0 &&
+                ContainerRule.PreferContainer(_state.Position, door, GameMap.Doors, lootSq))
+                return;
             if (!_doors.IsOpen(door)) _doors.Predict(door, true, _time);
             else if (!MovementSimulation.OverlapsAny(_state.Position, MovementSimulation.CollisionHeight(_state.Mode), GameMap.Doors.Slice(door, 1)))
                 _doors.Predict(door, false, _time);

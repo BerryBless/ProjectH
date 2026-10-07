@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "name": "Supply Drop Spawn",
+  "description": "Phase 16 D6, D7 (request §64-§66): a supply drop placed by the server spot rule lands inside 0.6 x the next zone circle and the +-60 m arena, more than 15 m from the two players, and falls for 15 s (450 ticks: 60 m at 4 m/s) before it lands. Every client gets the list (SupplyDrops) at the spawn and at the landing, never in snapshots.",
+  "tags": ["loot", "supplydrop"],
+  "seed": 16005,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 0, "z": 0 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": 4, "z": 0 } },
+    { "id": "none_yet", "assert": "loot.supplyDropCount", "equals": 0 },
+
+    { "id": "spawn", "phase": "arrange", "action": "spawnSupplyDrop", "saveAs": "drop", "description": "the subject is the server spot rule and the fall, so the QA command only starts it" },
+    { "id": "listed", "phase": "assert", "action": "waitFor", "condition": "loot.supplyDropCount", "equals": 1, "timeoutMilliseconds": 2000 },
+    { "id": "falling", "assert": "loot.supplyDrops.0.state", "equals": "Falling" },
+    { "id": "in_arena_x", "assert": "loot.supplyDrops.0.position.x", "between": [-60, 60] },
+    { "id": "in_arena_z", "assert": "loot.supplyDrops.0.position.z", "between": [-60, 60] },
+    { "id": "four_items", "assert": "loot.supplyDrops.0.loot.3.kind", "exists": true },
+    { "id": "in_next_circle", "assert": "loot.supplyDrops.0.insideTargetCircle", "equals": true },
+    { "id": "away_from_players", "assert": "loot.supplyDrops.0.nearestPlayerDistance", "greaterThan": 15 },
+    { "id": "fall_15s", "assert": "loot.supplyDrops.0.fallTicks", "equals": 450 },
+    { "id": "a_client_falling", "action": "waitFor", "condition": "actor.supplyDropStates.0", "actor": "playerA", "equals": "Falling", "timeoutMilliseconds": 3000 },
+    { "id": "b_client_falling", "action": "waitFor", "condition": "actor.supplyDropStates.0", "actor": "playerB", "equals": "Falling", "timeoutMilliseconds": 3000 },
+    { "id": "still_falling", "action": "wait", "milliseconds": 10000, "description": "the fall takes 15 s" },
+    { "id": "not_landed_yet", "assert": "loot.supplyDrops.0.state", "equals": "Falling" },
+    { "id": "landed", "action": "waitFor", "condition": "loot.supplyDrops.0.state", "equals": "Landed", "timeoutMilliseconds": 8000 },
+    { "id": "landed_count", "assert": "server.health.loot.dropsLanded", "equals": 1 },
+    { "id": "a_client_landed", "action": "waitFor", "condition": "actor.supplyDropStates.0", "actor": "playerA", "equals": "Landed", "timeoutMilliseconds": 3000 }
+  ]
+}

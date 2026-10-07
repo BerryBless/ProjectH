@@ -19,6 +19,8 @@ namespace ProjectH.Client.Net
     public delegate void SnapshotHandler(in WorldSnapshotHeader header, SnapshotEntity[] entities, int count);
     // Phase 15 D10: the whole team marker list, in NetClient's reused arrays (valid only during the call).
     public delegate void TeamMarkersHandler(MarkerPing[] pings, int pingCount, MarkerWaypoint[] waypoints, int waypointCount);
+    // Phase 16 D7: the whole supply drop list, in NetClient's reused array (valid only during the call).
+    public delegate void SupplyDropsHandler(SupplyDropInfo[] drops, int count);
 
     // Owns the LiteNetLib client. Main thread only: UnsyncedEvents is off and Poll() is called from
     // Update, so every callback below runs on the Unity main thread. Buffers are reused: receiving
@@ -33,6 +35,8 @@ namespace ProjectH.Client.Net
         // raised only after a whole read; the receiver copies what it keeps).
         private readonly MarkerPing[] _markerPings = new MarkerPing[MapMarkerConstants.MaxTeamPings];
         private readonly MarkerWaypoint[] _markerWaypoints = new MarkerWaypoint[MapMarkerConstants.MaxWaypoints];
+        // Phase 16 D7: SupplyDrops is read into this (same rule: the event only after a whole read; the receiver copies).
+        private readonly SupplyDropInfo[] _supplyDrops = new SupplyDropInfo[SupplyDropsPacket.MaxSupplyDrops];
         // The current connection. Events from any other peer (an attempt CancelConnect gave up on) are ignored.
         private NetPeer _server;
         private bool _disposed;
@@ -109,6 +113,9 @@ namespace ProjectH.Client.Net
         public event Action<RebootStationsState> RebootStationsReceived;
         // Phase 15 D10: our team's pings and waypoints (the whole list each time).
         public event TeamMarkersHandler TeamMarkersReceived;
+        // Phase 16 D3, D7: which loot containers spawned and which are open (spawned, opened), and the match's supply drops.
+        public event Action<ulong, ulong> ContainerStatesReceived;
+        public event SupplyDropsHandler SupplyDropsReceived;
 
         public ClientState State { get; private set; } = ClientState.Disconnected;
         public string LastError { get; private set; }
@@ -310,7 +317,7 @@ namespace ProjectH.Client.Net
         }
 
         // 기능: 받은 패킷 하나를 읽어 해당 이벤트를 올린다(Phase 13.5: BuildEvents의 Edited 기록 포함, Phase 14: 분대 패킷 4종,
-        //   Phase 15: TeamMarkers).
+        //   Phase 15: TeamMarkers, Phase 16: ContainerStates·SupplyDrops).
         //   메인 스레드에서 Poll이 부른다.
         // 입력: peer - 보낸 쪽(지금 연결이 아니면 무시), reader - 패킷, channelNumber·deliveryMethod - 쓰지 않는다.
         // 출력: 반환값 없음. 읽기에 실패한 기록이 있으면 그 패킷의 나머지는 버린다.
@@ -506,6 +513,15 @@ namespace ProjectH.Client.Net
                 case PacketId.TeamMarkers:
                     if (TeamMarkersPacket.TryRead(ref packet, _markerPings, _markerWaypoints, out int pingCount, out int waypointCount))
                         TeamMarkersReceived?.Invoke(_markerPings, pingCount, _markerWaypoints, waypointCount);
+                    break;
+
+                case PacketId.ContainerStates:
+                    if (ContainerStatesPacket.TryRead(ref packet, out ulong spawnedMask, out ulong openedMask))
+                        ContainerStatesReceived?.Invoke(spawnedMask, openedMask);
+                    break;
+
+                case PacketId.SupplyDrops:
+                    if (SupplyDropsPacket.TryRead(ref packet, _supplyDrops, out int dropCount)) SupplyDropsReceived?.Invoke(_supplyDrops, dropCount);
                     break;
             }
         }

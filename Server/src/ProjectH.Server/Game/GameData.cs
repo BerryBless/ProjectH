@@ -22,7 +22,7 @@ public sealed class GameData
     public const string MapFile = MapCatalog.FileName;
 
     // Phase 13: building null = the shipped numbers (BuildingCatalog.Default), so tests need no file.
-    // 기능: 데이터 파일들을 묶고 서로 맞는지 검사한다(SimHz, Loot Table 참조, Phase 14 재투입 장비, Phase 15 지도 수치).
+    // 기능: 데이터 파일들을 묶고 서로 맞는지 검사한다(SimHz, Loot Table 참조와 바닥 Loot Point 표의 항목 1개 이상(Phase 16 리뷰), Phase 14 재투입 장비, Phase 15 지도 수치).
     // 입력: weapons·items·loot·zones - 필수 데이터, building - 건설 수치(null = 기본값), squad - 분대 수치(null = 기본값, Phase 14 D11),
     //   map - Ping·Waypoint 수치(null = 기본값, Phase 15 D9).
     // 출력: 검증된 GameData. 맞지 않으면 ArgumentException.
@@ -43,8 +43,13 @@ public sealed class GameData
         // Every table the map's spawn points name must exist (D5, "all references exist").
         foreach (LootPoint point in LootPoints.All)
         {
-            if (loot.TableIndex(point.Table) < 0)
+            int table = loot.TableIndex(point.Table);
+            if (table < 0)
                 throw new ArgumentException($"loot.json has no table \"{point.Table}\" used by LootPoints.", nameof(loot));
+            // Phase 16 review (Low): a floor point rolls one weighted entry (LootTable.Roll); a table of guaranteed kinds only
+            // would index an empty entry list at every match start.
+            if (loot.EntryCount(table) == 0)
+                throw new ArgumentException($"loot.json table \"{point.Table}\" is used by LootPoints and needs at least one entry.", nameof(loot));
         }
         Squad = squad ?? SquadCatalog.Default(weapons.SimHz);
         if (Squad.SimHz != weapons.SimHz)
@@ -70,7 +75,7 @@ public sealed class GameData
     public MapCatalog Map { get; }
     public int SimHz => Weapons.SimHz;
 
-    // 기능: 서버 실행 파일 옆의 데이터 파일을 모두 읽고 GameData로 묶는다(Phase 15: map.json 포함).
+    // 기능: 서버 실행 파일 옆의 데이터 파일을 모두 읽고 GameData로 묶는다(Phase 15: map.json 포함, Phase 16: loot.json에 Container 표가 모두 있어야 한다).
     // 입력: directory - 파일이 있는 폴더, simHz - 서버 Tick 속도.
     // 출력: 검증된 GameData. 파일이 없거나 틀리면 InvalidOperationException(서버가 시작하지 않는다).
     // The files are copied next to the server executable. A missing or invalid file throws, so the host
@@ -84,6 +89,9 @@ public sealed class GameData
         var building = BuildingCatalog.LoadFile(Path.Combine(directory, BuildingFile), simHz);
         var squad = SquadCatalog.LoadFile(Path.Combine(directory, SquadFile), simHz);
         var map = MapCatalog.LoadFile(Path.Combine(directory, MapFile), simHz);
+        // Phase 16 D5: the shipped data must fill the containers and supply drops (tests may leave them out: no containers then).
+        string? containerError = loot.ValidateContainerTables();
+        if (containerError != null) throw new InvalidOperationException("Invalid game data: " + containerError);
         try
         {
             return new GameData(weapons, items, loot, zones, building, squad, map);

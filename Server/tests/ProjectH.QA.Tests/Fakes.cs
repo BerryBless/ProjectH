@@ -132,6 +132,9 @@ public sealed class FakeQaServer : IQaServerClient
     public Task<JsonElement> GetBuildAsync(float? x, float? z, float? radius, int? max, CancellationToken token) =>
         Task.FromResult(JsonSerializer.SerializeToElement(new { count = 1, pieces = new[] { new { id = 42, health = 100 } } }));
 
+    public Task<JsonElement> GetLootAsync(float? x, float? z, float? radius, CancellationToken token) =>
+        Task.FromResult(JsonSerializer.SerializeToElement(new { containersSpawned = 1, items = new { count = 3, weapons = 1 } }));
+
     // QA-5: settable so baseline tests can make a run worse than the previous one.
     public object Metrics { get; set; } = new { tickP50Ms = 0.4, tickP95Ms = 0.9, tickP99Ms = 1.5, tickMaxMs = 3.0, workingSetMB = 80.5 };
 

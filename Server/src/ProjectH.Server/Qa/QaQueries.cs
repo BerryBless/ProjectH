@@ -46,7 +46,24 @@ public sealed record QaMatchDto(
     MatchFlowState State, int Round, long Tick, double ElapsedSeconds, long StateEndTick, int MinPlayers, int Players, int Connected,
     int Graced, int Participants, int Alive, string? Winner, QaZoneDto Zone, int BuildPieces, int WorldItems, bool AirDropRoute,
     // Phase 14: the team size, the teams of the match, the teams not yet wiped out, reboot cards in the world, and the stations.
-    int TeamSize = 1, int Teams = 0, int TeamsAlive = 0, int WorldCards = 0, QaStationDto[]? Stations = null);
+    int TeamSize = 1, int Teams = 0, int TeamsAlive = 0, int WorldCards = 0, QaStationDto[]? Stations = null,
+    // Phase 16: loot containers spawned and opened, and the match's supply drops (details: GET /qa/loot).
+    int ContainersSpawned = 0, int ContainersOpened = 0, int SupplyDrops = 0);
+
+// Phase 16: one rolled loot item (kind = ItemKind name, rarity index 0-4).
+public sealed record QaLootItemDto(string Kind, int DefId, int Rarity, int Amount);
+
+// Phase 16: a loot container (kind = LootContainerKind name, state none / closed / open) and the loot it holds or held.
+public sealed record QaContainerDto(int Id, string Kind, QaVec3 Position, float Yaw, string State, QaLootItemDto[] Loot);
+
+// Phase 16: a supply drop (state = SupplyDropState name) and its loot. Computed when asked (QA only): the fall in ticks, the
+// horizontal distance to the nearest living player now, and whether it lies inside 0.6 x the zone's current target circle
+// (the "next circle" D6 picks from; Phase 0 = circle 1).
+public sealed record QaSupplyDropDto(int Id, string State, QaVec3 Position, long StartTick, long LandTick, QaLootItemDto[] Loot,
+    long FallTicks = 0, float NearestPlayerDistance = -1, bool InsideTargetCircle = false);
+
+// Phase 16: a world item near the asked point (dropped = not a loot point's item).
+public sealed record QaWorldItemDto(int ItemId, string Kind, int DefId, int Rarity, int Amount, QaVec3 Position, bool Dropped);
 
 public sealed record QaPieceDto(long Id, BuildPieceType Type, BuildMaterialType Material, int CellX, int Level, int CellZ, int Rotation,
     QaVec3 Center, int Health, int MaxHealth, int Damage, int Owner, long CreatedTick, bool Grounded, int Edit = 0);
@@ -61,7 +78,7 @@ internal static class QaQueries
         typeof(QaQueries).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
         ?? typeof(QaQueries).Assembly.GetName().Version?.ToString() ?? "unknown";
 
-    // 기능: GET /qa/health 본문을 만든다(Phase 14: options.teamSize, Phase 15: map 수치).
+    // 기능: GET /qa/health 본문을 만든다(Phase 14: options.teamSize, Phase 15: map 수치, Phase 16: loot 수치).
     // 입력: t - QA Tick 문맥.
     // 출력: 익명 객체.
     public static object Health(QaTick t)
@@ -106,6 +123,7 @@ internal static class QaQueries
             },
             qa = new { rejected = qa.Rejected, timedOut = qa.TimedOut, failed = qa.Failed },
             map = MapHealth(t.Loop.Health),
+            loot = LootHealth(t.Loop.Health),
             db,
             dbQueueLength = db?.QueueLength ?? 0,
             parentPid = qa.Options.ParentPid,
@@ -130,6 +148,24 @@ internal static class QaQueries
             replaced = c.Replaced,
             expired = c.Expired,
             waypoints = c.Waypoints,
+            packets = c.Packets,
+        };
+    }
+
+    // 기능: Phase 16: /qa/health의 Loot 수치(경기 수치 합계)를 만든다.
+    // 입력: h - 시작부터의 합계.
+    // 출력: 익명 객체.
+    private static object LootHealth(Diagnostics.HealthCounters h)
+    {
+        Diagnostics.LootCounts c = h.Loot;
+        return new
+        {
+            containersOpened = c.ContainersOpened,
+            dropsSpawned = c.DropsSpawned,
+            dropsLanded = c.DropsLanded,
+            dropsOpened = c.DropsOpened,
+            lootItems = c.LootItems,
+            opensBlocked = c.OpensBlocked,
             packets = c.Packets,
         };
     }
@@ -214,7 +250,7 @@ internal static class QaQueries
         return stations;
     }
 
-    // 기능: 경기의 QA DTO를 만든다(Phase 14: 팀 크기·팀 수·남은 팀·월드 카드·스테이션).
+    // 기능: 경기의 QA DTO를 만든다(Phase 14: 팀 크기·팀 수·남은 팀·월드 카드·스테이션, Phase 16: Container 생성·열림 수, Supply Drop 수).
     // 입력: m - 경기, simHz - Tick 속도.
     // 출력: QaMatchDto.
     public static QaMatchDto Match(Match m, int simHz)
@@ -234,7 +270,108 @@ internal static class QaQueries
         MatchState wire = m.Flow.ToWire(m.PlayerCount);
         return new QaMatchDto(m.Flow.State, m.Flow.Round, m.ServerTick, elapsed, m.Flow.StateEndTick, m.Flow.MinPlayers, m.PlayerCount,
             connected, m.GracedCount, wire.Participants, wire.Alive, winner, zone, m.BuildPieces, m.WorldItems.Count, m.HasRoute,
-            m.TeamSize, m.Flow.Teams, m.Flow.TeamsAlive, m.WorldItems.CardCount, Stations(m));
+            m.TeamSize, m.Flow.Teams, m.Flow.TeamsAlive, m.WorldItems.CardCount, Stations(m),
+            System.Numerics.BitOperations.PopCount(m.ContainerSpawnedMask), System.Numerics.BitOperations.PopCount(m.ContainerOpenedMask), m.SupplyDropCount);
+    }
+
+    public const int MaxLootItems = 256;
+
+    // 기능: Phase 16 GET /qa/loot 본문: Container 전체(상태와 Loot), Supply Drop 목록, (x, z, radius를 주면) 그 원 안의 월드 아이템 목록과
+    //   종류별 수·무기 등급 범위.
+    // 입력: m - 경기, x·z·radius - 아이템을 볼 원(모두 null이면 모든 아이템), max - 아이템 목록 상한.
+    // 출력: 익명 객체.
+    public static object Loot(Match m, float? x, float? z, float? radius, int max)
+    {
+        var containers = new QaContainerDto[LootContainers.Count];
+        for (int i = 0; i < containers.Length; i++)
+        {
+            LootContainer c = LootContainers.All[i];
+            ulong bit = 1UL << i;
+            string state = (m.ContainerSpawnedMask & bit) == 0 ? "none" : (m.ContainerOpenedMask & bit) != 0 ? "open" : "closed";
+            containers[i] = new QaContainerDto(i, c.Kind.ToString(), new QaVec3(c.Position.X, c.Position.Y, c.Position.Z), c.Yaw, state,
+                LootOf(m.ContainerLoot(i)));
+        }
+        var drops = new QaSupplyDropDto[m.SupplyDropCount];
+        for (int i = 0; i < drops.Length; i++)
+        {
+            SupplyDropInfo d = m.SupplyDropAt(i);
+            drops[i] = new QaSupplyDropDto(d.Id, d.State.ToString(), new QaVec3(d.X, d.LandY, d.Z), d.StartTick, d.LandTick, LootOf(m.SupplyDropLoot(i)),
+                (long)d.LandTick - d.StartTick, NearestLivingPlayer(m, d.X, d.Z), InsideTargetCircle(m, d.X, d.Z));
+        }
+        var items = new List<QaWorldItemDto>();
+        int count = 0, weapons = 0, ammo = 0, consumables = 0, materials = 0, minRarity = -1, maxRarity = -1;
+        for (int i = 0; i < m.WorldItems.Count; i++)
+        {
+            ref readonly WorldItem item = ref m.WorldItems[i];
+            WorldItemData d = item.Data;
+            if (radius.HasValue)
+            {
+                float dx = d.Position.X - x!.Value, dz = d.Position.Z - z!.Value;
+                if (dx * dx + dz * dz > radius.Value * radius.Value) continue;
+            }
+            count++;
+            switch (d.Kind)
+            {
+                case ItemKind.Weapon:
+                    weapons++;
+                    minRarity = minRarity < 0 ? d.Rarity : Math.Min(minRarity, d.Rarity);
+                    maxRarity = Math.Max(maxRarity, d.Rarity);
+                    break;
+                case ItemKind.Ammo: ammo++; break;
+                case ItemKind.Consumable: consumables++; break;
+                case ItemKind.Material: materials++; break;
+            }
+            if (items.Count < max)
+                items.Add(new QaWorldItemDto(d.ItemId, d.Kind.ToString(), d.DefId, d.Rarity, d.Amount, new QaVec3(d.Position.X, d.Position.Y, d.Position.Z), item.IsDropped));
+        }
+        return new
+        {
+            containersSpawned = System.Numerics.BitOperations.PopCount(m.ContainerSpawnedMask),
+            containersOpened = System.Numerics.BitOperations.PopCount(m.ContainerOpenedMask),
+            containers,
+            supplyDropCount = drops.Length,
+            supplyDrops = drops,
+            items = new { count, truncated = count > items.Count, weapons, ammo, consumables, materials, minWeaponRarity = minRarity, maxWeaponRarity = maxRarity, list = items },
+        };
+    }
+
+    // 기능: 점에서 가장 가까운 살아 있는 플레이어까지의 수평 거리를 잰다(QA 관찰용).
+    // 입력: m - 경기, x·z - 점.
+    // 출력: 거리, 살아 있는 플레이어가 없으면 -1.
+    private static float NearestLivingPlayer(Match m, float x, float z)
+    {
+        float best = -1f;
+        for (int i = 0; i < m.PlayerCount; i++)
+        {
+            PlayerEntity p = m.PlayerAt(i);
+            if (!p.Alive) continue;
+            float dx = p.State.Position.X - x, dz = p.State.Position.Z - z;
+            float d = MathF.Sqrt(dx * dx + dz * dz);
+            if (best < 0f || d < best) best = d;
+        }
+        return best;
+    }
+
+    // 기능: 점이 지금 자기장 목표 원(Phase 0이면 원 1) 반지름 × 0.6 안인지 본다(Supply Drop 위치 규칙 확인용, 반올림 여유 1 cm).
+    // 입력: m - 경기, x·z - 점.
+    // 출력: 안이면 true.
+    private static bool InsideTargetCircle(Match m, float x, float z)
+    {
+        var zone = m.Zone;
+        int circle = Math.Clamp(zone.Phase == 0 ? 1 : zone.Phase, 0, zone.PhaseCount);
+        float dx = x - zone.CenterX(circle), dz = z - zone.CenterZ(circle);
+        float limit = zone.Radius(circle) * 0.6f + 0.01f;
+        return dx * dx + dz * dz <= limit * limit;
+    }
+
+    // 기능: 굴린 Loot 칸을 DTO 배열로 바꾼다.
+    // 입력: loot - Loot 칸.
+    // 출력: DTO 배열.
+    private static QaLootItemDto[] LootOf(ReadOnlySpan<LootRoll> loot)
+    {
+        var list = new QaLootItemDto[loot.Length];
+        for (int i = 0; i < list.Length; i++) list[i] = new QaLootItemDto(loot[i].Kind.ToString(), loot[i].DefId, loot[i].Rarity, loot[i].Amount);
+        return list;
     }
 
     private static void SafeZoneView(Match m, out QaZoneDto zone)

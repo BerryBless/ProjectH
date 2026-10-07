@@ -106,6 +106,9 @@ public sealed class HeadlessActor : IQaActor
     private long _markersVersion = -1;
     private ActorPing[] _pingsPublished = Array.Empty<ActorPing>();
     private ActorWaypoint[] _waypointsPublished = Array.Empty<ActorWaypoint>();
+    // Phase 16 (pump thread): the supply drop states last published and the SupplyDrops count they were built at.
+    private long _dropsVersion = -1;
+    private string[] _dropStatesPublished = Array.Empty<string>();
 
     internal HeadlessActor(string alias, ActorPump pump, int seed, InputLatencyHistogram? latency = null)
     {
@@ -915,7 +918,8 @@ public sealed class HeadlessActor : IQaActor
         return _current.Buttons;
     }
 
-    // 기능: 이번 Pump Tick의 ActorState를 만들어 발행한다(Phase 14: 팀, 구성원 상태, 카드, 기절 소식, 채널, 스테이션, Phase 15: 팀 Ping·Waypoint).
+    // 기능: 이번 Pump Tick의 ActorState를 만들어 발행한다(Phase 14: 팀, 구성원 상태, 카드, 기절 소식, 채널, 스테이션, Phase 15: 팀 Ping·Waypoint,
+    //   Phase 16: Container 수·Supply Drop 상태).
     // 입력: 없음.
     // 출력: 반환값 없음. State가 바뀐다.
     private void Publish()
@@ -1011,10 +1015,29 @@ public sealed class HeadlessActor : IQaActor
                 Waypoints = _waypointsPublished,
                 TeamMarkersReceived = v.TeamMarkersReceived,
                 MapMarkersSent = c.MapMarkersSent,
+                ContainersSpawned = System.Numerics.BitOperations.PopCount(v.ContainersSpawned),
+                ContainersOpened = System.Numerics.BitOperations.PopCount(v.ContainersOpened),
+                ContainerStatesReceived = v.ContainerStatesReceived,
+                SupplyDropCount = v.SupplyDropCount,
+                SupplyDropStates = SupplyDropStatesOf(v),
+                SupplyDropsReceived = v.SupplyDropsReceived,
                 Error = _error,
             };
         }
         Volatile.Write(ref _state, state);
+    }
+
+    // 기능: Phase 16: 마지막 SupplyDrops의 상태 이름 목록을 발행용 배열로 만든다. 새 SupplyDrops가 왔을 때만 새로 만든다.
+    // 입력: v - 봇 View.
+    // 출력: 칸 순서의 SupplyDropState 이름 배열.
+    private string[] SupplyDropStatesOf(BotView v)
+    {
+        if (_dropsVersion == v.SupplyDropsReceived) return _dropStatesPublished;
+        var states = new string[v.SupplyDropCount];
+        for (int i = 0; i < states.Length; i++) states[i] = v.SupplyDrops[i].State.ToString();
+        _dropStatesPublished = states;
+        _dropsVersion = v.SupplyDropsReceived;
+        return states;
     }
 
     // 기능: Phase 15: 마지막 TeamMarkers의 Ping·Waypoint 목록을 발행용 배열로 만든다. 새 TeamMarkers가 왔을 때만 새로 만든다

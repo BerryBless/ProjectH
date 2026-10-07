@@ -109,6 +109,9 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
         _app = null;
     }
 
+    // 기능: QA HTTP 경로를 모두 등록한다(Phase 16: GET /qa/loot).
+    // 입력: app - Kestrel 앱.
+    // 출력: 반환값 없음.
     private void Map(WebApplication app)
     {
         app.MapGet("/qa/health", ctx => Run(ctx, t => QaResult.Data(QaQueries.Health(t))));
@@ -131,6 +134,16 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
             if ((x.HasValue || z.HasValue || radius.HasValue) && !(x.HasValue && z.HasValue && radius.HasValue))
                 return Write(ctx, QaResult.Error(400, "x, z and radius go together."));
             return Run(ctx, t => QaResult.Data(QaQueries.Build(t.Match, (float?)x, (float?)z, (float?)radius, (int)(max ?? QaQueries.MaxPieces))));
+        });
+        // Phase 16: the loot containers, supply drops and the world items around a point (kind, rarity, amount).
+        app.MapGet("/qa/loot", ctx =>
+        {
+            if (!Query(ctx, "x", -1000, 1000, out double? x, out string? error) || !Query(ctx, "z", -1000, 1000, out double? z, out error) ||
+                !Query(ctx, "radius", 0, 1000, out double? radius, out error) || !Query(ctx, "max", 1, QaQueries.MaxLootItems, out double? max, out error))
+                return Write(ctx, QaResult.Error(400, error!));
+            if ((x.HasValue || z.HasValue || radius.HasValue) && !(x.HasValue && z.HasValue && radius.HasValue))
+                return Write(ctx, QaResult.Error(400, "x, z and radius go together."));
+            return Run(ctx, t => QaResult.Data(QaQueries.Loot(t.Match, (float?)x, (float?)z, (float?)radius, (int)(max ?? QaQueries.MaxLootItems))));
         });
         app.MapGet("/qa/metrics", ctx =>
         {

@@ -119,6 +119,23 @@ namespace ProjectH.Client.Game.Map
         public static readonly Color MyWaypoint = new Color(1f, 1f, 1f);
         public static readonly Color TeamWaypoint = new Color(0.45f, 1f, 0.75f);
         public static readonly Color Route = new Color(1f, 0.85f, 0.3f, 0.8f);
+        // Phase 16 D8: a supply drop falling, landed (closed) and opened.
+        public static readonly Color SupplyFalling = new Color(0.6f, 0.8f, 1f);
+        public static readonly Color SupplyLanded = new Color(0.2f, 0.45f, 1f);
+        public static readonly Color SupplyOpened = new Color(0.5f, 0.5f, 0.55f);
+
+        // 기능: Supply Drop 상태의 색을 고른다(Phase 16 D8: 낙하 연한 파랑, 착지 파랑, 열림 회색).
+        // 입력: state - Supply Drop 상태.
+        // 출력: 색.
+        public static Color Of(SupplyDropState state)
+        {
+            switch (state)
+            {
+                case SupplyDropState.Falling: return SupplyFalling;
+                case SupplyDropState.Landed: return SupplyLanded;
+                default: return SupplyOpened;
+            }
+        }
 
         // 기능: Ping 종류의 색을 고른다(D11: Location 노랑, Enemy 빨강, Item 하늘, Danger 주황).
         // 입력: kind - Ping 종류.

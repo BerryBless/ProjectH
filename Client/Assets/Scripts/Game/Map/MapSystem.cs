@@ -81,12 +81,12 @@ namespace ProjectH.Client.Game.Map
         }
 
         // 기능: 지도와 월드 표지를 그린다(매 프레임, 참가해 등장한 뒤).
-        // 입력: f - 이번 프레임 값, camera - 화면 투영 카메라, from - 거리 기준 위치.
+        // 입력: f - 이번 프레임 값, camera - 화면 투영 카메라, from - 거리 기준 위치, loot - Supply Drop 목록(Phase 16 지도 아이콘).
         // 출력: 반환값 없음. 할당 없음.
-        public void Draw(in MapFrame f, Camera camera, Vector3 from)
+        public void Draw(in MapFrame f, Camera camera, Vector3 from, LootState loot)
         {
             _hud.SetVisible(true);
-            _hud.Draw(f, _mates, _mateCount, Markers);
+            _hud.Draw(f, _mates, _mateCount, Markers, loot);
             _world.Draw(camera, from, Markers, f.ServerTick, f.MyId);
         }
 
@@ -165,6 +165,7 @@ namespace ProjectH.Client.Game.Map
         public int QaTeammates => _hud.TeammatesDrawn;
         public int QaPings => _hud.PingsDrawn;
         public int QaWaypoints => _hud.WaypointsDrawn;
+        public int QaSupplyDrops => _hud.SupplyDropsDrawn;
 
         // 기능: 월드 표지, 지도 HUD, 텍스처를 해제한다(텍스처를 쓰는 것부터).
         // 입력: 없음.

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "name": "Chest Open",
+  "description": "Phase 16 D3-D5 (request §59, §60, §62): chest 14 (15, 16, open ground) is forced closed, A stands 2 m south of it facing it and presses E: the server opens it (ContainerStates to everyone), its three rolled items lie around it, and both clients see it open.",
+  "tags": ["loot", "container"],
+  "seed": 16001,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "chest_closed", "phase": "arrange", "action": "setContainer", "container": 14, "state": "closed" },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": -20, "z": -20 } },
+    { "id": "a_place", "action": "setPosition", "actor": "playerA", "position": { "x": 15, "z": 14, "yaw": 0 } },
+    { "id": "a_face", "action": "look", "actor": "playerA", "yaw": 0 },
+    { "id": "settle", "action": "wait", "milliseconds": 500 },
+    { "id": "is_closed", "assert": "loot.containers.14.state", "equals": "closed" },
+    { "id": "no_items_yet", "assert": "loot.items.count", "at": { "x": 15, "z": 16 }, "radius": 2, "equals": 0 },
+
+    { "id": "a_open", "phase": "act", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "opened", "phase": "assert", "action": "waitFor", "condition": "loot.containers.14.state", "equals": "open", "timeoutMilliseconds": 3000 },
+    { "id": "three_items", "assert": "loot.items.count", "at": { "x": 15, "z": 16 }, "radius": 2, "equals": 3 },
+    { "id": "opened_count", "assert": "server.health.loot.containersOpened", "equals": 1 },
+    { "id": "a_client_open", "action": "waitFor", "condition": "actor.containersOpened", "actor": "playerA", "greaterThan": 0, "timeoutMilliseconds": 3000 },
+    { "id": "b_client_open", "action": "waitFor", "condition": "actor.containersOpened", "actor": "playerB", "greaterThan": 0, "timeoutMilliseconds": 3000 }
+  ]
+}

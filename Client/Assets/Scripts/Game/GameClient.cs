@@ -82,6 +82,12 @@ namespace ProjectH.Client.Game
         private MapSystem _map;
         private Camera _mainCamera;
         private bool _mapOpen;
+        // Phase 16 D3, D7, D8: the loot containers and supply drops as the server said (emptied by its own packets at a match
+        // start and a round reset, and with the match state), their views, and what the "[E] 열기" hint names this frame.
+        private readonly LootState _loot = new LootState();
+        private ContainerViews _containerViews;
+        private SupplyDropViews _supplyDropViews;
+        private LootTargetKind _lootPrompt;
         // Phase 11 D9: entity id -> name from PlayerSpawned. At most one entry per player in the match: removed on
         // despawn, cleared with the match state (disconnect).
         private readonly Dictionary<ushort, string> _names = new Dictionary<ushort, string>();
@@ -232,7 +238,8 @@ namespace ProjectH.Client.Game
             State == ClientState.Joined && _tools.Current == ToolKind.Build && _build.HasCandidate ? _build.CandidateState : (BuildPreviewState?)null;
         // The cursor lock as the game sees it this frame (QA assumption included).
         public bool QaCursorLocked => CursorLocked;
-        // 기능: /qa/status의 지도 필드를 모은다(Phase 15 D14, 미니맵·전체 지도가 그린 값; QaMapStatus 참고). 월드 값은 그린 uv를
+        // 기능: /qa/status의 지도 필드를 모은다(Phase 15 D14, 미니맵·전체 지도가 그린 값; QaMapStatus 참고. Phase 16: 미니맵의 Supply Drop
+        //   아이콘 수와 지금 "[E] 열기" 안내 대상). 월드 값은 그린 uv를
         //   MapProjection.UvToWorld로 되돌린 것이고, uv가 -1(그리지 않음)이면 NaN(JSON null)이다.
         // 입력: 없음.
         // 출력: 지도 필드.
@@ -266,6 +273,8 @@ namespace ProjectH.Client.Game
             Teammates = _map.QaTeammates,
             Pings = _map.QaPings,
             Waypoints = _map.QaWaypoints,
+            SupplyDrops = _map.QaSupplyDrops,
+            LootPrompt = Qa.QaHttp.LootPromptName((byte)_lootPrompt),
         };
 #endif
 
@@ -378,7 +387,7 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 월드·입력·카메라·HUD·건설 표시(Phase 13.5: 편집 오버레이)·분대 표시(Phase 14: 분대 HUD, 팀원 표지, 스테이션 기둥)·
-        //   지도(Phase 15: 미니맵, 전체 지도, 월드 표지)·네트워크를 만들고 네트워크 이벤트를 구독한다.
+        //   지도(Phase 15: 미니맵, 전체 지도, 월드 표지)·Loot 표시(Phase 16: Container, Supply Drop)·네트워크를 만들고 네트워크 이벤트를 구독한다.
         // 입력: 없음(Unity가 한 번 부른다).
         // 출력: 반환값 없음. 만든 것은 모두 OnDestroy가 해제한다. 배치와 편집은 순번 카운터 하나를 같이 쓴다.
         private void Awake()
@@ -421,6 +430,8 @@ namespace ProjectH.Client.Game
             _markers = new TeammateMarkers(_buildSource);
             _stationViews = new RebootStationViews(_buildSource);
             _map = new MapSystem(_buildSource);
+            _containerViews = new ContainerViews(_buildSource);
+            _supplyDropViews = new SupplyDropViews(_buildSource);
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             _qaRecorder = Qa.QaInputRecorder.FromLaunch();
@@ -467,6 +478,8 @@ namespace ProjectH.Client.Game
             _net.ChannelStateReceived += OnChannelState;
             _net.RebootStationsReceived += OnRebootStations;
             _net.TeamMarkersReceived += OnTeamMarkers;
+            _net.ContainerStatesReceived += OnContainerStates;
+            _net.SupplyDropsReceived += OnSupplyDrops;
         }
 
         // 기능: 한 프레임의 Client 처리: 네트워크 Poll, 재접속, 입력·커서, 원격 플레이어 렌더, 시점과 이동 예측, 로컬 뷰 배치.
@@ -513,6 +526,7 @@ namespace ProjectH.Client.Game
         // 기능: 카메라가 움직인 뒤의 프레임 처리: 조준점(과 맞힌 Collider), 입력 전송, 사격 효과, 편집 모드(Phase 13.5), 건설, 표시, HUD.
         //   Phase 14: 분대 관전, 분대 HUD·표지·기절 막대·진행 막대, 소생·재투입 안내(범위 안이면 문·줍기 안내보다 먼저, D7).
         //   Phase 15: Ping 입력, 전체 지도 클릭 Waypoint, 미니맵·전체 지도·월드 표지.
+        //   Phase 16: Container·Supply Drop 표시(등장 전에도), "[E] 열기" 안내(소생·재투입 다음, 문과는 더 가까운 쪽, 줍기보다 먼저, D4).
         // 입력: 없음(Unity가 매 프레임 부른다).
         // 출력: 반환값 없음. 예측 입력이 전송되고 화면이 갱신된다.
         private void LateUpdate()
@@ -526,6 +540,11 @@ namespace ProjectH.Client.Game
             _doorViews.Tick(_doors);
             bool riding = _predictor != null && !_predictor.IsDead && _predictor.Mode == MovementMode.Transport && _clock != null;
             _transportView.Tick(riding ? RiderTick() : _renderTick);
+            // Phase 16 D8: containers change only with a packet (Apply returns at once otherwise); falling supply drops move
+            // at the render tick like the transport.
+            _containerViews.Apply(_loot);
+            _supplyDropViews.Apply(_loot, _renderTick);
+            _supplyDropViews.Tick(_renderTick);
             if (_predictor == null) _buildStore.ClearChanged();   // nothing reads the changes before the spawn: do not let them pile up
             if (_predictor == null) return;
             float now = Time.time;
@@ -586,20 +605,33 @@ namespace ProjectH.Client.Game
             _hud.SetEnergy(energy, alive && (energy < 1f || _predictor.Sprinting), _predictor.Exhausted);
             // Phase 14 D7: a revive or reboot in range (or under way) comes before the door and the item prompt, like the server.
             string squadHint = UpdateSquad(alive, out bool squadTarget);
-            int door = alive && onFoot && !squadTarget ? DoorRule.FindTarget(_predictor.PredictedPosition.ToNumerics(), _predictor.RenderYaw, GameMap.Doors) : -1;
-            _hud.SetHint(squadHint ?? Hint(alive, door));
+            System.Numerics.Vector3 hintFeet = _predictor.PredictedPosition.ToNumerics();
+            int door = alive && onFoot && !squadTarget ? DoorRule.FindTarget(hintFeet, _predictor.RenderYaw, GameMap.Doors) : -1;
+            // Phase 16 D4: the nearest closed container or landed supply drop; with a door also in reach the nearer one wins
+            // (the door on a tie), as the server picks (it also checks the line of sight; the hint does not).
+            int loot = -1;
+            float lootSq = 0f;
+            if (alive && onFoot && !squadTarget) loot = _loot.FindTarget(hintFeet, _predictor.RenderYaw, out lootSq);
+            if (loot >= 0 && door >= 0)
+            {
+                if (ContainerRule.PreferContainer(hintFeet, door, GameMap.Doors, lootSq)) door = -1;
+                else loot = -1;
+            }
+            _lootPrompt = LootState.KindOf(loot);
+            _hud.SetHint(squadHint ?? (loot >= 0 ? LootHint(_lootPrompt) : Hint(alive, door)));
             if (_weapons != null && _weapons.HasWeapon) _hud.SetWeapon(_weapons.Current.Name, _weapons.Ammo, _weapons.Reserve, _weapons.Reloading);
             else _hud.ClearWeapon();
             _hud.Tick(_camera.Yaw, now);
 
-            // D9, D12: E means the door first, and aboard, falling or vaulting it does nothing: no item prompt then.
-            UpdateInventoryHud(alive, onFoot && door < 0 && !squadTarget, now);
+            // D9, D12: E means the door first, and aboard, falling or vaulting it does nothing: no item prompt then. Phase 16 D4:
+            // nor with a container or supply drop to open.
+            UpdateInventoryHud(alive, onFoot && door < 0 && loot < 0 && !squadTarget, now);
             UpdateMatchHud(alive);
             UpdateMap(alive, watching, followFeet);
         }
 
         // 기능: 지도 한 프레임(Phase 15): 가운데 버튼 Ping(D6, 기절해도 보낸다: canAct·ActionsAllowed를 지나지 않는다), 열린 전체 지도의
-        //   클릭 Waypoint(D4), 그리고 미니맵·전체 지도·월드 표지 그리기(D3, D4, D11).
+        //   클릭 Waypoint(D4), 그리고 미니맵·전체 지도·월드 표지 그리기(D3, D4, D11; Phase 16 Supply Drop 아이콘 포함).
         // 입력: alive - 살아 있음(기절 포함), watching - 다른 플레이어를 관전 중, followFeet - 카메라가 따라가는 발(미니맵 중심).
         // 출력: 반환값 없음. Ping·Waypoint 요청이 나갈 수 있다(프레임마다 Ping 하나, 클릭 하나까지). 누를 때만 광선 하나를 쏘고, 그 밖에는
         //   할당 없음.
@@ -668,7 +700,7 @@ namespace ProjectH.Client.Game
             {
                 if (SquadPrompt.IsCoolingDown(_stations, i, tick)) frame.StationCooling |= (byte)(1 << i);
             }
-            _map.Draw(frame, _mainCamera, alive ? _predictor.RenderPosition : followFeet);
+            _map.Draw(frame, _mainCamera, alive ? _predictor.RenderPosition : followFeet, _loot);
         }
 
         // 기능: 건설 키를 처리한다(Update, 입력이 막히지 않았을 때). 조각 키는 고르고 건설 모드로 들어가며, T는 재료를 바꾸고,
@@ -889,6 +921,20 @@ namespace ProjectH.Client.Game
             return _doors.IsOpen(door) ? UiText.HintDoorClose : UiText.HintDoorOpen;
         }
 
+        // 기능: "[E] 열기" 안내 문구를 대상 종류로 고른다(Phase 16 D4).
+        // 입력: kind - 안내 대상 종류.
+        // 출력: UiText 상수(할당 없음), None이면 null.
+        private static string LootHint(LootTargetKind kind)
+        {
+            switch (kind)
+            {
+                case LootTargetKind.Chest: return UiText.HintOpenChest;
+                case LootTargetKind.AmmoBox: return UiText.HintOpenAmmoBox;
+                case LootTargetKind.SupplyDrop: return UiText.HintOpenSupplyDrop;
+                default: return null;
+            }
+        }
+
         // The server tick our rider is drawn at: the predicted one, or before the first ack (the rider held at the server's
         // position) the newest snapshot's. Only called with a predictor and a clock.
         private double RiderTick() => _predictor.HasTickBase ? _predictor.RenderTick : _clock.LatestTick;
@@ -971,7 +1017,8 @@ namespace ProjectH.Client.Game
             return "?";
         }
 
-        // 기능: 구독을 풀고 만든 것을 만든 역순으로 해제한다(편집 오버레이는 공유 Mesh보다 먼저, Phase 14 분대 표시, Phase 15 지도 포함).
+        // 기능: 구독을 풀고 만든 것을 만든 역순으로 해제한다(편집 오버레이는 공유 Mesh보다 먼저, Phase 14 분대 표시, Phase 15 지도,
+        //   Phase 16 Loot 표시 포함).
         // 입력: 없음(Unity가 부른다, 종료 때도).
         // 출력: 반환값 없음.
         private void OnDestroy()
@@ -1015,6 +1062,8 @@ namespace ProjectH.Client.Game
             _net.ChannelStateReceived -= OnChannelState;
             _net.RebootStationsReceived -= OnRebootStations;
             _net.TeamMarkersReceived -= OnTeamMarkers;
+            _net.ContainerStatesReceived -= OnContainerStates;
+            _net.SupplyDropsReceived -= OnSupplyDrops;
             _net.Dispose();
             ClearMatchState();
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -1022,6 +1071,8 @@ namespace ProjectH.Client.Game
             _qaRecorder = null;
 #endif
             _killFeed.Dispose();
+            _supplyDropViews.Dispose();
+            _containerViews.Dispose();
             _map.Dispose();
             _stationViews.Dispose();
             _markers.Dispose();
@@ -1259,7 +1310,7 @@ namespace ProjectH.Client.Game
             }
         }
 
-        // 기능: 플레이어 등장을 처리한다. 나면 예측과 내 뷰를 만들고, 남이면 원격 뷰를 만든다(Phase 14: 팀원이면 초록).
+        // 기능: 플레이어 등장을 처리한다. 나면 예측(Phase 16: Loot 상태 연결)과 내 뷰를 만들고, 남이면 원격 뷰를 만든다(Phase 14: 팀원이면 초록).
         // 입력: spawned - 등장 이벤트(이름 포함).
         // 출력: 반환값 없음. 이름 표에 등록된다.
         private void OnSpawned(PlayerSpawned spawned)
@@ -1272,6 +1323,7 @@ namespace ProjectH.Client.Game
                 _predictor = new LocalPlayerPredictor(_simHz, new MoveState { Position = spawned.Position, Yaw = spawned.Yaw }, _doors);
                 _predictor.DestroyedHarvestables = _destroyedHarvestables;
                 _predictor.Pieces = _buildStore.Grid;   // Phase 13 D3: confirmed pieces only
+                _predictor.Loot = _loot;   // Phase 16 D4: no door prediction when E opens a nearer container
                 if (_hasRoute) _predictor.SetRoute(_route);
                 // A key pressed while waiting for the spawn must not act on the first step, and it starts standing.
                 _input.QueuedButtons = InputButtons.None;
@@ -1404,11 +1456,13 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 경기 상태를 저장한다. 새 라운드 카운트다운(대기·시작)이면 결과·수송기 경로와 Phase 14 팀·채널, Phase 15 팀 Ping·Waypoint를 지운다.
+        //   Phase 16: Container 열기 가능 조건(경기 중)을 맞춘다. Loot 상태 자체는 서버가 보내는 빈 패킷으로 비운다.
         // 입력: state - 받은 MatchState.
         // 출력: 반환값 없음. 처음 받으면 경기 HUD를 보인다.
         private void OnMatchState(MatchState state)
         {
             _match = state;
+            _loot.SetMatch(true, state.State);
             if (!_hasMatch)
             {
                 _hasMatch = true;
@@ -1511,6 +1565,16 @@ namespace ProjectH.Client.Game
         // 출력: 반환값 없음.
         private void OnTeamMarkers(MarkerPing[] pings, int pingCount, MarkerWaypoint[] waypoints, int waypointCount) =>
             _map.ApplyMarkers(pings, pingCount, waypoints, waypointCount);
+
+        // 기능: Container 생성·열림 마스크(Phase 16 D3)를 적용한다. 뷰는 다음 LateUpdate가 바뀐 것만 고친다.
+        // 입력: spawned - 생성된 Container 비트, opened - 열린 Container 비트.
+        // 출력: 반환값 없음.
+        private void OnContainerStates(ulong spawned, ulong opened) => _loot.ApplyContainers(spawned, opened);
+
+        // 기능: Supply Drop 목록(Phase 16 D7)으로 상태를 통째로 바꾼다. 뷰·지도는 다음 LateUpdate가 그린다.
+        // 입력: drops·count - NetClient의 재사용 배열(호출 동안만 유효, 복사한다).
+        // 출력: 반환값 없음.
+        private void OnSupplyDrops(SupplyDropInfo[] drops, int count) => _loot.ApplyDrops(drops, count);
 
         private void OnDoorStates(byte openMask)
         {
@@ -1627,7 +1691,7 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 경기 상태 전체를 비운다(끊김, 종료). 조각·편집 예측·편집 모드와 오버레이, Phase 14 팀·채널·스테이션·분대 표시,
-        //   Phase 15 팀 Ping·Waypoint·경로 선·지도 아이콘·월드 표지도 비운다.
+        //   Phase 15 팀 Ping·Waypoint·경로 선·지도 아이콘·월드 표지, Phase 16 Container·Supply Drop 상태와 표시도 비운다.
         // 입력: 없음.
         // 출력: 반환값 없음. 화면 Object는 숨기거나 풀로 돌아간다.
         private void ClearMatchState()
@@ -1701,6 +1765,10 @@ namespace ProjectH.Client.Game
             _squadHud.SetBleed(-1, 0);
             _squadHud.SetChannel(null, 0f);
             _squadHud.SetVisible(false);
+            _loot.Clear();
+            _containerViews.Apply(_loot);
+            _supplyDropViews.HideAll();
+            _lootPrompt = LootTargetKind.None;
         }
     }
 }

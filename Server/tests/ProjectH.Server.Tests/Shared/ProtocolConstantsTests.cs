@@ -21,9 +21,9 @@ public class ProtocolConstantsTests
     }
 
     [Fact]
-    public void ProtocolVersion_IsFourteen()
+    public void ProtocolVersion_IsFifteen()
     {
-        // Phase 15 added MapMarker and TeamMarkers; v13 clients must be rejected.
-        Assert.Equal((ushort)14, ProtocolConstants.ProtocolVersion);
+        // Phase 16 added ContainerStates and SupplyDrops; v14 clients must be rejected.
+        Assert.Equal((ushort)15, ProtocolConstants.ProtocolVersion);
     }
 }

@@ -82,6 +82,10 @@ stateDiagram-v2
 
 `Finished` 10초 뒤 `Closing`: 월드 아이템을 모두 지우고(전원에게 `ItemRemoved`), 모든 접속자를 살려 Spawn에 두고 인벤토리를 비우고, Zone을 끄고, 수송기 경로를 지우고(Phase 12), 판 번호를 올린다 → 인원에 따라 `Starting` 또는 `WaitingForPlayers`.
 
+## Loot Container와 Supply Drop (Phase 16)
+
+Chest·Ammo Box(맵의 고정 34곳)는 경기 시작에 생성 여부와 Loot가 정해지고 E로 연다. Supply Drop은 자기장 시계 60초·150초에 다음 원 안으로 떨어진다. 규칙 전체는 `Loot.md`다.
+
 ## 아직 없는 것 (D15)
 
 팀·분대, 기절, 관전자 채팅, 지형 가중 Zone, Zone 경고 음향. Phase 6 D14: 2층 건물, 미니맵. Phase 12 D17: 지도 UI(낙하 지점 고르기. 수송기 경로는 F1 문구와 월드의 수송기로만 보인다)와 새 애니메이션 에셋. (Phase 5 때 "없는 것"이던 비행기·낙하산 투입은 Phase 12에서, 킬로그 UI는 Phase 11에서, 재접속은 Phase 10에서, 전적 저장은 Phase 9에서 생겼다.)

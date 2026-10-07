@@ -127,7 +127,7 @@ public sealed partial class Match
     // map's LootPoints.All; dropPoints null = the map's DropPoints.All (Phase 6 D9).
     // Phase 13 D13: sendBuild sends on the building channel (LiteNetLib channel 1); null = everything through send (tests).
     // buildBacklog: final review A4, a peer's queued reliable packets on the building channel (null = none).
-    // 기능: 경기 객체를 만든다(데이터 카탈로그, Phase 15 지도 수치 포함, 개발 모드면 Loot도 채운다).
+    // 기능: 경기 객체를 만든다(데이터 카탈로그, Phase 15 지도 수치 포함, 개발 모드면 Loot와 Phase 16 Container도 채운다).
     // 입력: options - 서버 설정, data - 게임 데이터, send - 패킷 전송, 나머지 - 위 설명의 테스트용·선택 인자.
     // 출력: 대기 상태의 Match.
     public Match(ServerOptions options, GameData data, SendPacket send, StartingLoadout? loadout = null, LootPoint[]? lootPoints = null,
@@ -189,6 +189,13 @@ public sealed partial class Match
         _dropPoints = dropPoints is null ? DropPoints.All.ToArray() : (Vector3[])dropPoints.Clone();
         if (_dropPoints.Length == 0) throw new ArgumentException("A match needs at least one drop point.", nameof(dropPoints));
         _dropOrder = new int[_dropPoints.Length];
+        // Phase 16 D2, D6: the container tables (-1 = none in this loot data: those containers never spawn), the fall time and the schedule.
+        _lootTable = data.Loot;
+        _chestTable = data.Loot.TableIndex(LootTable.ChestTable);
+        _ammoBoxTable = data.Loot.TableIndex(LootTable.AmmoBoxTable);
+        _supplyDropTable = data.Loot.TableIndex(LootTable.SupplyDropTable);
+        _supplyDropFallTicks = SupplyDropFall.FallTicks(data.Loot.SupplyDropFallSpeed, options.SimHz);
+        _dropScheduleTicks = ScheduleTicks(data.Loot, options.SimHz);
         _sentMatchState = _flow.ToWire(0);
         _sentZoneState = _zone.ToWire();
 
@@ -201,6 +208,8 @@ public sealed partial class Match
         if (options.DevRespawn)
         {
             for (int point = 0; point < _loot.Count; point++) SpawnItem(_loot.Roll(point), _loot.Position(point), point);
+            // Phase 16 D2: the sandbox's containers are rolled once now, the same way as a match start (round 1), and never refilled.
+            RollContainers(unchecked((_lootSeed + _flow.Round) * -1640531535 + ContainerSeedSalt));
         }
     }
 
@@ -298,8 +307,8 @@ public sealed partial class Match
         return error;
     }
 
-    // 기능: 연결을 경기에 넣는다(유예 중인 같은 DevPlayerId면 Resume). 새 플레이어는 JoinOrder를 받고(Phase 14 D1, 개발 모드면 팀도), 입장 패킷 묶음과 끝에 분대 상태,
-    //   (Phase 15, 팀이 있으면) 팀 지도 표시를 받는다.
+    // 기능: 연결을 경기에 넣는다(유예 중인 같은 DevPlayerId면 Resume). 새 플레이어는 JoinOrder를 받고(Phase 14 D1, 개발 모드면 팀도), 입장 패킷 묶음
+    //   (Phase 16: 채집 상태 뒤에 ContainerStates·SupplyDrops)과 끝에 분대 상태, (Phase 15, 팀이 있으면) 팀 지도 표시를 받는다.
     // 입력: peerId - 연결 id, devPlayerId - 검증된 플레이어 이름.
     // 출력: Ok, Resumed, AlreadyJoined 또는 MatchFull.
     public JoinResult TryJoin(int peerId, string devPlayerId)
@@ -350,6 +359,8 @@ public sealed partial class Match
         }
         SendDoors(peerId);   // Phase 12 D9
         SendHarvestStates(peerId);   // Phase 13 D6
+        SendContainerStates(peerId); // Phase 16 D3
+        SendSupplyDrops(peerId);     // Phase 16 D7
         SendResources(player);       // Phase 13 D15
         SendBuildCatalog(peerId);    // Phase 13 D4, final review A3: first on the building channel
         StartBuildSync(player);      // Phase 13 D14
@@ -455,7 +466,8 @@ public sealed partial class Match
     // 출력: 반환값 없음.
     public void EnqueueEdit(int peerId, in BuildEditRequest request) => EnqueueBuild(peerId, new BuildQueueItem(request));
 
-    // 기능: 경기 한 Tick: 유예 만료, 경기 흐름, 자기장, 플레이어 Tick, 경기 끝 판정, 그리고 Tick 끝 전송(인벤토리·경기·문·채집·자원·팀·스테이션,
+    // 기능: 경기 한 Tick: 유예 만료, 경기 흐름, 자기장, (Phase 16) Supply Drop 일정·착지, 플레이어 Tick, 경기 끝 판정, 그리고 Tick 끝 전송
+    //   (인벤토리·경기·문·채집·Container·Supply Drop·자원·팀·스테이션,
     //   Phase 15 지도 표시 만료와 TeamMarkers, 건설 사건, Snapshot).
     // 입력: 없음.
     // 출력: 반환값 없음. Server Authoritative 경기 상태가 한 Tick 진행되고 바뀐 내용이 전송된다.
@@ -482,6 +494,8 @@ public sealed partial class Match
 
         // Step 2: the zone's phase and its damage (D8).
         if (_flow.InMatch) UpdateZone(now);
+        // Phase 16 D6: supply drops spawn and land only during the match (not on the result screen).
+        if (_flow.InMatch) UpdateSupplyDrops(now);
 
         // D4: death is permanent in a match; the dev sandbox respawns (Phase 3 D9). Refills are off in a match
         // (the spawner was built with 0 respawn ticks).
@@ -533,6 +547,7 @@ public sealed partial class Match
         SendMatchChanges();
         SendDoorChanges();
         SendHarvestChanges();
+        SendLootChanges();       // Phase 16 D3, D7
         SendResourceChanges();
         SendTeamChanges();       // Phase 14 D2
         SendStationChanges();    // Phase 14 D10
@@ -1079,6 +1094,7 @@ public sealed partial class Match
     }
 
     // 기능: 살아 있는 플레이어의 실제 입력 하나를 spec §2 순서로 처리한다. Phase 14 D7: 소생·재투입 대상이 범위 안이면 E 누름은 문·줍기를 하지 않는다.
+    //   Phase 16 D4: 그 밖의 E는 Interact(문과 Container 중 가까운 쪽, 없으면 줍기)다.
     // 입력: player - 행위자, input - 받은 입력, previous - 직전 실제 입력의 버튼, now - 마지막 Tick.
     // 출력: 반환값 없음.
     // One real input of a living player, in the spec §2 order: cancel use -> tool -> slot -> drop -> pickup ->
@@ -1096,8 +1112,8 @@ public sealed partial class Match
         WeaponRules.SelectSlot(player, buttons);
         if ((buttons & InputButtons.Drop) != 0) DropCurrentWeapon(player);
         // Phase 12 D9: E acts on a door in front first, an item otherwise. Phase 14 D7: neither while a revive or reboot target
-        // is in reach (holding E there starts that instead).
-        if ((buttons & InputButtons.Interact) != 0 && !HasChannelTarget(player, now) && !ToggleDoor(player)) Pickup(player);
+        // is in reach (holding E there starts that instead). Phase 16 D4: a container in reach competes with the door (the nearer wins).
+        if ((buttons & InputButtons.Interact) != 0 && !HasChannelTarget(player, now)) Interact(player);
 
         bool aimValid = CombatRules.TryAimDirection(input.AimYaw, input.AimPitch, out Vector3 direction);
         bool fire = (buttons & InputButtons.Fire) != 0;
@@ -1470,15 +1486,13 @@ public sealed partial class Match
         }
     }
 
-    // Phase 12 D9: E on the door DoorRules picks opens it, or closes it when no living character stands in its place.
-    // Returns false when no door is in reach (then E picks up an item).
-    private bool ToggleDoor(PlayerEntity player)
+    // 기능: E가 고른 문(DoorRules.FindTarget, Phase 12 D9)을 연다. 열려 있으면 그 자리에 살아 있는 캐릭터가 없을 때 닫는다.
+    // 입력: door - 문 번호(0..DoorCount-1).
+    // 출력: 반환값 없음. 문 상태가 바뀌면 Tick 끝에 DoorStates가 간다.
+    private void ToggleDoor(int door)
     {
-        int door = DoorRules.FindTarget(player.State.Position, player.State.Yaw, GameMap.Doors);
-        if (door < 0) return false;
         if (!_doors.IsOpen(door)) _doors.Set(door, true);
         else if (!DoorOccupied(door)) _doors.Set(door, false);
-        return true;
     }
 
     // A living character's box overlaps the door's. A vaulter also occupies the rest of its straight vault path (current
@@ -1885,7 +1899,7 @@ public sealed partial class Match
     }
 
     // 기능: Starting -> Playing 시작 리셋(D3). Phase 14: 분대 상태를 지우고 참가자를 입장 순서로 팀에 묶는다(D1). Phase 15: 지도 표시를 지우고
-    //   새 팀마다 Tick 끝에 빈 TeamMarkers를 보낸다.
+    //   새 팀마다 Tick 끝에 빈 TeamMarkers를 보낸다. Phase 16: Container를 따로 둔 시드로 굴리고 Supply Drop 목록을 비운다.
     // 입력: now - 마지막 Tick.
     // 출력: 반환값 없음. 경기 세계가 새로 시작된다.
     // D3: Starting -> Playing, in this one tick: everyone to a drop point (Phase 6 D9), empty-handed with Health 100 and
@@ -1933,13 +1947,16 @@ public sealed partial class Match
         _loot.Restart(unchecked(_lootSeed + _flow.Round));
         for (int point = 0; point < _loot.Count; point++) SpawnItem(_loot.Roll(point), _loot.Position(point), point);
         _zone.Start(_hasRoute ? _route.EndTick : now, unchecked(_zoneSeed + _flow.Round));
+        // Phase 16 D2, D6: the containers from their own seed stream (the floor loot above is unchanged), no supply drop yet,
+        // the schedule on the zone clock.
+        StartLoot(now, _hasRoute ? _route.EndTick : now);
         if (_zone.IsFinalPhase) _flow.EnterFinalPhase();   // a one-phase zone is final from the start
         _matchStartTick = now;
         WinnerId = 0;
     }
 
     // 기능: Finished -> Closing -> 다음 라운드 리셋(D13). Phase 14: 팀과 분대 상태를 지운다(대기실에는 팀이 없다). Phase 15: 남은 지도 표시를
-    //   팀이 지워지기 전에 지우고 알린다.
+    //   팀이 지워지기 전에 지우고 알린다. Phase 16: Container 마스크와 Supply Drop 목록을 지운다.
     // 입력: now - 마지막 Tick.
     // 출력: 반환값 없음.
     // D13: Finished -> Closing -> the next round, in this one tick: everyone alive on the spawn ring with an
@@ -1954,6 +1971,7 @@ public sealed partial class Match
         _harvest.Reset();
         ClearBuilds();
         ClearMarkersAtRoundReset();          // Phase 15: while the teams still exist
+        ResetLoot();                         // Phase 16 D3: no container or supply drop in the lobby
         ResetSquadState(keepTeams: false);   // Phase 14: the lobby has no teams
         foreach (var player in _players)
         {
@@ -2253,8 +2271,8 @@ public sealed partial class Match
         return null;
     }
 
-    // 기능: 유예 중인 캐릭터를 새 연결로 넘기고 입장 패킷 묶음을 다시 보낸다. Phase 14 D13: 끝에 팀 상태·스테이션·진행 중인 팀 채널도.
-    //   Phase 15 D10: 그리고 팀 지도 표시.
+    // 기능: 유예 중인 캐릭터를 새 연결로 넘기고 입장 패킷 묶음을 다시 보낸다(Phase 16: Container·Supply Drop 상태 포함). Phase 14 D13: 끝에
+    //   팀 상태·스테이션·진행 중인 팀 채널도. Phase 15 D10: 그리고 팀 지도 표시.
     // 입력: peerId - 새 연결 id, player - 유예 중인 플레이어.
     // 출력: 반환값 없음.
     // D2: the character goes to the new connection with everything it has (position, health, inventory, placement
@@ -2288,6 +2306,8 @@ public sealed partial class Match
         if (_hasRoute) SendRoute(peerId);
         SendDoors(peerId);
         SendHarvestStates(peerId);   // Phase 13 D6
+        SendContainerStates(peerId); // Phase 16 D3
+        SendSupplyDrops(peerId);     // Phase 16 D7
         SendResources(player);       // Phase 13 D15
         SendBuildCatalog(peerId);    // Phase 13 D4, final review A3
         StartBuildSync(player);      // Phase 13 D14: the client's old pieces are not trusted

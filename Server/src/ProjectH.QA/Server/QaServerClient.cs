@@ -14,6 +14,8 @@ public interface IQaServerClient
     Task<JsonElement> GetPlayersAsync(CancellationToken token);
     Task<JsonElement> GetMatchAsync(CancellationToken token);
     Task<JsonElement> GetBuildAsync(float? x, float? z, float? radius, int? max, CancellationToken token);
+    // Phase 16: GET /qa/loot (containers, supply drops, world items within radius of x/z when given).
+    Task<JsonElement> GetLootAsync(float? x, float? z, float? radius, CancellationToken token);
     Task<JsonElement> GetMetricsAsync(int? windowSeconds, CancellationToken token);
     Task<JsonElement> GetEventsAsync(long after, int max, CancellationToken token);
     Task StopServerAsync(CancellationToken token);
@@ -104,6 +106,18 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
         if (radius != null) query.Add($"radius={radius.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
         if (max != null) query.Add($"max={max.Value}");
         return GetAsync(query.Count == 0 ? "qa/build" : "qa/build?" + string.Join('&', query), token);
+    }
+
+    // 기능: Phase 16: GET /qa/loot를 부른다(x·z·radius는 함께 주거나 모두 뺀다).
+    // 입력: x·z·radius - 월드 아이템을 볼 원, token - 취소.
+    // 출력: 응답 JSON의 data.
+    public Task<JsonElement> GetLootAsync(float? x, float? z, float? radius, CancellationToken token)
+    {
+        var query = new List<string>();
+        if (x != null) query.Add($"x={x.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+        if (z != null) query.Add($"z={z.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+        if (radius != null) query.Add($"radius={radius.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+        return GetAsync(query.Count == 0 ? "qa/loot" : "qa/loot?" + string.Join('&', query), token);
     }
 
     public Task<JsonElement> GetMetricsAsync(int? windowSeconds, CancellationToken token) =>

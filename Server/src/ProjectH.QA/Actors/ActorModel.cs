@@ -118,6 +118,15 @@ public sealed record ActorState
     public IReadOnlyList<ActorWaypoint> Waypoints { get; init; } = Array.Empty<ActorWaypoint>();
     public long TeamMarkersReceived { get; init; }
     public long MapMarkersSent { get; init; }
+    // Phase 16: what this client knows of the loot containers (how many spawned and how many of those are open, from the last
+    // ContainerStates) and the match's supply drops (the last SupplyDrops: count and each one's SupplyDropState name, by
+    // slot), and how many of each packet arrived.
+    public int ContainersSpawned { get; init; }
+    public int ContainersOpened { get; init; }
+    public long ContainerStatesReceived { get; init; }
+    public int SupplyDropCount { get; init; }
+    public IReadOnlyList<string> SupplyDropStates { get; init; } = Array.Empty<string>();
+    public long SupplyDropsReceived { get; init; }
     // The newest command applied (ActorCommand.Id).
     public long LastCommandId { get; init; }
     // Last exception of this actor's pump work (the pump keeps running).

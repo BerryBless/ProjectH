@@ -93,12 +93,15 @@ namespace ProjectH.Shared.Protocol
             return true;
         }
 
+        // 기능: 첫 바이트를 PacketId로 읽는다(범위: JoinMatchRequest..SupplyDrops, Phase 16 상한 43).
+        // 입력: 없음(읽기 위치의 바이트).
+        // 출력: 범위 안이면 true와 id, 아니면 false.
         public bool TryReadPacketId(out PacketId id)
         {
             id = PacketId.None;
             if (!TryReadByte(out byte raw)) return false;
             // Upper bound is the highest id in PacketId; raise it whenever a packet is added.
-            if (raw < (byte)PacketId.JoinMatchRequest || raw > (byte)PacketId.TeamMarkers) return false;
+            if (raw < (byte)PacketId.JoinMatchRequest || raw > (byte)PacketId.SupplyDrops) return false;
             id = (PacketId)raw;
             return true;
         }

@@ -17,7 +17,7 @@ public sealed class ServerMeter : IDisposable
 
     private readonly Meter _meter = new(Name);
 
-    // 기능: Health 수치를 읽는 관찰형 계측기를 모두 등록한다(Phase 15: 지도 표시 사건과 MapMarker 드롭 포함).
+    // 기능: Health 수치를 읽는 관찰형 계측기를 모두 등록한다(Phase 15: 지도 표시 사건과 MapMarker 드롭, Phase 16: Loot 사건 포함).
     // 입력: h - 시작부터의 합계.
     // 출력: 등록이 끝난 ServerMeter(Dispose가 해제한다).
     public ServerMeter(HealthCounters h)
@@ -84,6 +84,8 @@ public sealed class ServerMeter : IDisposable
             new Measurement<long>(h.MarkerDrops, Tag("where", "rate")),
             new Measurement<long>(h.MarkerInboxDrops, Tag("where", "inbox")),
         }, description: "MapMarker packets dropped by the per-connection rate and by the full inbound channel");
+        // Phase 16: loot containers and supply drops (since the server started).
+        _meter.CreateObservableCounter("projecth.loot.events", () => LootEvents(h), description: "Containers opened, supply drops spawned, landed and opened, loot items, blocked opens and state packets");
         _meter.CreateObservableCounter("projecth.db_records", () => DbRecords(h));
         _meter.CreateObservableCounter("projecth.stats_queries", () => StatsQueries(h));
     }
@@ -158,6 +160,24 @@ public sealed class ServerMeter : IDisposable
             new Measurement<long>(c.Replaced, Tag("event", "replaced")),
             new Measurement<long>(c.Expired, Tag("event", "expired")),
             new Measurement<long>(c.Waypoints, Tag("event", "waypoint")),
+            new Measurement<long>(c.Packets, Tag("event", "packet")),
+        };
+    }
+
+    // 기능: Phase 16 Loot 사건 수를 종류 Tag로 나눠 돌려준다.
+    // 입력: h - 합계.
+    // 출력: Measurement 배열(관찰자가 읽을 때마다 만든다, Tick 경로 아님).
+    private static Measurement<long>[] LootEvents(HealthCounters h)
+    {
+        LootCounts c = h.Loot;
+        return new[]
+        {
+            new Measurement<long>(c.ContainersOpened, Tag("event", "container_opened")),
+            new Measurement<long>(c.DropsSpawned, Tag("event", "drop_spawned")),
+            new Measurement<long>(c.DropsLanded, Tag("event", "drop_landed")),
+            new Measurement<long>(c.DropsOpened, Tag("event", "drop_opened")),
+            new Measurement<long>(c.LootItems, Tag("event", "loot_item")),
+            new Measurement<long>(c.OpensBlocked, Tag("event", "open_blocked")),
             new Measurement<long>(c.Packets, Tag("event", "packet")),
         };
     }

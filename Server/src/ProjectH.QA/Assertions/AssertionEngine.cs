@@ -10,7 +10,7 @@ namespace ProjectH.QA;
 // One query per evaluation; waitFor repeats it at the run's poll interval (request §29, §149).
 public static class AssertionEngine
 {
-    public static readonly string[] Roots = { "player", "match", "build", "server", "network", "actor", "event", "var", "group" };
+    public static readonly string[] Roots = { "player", "match", "build", "loot", "server", "network", "actor", "event", "var", "group" };
 
     // Paths whose numeric values are protocol enums (the server sends names; numbers are mapped for comparisons).
     private static readonly Dictionary<string, Type> s_enumPaths = new(StringComparer.OrdinalIgnoreCase)
@@ -46,6 +46,9 @@ public static class AssertionEngine
         return null;
     }
 
+    // 기능: 검증 경로 하나를 값으로 바꾼다(Phase 16: loot.* = GET /qa/loot, at·radius 선택).
+    // 입력: path - 점으로 나눈 경로, ctx - Step 문맥, token - 취소.
+    // 출력: 그 경로의 JSON 값, 없으면 null.
     public static async Task<JsonElement?> ResolveAsync(string path, StepContext ctx, CancellationToken token)
     {
         string[] seg = path.Split('.');
@@ -85,6 +88,15 @@ public static class AssertionEngine
             }
             case "build":
                 return await ResolveBuildAsync(rest, ctx, token).ConfigureAwait(false);
+            case "loot":
+            {
+                // Phase 16: GET /qa/loot; 'at' + 'radius' limit loot.items to the world items around a point.
+                QaPosition? at = ctx.Position("at");
+                float? radius = ctx.Double("radius") is double r ? (float)r : null;
+                if (radius != null && at == null) throw new QaStepException("loot.* with 'radius' needs 'at'.");
+                JsonElement loot = await run.Server.GetLootAsync(radius != null ? at?.X : null, radius != null ? at?.Z : null, radius, token).ConfigureAwait(false);
+                return JsonPath.Get(loot, rest);
+            }
             case "server":
                 return await ResolveServerAsync(rest, ctx, token).ConfigureAwait(false);
             case "network":

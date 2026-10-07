@@ -13,6 +13,8 @@ public class ProtocolFuzzTests
     // Phase 15: TeamMarkers reads into the caller's fixed arrays.
     private static readonly MarkerPing[] Pings = new MarkerPing[MapMarkerConstants.MaxTeamPings];
     private static readonly MarkerWaypoint[] Waypoints = new MarkerWaypoint[MapMarkerConstants.MaxWaypoints];
+    // Phase 16: SupplyDrops reads into the caller's fixed array.
+    private static readonly SupplyDropInfo[] Drops = new SupplyDropInfo[SupplyDropsPacket.MaxSupplyDrops];
 
     [Fact]
     public void RandomBytes_NeverThrow_InAnyParser()
@@ -27,7 +29,7 @@ public class ProtocolFuzzTests
             int length = n % 100 == 0 ? random.Next(buffer.Length + 1) : random.Next(65);
             random.NextBytes(buffer.AsSpan(0, length));
             // Half of them start with a valid packet id, so the body parsers also see plausible headers.
-            if (length > 0 && random.Next(2) == 0) buffer[0] = (byte)random.Next(1, (int)PacketId.TeamMarkers + 1);
+            if (length > 0 && random.Next(2) == 0) buffer[0] = (byte)random.Next(1, (int)PacketId.SupplyDrops + 1);
             ReadOnlySpan<byte> data = buffer.AsSpan(0, length);
 
             serverParsed += ServerSide(data);
@@ -140,6 +142,10 @@ public class ProtocolFuzzTests
         if (RebootStationsState.TryRead(ref r, out _)) ok++;
         r = new PacketReader(data);
         if (TeamMarkersPacket.TryRead(ref r, Pings, Waypoints, out _, out _)) ok++;   // Phase 15
+        r = new PacketReader(data);
+        if (ContainerStatesPacket.TryRead(ref r, out _, out _)) ok++;   // Phase 16
+        r = new PacketReader(data);
+        if (SupplyDropsPacket.TryRead(ref r, Drops, out _)) ok++;
         r = new PacketReader(data);
         if (BuildCatalogPacket.TryRead(ref r, out _)) ok++;
         r = new PacketReader(data);

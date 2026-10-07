@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "name": "Ammo Box",
+  "description": "Phase 16 D1, D5 (request §63): ammo box 19 (20, -16) reuses the chest system: two items, one ammo stack and 10 building resources (the AmmoBox table of loot.json). A opens it from the south-east, out of touch-pickup range of the resources.",
+  "tags": ["loot", "container"],
+  "seed": 16004,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "box_closed", "phase": "arrange", "action": "setContainer", "container": 19, "state": "closed" },
+    { "id": "is_ammo_box", "assert": "loot.containers.19.kind", "equals": "AmmoBox" },
+    { "id": "rolled_ammo", "assert": "loot.containers.19.loot.0.kind", "equals": "Ammo" },
+    { "id": "rolled_material", "assert": "loot.containers.19.loot.1.kind", "equals": "Material" },
+    { "id": "rolled_ten", "assert": "loot.containers.19.loot.1.amount", "equals": 10 },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": -20, "z": 20 } },
+    { "id": "a_place", "action": "setPosition", "actor": "playerA", "position": { "x": 21.7, "z": -17.3, "yaw": 307 } },
+    { "id": "a_face", "action": "look", "actor": "playerA", "yaw": 307 },
+    { "id": "settle", "action": "wait", "milliseconds": 500 },
+
+    { "id": "a_open", "phase": "act", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "opened", "phase": "assert", "action": "waitFor", "condition": "loot.containers.19.state", "equals": "open", "timeoutMilliseconds": 3000 },
+    { "id": "two_items", "assert": "loot.items.count", "at": { "x": 20, "z": -16 }, "radius": 2, "equals": 2 },
+    { "id": "ammo_item", "assert": "loot.items.ammo", "at": { "x": 20, "z": -16 }, "radius": 2, "equals": 1 },
+    { "id": "material_item", "assert": "loot.items.materials", "at": { "x": 20, "z": -16 }, "radius": 2, "equals": 1 },
+    { "id": "no_weapon", "assert": "loot.items.weapons", "at": { "x": 20, "z": -16 }, "radius": 2, "equals": 0 }
+  ]
+}

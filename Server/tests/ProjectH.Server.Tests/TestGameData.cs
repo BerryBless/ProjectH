@@ -43,7 +43,7 @@ internal static class TestGameData
         }
         """;
 
-    // The shipped loot.json (Phase 4 spec §1 plus the Phase 6 D10 Building table).
+    // The shipped loot.json (Phase 4 spec §1 plus the Phase 6 D10 Building table and the Phase 16 D5 container tables).
     public const string LootJson = """
         {
           "rarityWeights": { "Common": 50, "Uncommon": 25, "Rare": 15, "Epic": 7, "Legendary": 3 },
@@ -53,8 +53,16 @@ internal static class TestGameData
             "Building": [ { "kind": "Weapon", "weight": 50 }, { "kind": "Ammo", "weight": 20 },
                           { "kind": "Medkit", "weight": 15 }, { "kind": "ShieldCell", "weight": 15 } ],
             "Tower": [ { "kind": "Weapon", "weight": 60 }, { "kind": "Ammo", "weight": 10 },
-                       { "kind": "Medkit", "weight": 15 }, { "kind": "ShieldCell", "weight": 15 } ]
-          }
+                       { "kind": "Medkit", "weight": 15 }, { "kind": "ShieldCell", "weight": 15 } ],
+            "Chest": { "rolls": 3, "guaranteed": [ "Weapon" ],
+                       "entries": [ { "kind": "Ammo", "weight": 30 }, { "kind": "Medkit", "weight": 20 }, { "kind": "ShieldCell", "weight": 20 },
+                                    { "kind": "Material", "weight": 30, "amount": 30 } ] },
+            "AmmoBox": { "rolls": 2, "guaranteed": [ "Ammo" ], "entries": [ { "kind": "Material", "weight": 1, "amount": 10 } ] },
+            "SupplyDrop": { "rolls": 4, "guaranteed": [ "Weapon" ], "rarityWeights": { "Epic": 70, "Legendary": 30 },
+                            "entries": [ { "kind": "ShieldCell", "weight": 40 }, { "kind": "Medkit", "weight": 30 }, { "kind": "Ammo", "weight": 30 } ] }
+          },
+          "spawnChance": { "Chest": 0.7, "AmmoBox": 0.8 },
+          "supplyDrops": { "times": [ 60, 150 ], "fallSpeed": 4 }
         }
         """;
 

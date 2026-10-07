@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "name": "Chest Duplicate Open",
+  "description": "Phase 16 D4 (request §60, §62): A and B both stand at chest 14 and press E right after each other, then A presses again. The chest opens once and its loot spawns once (three items); the later presses go to pickups. Two presses in exactly the same tick are covered by the server test TwoPlayersInOneTick_AndRepeatedPresses_OpenItOnce.",
+  "tags": ["loot", "container"],
+  "seed": 16002,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "chest_closed", "phase": "arrange", "action": "setContainer", "container": 14, "state": "closed" },
+    { "id": "a_place", "action": "setPosition", "actor": "playerA", "position": { "x": 15, "z": 14, "yaw": 0 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": 15.8, "z": 14, "yaw": 0 } },
+    { "id": "a_face", "action": "look", "actor": "playerA", "yaw": 0 },
+    { "id": "b_face", "action": "look", "actor": "playerB", "yaw": 0 },
+    { "id": "settle", "action": "wait", "milliseconds": 500 },
+
+    { "id": "a_open", "phase": "act", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "b_open", "action": "press", "actor": "playerB", "button": "Interact" },
+    { "id": "opened", "phase": "assert", "action": "waitFor", "condition": "loot.containers.14.state", "equals": "open", "timeoutMilliseconds": 3000 },
+    { "id": "settle_presses", "action": "wait", "milliseconds": 500 },
+    { "id": "opened_once", "assert": "server.health.loot.containersOpened", "equals": 1 },
+    { "id": "loot_once", "assert": "server.health.loot.lootItems", "equals": 3 },
+
+    { "id": "a_again", "phase": "act", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "settle_again", "phase": "assert", "action": "wait", "milliseconds": 500 },
+    { "id": "still_once", "assert": "server.health.loot.containersOpened", "equals": 1 },
+    { "id": "still_three", "assert": "server.health.loot.lootItems", "equals": 3 }
+  ]
+}

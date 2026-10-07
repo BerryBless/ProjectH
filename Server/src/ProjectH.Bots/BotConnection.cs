@@ -17,6 +17,8 @@ public sealed class BotConnection : IDisposable
     // packet never leaves the view's lists half overwritten. Fixed size, made once (receive thread = the pump thread).
     private readonly MarkerPing[] _markerPings = new MarkerPing[MapMarkerConstants.MaxTeamPings];
     private readonly MarkerWaypoint[] _markerWaypoints = new MarkerWaypoint[MapMarkerConstants.MaxWaypoints];
+    // Phase 16 D7: SupplyDrops is read here first, like TeamMarkers (a refused packet keeps the view's last list).
+    private readonly SupplyDropInfo[] _supplyDrops = new SupplyDropInfo[SupplyDropsPacket.MaxSupplyDrops];
     private readonly InputCommand[] _sent = new InputCommand[ProtocolConstants.MaxInputsPerPacket];
     private NetPeer? _peer;
     private int _sentCount;
@@ -154,6 +156,18 @@ public sealed class BotConnection : IDisposable
         return true;
     }
 
+    // 기능: SupplyDrops 본문을 임시 배열에 읽고, 패킷 전체가 맞을 때만 BotView의 목록과 수를 바꾼다(거절된 패킷은 이전 목록을 그대로 둔다).
+    // 입력: reader - PacketId 뒤 본문, view - 반영할 View, drops - 임시 배열(MaxSupplyDrops 칸 이상).
+    // 출력: 반영했으면 true(SupplyDropsReceived가 는다), 거절했으면 false.
+    internal static bool ApplySupplyDrops(ref PacketReader reader, BotView view, SupplyDropInfo[] drops)
+    {
+        if (!SupplyDropsPacket.TryRead(ref reader, drops, out int count)) return false;
+        Array.Copy(drops, view.SupplyDrops, count);
+        view.SupplyDropCount = count;
+        view.SupplyDropsReceived++;
+        return true;
+    }
+
     public void Dispose() => _net.Stop();
 
     // QA tool (D14, request §127): send bytes as they are, on the reliable channel so the server receives every one
@@ -190,7 +204,8 @@ public sealed class BotConnection : IDisposable
         _peer!.Send(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
-    // 기능: 서버 패킷 하나를 BotView에 반영한다(Phase 14: TeamState, PlayerDowned, ChannelState, RebootStations, Phase 15: TeamMarkers).
+    // 기능: 서버 패킷 하나를 BotView에 반영한다(Phase 14: TeamState, PlayerDowned, ChannelState, RebootStations, Phase 15: TeamMarkers,
+    //   Phase 16: ContainerStates, SupplyDrops).
     // 입력: peer·reader·channel·method - LiteNetLib 수신 정보.
     // 출력: 반환값 없음.
     private void OnReceive(NetPeer peer, NetPacketReader reader, byte channel, DeliveryMethod method)
@@ -332,6 +347,18 @@ public sealed class BotConnection : IDisposable
             // Phase 15 D10: our team's whole marker list (replaces the last one; a refused packet keeps the last one).
             case PacketId.TeamMarkers:
                 ApplyTeamMarkers(ref r, view, _markerPings, _markerWaypoints);
+                break;
+            // Phase 16 D3, D7: container states and the match's supply drop list (replaces the last one).
+            case PacketId.ContainerStates:
+                if (ContainerStatesPacket.TryRead(ref r, out ulong spawned, out ulong opened))
+                {
+                    view.ContainersSpawned = spawned;
+                    view.ContainersOpened = opened;
+                    view.ContainerStatesReceived++;
+                }
+                break;
+            case PacketId.SupplyDrops:
+                ApplySupplyDrops(ref r, view, _supplyDrops);
                 break;
             case PacketId.BuildInterest:
                 // The window moved: what we keep is not worth tracking per cell for a bot; the next syncs bring it back.

@@ -108,6 +108,11 @@ namespace ProjectH.Client.Qa
     //   mapZoneCenterWorldX/Z - mapZoneCenterU/V back in world metres; mapZoneRadiusWorld - mapZoneCurrentRadiusU x 160 m.
     //                           The world fields are JSON null (not -1: -1 is a valid coordinate) whenever their uv fields are
     //                           -1; in the struct that is NaN.
+    //   Phase 16 (written only when LootPrompt is set, so older readers see the same JSON):
+    //   mapSupplyDrops        - supply drop icons drawn on the minimap (falling and landed ones clamped to the edge, opened ones
+    //                           only inside the window). 0 while hidden.
+    //   lootPrompt            - what the "[E] 열기" hint names this frame: "none", "chest", "ammoBox" or "supplyDrop" (the
+    //                           client's copy of the server rule; the server also checks the line of sight).
     public struct QaMapStatus
     {
         public bool MapOpen;
@@ -124,6 +129,8 @@ namespace ProjectH.Client.Qa
         public float ZoneCenterWorldX;
         public float ZoneCenterWorldZ;
         public float ZoneRadiusWorld;
+        public int SupplyDrops;
+        public string LootPrompt;          // null = not written
     }
 
     public enum QaJsonResult : byte
@@ -135,6 +142,20 @@ namespace ProjectH.Client.Qa
 
     public static class QaHttp
     {
+        // 기능: "[E] 열기" 안내 대상 종류의 /qa/status 이름을 돌려준다(Phase 16, LootTargetKind 값 순서).
+        // 입력: kind - 0 없음, 1 Chest, 2 Ammo Box, 3 Supply Drop.
+        // 출력: "none", "chest", "ammoBox", "supplyDrop"(모르는 값은 "none"). 상수라 할당 없음.
+        public static string LootPromptName(byte kind)
+        {
+            switch (kind)
+            {
+                case 1: return "chest";
+                case 2: return "ammoBox";
+                case 3: return "supplyDrop";
+                default: return "none";
+            }
+        }
+
         // D28: the shot file is <dir>/<name>.png, so the name can never leave the directory.
         public const int MaxShotNameLength = 64;
 
@@ -935,6 +956,7 @@ namespace ProjectH.Client.Qa
         }
 
         // 기능: 지도 필드를 쓴다(앞에 쉼표를 붙인다). 정규 값은 소수 넷째 자리까지, 월드 값은 둘째 자리까지(없으면 null).
+        //   Phase 16: LootPrompt가 있으면 mapSupplyDrops와 lootPrompt를 끝에 더한다.
         // 입력: sb - 이어 쓸 StringBuilder, map - 지도 필드.
         // 출력: 반환값 없음.
         private static void AppendMap(StringBuilder sb, in QaMapStatus map)
@@ -967,6 +989,11 @@ namespace ProjectH.Client.Qa
             AppendOrNull(sb, map.ZoneCenterWorldZ);
             sb.Append(",\"mapZoneRadiusWorld\":");
             AppendOrNull(sb, map.ZoneRadiusWorld);
+            if (map.LootPrompt == null) return;
+            sb.Append(",\"mapSupplyDrops\":");
+            QaJsonWriter.AppendLong(sb, map.SupplyDrops);
+            sb.Append(",\"lootPrompt\":");
+            QaJsonWriter.AppendString(sb, map.LootPrompt);
         }
 
         // 기능: 월드 좌표 값을 소수 둘째 자리(1 cm)까지 쓰고, NaN이면 JSON null을 쓴다.

@@ -44,6 +44,8 @@
     <Compile Include="..\..\..\Client\Assets\Scripts\Game\Build\ToolState.cs" Link="ClientCopies\ToolState.cs" />
     <!-- Phase 13 D13, D14: the client's build store, fed the server's real building stream (BuildReplicationTests). -->
     <Compile Include="..\..\..\Client\Assets\Scripts\Game\Build\BuildStore.cs" Link="ClientCopies\BuildStore.cs" />
+    <!-- Phase 16 D4: the client's copy of the container rule, compared with the server's ContainerRules (ContainerRulesTests). -->
+    <Compile Include="..\..\..\Client\Assets\Scripts\Game\ContainerRule.cs" Link="ClientCopies\ContainerRule.cs" />
   </ItemGroup>
 
 </Project>

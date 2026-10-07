@@ -280,6 +280,25 @@ namespace ProjectH.Client.Tests
         }
 
         [Test]
+        public void Status_LootFields_OnlyWhenSet()
+        {
+            var map = new QaMapStatus { MinimapSelfWorldX = float.NaN, MinimapSelfWorldZ = float.NaN, ZoneCenterWorldX = float.NaN,
+                ZoneCenterWorldZ = float.NaN, ZoneRadiusWorld = float.NaN, SupplyDrops = 2, LootPrompt = QaHttp.LootPromptName(3) };
+            var sb = new StringBuilder();
+            QaResponses.AppendStatus(sb, "qa1", true, true, "InGame", false, false, true, 100, 60, 42, "Weapon", "none", false, map);
+            StringAssert.EndsWith("\"mapZoneRadiusWorld\":null,\"mapSupplyDrops\":2,\"lootPrompt\":\"supplyDrop\"}", sb.ToString());
+
+            map.LootPrompt = null;
+            sb.Clear();
+            QaResponses.AppendStatus(sb, "qa1", true, true, "InGame", false, false, true, 100, 60, 42, "Weapon", "none", false, map);
+            StringAssert.EndsWith("\"mapZoneRadiusWorld\":null}", sb.ToString());
+            Assert.AreEqual("none", QaHttp.LootPromptName(0));
+            Assert.AreEqual("chest", QaHttp.LootPromptName(1));
+            Assert.AreEqual("ammoBox", QaHttp.LootPromptName(2));
+            Assert.AreEqual("none", QaHttp.LootPromptName(9));
+        }
+
+        [Test]
         public void UiCommands_OpenAndCloseMap()
         {
             Assert.AreEqual(QaUiCommand.OpenMap, QaHttp.ParseUiCommand("openMap"));

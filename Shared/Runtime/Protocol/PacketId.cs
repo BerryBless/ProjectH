@@ -51,5 +51,8 @@ namespace ProjectH.Shared.Protocol
         // Phase 15 D7, D10: map pings and waypoints. MapMarker is C->S (channel 0); TeamMarkers is S->C to one team.
         MapMarker = 40,
         TeamMarkers = 41,
+        // Phase 16 D3, D7: loot containers and supply drops (both S->C, channel 0).
+        ContainerStates = 42,
+        SupplyDrops = 43,
     }
 }

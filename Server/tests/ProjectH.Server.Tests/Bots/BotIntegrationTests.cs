@@ -57,6 +57,20 @@ public sealed class BotIntegrationTests
         Assert.Equal(2, connection.MapMarkersSent);
     }
 
+    // Phase 16 D3, D7: the bots' connection (and so the QA actors) reads ContainerStates and SupplyDrops; a dev-mode server
+    // rolls its containers at startup, and the join brings both packets.
+    [Fact]
+    public void ABotConnection_ReadsContainerStatesAndSupplyDrops()
+    {
+        using GameLoop server = StartServer(new ServerOptions { MaxPlayers = 4, DevRespawn = true }, TestGameData.Create());
+        using BotRunner bots = Bots(server, 1);
+        BotConnection connection = bots.Connection(0);
+        Assert.True(RunUntil(bots, () => connection.View.ContainerStatesReceived > 0 && connection.View.SupplyDropsReceived > 0, 10000), "loot packets");
+        Assert.NotEqual(0UL, connection.View.ContainersSpawned);
+        Assert.Equal(0UL, connection.View.ContainersOpened);
+        Assert.Equal(0, connection.View.SupplyDropCount);
+    }
+
     [Fact]
     public void ABot_FindsAndPicksUpAWeapon()
     {
