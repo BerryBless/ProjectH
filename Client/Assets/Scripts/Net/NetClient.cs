@@ -17,6 +17,8 @@ namespace ProjectH.Client.Net
     }
 
     public delegate void SnapshotHandler(in WorldSnapshotHeader header, SnapshotEntity[] entities, int count);
+    // Phase 15 D10: the whole team marker list, in NetClient's reused arrays (valid only during the call).
+    public delegate void TeamMarkersHandler(MarkerPing[] pings, int pingCount, MarkerWaypoint[] waypoints, int waypointCount);
 
     // Owns the LiteNetLib client. Main thread only: UnsyncedEvents is off and Poll() is called from
     // Update, so every callback below runs on the Unity main thread. Buffers are reused: receiving
@@ -27,6 +29,10 @@ namespace ProjectH.Client.Net
         private readonly NetDataWriter _connectData = new NetDataWriter();
         private readonly byte[] _sendBuffer = new byte[ProtocolConstants.MaxPacketSize];
         private readonly SnapshotEntity[] _snapshotEntities = new SnapshotEntity[ProtocolConstants.MaxSnapshotEntities];
+        // Phase 15 D10: TeamMarkers is read into these (TryRead may leave them half written on a bad packet, so the event is
+        // raised only after a whole read; the receiver copies what it keeps).
+        private readonly MarkerPing[] _markerPings = new MarkerPing[MapMarkerConstants.MaxTeamPings];
+        private readonly MarkerWaypoint[] _markerWaypoints = new MarkerWaypoint[MapMarkerConstants.MaxWaypoints];
         // The current connection. Events from any other peer (an attempt CancelConnect gave up on) are ignored.
         private NetPeer _server;
         private bool _disposed;
@@ -101,6 +107,8 @@ namespace ProjectH.Client.Net
         public event Action<PlayerDowned> PlayerDownedReceived;
         public event Action<ChannelState> ChannelStateReceived;
         public event Action<RebootStationsState> RebootStationsReceived;
+        // Phase 15 D10: our team's pings and waypoints (the whole list each time).
+        public event TeamMarkersHandler TeamMarkersReceived;
 
         public ClientState State { get; private set; } = ClientState.Disconnected;
         public string LastError { get; private set; }
@@ -200,6 +208,18 @@ namespace ProjectH.Client.Net
             return true;
         }
 
+        // 기능: Ping 하나나 내 Waypoint 설정·삭제 요청을 신뢰 채널 0으로 보낸다(Phase 15 D7).
+        // 입력: marker - 종류·위치·대상(Enemy·Item만 대상 id, 그 밖은 0: 서버 Reader가 강제한다).
+        // 출력: 보냈으면 true, 참가 중이 아니면 false(아무것도 보내지 않음).
+        public bool SendMapMarker(in MapMarker marker)
+        {
+            if (State != ClientState.Joined) return false;
+            var writer = new PacketWriter(_sendBuffer);
+            MapMarker.Write(ref writer, marker);
+            _server.Send(writer.WrittenSpan, ProtocolConstants.ReliableChannel, DeliveryMethod.ReliableOrdered);
+            return true;
+        }
+
         // Phase 11 D8: asks for this player's statistics; the answer comes as StatsReceived. False when not joined.
         public bool RequestStats()
         {
@@ -289,7 +309,8 @@ namespace ProjectH.Client.Net
             }
         }
 
-        // 기능: 받은 패킷 하나를 읽어 해당 이벤트를 올린다(Phase 13.5: BuildEvents의 Edited 기록 포함, Phase 14: 분대 패킷 4종).
+        // 기능: 받은 패킷 하나를 읽어 해당 이벤트를 올린다(Phase 13.5: BuildEvents의 Edited 기록 포함, Phase 14: 분대 패킷 4종,
+        //   Phase 15: TeamMarkers).
         //   메인 스레드에서 Poll이 부른다.
         // 입력: peer - 보낸 쪽(지금 연결이 아니면 무시), reader - 패킷, channelNumber·deliveryMethod - 쓰지 않는다.
         // 출력: 반환값 없음. 읽기에 실패한 기록이 있으면 그 패킷의 나머지는 버린다.
@@ -480,6 +501,11 @@ namespace ProjectH.Client.Net
 
                 case PacketId.RebootStations:
                     if (RebootStationsState.TryRead(ref packet, out var stations)) RebootStationsReceived?.Invoke(stations);
+                    break;
+
+                case PacketId.TeamMarkers:
+                    if (TeamMarkersPacket.TryRead(ref packet, _markerPings, _markerWaypoints, out int pingCount, out int waypointCount))
+                        TeamMarkersReceived?.Invoke(_markerPings, pingCount, _markerWaypoints, waypointCount);
                     break;
             }
         }

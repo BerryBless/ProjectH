@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "name": "Ping Rate Limit",
+  "description": "Phase 15 D7, D9 (request §55-§56): five players with TeamSize 4 (A-D = team 1, E = team 2). A burst of six pings from A: the connection's token bucket lets four through and drops two (markerDrops, not invalid packets), and A keeps at most three active pings (its oldest is replaced). Then B and C ping three each: nine in the team, so the team keeps eight (its oldest replaced). After the 8 s lifetime every ping expires and the team is told; team 2 never sees any of them.",
+  "tags": ["map", "ping", "limits"],
+  "seed": 15004,
+  "timeoutSeconds": 120,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "5", "Server:TeamSize": "4" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" }, { "id": "playerC" }, { "id": "playerD" }, { "id": "playerE" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "c_connect", "action": "connect", "actor": "playerC" },
+    { "id": "d_connect", "action": "connect", "actor": "playerD" },
+    { "id": "e_connect", "action": "connect", "actor": "playerE" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+    { "id": "c_team", "assert": "player.teamId", "actor": "playerC", "equals": 1 },
+    { "id": "e_team", "assert": "player.teamId", "actor": "playerE", "equals": 2 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 0, "z": 0 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": 3, "z": 0 } },
+    { "id": "c_place", "action": "setPosition", "actor": "playerC", "position": { "x": -3, "z": 0 } },
+    { "id": "d_place", "action": "setPosition", "actor": "playerD", "position": { "x": 0, "z": 3 } },
+    { "id": "e_place", "action": "setPosition", "actor": "playerE", "position": { "x": -20, "z": 20 } },
+
+    { "id": "a_burst", "phase": "act", "action": "ping", "actor": "playerA", "kind": "location", "position": { "x": 10, "z": 10 }, "count": 6 },
+    { "id": "two_dropped", "phase": "assert", "action": "waitFor", "condition": "server.health.map.markerDrops", "equals": 2, "timeoutMilliseconds": 3000 },
+    { "id": "four_taken", "action": "waitFor", "condition": "server.health.map.pings", "equals": 4, "timeoutMilliseconds": 3000 },
+    { "id": "not_invalid", "assert": "server.health.map.markerRateBadPackets", "equals": 0 },
+    { "id": "a_three_active", "assert": "player.teamPingCount", "actor": "playerA", "equals": 3 },
+    { "id": "a_oldest_replaced", "assert": "server.health.map.replaced", "equals": 1 },
+    { "id": "d_client_three", "action": "waitFor", "condition": "actor.pingCount", "actor": "playerD", "equals": 3, "timeoutMilliseconds": 3000 },
+
+    { "id": "b_three", "phase": "act", "action": "ping", "actor": "playerB", "kind": "danger", "position": { "x": 12, "z": 12 }, "count": 3 },
+    { "id": "c_three", "action": "ping", "actor": "playerC", "kind": "location", "position": { "x": 14, "z": 14 }, "count": 3 },
+    { "id": "ten_taken", "phase": "assert", "action": "waitFor", "condition": "server.health.map.pings", "equals": 10, "timeoutMilliseconds": 3000 },
+    { "id": "team_cap", "assert": "player.teamPingCount", "actor": "playerB", "equals": 8 },
+    { "id": "team_oldest_replaced", "assert": "server.health.map.replaced", "equals": 2 },
+    { "id": "d_client_eight", "action": "waitFor", "condition": "actor.pingCount", "actor": "playerD", "equals": 8, "timeoutMilliseconds": 3000 },
+    { "id": "e_none", "assert": "actor.pingCount", "actor": "playerE", "equals": 0 },
+
+    { "id": "all_expire", "phase": "assert", "action": "waitFor", "condition": "player.teamPingCount", "actor": "playerA", "equals": 0, "timeoutMilliseconds": 12000 },
+    { "id": "expired_count", "assert": "server.health.map.expired", "equals": 8 },
+    { "id": "d_client_empty", "action": "waitFor", "condition": "actor.pingCount", "actor": "playerD", "equals": 0, "timeoutMilliseconds": 3000 }
+  ]
+}

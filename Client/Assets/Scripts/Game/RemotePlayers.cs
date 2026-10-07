@@ -72,6 +72,23 @@ namespace ProjectH.Client.Game
             return true;
         }
 
+        // 기능: 조준 Raycast가 맞힌 Collider가 어느 원격 플레이어의 피격 상자인지 찾는다(Phase 15 D6: Enemy Ping).
+        // 입력: hit - 맞은 Collider(null 가능).
+        // 출력: 원격 플레이어의 상자(뷰 뿌리에 붙어 있다)면 true와 Entity id, 아니면 false. 누를 때만 부르고 할당 없음(구조체 열거자).
+        public bool TryFindEntity(Collider hit, out ushort entityId)
+        {
+            entityId = 0;
+            if (hit == null || hit.gameObject.layer != PlayerViewFactory.RemoteHitLayer) return false;
+            Transform root = hit.transform;
+            foreach (var pair in _entries)
+            {
+                if (pair.Value.View.Root != root) continue;
+                entityId = pair.Key;
+                return true;
+            }
+            return false;
+        }
+
         public void Despawn(ushort entityId)
         {
             if (_entries.Remove(entityId, out Entry entry)) entry.View.Destroy();

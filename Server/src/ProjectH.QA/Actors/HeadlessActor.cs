@@ -101,6 +101,11 @@ public sealed class HeadlessActor : IQaActor
     private long[] _buildCodesPublished = new long[(int)BuildResultCode.NotFound + 1];
 
     private ActorState _state;
+    // Phase 15 (pump thread): the marker lists last published and the TeamMarkers count they were built at (rebuilt only
+    // when a new TeamMarkers arrived, so an idle actor allocates nothing for them).
+    private long _markersVersion = -1;
+    private ActorPing[] _pingsPublished = Array.Empty<ActorPing>();
+    private ActorWaypoint[] _waypointsPublished = Array.Empty<ActorWaypoint>();
 
     internal HeadlessActor(string alias, ActorPump pump, int seed, InputLatencyHistogram? latency = null)
     {
@@ -120,6 +125,9 @@ public sealed class HeadlessActor : IQaActor
 
     // ---- pump thread only below ----
 
+    // 기능: 명령 하나를 이 배우의 의도에 반영한다(Pump 스레드, Phase 15: 지도 표시 요청은 바로 보낸다).
+    // 입력: command - 적용할 명령.
+    // 출력: 반환값 없음. 의도·연결 상태가 바뀌고 실패는 _error에 남는다.
     internal void Apply(ActorCommand command)
     {
         _lastCommandId = command.Id;
@@ -240,6 +248,18 @@ public sealed class HeadlessActor : IQaActor
             case BuildEditCommand e:
                 ApplyEdit(e);
                 break;
+            case MapMarkerCommand marker:
+            {
+                // Phase 15: sent at once (no aim needed: the request carries its own position and target).
+                BotConnection? c = _connection;
+                if (c == null || _closed || !c.Connected || c.Disconnected || !c.View.Joined)
+                {
+                    _error = "Not joined: map markers not sent.";
+                    break;
+                }
+                foreach (MapMarker m in marker.Markers) c.SendMapMarker(m);
+                break;
+            }
             case BuildCommand b:
                 if (_builds.Count + b.Pieces.Count > MaxBuildQueue)
                 {
@@ -895,7 +915,7 @@ public sealed class HeadlessActor : IQaActor
         return _current.Buttons;
     }
 
-    // 기능: 이번 Pump Tick의 ActorState를 만들어 발행한다(Phase 14: 팀, 구성원 상태, 카드, 기절 소식, 채널, 스테이션).
+    // 기능: 이번 Pump Tick의 ActorState를 만들어 발행한다(Phase 14: 팀, 구성원 상태, 카드, 기절 소식, 채널, 스테이션, Phase 15: 팀 Ping·Waypoint).
     // 입력: 없음.
     // 출력: 반환값 없음. State가 바뀐다.
     private void Publish()
@@ -985,10 +1005,37 @@ public sealed class HeadlessActor : IQaActor
                 ChannelKind = v.HasChannel ? v.LastChannel.Kind.ToString() : string.Empty,
                 ChannelActor = v.HasChannel ? v.LastChannel.ActorId : 0,
                 StationsCooling = v.Stations.CooldownMask,
+                PingCount = v.PingCount,
+                Pings = PingsOf(v),
+                WaypointCount = v.WaypointCount,
+                Waypoints = _waypointsPublished,
+                TeamMarkersReceived = v.TeamMarkersReceived,
+                MapMarkersSent = c.MapMarkersSent,
                 Error = _error,
             };
         }
         Volatile.Write(ref _state, state);
+    }
+
+    // 기능: Phase 15: 마지막 TeamMarkers의 Ping·Waypoint 목록을 발행용 배열로 만든다. 새 TeamMarkers가 왔을 때만 새로 만든다
+    //   (Waypoint 배열도 같이 갱신한다).
+    // 입력: v - 봇 View.
+    // 출력: Ping 배열(_waypointsPublished도 같은 버전으로 맞춰진다).
+    private ActorPing[] PingsOf(BotView v)
+    {
+        if (_markersVersion == v.TeamMarkersReceived && _pingsPublished.Length == v.PingCount && _waypointsPublished.Length == v.WaypointCount) return _pingsPublished;
+        var pings = new ActorPing[v.PingCount];
+        for (int i = 0; i < pings.Length; i++)
+        {
+            MarkerPing p = v.Pings[i];
+            pings[i] = new ActorPing(p.Id, p.Kind.ToString(), p.OwnerId, Vec3.From(p.Position), p.EndTick, p.TargetId);
+        }
+        var waypoints = new ActorWaypoint[v.WaypointCount];
+        for (int i = 0; i < waypoints.Length; i++) waypoints[i] = new ActorWaypoint(v.Waypoints[i].OwnerId, Vec3.From(v.Waypoints[i].Position));
+        _pingsPublished = pings;
+        _waypointsPublished = waypoints;
+        _markersVersion = v.TeamMarkersReceived;
+        return pings;
     }
 
     // 기능: Phase 14: 마지막 TeamState의 구성원 Entity id 목록을 만든다(상태 발행용, 최대 4개).

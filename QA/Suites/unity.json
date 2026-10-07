@@ -1,5 +1,5 @@
 {
   "name": "unity",
   "description": "QA-4: scenarios with a real Unity Development player. Run with --unity-exe <ProjectH.exe> on an unlocked desktop (a locked screen gives gray screenshots).",
-  "scenarios": [ "Smoke/unity_client.json", "UI/kill_feed.json", "Building/unity_build_input.json", "Building/visual_building_edit.json", "Squad/visual_squad.json" ]
+  "scenarios": [ "Smoke/unity_client.json", "UI/kill_feed.json", "Building/unity_build_input.json", "Building/visual_building_edit.json", "Squad/visual_squad.json", "Map/minimap_position.json", "Map/map_zone.json", "Map/visual_map.json" ]
 }

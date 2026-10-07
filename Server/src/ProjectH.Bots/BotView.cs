@@ -68,6 +68,13 @@ public sealed class BotView
     public bool HasChannel;
     public ChannelState LastChannel;
     public RebootStationsState Stations;
+    // Phase 15 D10: our team's pings and waypoints as the last TeamMarkers had them (fixed arrays; the counts say how many
+    // are filled), and how many TeamMarkers packets arrived. The bots never ping (D15); the QA tool reads these.
+    public readonly MarkerPing[] Pings = new MarkerPing[MapMarkerConstants.MaxTeamPings];
+    public int PingCount;
+    public readonly MarkerWaypoint[] Waypoints = new MarkerWaypoint[MapMarkerConstants.MaxWaypoints];
+    public int WaypointCount;
+    public long TeamMarkersReceived;
 
     // 기능: 이 Entity가 우리 팀원(자기 제외)인지 본다(D15: 봇은 팀원을 겨누지 않는다).
     // 입력: id - Entity id.
@@ -82,7 +89,7 @@ public sealed class BotView
         return false;
     }
 
-    // 기능: 우리 팀의 경기 밖 상태를 지운다(새 라운드: 다음 경기 시작에 새 TeamState가 온다).
+    // 기능: 우리 팀의 경기 밖 상태를 지운다(새 라운드: 다음 경기 시작에 새 TeamState가 온다). Phase 15: 팀 Ping·Waypoint도.
     // 입력: 없음.
     // 출력: 반환값 없음.
     public void ClearTeam()
@@ -90,6 +97,8 @@ public sealed class BotView
         HasTeam = false;
         Team = default;
         HasChannel = false;
+        PingCount = 0;
+        WaypointCount = 0;
     }
 
     // QA tool: the latest BuildResults in arrival order (a ring of RecentBuildResultCount; BuildResultCount counts

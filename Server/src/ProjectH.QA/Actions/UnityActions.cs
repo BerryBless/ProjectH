@@ -8,7 +8,7 @@ namespace ProjectH.QA;
 // status, and manual checks (D30).
 public static partial class UnityActions
 {
-    public static readonly string[] UiCommands = { "openMenu", "closeMenu", "openStats", "closeStats", "toggleDebug" };
+    public static readonly string[] UiCommands = { "openMenu", "closeMenu", "openStats", "closeStats", "toggleDebug", "openMap", "closeMap" };   // Phase 15: the full map
     public const int ManualTimeoutMs = 24 * 3600 * 1000;   // a person answers; the scenario timeout is paused meanwhile
 
     [GeneratedRegex(@"^[A-Za-z0-9_-]{1,64}$")]
@@ -21,9 +21,9 @@ public static partial class UnityActions
     public static readonly string[] InputKeys =
     {
         "w", "a", "s", "d", "space", "leftShift", "leftCtrl", "c", "q", "f", "z", "x", "v", "b", "t", "r", "e", "g",
-        "1", "2", "3", "4", "5", "escape", "f1", "h",
+        "1", "2", "3", "4", "5", "escape", "f1", "h", "m",   // Phase 15: m = the full map
     };
-    public static readonly string[] InputButtons = { "left", "right" };
+    public static readonly string[] InputButtons = { "left", "right", "middle" };   // Phase 15: middle = ping
     public static readonly string[] InputPhases = { "down", "up" };
     public const int MaxHoldMs = 10_000;
     public const int MaxLookMs = 5_000;
@@ -285,7 +285,7 @@ public static partial class UnityActions
         return name switch
         {
             "key" when Array.IndexOf(InputKeys, text) < 0 => $"'key' must be one of {string.Join(", ", InputKeys)} (Input System key names, as strings: \"1\", not 1).",
-            "button" when Array.IndexOf(InputButtons, text) < 0 => "'button' must be left or right.",
+            "button" when Array.IndexOf(InputButtons, text) < 0 => "'button' must be left, right or middle.",
             "state" when Array.IndexOf(InputPhases, text) < 0 => "'state' must be down or up (or leave it out and use holdMs or a press).",
             "holdMs" when !IntIn(1, MaxHoldMs) => $"'holdMs' must be an integer 1-{MaxHoldMs}.",
             "ms" when !IntIn(0, MaxLookMs) => $"'ms' must be an integer 0-{MaxLookMs} (0 = one frame).",

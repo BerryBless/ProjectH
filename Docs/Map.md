@@ -122,3 +122,21 @@ Phase 12 기준(문 5개 추가). 설계 근거와 결정 D1–D14: `Docs/specs/
    - Vault 높이 구분(`MovementTuning`의 Hurdle·Mantle 높이)에 걸리는 박스 높이를 바꾸면 `VaultTests`의 맵 테스트(Gearworks 상자)도 본다.
    - 채집 대상을 바꾸면 `HarvestableMapTests`를 돌린다. 개수나 순서를 바꾸면 `HarvestStates` 비트가 달라지므로 프로토콜이 달라진다.
 4. 넓이가 바뀌면 `zones.json`도 맞춘다. 첫 원이 맵 전체를 덮어야 한다(`ZoneDataTests.ShippedFile_CoversTheWholeMap`).
+   - 넓이(`GameMap.HalfSize`)가 바뀌면 지도 표시의 맵 안 검사(서버 `Match.Map`의 `InMap`, `TeamMarkersPacket`의 ±`MapMarkerConstants.MaxHorizontal`)도 같이 바뀐다. int16 1/100 m 좌표는 ±327 m까지라 맵이 그보다 넓어지면 패킷 형식을 바꿔야 한다.
+
+## 지도 UI·Ping (Phase 15)
+
+설계 근거와 결정 D1–D15: `Docs/specs/2026-10-08-phase15-map-ping-design.md`. 패킷은 `Networking.md` "지도 표시 (Phase 15)". 이 절은 서버 규칙이다. 미니맵·전체 지도·월드 표지·입력(Client)은 Client 문서를 본다.
+
+- **종류(D6, D7):** 팀 Ping 4가지(Location, Enemy, Item, Danger)와 개인 Waypoint 설정·삭제. Client가 맥락(조준 Raycast)으로 종류를 고르고 `MapMarker`로 보낸다. 서버는 중요한 것만 확인한다(D8).
+- **누가(D6, D8):** 경기 중(또는 개발 모드)의 팀이 있는 참가자이고 살아 있거나 기절한 사람. 기절도 Ping할 수 있다(`ActionsAllowed`를 보지 않는다. 수송기·낙하 중에도 된다). 관전자·탈락자의 Ping과 Waypoint 설정은 버린다. Waypoint 지우기는 탈락한 팀원도 할 수 있다(전체 지도는 죽어서도 열린다).
+- **위치(D7):** 수평 좌표가 맵 안(|x|, |z| ≤ 80)이 아니면 버린다. 높이는 [그 점 지형 높이 − 1 m, 지형 높이 + 건설 최고 높이 48 m + 2 m]로 자른다(탑·지붕 위 Ping).
+- **Enemy(D8):** 대상이 다른 팀의 살아 있는 플레이어이고, 보낸 사람의 눈에서 대상 몸 가운데까지 `enemyPingRange`(150 m) 안이며, 맵 상자·닫힌 문·지형에 막히지 않아야 한다(`HitScan.TraceWorld`, `DoorSet.World`. 건설 조각·채집 대상은 보지 않는다: Phase 13.5 배치 시선과 같은 규칙). 대상 발이 맵 밖(수송기·자유 낙하)이어도 실패다. 확인되면 Ping 위치는 그 순간 대상의 발 위치다(따라다니지 않는다). 실패하면 보낸 좌표의 Location(대상 0)이 된다.
+- **Item(D8):** 아이템이 월드에 있고(다른 팀의 재투입 카드는 그 팀만 보이므로 없는 것으로 본다) 보낸 사람 발에서 `itemPingRange`(60 m) 안이어야 한다. 위치는 아이템 위치다. 실패하면 버린다.
+- **상한(D9):** 플레이어당 활성 Ping `pingsPerPlayer`(3), 팀당 `pingsPerTeam`(8, `TeamMarkers` 상한). 넘으면 보낸 사람의 가장 오래된 Ping을, 팀이 가득이면 팀의 가장 오래된 Ping을 바꾼다. Waypoint는 플레이어당 하나(새로 두면 옮긴다), 수명 없음.
+- **수명(D9):** Location·Item·Danger `pingSeconds`(8초), Enemy `enemyPingSeconds`(4초). 끝 Tick은 `TeamMarkers`에 실려 Client가 같은 값을 안다.
+- **전송(D10):** 팀 표시가 바뀐 Tick 끝에만 그 팀원에게 `TeamMarkers`(팀 전체 목록)를 보낸다. Join·Resume 때 받는 사람에게 보낸다. 다른 팀에는 절대 보내지 않는다.
+- **정리:** 플레이어가 나가면 그 사람의 Ping과 Waypoint가 지워진다(유예 중에는 남는다). 경기 시작에 모두 지우고 새 팀마다 빈 목록을 보낸다. 경기 끝(`Finished`)에 모두 지우고 빈 목록을 보낸다(결과 화면에서는 새 요청을 받지 않는다). 라운드 리셋에 남은 표시가 있으면 팀이 지워지기 전에 빈 목록을 보낸다.
+- **수치:** `map.json`(서버 GameData, 시작 때 검증, 틀리면 서버가 시작하지 않는다. `Server.md` "데이터 파일").
+- **저장 구조와 비용:** 팀마다 고정 배열 8칸(`Match.Map`의 256 × 8 배열, 생성 때 한 번), 플레이어의 Waypoint는 `PlayerEntity` 필드. 요청 처리·만료·전송 모두 할당이 없다(`MapMatchTests.MarkersAndTheirTicks_AllocateNothing`). 만료 검사는 활성 Ping이 있을 때만, 전송은 바뀐 팀만 돈다.
+- **관측:** Health 줄 `map pings enemyConfirmed enemyDemoted refused replaced expired waypoints packets markerDrops markerInboxDrops`와 `badPackets markerRate`, Meter `projecth.map.events`·`projecth.map.marker_drops`(`Server.md` "관측"). QA는 `/qa/players`의 `waypoint`·`teamPingCount`·`teamPings`·`teamWaypointCount`·`teamWaypoints`와 `/qa/health`의 `map`(`QA.md`).

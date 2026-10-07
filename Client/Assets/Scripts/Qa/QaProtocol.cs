@@ -89,6 +89,41 @@ namespace ProjectH.Client.Qa
         OpenStats,
         CloseStats,
         ToggleDebug,
+        OpenMap,    // Phase 15 D14: the full map (UiFlow.OpenMap, only in the game)
+        CloseMap,
+    }
+
+    // Phase 15 D14: the map fields of GET /qa/status, as the client drew them in its last frame.
+    //   mapOpen               - the full map is open (UiFlow.MapOpen).
+    //   minimapSelfU/V        - the centre of the minimap window in full-map uv (0..1, u east, v north; MapProjection): where
+    //                           the minimap is centred, i.e. the player the camera follows (ourselves when alive). -1 while
+    //                           the minimap is hidden (not joined, not spawned yet).
+    //   mapZoneCurrentRadiusU - the current zone radius in full-map uv (radius m / 160 m), mapZoneCenterU/V its centre.
+    //                           Only while the full map is open and a zone is shown (match Playing or FinalPhase, zone phase
+    //                           > 0); otherwise -1.
+    //   mapTeammates, mapPings, mapWaypoints - icons drawn on the minimap (teammates in play other than us, live team pings,
+    //                           team waypoints; off-window ones are clamped to the edge, so every one counts). 0 while hidden.
+    //   minimapSelfWorldX/Z   - minimapSelfU/V turned back into world metres with MapProjection.UvToWorld (the drawn
+    //                           position round-tripped through the same transform, so QA compares it with the server's x, z).
+    //   mapZoneCenterWorldX/Z - mapZoneCenterU/V back in world metres; mapZoneRadiusWorld - mapZoneCurrentRadiusU x 160 m.
+    //                           The world fields are JSON null (not -1: -1 is a valid coordinate) whenever their uv fields are
+    //                           -1; in the struct that is NaN.
+    public struct QaMapStatus
+    {
+        public bool MapOpen;
+        public float MinimapSelfU;
+        public float MinimapSelfV;
+        public float ZoneCurrentRadiusU;
+        public float ZoneCenterU;
+        public float ZoneCenterV;
+        public int Teammates;
+        public int Pings;
+        public int Waypoints;
+        public float MinimapSelfWorldX;    // NaN = null
+        public float MinimapSelfWorldZ;
+        public float ZoneCenterWorldX;
+        public float ZoneCenterWorldZ;
+        public float ZoneRadiusWorld;
     }
 
     public enum QaJsonResult : byte
@@ -161,6 +196,9 @@ namespace ProjectH.Client.Qa
                    contentType.TrimStart().StartsWith("application/json", StringComparison.OrdinalIgnoreCase);
         }
 
+        // 기능: POST /qa/ui의 명령 이름을 명령으로 바꾼다(Phase 15: openMap·closeMap 포함, 대소문자 구분).
+        // 입력: command - 요청의 command 값.
+        // 출력: 아는 이름이면 그 명령, 아니면 None.
         public static QaUiCommand ParseUiCommand(string command)
         {
             switch (command)
@@ -170,10 +208,15 @@ namespace ProjectH.Client.Qa
                 case "openStats": return QaUiCommand.OpenStats;
                 case "closeStats": return QaUiCommand.CloseStats;
                 case "toggleDebug": return QaUiCommand.ToggleDebug;
+                case "openMap": return QaUiCommand.OpenMap;
+                case "closeMap": return QaUiCommand.CloseMap;
                 default: return QaUiCommand.None;
             }
         }
 
+        // 기능: 명령을 응답에 쓸 이름으로 바꾼다(ParseUiCommand의 역).
+        // 입력: command - 명령.
+        // 출력: 명령 이름, None이면 "none".
         public static string UiCommandName(QaUiCommand command)
         {
             switch (command)
@@ -183,6 +226,8 @@ namespace ProjectH.Client.Qa
                 case QaUiCommand.OpenStats: return "openStats";
                 case QaUiCommand.CloseStats: return "closeStats";
                 case QaUiCommand.ToggleDebug: return "toggleDebug";
+                case QaUiCommand.OpenMap: return "openMap";
+                case QaUiCommand.CloseMap: return "closeMap";
                 default: return "none";
             }
         }
@@ -192,7 +237,7 @@ namespace ProjectH.Client.Qa
     {
         None,
         Key,      // {"key"}: a keyboard key from QaInput.KeyNames
-        Button,   // {"button"}: left or right mouse button
+        Button,   // {"button"}: left, right or (Phase 15) middle mouse button
         Look,     // {"lookX","lookY"}: mouse delta spread over "ms"
         ReleaseAll,   // {"releaseAll":true}: let go of every held key and button and stop every look
     }
@@ -205,7 +250,7 @@ namespace ProjectH.Client.Qa
         Up,      // action "up": up now
     }
 
-    // One parsed POST /qa/input body. Code is the index into QaInput.KeyNames (Key) or 0 = left, 1 = right (Button).
+    // One parsed POST /qa/input body. Code is the index into QaInput.KeyNames (Key) or 0 = left, 1 = right, 2 = middle (Button).
     public readonly struct QaInputRequest
     {
         public QaInputRequest(QaInputKind kind, QaInputAction action, int code, int holdMs, double lookX, double lookY, int ms)
@@ -240,7 +285,7 @@ namespace ProjectH.Client.Qa
         public static readonly string[] KeyNames =
         {
             "w", "a", "s", "d", "space", "leftShift", "leftCtrl", "c", "q", "f", "z", "x", "v", "b", "t", "r", "e", "g",
-            "1", "2", "3", "4", "5", "escape", "f1", "h",
+            "1", "2", "3", "4", "5", "escape", "f1", "h", "m",
         };
 
         // Every field a body may carry; any other field is a 400, so a typo ("holdms") is not silently a press.
@@ -352,16 +397,16 @@ namespace ProjectH.Client.Qa
                 code = KeyIndex(key);
                 if (code < 0)
                 {
-                    error = "unknown key (allowed: w a s d space leftShift leftCtrl c q f z x v b t r e g 1 2 3 4 5 escape f1)";
+                    error = "unknown key (allowed: w a s d space leftShift leftCtrl c q f z x v b t r e g 1 2 3 4 5 escape f1 h m)";
                     return false;
                 }
             }
             else
             {
-                code = button == "left" ? 0 : button == "right" ? 1 : -1;
+                code = ButtonIndex(button);
                 if (code < 0)
                 {
-                    error = "button must be left or right";
+                    error = "button must be left, right or middle";
                     return false;
                 }
             }
@@ -390,6 +435,16 @@ namespace ProjectH.Client.Qa
             error = null;
             return true;
         }
+
+        // 기능: 버튼 이름을 번호로 바꾼다(Phase 15: middle = Ping).
+        // 입력: name - 요청의 버튼 이름.
+        // 출력: left 0, right 1, middle 2, 그 밖 -1.
+        public static int ButtonIndex(string name) => name == "left" ? 0 : name == "right" ? 1 : name == "middle" ? 2 : -1;
+
+        // 기능: 버튼 번호를 이름으로 바꾼다.
+        // 입력: code - ButtonIndex의 번호.
+        // 출력: "left", "right", "middle".
+        public static string ButtonName(int code) => code == 0 ? "left" : code == 1 ? "right" : "middle";
 
         // 기능: 숫자가 min..max 범위의 정수인지 확인한다.
         // 입력: value - JSON 숫자, min·max - 허용 범위(양 끝 포함).
@@ -432,7 +487,7 @@ namespace ProjectH.Client.Qa
                 case QaInputAction.Up: sb.Append("up "); break;
                 default: sb.Append("press "); break;
             }
-            sb.Append(request.Kind == QaInputKind.Key ? KeyNames[request.Code] : request.Code == 0 ? "left" : "right");
+            sb.Append(request.Kind == QaInputKind.Key ? KeyNames[request.Code] : ButtonName(request.Code));
             if (request.Action != QaInputAction.Hold) return;
             sb.Append(' ');
             QaJsonWriter.AppendLong(sb, request.HoldMs);
@@ -831,12 +886,23 @@ namespace ProjectH.Client.Qa
         //       screen - 화면 이름, statsOpen·debugVisible - 통계 창·F1 줄, alive·health - 내 생존·체력, fps·frame - 프레임 값,
         //       tool - Weapon|Harvest|Build|none, preview - Valid|Invalid|NoResource|none, cursorLocked - 게임이 보는 커서 잠금
         //       (QA 가정 포함).
-        // 출력: 반환값 없음. sb 끝에 상태 객체 하나가 붙는다.
+        // 출력: 반환값 없음. sb 끝에 상태 객체 하나가 붙는다(지도 필드 없음: 아래 오버로드에 map null로 넘긴다).
         // statsOpen and debugVisible are additions to D28's field list (the QA tool can assert openStats/toggleDebug);
         // tool, preview and cursorLocked come with POST /qa/input (the QA tool waits on them after gameplay input).
         public static void AppendStatus(StringBuilder sb, string devPlayerId, bool connected, bool joined, string screen,
             bool statsOpen, bool debugVisible, bool alive, int health, double fps, long frame, string tool, string preview,
             bool cursorLocked)
+        {
+            AppendStatus(sb, devPlayerId, connected, joined, screen, statsOpen, debugVisible, alive, health, fps, frame, tool, preview,
+                cursorLocked, null);
+        }
+
+        // 기능: GET /qa/status 응답 JSON을 쓴다. Phase 15 D14: map이 있으면 지도 필드를 끝에 더한다(QaMapStatus 참고).
+        // 입력: sb - 이어 쓸 StringBuilder, 접속·화면·생존·체력·fps·frame·도구·미리보기·커서 잠금 값, map - 지도 필드(null이면 쓰지 않는다).
+        // 출력: 반환값 없음. sb 끝에 JSON 객체 하나가 붙는다.
+        public static void AppendStatus(StringBuilder sb, string devPlayerId, bool connected, bool joined, string screen,
+            bool statsOpen, bool debugVisible, bool alive, int health, double fps, long frame, string tool, string preview,
+            bool cursorLocked, QaMapStatus? map)
         {
             sb.Append("{\"ok\":true,\"devPlayerId\":");
             QaJsonWriter.AppendString(sb, devPlayerId);
@@ -864,7 +930,52 @@ namespace ProjectH.Client.Qa
             QaJsonWriter.AppendString(sb, preview);
             sb.Append(",\"cursorLocked\":");
             QaJsonWriter.AppendBool(sb, cursorLocked);
+            if (map.HasValue) AppendMap(sb, map.Value);
             sb.Append('}');
+        }
+
+        // 기능: 지도 필드를 쓴다(앞에 쉼표를 붙인다). 정규 값은 소수 넷째 자리까지, 월드 값은 둘째 자리까지(없으면 null).
+        // 입력: sb - 이어 쓸 StringBuilder, map - 지도 필드.
+        // 출력: 반환값 없음.
+        private static void AppendMap(StringBuilder sb, in QaMapStatus map)
+        {
+            sb.Append(",\"mapOpen\":");
+            QaJsonWriter.AppendBool(sb, map.MapOpen);
+            sb.Append(",\"minimapSelfU\":");
+            QaJsonWriter.AppendFixed(sb, map.MinimapSelfU, 4);
+            sb.Append(",\"minimapSelfV\":");
+            QaJsonWriter.AppendFixed(sb, map.MinimapSelfV, 4);
+            sb.Append(",\"mapZoneCurrentRadiusU\":");
+            QaJsonWriter.AppendFixed(sb, map.ZoneCurrentRadiusU, 4);
+            sb.Append(",\"mapZoneCenterU\":");
+            QaJsonWriter.AppendFixed(sb, map.ZoneCenterU, 4);
+            sb.Append(",\"mapZoneCenterV\":");
+            QaJsonWriter.AppendFixed(sb, map.ZoneCenterV, 4);
+            sb.Append(",\"mapTeammates\":");
+            QaJsonWriter.AppendLong(sb, map.Teammates);
+            sb.Append(",\"mapPings\":");
+            QaJsonWriter.AppendLong(sb, map.Pings);
+            sb.Append(",\"mapWaypoints\":");
+            QaJsonWriter.AppendLong(sb, map.Waypoints);
+            sb.Append(",\"minimapSelfWorldX\":");
+            AppendOrNull(sb, map.MinimapSelfWorldX);
+            sb.Append(",\"minimapSelfWorldZ\":");
+            AppendOrNull(sb, map.MinimapSelfWorldZ);
+            sb.Append(",\"mapZoneCenterWorldX\":");
+            AppendOrNull(sb, map.ZoneCenterWorldX);
+            sb.Append(",\"mapZoneCenterWorldZ\":");
+            AppendOrNull(sb, map.ZoneCenterWorldZ);
+            sb.Append(",\"mapZoneRadiusWorld\":");
+            AppendOrNull(sb, map.ZoneRadiusWorld);
+        }
+
+        // 기능: 월드 좌표 값을 소수 둘째 자리(1 cm)까지 쓰고, NaN이면 JSON null을 쓴다.
+        // 입력: sb - 이어 쓸 StringBuilder, value - 값(NaN = 없음).
+        // 출력: 반환값 없음.
+        private static void AppendOrNull(StringBuilder sb, float value)
+        {
+            if (float.IsNaN(value)) sb.Append("null");
+            else QaJsonWriter.AppendFixed(sb, value, 2);
         }
 
         // 기능: POST /qa/input 성공 응답 JSON을 쓴다.

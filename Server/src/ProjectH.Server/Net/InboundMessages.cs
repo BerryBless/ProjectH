@@ -48,6 +48,24 @@ public readonly struct BuildMessage
     public BuildQueueItem Request { get; }
 }
 
+// Phase 15 D7: one parsed map marker request (a ping or a waypoint change).
+public readonly struct MarkerMessage
+{
+    // 기능: 파싱된 MapMarker를 Game Loop로 넘길 메시지로 만든다.
+    // 입력: peerId - 연결 id, peer - 연결(같은 id 재사용 구분용), marker - 요청.
+    // 출력: 메시지.
+    public MarkerMessage(int peerId, NetPeer peer, in MapMarker marker)
+    {
+        PeerId = peerId;
+        Peer = peer;
+        Marker = marker;
+    }
+
+    public int PeerId { get; }
+    public NetPeer Peer { get; }
+    public MapMarker Marker { get; }
+}
+
 public readonly struct InputMessage
 {
     public InputMessage(int peerId, NetPeer peer, in PlayerInputPacket packet)

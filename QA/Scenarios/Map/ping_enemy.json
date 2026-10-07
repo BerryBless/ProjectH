@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "name": "Ping Enemy",
+  "description": "Phase 15 D6, D8 (request §57): the server checks an Enemy ping. A visible enemy (C, 8 m away in the open) becomes an Enemy ping at C's feet with C as its target; the same request at an enemy behind the open-ground map wall at (26, 0) becomes a Location ping at the sent point; a teammate (B) is never an enemy (Location).",
+  "tags": ["map", "ping", "enemy"],
+  "seed": 15003,
+  "timeoutSeconds": 120,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "4", "Server:TeamSize": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" }, { "id": "playerC" }, { "id": "playerD" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "c_connect", "action": "connect", "actor": "playerC" },
+    { "id": "d_connect", "action": "connect", "actor": "playerD" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+    { "id": "c_enemy", "assert": "player.teamId", "actor": "playerC", "equals": 2 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 0, "z": 0 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": 3, "z": 0 } },
+    { "id": "c_place", "action": "setPosition", "actor": "playerC", "position": { "x": 0, "z": 8 } },
+    { "id": "d_place", "action": "setPosition", "actor": "playerD", "position": { "x": -20, "z": 20 } },
+    { "id": "settle", "action": "wait", "milliseconds": 300 },
+
+    { "id": "a_ping_visible", "phase": "act", "action": "ping", "actor": "playerA", "kind": "enemy", "target": "playerC", "position": { "x": 0, "z": 8 } },
+    { "id": "enemy_confirmed", "phase": "assert", "action": "waitFor", "condition": "server.health.map.enemyConfirmed", "equals": 1, "timeoutMilliseconds": 3000 },
+    { "id": "enemy_kind", "action": "waitFor", "condition": "player.teamPings.0.kind", "actor": "playerB", "equals": "Enemy", "timeoutMilliseconds": 2000 },
+    { "id": "enemy_target", "assert": "player.teamPings.0.target", "actor": "playerB", "equals": "qa-playerC" },
+    { "id": "enemy_at_feet", "assert": "player.teamPings.0.position.z", "actor": "playerB", "approximately": 8, "tolerance": 0.1 },
+    { "id": "b_client_enemy", "action": "waitFor", "condition": "actor.pings.0.kind", "actor": "playerB", "equals": "Enemy", "timeoutMilliseconds": 2000 },
+    { "id": "c_not_told", "assert": "actor.pingCount", "actor": "playerC", "equals": 0 },
+
+    { "id": "a_behind", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 22, "z": 0 } },
+    { "id": "c_behind", "action": "setPosition", "actor": "playerC", "position": { "x": 30, "z": 0 } },
+    { "id": "settle_behind", "action": "wait", "milliseconds": 300 },
+    { "id": "a_ping_hidden", "phase": "act", "action": "ping", "actor": "playerA", "kind": "enemy", "target": "playerC", "position": { "x": 29, "z": 0.5 } },
+    { "id": "hidden_demoted", "phase": "assert", "action": "waitFor", "condition": "server.health.map.enemyDemoted", "equals": 1, "timeoutMilliseconds": 3000 },
+    { "id": "still_one_confirmed", "assert": "server.health.map.enemyConfirmed", "equals": 1 },
+
+    { "id": "a_ping_teammate", "phase": "act", "action": "ping", "actor": "playerA", "kind": "enemy", "target": "playerB", "position": { "x": 3, "z": 0 } },
+    { "id": "teammate_demoted", "phase": "assert", "action": "waitFor", "condition": "server.health.map.enemyDemoted", "equals": 2, "timeoutMilliseconds": 3000 },
+    { "id": "pings_total", "assert": "server.health.map.pings", "equals": 3 }
+  ]
+}

@@ -23,7 +23,15 @@ public sealed record QaPlayerDto(
     // Phase 14: the team (0 = none), knocked down, who knocked it down, cards held, its revive or reboot in progress, and
     // whether a teammate is reviving it.
     int TeamId = 0, int JoinOrder = 0, bool Downed = false, string? DownedBy = null, int RebootCards = 0, QaChannelDto? Channel = null,
-    string? RevivedBy = null);
+    string? RevivedBy = null,
+    // Phase 15: this player's waypoint (null = none), and its team's active pings and waypoints as the server holds them.
+    QaVec3? Waypoint = null, int TeamPingCount = 0, QaPingDto[]? TeamPings = null, int TeamWaypointCount = 0, QaWaypointDto[]? TeamWaypoints = null);
+
+// Phase 15: a team ping (kind = MapMarkerKind name; owner and target as DevPlayerIds when they are players still here).
+public sealed record QaPingDto(int Id, string Kind, int OwnerId, string? Owner, QaVec3 Position, long EndTick, int TargetId, string? Target);
+
+// Phase 15: a team member's waypoint.
+public sealed record QaWaypointDto(int OwnerId, string? Owner, QaVec3 Position);
 
 // Phase 14: a revive (target = the downed teammate's DevPlayerId) or reboot (station = the index) in progress.
 public sealed record QaChannelDto(string Kind, string? Target, int Station, long EndTick);
@@ -53,7 +61,7 @@ internal static class QaQueries
         typeof(QaQueries).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
         ?? typeof(QaQueries).Assembly.GetName().Version?.ToString() ?? "unknown";
 
-    // 기능: GET /qa/health 본문을 만든다(Phase 14: options.teamSize).
+    // 기능: GET /qa/health 본문을 만든다(Phase 14: options.teamSize, Phase 15: map 수치).
     // 입력: t - QA Tick 문맥.
     // 출력: 익명 객체.
     public static object Health(QaTick t)
@@ -97,9 +105,32 @@ internal static class QaQueries
                 qaAllowRemote = qa.Options.AllowRemote,
             },
             qa = new { rejected = qa.Rejected, timedOut = qa.TimedOut, failed = qa.Failed },
+            map = MapHealth(t.Loop.Health),
             db,
             dbQueueLength = db?.QueueLength ?? 0,
             parentPid = qa.Options.ParentPid,
+        };
+    }
+
+    // 기능: Phase 15: /qa/health의 지도 표시 수치(수신 스레드 드롭, MarkerRate 잘못된 패킷, 경기 수치 합계)를 만든다.
+    // 입력: h - 시작부터의 합계.
+    // 출력: 익명 객체.
+    private static object MapHealth(Diagnostics.HealthCounters h)
+    {
+        Diagnostics.MapCounts c = h.Map;
+        return new
+        {
+            markerDrops = h.MarkerDrops,
+            markerInboxDrops = h.MarkerInboxDrops,
+            markerRateBadPackets = h.BadPackets(Diagnostics.BadPacketReason.MarkerRate),
+            pings = c.Pings,
+            enemyConfirmed = c.EnemyConfirmed,
+            enemyDemoted = c.EnemyDemoted,
+            refused = c.Refused,
+            replaced = c.Replaced,
+            expired = c.Expired,
+            waypoints = c.Waypoints,
+            packets = c.Packets,
         };
     }
 
@@ -110,7 +141,7 @@ internal static class QaQueries
         return players;
     }
 
-    // 기능: 플레이어 하나의 QA DTO를 만든다(Phase 14: 팀, 기절, 기절시킨 사람, 카드, 진행, 소생자).
+    // 기능: 플레이어 하나의 QA DTO를 만든다(Phase 14: 팀, 기절, 기절시킨 사람, 카드, 진행, 소생자, Phase 15: Waypoint와 팀 Ping·Waypoint).
     // 입력: m - 경기, p - 플레이어.
     // 출력: QaPlayerDto.
     public static QaPlayerDto Player(Match m, PlayerEntity p)
@@ -127,6 +158,7 @@ internal static class QaQueries
             if (i == inv.CurrentSlot) current = dto;
         }
         MoveState s = p.State;
+        (MarkerPing[] pings, MarkerWaypoint[] waypoints) = m.TeamMarkersView(p.TeamId);
         return new QaPlayerDto(
             p.DevPlayerId, p.EntityId, !p.IsGraced, p.IsGraced, p.Alive, p.Participant, p.Health, p.Shield,
             new QaVec3(s.Position.X, s.Position.Y, s.Position.Z), new QaVec3(s.HorizontalVelocity.X, s.VelocityY, s.HorizontalVelocity.Y),
@@ -136,7 +168,24 @@ internal static class QaQueries
             new QaResourcesDto(inv.Resource(BuildMaterialType.Wood), inv.Resource(BuildMaterialType.Stone), inv.Resource(BuildMaterialType.Metal)),
             p.Kills, p.Placement, p.DamageDealt, p.LastProcessedSeq, p.Reloading,
             p.TeamId, (int)p.JoinOrder, p.IsDowned, p.IsDowned ? p.DownedBy?.DevPlayerId : null, inv.CardCount, ChannelView(p),
-            p.IsDowned ? p.RevivedBy?.DevPlayerId : null);
+            p.IsDowned ? p.RevivedBy?.DevPlayerId : null,
+            p.HasWaypoint ? new QaVec3(p.Waypoint.X, p.Waypoint.Y, p.Waypoint.Z) : null,
+            pings.Length, Array.ConvertAll(pings, ping => new QaPingDto(ping.Id, ping.Kind.ToString(), ping.OwnerId, NameOf(m, ping.OwnerId),
+                new QaVec3(ping.Position.X, ping.Position.Y, ping.Position.Z), ping.EndTick, ping.TargetId,
+                ping.Kind == MapMarkerKind.Enemy ? NameOf(m, ping.TargetId) : null)),
+            waypoints.Length, Array.ConvertAll(waypoints, w => new QaWaypointDto(w.OwnerId, NameOf(m, w.OwnerId), new QaVec3(w.Position.X, w.Position.Y, w.Position.Z))));
+    }
+
+    // 기능: Phase 15: Entity id의 DevPlayerId를 찾는다(QA 관찰용).
+    // 입력: m - 경기, entityId - id.
+    // 출력: 경기에 있는 플레이어면 DevPlayerId, 아니면 null.
+    private static string? NameOf(Match m, ushort entityId)
+    {
+        for (int i = 0; i < m.PlayerCount; i++)
+        {
+            if (m.PlayerAt(i).EntityId == entityId) return m.PlayerAt(i).DevPlayerId;
+        }
+        return null;
     }
 
     // 기능: Phase 14: 플레이어의 진행 중인 소생·재투입을 DTO로 만든다.

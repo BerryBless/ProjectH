@@ -84,6 +84,10 @@ public sealed class HeadlessClient : IDisposable
     // Phase 13: build results, and every building packet with the channel it came on.
     public List<BuildResult> BuildResults { get; } = new();
     public List<(PacketId Id, byte Channel)> BuildPackets { get; } = new();
+    // Phase 15: every TeamMarkers received (ping and waypoint counts) and the latest lists.
+    public List<(int Pings, int Waypoints)> TeamMarkers { get; } = new();
+    public MarkerPing[] LastPings { get; } = new MarkerPing[MapMarkerConstants.MaxTeamPings];
+    public MarkerWaypoint[] LastWaypoints { get; } = new MarkerWaypoint[MapMarkerConstants.MaxWaypoints];
 
     public void Connect(int port, string devPlayerId, ushort protocolVersion = ProtocolConstants.ProtocolVersion)
     {
@@ -144,6 +148,16 @@ public sealed class HeadlessClient : IDisposable
         var writer = new PacketWriter(_buffer);
         BuildEditRequest.Write(ref writer, request);
         _peer.Send(writer.WrittenSpan, ProtocolConstants.BuildChannel, DeliveryMethod.ReliableOrdered);
+    }
+
+    // 기능: Phase 15: 지도 표시 요청을 채널 0으로 보낸다.
+    // 입력: marker - 요청.
+    // 출력: 반환값 없음.
+    public void SendMapMarker(in MapMarker marker)
+    {
+        var writer = new PacketWriter(_buffer);
+        MapMarker.Write(ref writer, marker);
+        _peer.Send(writer.WrittenSpan, ProtocolConstants.ReliableChannel, DeliveryMethod.ReliableOrdered);
     }
 
     public void SendStatsRequest()
@@ -259,6 +273,9 @@ public sealed class HeadlessClient : IDisposable
             case PacketId.BuildResult:
                 BuildPackets.Add((id, channel));
                 if (BuildResult.TryRead(ref r, out var built)) BuildResults.Add(built);
+                break;
+            case PacketId.TeamMarkers:
+                if (TeamMarkersPacket.TryRead(ref r, LastPings, LastWaypoints, out int pings, out int waypoints)) TeamMarkers.Add((pings, waypoints));
                 break;
             case PacketId.BuildEvents:
             case PacketId.BuildSync:

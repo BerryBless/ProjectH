@@ -1,0 +1,17 @@
+{
+  // Phase 15 D7, D9: team pings and waypoints. Validated at startup (MapCatalog). Ping lifetimes in seconds (an Enemy ping
+  // is shorter: the enemy moves on); at most pingsPerPlayer active pings per player and pingsPerTeam per team (the oldest
+  // is replaced; pingsPerTeam <= 8, the TeamMarkers limit). An Enemy ping needs the enemy within enemyPingRange metres
+  // of the sender's eye and in sight; an Item ping needs the item within itemPingRange metres. The receive thread lets
+  // pingsPerSecond MapMarker packets per connection through (pingBurst at once; more are dropped and counted), and counts
+  // more than maxMarkerPacketsPerSecond in one second as invalid packets (the kick threshold).
+  "pingSeconds": 8,
+  "enemyPingSeconds": 4,
+  "pingsPerPlayer": 3,
+  "pingsPerTeam": 8,
+  "enemyPingRange": 150,
+  "itemPingRange": 60,
+  "pingsPerSecond": 2,
+  "pingBurst": 4,
+  "maxMarkerPacketsPerSecond": 20
+}

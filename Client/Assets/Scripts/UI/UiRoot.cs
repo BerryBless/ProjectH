@@ -74,10 +74,15 @@ namespace ProjectH.Client.UI
             Apply();
         }
 
+        // 기능: 한 프레임의 UI 흐름: F1·Esc·M(Phase 15 전체 지도)을 UiFlow에 넘기고, 연결 상태로 화면을 정하고, 커서·입력 막기와 전체 지도
+        //   상태를 GameClient에 넘기고, 보이는 화면을 갱신한다.
+        // 입력: 없음(Unity가 매 프레임 부른다).
+        // 출력: 반환값 없음.
         private void Update()
         {
             if (_client.DebugTogglePressed) _debug.Toggle();
             if (_client.EscapePressed) _flow.EscapePressed();
+            if (_client.MapTogglePressed) _flow.ToggleMap();
 
             UiConnection connection = _client.State == ClientState.Joined ? UiConnection.Joined
                 : _client.State == ClientState.Disconnected ? UiConnection.Offline
@@ -85,6 +90,7 @@ namespace ProjectH.Client.UI
             _flow.Update(connection, _client.ReconnectAttempt > 0, _client.ResultCount, _client.HasMatch, _client.Match.State);
             if (_flow.Version != _shownVersion) Apply();
             _client.SetUiControl(_flow.AllowCursorLock, _flow.BlocksGameInput);
+            _client.SetMapOpen(_flow.MapOpen);
 
             switch (_flow.Screen)
             {
@@ -202,11 +208,13 @@ namespace ProjectH.Client.UI
         // ---- QA-4 D28: QaCommandReceiver's view of the UI and its commands (main thread) ----
         public UiScreen QaScreen => _flow.Screen;
         public bool QaStatsOpen => _flow.StatsOpen;
+        public bool QaMapOpen => _flow.MapOpen;
         public bool QaDebugVisible => _debug.Visible;
 
-        // The same flow calls as Esc, the menu buttons and F1 (no faked input). False, and nothing changed, when the
-        // command does not apply to the current screen. The screens are redrawn at once, so a screenshot requested in
-        // the same frame shows the result.
+        // 기능: QA UI 명령 하나를 Esc·메뉴 버튼·F1·M과 같은 흐름 호출로 적용한다(가짜 입력 없음). Phase 15: openMap·closeMap.
+        //   화면은 바로 다시 그리므로 같은 프레임에 요청한 스크린샷에 결과가 보인다. 전체 지도는 GameClient에도 바로 알린다.
+        // 입력: command - 적용할 명령.
+        // 출력: 적용했으면 true, 지금 화면에 맞지 않으면 false(아무것도 바뀌지 않음).
         public bool QaApply(Qa.QaUiCommand command)
         {
             bool applied = false;
@@ -233,8 +241,18 @@ namespace ProjectH.Client.UI
                     applied = true;
                     _debug.Toggle();
                     break;
+                case Qa.QaUiCommand.OpenMap:
+                    applied = _flow.Screen == UiScreen.InGame && !_flow.MapOpen;
+                    if (applied) _flow.OpenMap();
+                    break;
+                case Qa.QaUiCommand.CloseMap:
+                    applied = _flow.MapOpen;
+                    if (applied) _flow.CloseMap();
+                    break;
             }
             if (_flow.Version != _shownVersion) Apply();
+            _client.SetUiControl(_flow.AllowCursorLock, _flow.BlocksGameInput);
+            _client.SetMapOpen(_flow.MapOpen);
             return applied;
         }
 #endif

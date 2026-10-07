@@ -17,6 +17,9 @@ public sealed class ServerMeter : IDisposable
 
     private readonly Meter _meter = new(Name);
 
+    // 기능: Health 수치를 읽는 관찰형 계측기를 모두 등록한다(Phase 15: 지도 표시 사건과 MapMarker 드롭 포함).
+    // 입력: h - 시작부터의 합계.
+    // 출력: 등록이 끝난 ServerMeter(Dispose가 해제한다).
     public ServerMeter(HealthCounters h)
     {
         _meter.CreateObservableGauge("projecth.peers", () => h.Peers, description: "Open connections");
@@ -74,6 +77,13 @@ public sealed class ServerMeter : IDisposable
         _meter.CreateObservableCounter("projecth.harvest.destroyed", () => h.Build.EnvironmentDestroyed);
         // Phase 14: squads (since the server started).
         _meter.CreateObservableCounter("projecth.squad.events", () => SquadEvents(h), description: "Knock-downs, revives, reboots, bleed-outs, cards and wipes");
+        // Phase 15: map pings and waypoints (since the server started).
+        _meter.CreateObservableCounter("projecth.map.events", () => MapEvents(h), description: "Pings, Enemy checks, refusals, replacements, expiries, waypoints and TeamMarkers packets");
+        _meter.CreateObservableCounter("projecth.map.marker_drops", () => new[]
+        {
+            new Measurement<long>(h.MarkerDrops, Tag("where", "rate")),
+            new Measurement<long>(h.MarkerInboxDrops, Tag("where", "inbox")),
+        }, description: "MapMarker packets dropped by the per-connection rate and by the full inbound channel");
         _meter.CreateObservableCounter("projecth.db_records", () => DbRecords(h));
         _meter.CreateObservableCounter("projecth.stats_queries", () => StatsQueries(h));
     }
@@ -130,6 +140,25 @@ public sealed class ServerMeter : IDisposable
             new Measurement<long>(c.CardsExpired, Tag("event", "card_expired")),
             new Measurement<long>(c.Wipes, Tag("event", "wipe")),
             new Measurement<long>(c.ChannelsCancelled, Tag("event", "channel_cancelled")),
+        };
+    }
+
+    // 기능: Phase 15 지도 표시 사건 수를 종류 Tag로 나눠 돌려준다.
+    // 입력: h - 합계.
+    // 출력: Measurement 배열(관찰자가 읽을 때마다 만든다, Tick 경로 아님).
+    private static Measurement<long>[] MapEvents(HealthCounters h)
+    {
+        MapCounts c = h.Map;
+        return new[]
+        {
+            new Measurement<long>(c.Pings, Tag("event", "ping")),
+            new Measurement<long>(c.EnemyConfirmed, Tag("event", "enemy_confirmed")),
+            new Measurement<long>(c.EnemyDemoted, Tag("event", "enemy_demoted")),
+            new Measurement<long>(c.Refused, Tag("event", "refused")),
+            new Measurement<long>(c.Replaced, Tag("event", "replaced")),
+            new Measurement<long>(c.Expired, Tag("event", "expired")),
+            new Measurement<long>(c.Waypoints, Tag("event", "waypoint")),
+            new Measurement<long>(c.Packets, Tag("event", "packet")),
         };
     }
 

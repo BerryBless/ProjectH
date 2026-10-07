@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "Invalid Packets",
-  "description": "Request §127 (D14): invalid packets over a live connection. The server counts each one (badPackets) and keeps the sender connected below Server:BadPacketDisconnectThreshold (20); at the threshold it kicks only that peer (DisconnectCode.Kicked). An input flood above the per-peer rate (SimHz x 2 per second) is rejected the same way. The server keeps running and the other players are unaffected.",
+  "description": "Request §127 (D14): invalid packets over a live connection. The server counts each one (badPackets) and keeps the sender connected below Server:BadPacketDisconnectThreshold (20); at the threshold it kicks only that peer (DisconnectCode.Kicked). An input flood above the per-peer bucket (SimHz at once, SimHz x 2 per second) is dropped and counted (inputRate) but never kicks (server review M5). The server keeps running and the other players are unaffected.",
   "tags": ["network", "faults", "security"],
   "seed": 1271,
   "timeoutSeconds": 60,
@@ -25,8 +25,11 @@
     { "id": "a_kicked", "phase": "assert", "action": "waitFor", "condition": "network.disconnectCode", "actor": "playerA", "equals": "Kicked", "timeoutMilliseconds": 5000 },
     { "id": "bad_total", "action": "waitFor", "condition": "server.metrics.health.badPackets", "greaterThan": 19, "timeoutMilliseconds": 3000 },
 
+    { "id": "bad_before_flood", "action": "save", "path": "server.metrics.health.badPackets", "saveAs": "badBeforeFlood" },
     { "id": "c_flood", "phase": "act", "action": "sendInvalidPackets", "actor": "playerC", "kinds": ["inputFlood"], "count": 120, "description": "120 inputs in one tick: far above the input rate" },
-    { "id": "c_kicked", "phase": "assert", "action": "waitFor", "condition": "network.disconnectCode", "actor": "playerC", "equals": "Kicked", "timeoutMilliseconds": 5000 },
+    { "id": "flood_counted", "phase": "assert", "action": "waitFor", "condition": "server.metrics.health.badPackets", "greaterThan": "${badBeforeFlood}", "timeoutMilliseconds": 3000, "description": "Inputs over the bucket are dropped and counted (inputRate)" },
+    { "id": "flood_settle", "action": "wait", "milliseconds": 1000 },
+    { "id": "c_not_kicked", "assert": "network.connected", "actor": "playerC", "equals": true, "description": "Server review M5: an input flood is dropped, never kicked (a bad link can deliver seconds of inputs at once)" },
 
     { "id": "server_running", "assert": "server.running", "equals": true },
     { "id": "no_tick_failures", "assert": "server.metrics.health.tickFailures", "equals": 0 },

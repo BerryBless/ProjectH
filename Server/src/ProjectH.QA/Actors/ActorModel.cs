@@ -110,11 +110,23 @@ public sealed record ActorState
     public string ChannelKind { get; init; } = string.Empty;
     public int ChannelActor { get; init; }
     public int StationsCooling { get; init; }
+    // Phase 15: what this client knows of its team's map markers: the latest TeamMarkers' pings and waypoints (counts and
+    // lists), how many TeamMarkers packets arrived, and the MapMarker requests this actor sent.
+    public int PingCount { get; init; }
+    public IReadOnlyList<ActorPing> Pings { get; init; } = Array.Empty<ActorPing>();
+    public int WaypointCount { get; init; }
+    public IReadOnlyList<ActorWaypoint> Waypoints { get; init; } = Array.Empty<ActorWaypoint>();
+    public long TeamMarkersReceived { get; init; }
+    public long MapMarkersSent { get; init; }
     // The newest command applied (ActorCommand.Id).
     public long LastCommandId { get; init; }
     // Last exception of this actor's pump work (the pump keeps running).
     public string? Error { get; init; }
 }
+
+// Phase 15: a team ping and a team member's waypoint as this client received them (TeamMarkers).
+public readonly record struct ActorPing(int Id, string Kind, int OwnerId, Vec3 Position, long EndTick, int TargetId);
+public readonly record struct ActorWaypoint(int OwnerId, Vec3 Position);
 
 // One timed input: Buttons held for Ticks pump ticks. FirePress = one tick of Fire then the current weapon's fire
 // interval released, so a semi-automatic weapon sees a fresh trigger edge and the next press is not lost to cooldown.
@@ -169,6 +181,12 @@ public readonly record struct WatchedPiece(bool Known, int Edit, int Rotation);
 public sealed record SendRawCommand(IReadOnlyList<byte[]> Packets) : ActorCommand
 {
     public const int MaxRawPackets = 2500;
+}
+// Phase 15 D7, D14: map marker requests (pings, waypoint set or clear) sent as they are, all in the pump tick that applies the
+// command (a burst of Count tests the server's rate limit). At most MaxMarkers.
+public sealed record MapMarkerCommand(IReadOnlyList<MapMarker> Markers) : ActorCommand
+{
+    public const int MaxMarkers = 30;
 }
 // Drops the queued timed inputs (presses, holds) and the one in progress; held buttons stay. Also stops a playback.
 public sealed record ClearInputQueueCommand : ActorCommand;

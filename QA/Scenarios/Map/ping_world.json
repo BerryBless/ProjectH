@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "name": "Ping World",
+  "description": "Phase 15 D7-D9 (request §54-§57): a Location ping, a Danger ping whose height is clamped to the build range above the terrain, a ping outside the map (refused), an Item ping placed at the item (one at an item too far away is refused), and a knocked-down player who can still ping (its fourth ping replaces its oldest).",
+  "tags": ["map", "ping"],
+  "seed": 15002,
+  "timeoutSeconds": 120,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "4", "Server:TeamSize": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" }, { "id": "playerC" }, { "id": "playerD" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "c_connect", "action": "connect", "actor": "playerC" },
+    { "id": "d_connect", "action": "connect", "actor": "playerD" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 0, "z": 0 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": 3, "z": 0 } },
+    { "id": "c_place", "action": "setPosition", "actor": "playerC", "position": { "x": -20, "z": 20 } },
+    { "id": "d_place", "action": "setPosition", "actor": "playerD", "position": { "x": 20, "z": 20 } },
+    { "id": "loot_near", "action": "spawnLoot", "kind": "medkit", "amount": 1, "position": { "x": 4, "z": 2 }, "saveAs": "near" },
+    { "id": "loot_far", "action": "spawnLoot", "kind": "medkit", "amount": 1, "position": { "x": 70, "z": 70 }, "saveAs": "far" },
+
+    { "id": "a_location", "phase": "act", "action": "ping", "actor": "playerA", "kind": "location", "position": { "x": 10, "z": 10 } },
+    { "id": "location_seen", "phase": "assert", "action": "waitFor", "condition": "player.teamPingCount", "actor": "playerA", "equals": 1, "timeoutMilliseconds": 3000 },
+    { "id": "location_kind", "assert": "player.teamPings.0.kind", "actor": "playerA", "equals": "Location" },
+
+    { "id": "a_danger_high", "phase": "act", "action": "ping", "actor": "playerA", "kind": "danger", "position": { "x": 12, "y": 250, "z": 12 } },
+    { "id": "danger_seen", "phase": "assert", "action": "waitFor", "condition": "player.teamPingCount", "actor": "playerA", "equals": 2, "timeoutMilliseconds": 3000 },
+    { "id": "danger_kind", "assert": "player.teamPings.1.kind", "actor": "playerA", "equals": "Danger" },
+    { "id": "danger_clamped", "assert": "player.teamPings.1.position.y", "actor": "playerA", "lessThan": 70 },
+
+    { "id": "a_outside", "phase": "act", "action": "ping", "actor": "playerA", "kind": "location", "position": { "x": 85, "y": 0, "z": 0 } },
+    { "id": "outside_refused", "phase": "assert", "action": "waitFor", "condition": "server.health.map.refused", "equals": 1, "timeoutMilliseconds": 3000 },
+    { "id": "still_two", "assert": "player.teamPingCount", "actor": "playerA", "equals": 2 },
+
+    { "id": "a_item", "phase": "act", "action": "ping", "actor": "playerA", "kind": "item", "itemId": "${near.itemId}" },
+    { "id": "item_seen", "phase": "assert", "action": "waitFor", "condition": "player.teamPingCount", "actor": "playerA", "equals": 3, "timeoutMilliseconds": 3000 },
+    { "id": "item_kind", "assert": "player.teamPings.2.kind", "actor": "playerA", "equals": "Item" },
+    { "id": "item_target", "assert": "player.teamPings.2.targetId", "actor": "playerA", "equals": "${near.itemId}" },
+    { "id": "item_at_item", "assert": "player.teamPings.2.position.x", "actor": "playerA", "approximately": 4, "tolerance": 0.05 },
+    { "id": "b_client_item", "action": "waitFor", "condition": "actor.pings.2.kind", "actor": "playerB", "equals": "Item", "timeoutMilliseconds": 3000 },
+
+    { "id": "bucket_refill", "phase": "arrange", "action": "wait", "milliseconds": 1500, "description": "A sent four pings at once: its connection's bucket (2 per second, 4 at once, map.json) refills before the next ones" },
+    { "id": "a_item_far", "phase": "act", "action": "ping", "actor": "playerA", "kind": "item", "itemId": "${far.itemId}" },
+    { "id": "far_refused", "phase": "assert", "action": "waitFor", "condition": "server.health.map.refused", "equals": 2, "timeoutMilliseconds": 3000 },
+
+    { "id": "a_down", "phase": "arrange", "action": "downPlayer", "actor": "playerA" },
+    { "id": "a_downed", "action": "waitFor", "condition": "player.downed", "actor": "playerA", "equals": true, "timeoutMilliseconds": 2000 },
+    { "id": "downed_ping", "phase": "act", "action": "ping", "actor": "playerA", "kind": "danger", "position": { "x": -6, "z": 6 } },
+    { "id": "downed_taken", "phase": "assert", "action": "waitFor", "condition": "server.health.map.pings", "equals": 4, "timeoutMilliseconds": 3000 },
+    { "id": "oldest_replaced", "assert": "server.health.map.replaced", "equals": 1 },
+    { "id": "still_three", "assert": "player.teamPingCount", "actor": "playerA", "equals": 3 }
+  ]
+}

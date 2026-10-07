@@ -10,6 +10,9 @@ namespace ProjectH.Server.Tests.Shared;
 public class ProtocolFuzzTests
 {
     private const int Buffers = 100_000;
+    // Phase 15: TeamMarkers reads into the caller's fixed arrays.
+    private static readonly MarkerPing[] Pings = new MarkerPing[MapMarkerConstants.MaxTeamPings];
+    private static readonly MarkerWaypoint[] Waypoints = new MarkerWaypoint[MapMarkerConstants.MaxWaypoints];
 
     [Fact]
     public void RandomBytes_NeverThrow_InAnyParser()
@@ -24,7 +27,7 @@ public class ProtocolFuzzTests
             int length = n % 100 == 0 ? random.Next(buffer.Length + 1) : random.Next(65);
             random.NextBytes(buffer.AsSpan(0, length));
             // Half of them start with a valid packet id, so the body parsers also see plausible headers.
-            if (length > 0 && random.Next(2) == 0) buffer[0] = (byte)random.Next(1, (int)PacketId.RebootStations + 1);
+            if (length > 0 && random.Next(2) == 0) buffer[0] = (byte)random.Next(1, (int)PacketId.TeamMarkers + 1);
             ReadOnlySpan<byte> data = buffer.AsSpan(0, length);
 
             serverParsed += ServerSide(data);
@@ -51,6 +54,10 @@ public class ProtocolFuzzTests
         if (r.TryReadPacketId(out PacketId buildId) && buildId == PacketId.BuildRequest && BuildRequest.TryRead(ref r, out _)) ok++;   // Phase 13
         r = new PacketReader(data);
         if (BuildRequest.TryRead(ref r, out _)) ok++;
+        r = new PacketReader(data);
+        if (r.TryReadPacketId(out PacketId markerId) && markerId == PacketId.MapMarker && MapMarker.TryRead(ref r, out _)) ok++;   // Phase 15
+        r = new PacketReader(data);
+        if (MapMarker.TryRead(ref r, out _)) ok++;
         DisconnectCodes.Read(data);   // must not throw; not counted (any first byte 1-5 "parses")
         return ok;
     }
@@ -131,6 +138,8 @@ public class ProtocolFuzzTests
         if (ChannelState.TryRead(ref r, out _)) ok++;
         r = new PacketReader(data);
         if (RebootStationsState.TryRead(ref r, out _)) ok++;
+        r = new PacketReader(data);
+        if (TeamMarkersPacket.TryRead(ref r, Pings, Waypoints, out _, out _)) ok++;   // Phase 15
         r = new PacketReader(data);
         if (BuildCatalogPacket.TryRead(ref r, out _)) ok++;
         r = new PacketReader(data);

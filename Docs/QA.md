@@ -222,6 +222,8 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `jump` | actor | 한 번 누른다 |
 | `sprint` / `crouch` | actor, `held?`(true) | 누르기·떼기 |
 | `holdInteract` | actor, `held?`(true) | Phase 14 D7: Client처럼 E를 누르고 있는다(`Interact` 한 번 + 매 입력 `InteractHeld`). `held: false`면 뗀다. 소생·재투입은 누르고 있는 동안만 이어진다 |
+| `ping` | actor, `kind?`(location 기본 \| danger \| enemy \| item), `position`(location·danger, y가 없으면 지형 높이), `target`(enemy: 대상 Actor. `position`이 없으면 이 Actor가 아는 대상 위치), `itemId`(item, 예: `spawnLoot`의 `saveAs` 변수 `${loot.itemId}`), `count?`(1–30, 기본 1) | Phase 15 D14: 실제 `MapMarker`를 `count`개 한꺼번에 보낸다(속도 제한 검사용). 보냈으면 PASS다. 서버 판정은 `player.teamPings`·`server.health.map.*`, 팀이 받은 것은 `actor.pings`로 본다. 연결당 한 번에 4개, 초당 2개만 지나가므로 Ping을 이어 보내는 시나리오는 사이에 `wait`를 둔다 |
+| `waypoint` | actor, `position` 또는 `clear: true` | Phase 15 D5: 이 Actor의 Waypoint를 둔다(y가 없으면 지형 높이, 지도 클릭과 같다). 이미 있으면 옮긴다. `clear`면 지운다 |
 
 `fire`·`press`가 Timeout이나 취소로 끝나면 남은 누름을 버린다. 그래서 다음 Step으로 새지 않는다.
 
@@ -272,6 +274,9 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `player.state` | 위에서 계산 | Alive / Dead / Graced / Disconnected / Downed(Phase 14) |
 | Phase 14 `player.*` | 위 | `player.teamId`, `player.joinOrder`, `player.downed`, `player.downedBy`, `player.revivedBy`, `player.rebootCards`, `player.channel.kind`(revive/reboot), `player.channel.target`, `player.channel.station`, `player.channel.endTick`(진행 중이 아니면 `player.channel` 없음) |
 | Phase 14 `match.*` | 위 | `match.teamSize`, `match.teams`, `match.teamsAlive`, `match.worldCards`, `match.stations.<i>.coolingDown`·`cooldownEndTick`·`position` |
+| Phase 15 `player.*` | 위 | `player.waypoint`(없으면 없음, `.x`·`.y`·`.z`), 그 플레이어 팀의 `player.teamPingCount`, `player.teamPings.<i>.kind`(Location/Enemy/Item/Danger)·`owner`·`ownerId`·`position`·`endTick`·`targetId`·`target`(Enemy 대상의 DevPlayerId), `player.teamWaypointCount`, `player.teamWaypoints.<i>.owner`·`position`. Ping 순서는 서버 칸 순서다(만료된 칸에 새 Ping이 들어간다) |
+| Phase 15 `actor.*` | Actor가 받은 `TeamMarkers` | `actor.pingCount`, `actor.pings.<i>.kind`·`ownerId`·`position`·`endTick`·`targetId`, `actor.waypointCount`, `actor.waypoints.<i>.ownerId`·`position`, `actor.teamMarkersReceived`, `actor.mapMarkersSent` |
+| Phase 15 `server.health.map.*` | `/qa/health` | `pings`, `enemyConfirmed`, `enemyDemoted`, `refused`, `replaced`, `expired`, `waypoints`, `packets`, `markerDrops`(연결별 속도 제한이 버린 것), `markerInboxDrops`, `markerRateBadPackets`(1초 20개 초과) |
 | Phase 14 `actor.*` | Actor가 받은 것 | `actor.teamId`, `actor.teamIds`, `actor.teamStates`(TeamMemberState 이름), `actor.rebootCards`, `actor.downsSeen`, `actor.channelActive`, `actor.channelKind`, `actor.channelActor`, `actor.stationsCooling`(대기 마스크) |
 | `match.<필드…>` | `GET /qa/match` | `match.state`, `match.alive`, `match.winner`, `match.zone.phase`, `match.zone.center` |
 | `match.playerCount`·`aliveCount`·`zonePhase`·`playing` | 별칭 | `playing` = Playing 또는 FinalPhase |
@@ -338,10 +343,10 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | Action | 인자 | 동작 |
 |---|---|---|
 | `captureScreenshot` | actor, `name`(`[A-Za-z0-9_-]{1,64}`) | `screenshots/<Step 번호>_<alias>_<name>.png`(64자 이내).<br>Step 번호가 있어서, 영문이 아닌 Alias가 같은 문자로 바뀌거나 잘려도 파일이 겹치지 않는다. 다시 실행한 Step은 `_2`가 붙는다.<br>Report에는 썸네일과 링크로 나온다(상대 경로). UI에서 연 Report도 `/reports/<runId>/screenshots/<file>.png`로 이미지를 보인다. 실행당 최대 200장 |
-| `uiCommand` | actor, `command`(openMenu, closeMenu, openStats, closeStats, toggleDebug) | 지금 화면에 맞지 않으면(409) 실패한다. 화면 이름이 메시지에 나온다 |
+| `uiCommand` | actor, `command`(openMenu, closeMenu, openStats, closeStats, toggleDebug, Phase 15: openMap, closeMap) | 지금 화면에 맞지 않으면(409) 실패한다. 화면 이름이 메시지에 나온다 |
 | `waitForUnity` | actor, `condition`(status 필드, 예: `joined`, `screen`, `unity.statsOpen`, `tool`, `preview`), 연산자 하나, `timeoutMilliseconds` | Player 상태를 직접 읽으며 기다린다 |
-| `unityKey` | actor, `key`(w a s d space leftShift leftCtrl c q f z x v b t r e g 1 2 3 4 5 escape f1 h), `holdMs?`(1–10000), `state?`(down\|up), `async?` | 키 입력. 없으면 한 번 누름(이번 Frame 누르고 다음 Frame 뗌), `holdMs`면 그동안 누름, `state`면 누름·뗌만(뗌 없는 down은 Player가 10 s 뒤 뗀다). `holdMs`와 `state`는 함께 쓰지 않는다 |
-| `unityClick` | actor, `button?`(left\|right, 기본 left), `holdMs?`, `state?`, `async?` | 마우스 버튼. 규칙은 `unityKey`와 같다 |
+| `unityKey` | actor, `key`(w a s d space leftShift leftCtrl c q f z x v b t r e g 1 2 3 4 5 escape f1 h m), `holdMs?`(1–10000), `state?`(down\|up), `async?` | 키 입력. 없으면 한 번 누름(이번 Frame 누르고 다음 Frame 뗌), `holdMs`면 그동안 누름, `state`면 누름·뗌만(뗌 없는 down은 Player가 10 s 뒤 뗀다). `holdMs`와 `state`는 함께 쓰지 않는다 |
+| `unityClick` | actor, `button?`(left\|right\|middle, 기본 left. Phase 15: middle = Ping, m = 전체 지도), `holdMs?`, `state?`, `async?` | 마우스 버튼. 규칙은 `unityKey`와 같다 |
 | `unityReleaseAll` | actor | 눌린 키·버튼과 진행 중인 시점 이동을 모두 뗀다(`{"releaseAll":true}`). 약 2 Frame 뒤 PASS |
 | `unityLook` | actor, `dx`·`dy`(픽셀, 하나 이상, \|값\| ≤ 20000), `ms?`(0–5000, 기본 0 = 한 Frame), `async?` | 마우스 이동량을 `ms` 동안의 Frame에 고르게 나눠 넣는다 |
 
@@ -440,6 +445,13 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `Squad/squad_elimination.json` | 41 | A 기절 → C가 B를 사격으로 탈락 → A도 같은 Tick에 탈락, 둘 다 팀 배치 2, 카드 없음 → Finished, 승자 C, C·D 배치 1 | ~4.5 s |
 | `Squad/reboot.json` | 42–45 | A 탈락 → 카드 → B가 실제 E로 줍기 → 스테이션 0에서 holdInteract → 5 s 뒤 A가 스테이션 옆 Ground, Wisp SMG + Light 30, 실드 0, 카드 소모, 스테이션 대기 | ~8.5 s |
 | `Squad/reconnect_dbno.json` | 47 | 기절한 A가 끊김 → 유예 중 출혈 계속 → 재접속: 같은 Entity, 기절 그대로, TeamState 다시 받음 → B가 소생 | ~11 s |
+| `Map/map_team.json` | 53–55 | Phase 15: TeamSize 2, A의 Location Ping과 Waypoint가 A·팀원 B에게만(C·D의 Client는 0개, 서버도 팀 2에 0개) → B의 Danger Ping이 목록에 더해짐 → A가 Waypoint를 지우면 팀에서 사라짐 | ~3.5 s |
+| `Map/ping_world.json` | 54–57 | Location, 높이 250 m Danger(지형 + 50 m 아래로 잘림), 맵 밖 Ping 버림(refused), `spawnLoot` 아이템에 Item Ping(아이템 위치), 먼 아이템 버림, 기절한 A의 Ping(넷째라 A의 가장 오래된 것 교체) | ~5 s |
+| `Map/ping_enemy.json` | 57 | 8 m 앞 보이는 적 C → Enemy(대상 C, C 발 위치), 맵 벽 (26, 0) 뒤의 C → Location(enemyDemoted), 팀원 B를 Enemy로 → Location | ~3.7 s |
+| `Map/ping_rate_limit.json` | 55, 56 | TeamSize 4, 5명. A가 6개를 한꺼번에 → 4개 통과·2개 버림(markerDrops, 잘못된 패킷 아님), A의 활성 3개(가장 오래된 것 교체) → B·C가 3개씩: 팀 9개 중 8개만(팀의 가장 오래된 것 교체) → 8초 뒤 모두 만료, 팀에 빈 목록, 팀 2는 끝까지 0개 | ~11 s |
+| `Map/minimap_position.json` | 49, 51, 58 | Unity Player를 두 곳으로 순간이동 → 미니맵의 내 아이콘을 `MapProjection`으로 월드 좌표로 되돌린 값(`minimapSelfWorldX/Z`)이 서버 위치와 0.5 m 안 | ~9 s |
+| `Map/map_zone.json` | 50, 58 | `setZone 2`(70 m 고정 원) → `openMap` → 지도에 그린 고리의 중심·반지름(`mapZoneCenterWorldX/Z`, `mapZoneRadiusWorld`)이 서버 값과 0.5 m 안, 커서 풀림, `closeMap` | ~8 s |
+| `Map/visual_map.json` | 49, 50, 54 | Duo의 Unity Player: 팀원의 Location·Enemy·Danger Ping과 Waypoint → 미니맵 수(3, 1, 1), 월드 표지·거리 스크린샷, 전체 지도 스크린샷, 수명 만료 뒤 실제 가운데 버튼 클릭 → 서버에 내 Location Ping | ~19 s |
 | `Persistence/db_down.json` | 77, 128 | DB 정상 확인 → `stopDb` → 경기 종료 → 저장 3회 실패 후 `db.failed` +1, saved 그대로, 서버 계속, 다음 경기 시작 → `startDb` → 다음 경기 종료 → `db.saved` +1. Docker나 `projecth-mysql` 컨테이너가 없거나 멈춰 있으면 첫 Step에서 나머지를 SKIPPED로 끝낸다(결과 SKIPPED, 종료 코드 0. `--fail-on-skip`이면 1) | 아래 표 참고 |
 
 Stress Test 시나리오(baseline, movement, combat, building, mixed_match, reconnect_churn, final_zone, soak, soak_match_reset)는 아래 "Stress"에 있다.
@@ -452,6 +464,7 @@ Stress Test 시나리오(baseline, movement, combat, building, mixed_match, reco
 | `building` | Phase 13 건설 3개 + Phase 13.5 편집 6개(헤드리스) | ~50 s |
 | `pre-push` | §93: connect, move, shoot, pickup, death, reconnect | ~30 s |
 | `squad` | Phase 14 분대 8개(헤드리스, TeamSize 2): duo_basic, dbno, dbno_bleedout, revive, revive_cancel, squad_elimination, reboot, reconnect_dbno. 2026-10-08 8/8 통과 | ~85 s |
+| `map` | Phase 15 지도 표시 4개(헤드리스): map_team, ping_world, ping_enemy, ping_rate_limit. 2026-10-08 4/4 통과. Unity 지도 시나리오(minimap_position, map_zone, visual_map)는 Client `/qa/status` 지도 필드가 생긴 뒤 `unity.json`에 들어간다 | ~25 s |
 | `full-regression` | 모든 카테고리. Stress, Persistence, ServerProcess, Recorded 포함 | ~6 min |
 | `faults` | QA-3: latency_loss_combat, lag_compensation, network_drop, invalid_packet, input_timeout, shutdown, restart, db_down | ~1 min |
 | `stress` | QA-5 D35: Load 파일 3개(bots_50, load_bots_10, load_bots_50). 같은 이름의 카테고리가 있으므로 `suite:stress`로 부른다. Stress 시나리오는 아래 `stress-*` | ~3.2 min |
@@ -736,7 +749,7 @@ Client 쪽 세부 사항(스레드, 상태 코드 전체, 녹화 형식)은 `Doc
 |---|---|---|---|
 | GET | `/qa/status` | — | `{ok, devPlayerId, connected, joined, screen, statsOpen, debugVisible, alive, health, fps, frame, tool, preview, cursorLocked}` |
 | POST | `/qa/screenshot` | `{"name":"[A-Za-z0-9_-]{1,64}"}` | 파일이 생긴 뒤 `{ok, path}`. Windows 장치 이름(CON, NUL, COM1…)은 400 |
-| POST | `/qa/ui` | `{"command":"openMenu\|closeMenu\|openStats\|closeStats\|toggleDebug"}` | `{ok, command, screen, statsOpen, debugVisible}`. 지금 화면에 맞지 않으면 409이고 아무것도 바뀌지 않는다 |
+| POST | `/qa/ui` | `{"command":"openMenu\|closeMenu\|openStats\|closeStats\|toggleDebug\|openMap\|closeMap"}` | `{ok, command, screen, statsOpen, debugVisible}`. 지금 화면에 맞지 않으면 409이고 아무것도 바뀌지 않는다 |
 | POST | `/qa/input` | 하나만: `{"key":"q"}`, `{"key":"w","holdMs":1500}`, `{"key":"w","action":"down\|up"}`, `{"button":"left\|right"}`(같은 `holdMs`·`action`), `{"lookX":120,"lookY":-30,"ms":300}`, `{"releaseAll":true}`(join 전에도 200). 숫자는 JSON 숫자 | Input System에 넣은 뒤 `{ok, applied}`(hold는 그 뒤에도 이어진다). 400 잘못된 본문·허용 밖 키, 409 join 전, 503 동시 hold·look 16개 초과. 도구의 `unityKey`·`unityClick`·`unityLook`이 보낸다(도구 인자 `state`가 본문의 `action`이 된다) |
 
 - 모든 POST에는 `Content-Type: application/json`이 있어야 한다. 없으면 415다(브라우저 CSRF 방지).
@@ -1220,6 +1233,23 @@ Development Player(`phase14-squad` 작업 트리 복사본, batchmode)로 확인
 다듬기(Known Issue):
 - 출혈 문구(빨강)가 밝은 배경 위에서 잘 안 읽힌다. 테두리나 배경 판이 있으면 좋다.
 - 3인칭 카메라에서 바로 앞에 쓰러진 팀원은 내 몸에 가려진다(표지는 보인다).
+- Critical·High 문제는 없다.
+
+## Phase 15 Unity 검증 (2026-10-08)
+
+Development Player(`phase15-map` 작업 트리 복사본, batchmode)로 확인했다. 같은 복사본에서 EditMode 312/312가 통과했고 컴파일 오류는 0이다. 스크린샷은 에이전트가 직접 보고 판정했다.
+
+| 항목 | 결과 | 근거 |
+|---|---|---|
+| 미니맵 위치 | PASS | `minimap_position.json`: 두 위치 모두 미니맵의 내 아이콘이 서버 위치와 0.5 m 안 |
+| 지도 자기장 | PASS | `map_zone.json`: 지도에 그린 현재 고리 중심·반지름이 서버 값과 0.5 m 안. 스크린샷에 현재(흰 70 m)·다음(파랑 40 m) 고리, 자기장 밖 붉은 화면 |
+| Ping 표시 | PASS | `visual_map.json`: Location 노랑 "20 m", 적 위의 Enemy 빨강 "28 m", Danger 주황 "20 m", 미니맵에 같은 색 점, 초록 팀원과 내 화살표 |
+| 전체 지도 | PASS | POI 이름 5개, 팀원(이름), Rustvale 근처 Waypoint, Reboot Station 4개, Ping 3개, 조작 안내 |
+| 실제 가운데 버튼 Ping | PASS | 수명 만료 뒤 가상 마우스 가운데 클릭 → 서버에 qa-viewer의 Location Ping, 조준점에 노란 기둥 |
+
+발견한 문제:
+- **수정함(시나리오):** `equals`는 `tolerance`를 무시한다. 오차 비교는 `approximately`를 써야 한다. 반지름(70)처럼 정확히 같은 값만 우연히 통과했다.
+- 다듬기(Known Issue): 전체 지도에서 팀원 이름이 POI 이름과 겹칠 수 있다. 지도 아래 조작 안내가 무기 칸 번호와 살짝 겹친다. 맵 가장자리에서는 미니맵에 맵 밖(검정)이 보인다(설계대로).
 - Critical·High 문제는 없다.
 
 ## Adding New Actions

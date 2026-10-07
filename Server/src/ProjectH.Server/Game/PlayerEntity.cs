@@ -115,6 +115,11 @@ public sealed class PlayerEntity
     // Phase 14 D6: alive and standing (an Up member keeps its team in and can revive).
     public bool IsUp => Alive && State.Mode != MovementMode.Downed;
 
+    // Phase 15 D5: this player's one waypoint, which its team sees (Match.Map). Cleared at the match start, the match end,
+    // the round reset and when the player leaves.
+    public bool HasWaypoint;
+    public System.Numerics.Vector3 Waypoint;
+
     // Phase 10 D2: the tick the reconnect grace ends at (only meaningful while PeerId is NoPeer).
     public uint GraceEndTick;
     public bool IsGraced => PeerId == NoPeer;

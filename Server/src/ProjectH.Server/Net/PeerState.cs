@@ -6,8 +6,8 @@ namespace ProjectH.Server.Net;
 
 // Stored in NetPeer.Tag at accept time. Three groups of fields, each with one owner:
 //   - DevPlayerId is immutable and may be read by any thread.
-//   - BadPackets, Kicked, JoinRequested, the input token bucket (server review M5), the build request window and the
-//     statistics request time (Phase 11) are touched
+//   - BadPackets, Kicked, JoinRequested, the input token bucket (server review M5), the build request window, the
+//     statistics request time (Phase 11) and the map marker window and token bucket (Phase 15 D7) are touched
 //     only on LiteNetLib's receive path, so
 //     they need no synchronization: LiteNetLib runs one receive thread per socket and the server binds IPv4 only, so
 //     all of a peer's packets arrive on that single thread.
@@ -95,6 +95,49 @@ public sealed class PeerState
             _buildRequestsInWindow = 0;
         }
         return ++_buildRequestsInWindow <= maxPerSecond;
+    }
+
+    // Phase 15 D7 (LiteNetLib's receive path only): every MapMarker packet in a fixed 1-second window (above the limit they
+    // are invalid packets), and the token bucket that lets pingsPerSecond through (pingBurst at once).
+    private long _markerWindowStartMs;
+    private int _markersInWindow;
+    private bool _markerBucketStarted;
+    private long _markerTokens;
+    private long _lastMarkerMs;
+
+    // 기능: MapMarker 패킷을 고정 1초 창으로 센다(Phase 15 D7, 끊기 기준용).
+    // 입력: nowMs - 지금 시각(ms), maxPerSecond - 1초에 허용하는 수.
+    // 출력: 이 창에서 maxPerSecond 이하면 true, 넘으면 false(호출자가 잘못된 패킷으로 센다).
+    public bool TryCountMarkerPacket(long nowMs, int maxPerSecond)
+    {
+        if (nowMs - _markerWindowStartMs >= 1000)
+        {
+            _markerWindowStartMs = nowMs;
+            _markersInWindow = 0;
+        }
+        return ++_markersInWindow <= maxPerSecond;
+    }
+
+    // 기능: MapMarker 토큰 버킷(Phase 15 D7): 처음에는 가득 차 있고, 초당 perSecond개씩 burst개까지 찬다. 정수 1/1000 단위.
+    // 입력: nowMs - 지금 시각(ms), perSecond - 초당 통과 수, burst - 한 번에 통과할 수 있는 수.
+    // 출력: 통과하면 true, 버킷이 비었으면 false(호출자가 버리고 센다, 끊지 않는다).
+    public bool TryTakeMarkerToken(long nowMs, int perSecond, int burst)
+    {
+        long capacity = burst * 1000L;
+        if (!_markerBucketStarted)
+        {
+            _markerBucketStarted = true;
+            _markerTokens = capacity;
+        }
+        else
+        {
+            long elapsed = Math.Clamp(nowMs - _lastMarkerMs, 0, capacity);   // capped, so the multiply cannot overflow
+            _markerTokens = Math.Min(capacity, _markerTokens + elapsed * perSecond);
+        }
+        _lastMarkerMs = nowMs;
+        if (_markerTokens < 1000) return false;
+        _markerTokens -= 1000;
+        return true;
     }
 
     private bool _statsRequested;

@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "name": "Map And Ping Visuals On A Unity Client (Screenshots)",
+  "description": "Phase 15 D3, D4, D6, D11 (request §49, §50, §54): a Unity Development player in a duo (it joins first: team 1 with 'mate'). The teammate sends a Location, an Enemy (a visible enemy) and a Danger ping and sets a waypoint; the player's minimap draws them (mapPings 3, mapWaypoints 1, mapTeammates 1) and the report gets the world markers with distances, the minimap, and the full map (zone, POI names, teammate, waypoint, pings). Then the player really clicks the middle mouse button at the ground ahead and the server records its own Location ping (the input path, also allowed while downed). Needs --unity-exe; SKIPPED without it.",
+  "tags": ["map", "ping", "unity", "slow"],
+  "seed": 15101,
+  "timeoutSeconds": 240,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "4", "Server:TeamSize": "2" } },
+  "actors": [
+    { "id": "viewer", "type": "UnityClient", "unity": { "width": 1600, "height": 900 } },
+    { "id": "mate", "type": "HeadlessClient" },
+    { "id": "enemy1", "type": "HeadlessClient" },
+    { "id": "enemy2", "type": "HeadlessClient" }
+  ],
+  "steps": [
+    { "id": "viewer_launch", "phase": "arrange", "action": "connect", "actor": "viewer" },
+    { "id": "viewer_joined", "action": "waitForUnity", "actor": "viewer", "condition": "joined", "equals": true, "timeoutMilliseconds": 30000 },
+    { "id": "mate_connect", "action": "connect", "actor": "mate" },
+    { "id": "enemy1_connect", "action": "connect", "actor": "enemy1" },
+    { "id": "enemy2_connect", "action": "connect", "actor": "enemy2" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+    { "id": "in_game", "action": "waitForUnity", "actor": "viewer", "condition": "screen", "equals": "InGame", "timeoutMilliseconds": 10000 },
+    { "id": "viewer_team", "assert": "player.teamId", "actor": "viewer", "equals": 1 },
+    { "id": "mate_team", "assert": "player.teamId", "actor": "mate", "equals": 1 },
+
+    { "id": "viewer_place", "action": "setPosition", "actor": "viewer", "position": { "x": 0, "z": -6, "yaw": 0 } },
+    { "id": "mate_place", "action": "setPosition", "actor": "mate", "position": { "x": -4, "z": 0, "yaw": 0 } },
+    { "id": "enemy1_place", "action": "setPosition", "actor": "enemy1", "position": { "x": 6, "z": 22 } },
+    { "id": "enemy2_place", "action": "setPosition", "actor": "enemy2", "position": { "x": 50, "z": -50 } },
+    { "id": "place_settle", "action": "wait", "milliseconds": 800 },
+
+    { "id": "ping_location", "phase": "act", "action": "ping", "actor": "mate", "kind": "location", "position": { "x": -6, "z": 14 } },
+    { "id": "ping_enemy", "action": "ping", "actor": "mate", "kind": "enemy", "target": "enemy1" },
+    { "id": "ping_danger", "action": "ping", "actor": "mate", "kind": "danger", "position": { "x": 12, "z": 10 } },
+    { "id": "mate_waypoint", "action": "waypoint", "actor": "mate", "position": { "x": -40, "z": 50 } },
+    { "id": "team_three_pings", "phase": "assert", "action": "waitFor", "condition": "player.teamPingCount", "actor": "viewer", "equals": 3, "timeoutMilliseconds": 3000 },
+    { "id": "enemy_kept", "assert": "player.teamPings.1.kind", "actor": "viewer", "equals": "Enemy" },
+    { "id": "minimap_pings", "action": "waitForUnity", "actor": "viewer", "condition": "mapPings", "equals": 3, "timeoutMilliseconds": 3000 },
+    { "id": "minimap_waypoint", "action": "waitForUnity", "actor": "viewer", "condition": "mapWaypoints", "equals": 1, "timeoutMilliseconds": 3000 },
+    { "id": "minimap_teammate", "action": "waitForUnity", "actor": "viewer", "condition": "mapTeammates", "equals": 1, "timeoutMilliseconds": 3000 },
+    { "id": "shot_world", "phase": "act", "action": "captureScreenshot", "actor": "viewer", "name": "world_pings_and_minimap" },
+
+    { "id": "open_map", "action": "uiCommand", "actor": "viewer", "command": "openMap" },
+    { "id": "map_open", "phase": "assert", "action": "waitForUnity", "actor": "viewer", "condition": "mapOpen", "equals": true, "timeoutMilliseconds": 2000 },
+    { "id": "map_settle", "phase": "act", "action": "wait", "milliseconds": 300 },
+    { "id": "shot_map", "action": "captureScreenshot", "actor": "viewer", "name": "full_map" },
+    { "id": "close_map", "action": "uiCommand", "actor": "viewer", "command": "closeMap" },
+    { "id": "map_closed", "phase": "assert", "action": "waitForUnity", "actor": "viewer", "condition": "mapOpen", "equals": false, "timeoutMilliseconds": 2000 },
+
+    { "id": "pings_expire", "phase": "act", "action": "wait", "milliseconds": 8500, "description": "Pings last 8 s (Enemy 4 s): the team list empties" },
+    { "id": "team_pings_gone", "phase": "assert", "action": "waitFor", "condition": "player.teamPingCount", "actor": "viewer", "equals": 0, "timeoutMilliseconds": 3000 },
+    { "id": "look_down", "phase": "act", "action": "unityLook", "actor": "viewer", "dy": -250, "ms": 200, "description": "Aim at the ground ahead (about 25 degrees down)" },
+    { "id": "look_settle", "action": "wait", "milliseconds": 300 },
+    { "id": "middle_click", "action": "unityClick", "actor": "viewer", "button": "middle", "description": "A real middle-button ping (sent after the 0.3 s double-tap window)" },
+    { "id": "own_ping", "phase": "assert", "action": "waitFor", "condition": "player.teamPingCount", "actor": "viewer", "equals": 1, "timeoutMilliseconds": 3000 },
+    { "id": "own_ping_owner", "assert": "player.teamPings.0.owner", "actor": "viewer", "equals": "qa-viewer" },
+    { "id": "own_ping_kind", "assert": "player.teamPings.0.kind", "actor": "viewer", "equals": "Location" },
+    { "id": "shot_own_ping", "phase": "act", "action": "captureScreenshot", "actor": "viewer", "name": "own_middle_click_ping" }
+  ]
+}

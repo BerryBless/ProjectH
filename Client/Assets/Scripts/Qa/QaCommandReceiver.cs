@@ -119,6 +119,7 @@ namespace ProjectH.Client.Qa
         {
             Key.W, Key.A, Key.S, Key.D, Key.Space, Key.LeftShift, Key.LeftCtrl, Key.C, Key.Q, Key.F, Key.Z, Key.X, Key.V,
             Key.B, Key.T, Key.R, Key.E, Key.G, Key.Digit1, Key.Digit2, Key.Digit3, Key.Digit4, Key.Digit5, Key.Escape, Key.F1, Key.H,
+            Key.M,   // Phase 15: the full map
         };
 
         private enum HoldKind : byte
@@ -134,7 +135,7 @@ namespace ProjectH.Client.Qa
         private struct Hold
         {
             public HoldKind Kind;
-            public int Code;            // key index (QaInput.KeyNames) or 0 = left, 1 = right
+            public int Code;            // key index (QaInput.KeyNames) or 0 = left, 1 = right, 2 = middle
             public double ReleaseAt;
             public int MinFrame;
             public double Start;
@@ -597,7 +598,7 @@ namespace ProjectH.Client.Qa
 
         // 기능: GET /qa/status 응답을 만든다.
         // 입력: 없음(GameClient·UiRoot의 QA 읽기 전용 값을 읽는다).
-        // 출력: 상태 JSON 문자열(접속·화면·생존·체력·fps·frame·도구·건설 미리보기·커서 잠금).
+        // 출력: 상태 JSON 문자열(접속·화면·생존·체력·fps·frame·도구·건설 미리보기·커서 잠금, Phase 15 지도 필드).
         private string StatusJson()
         {
             ClientState state = _client.State;
@@ -606,7 +607,7 @@ namespace ProjectH.Client.Qa
             QaResponses.AppendStatus(_json, _client.QaDevPlayerId, state == ClientState.Connected || joined, joined,
                 ScreenName(_ui.QaScreen), _ui.QaStatsOpen, _ui.QaDebugVisible, joined && _client.QaAlive,
                 joined ? _client.QaHealth : 0, 1.0 / _smoothedDelta, Time.frameCount, ToolName(_client.QaTool),
-                PreviewName(_client.QaPreview), _client.QaCursorLocked);
+                PreviewName(_client.QaPreview), _client.QaCursorLocked, _client.QaMap);
             return _json.ToString();
         }
 
@@ -768,7 +769,7 @@ namespace ProjectH.Client.Qa
         }
 
         // 기능: 보관 중인 QA 키보드·마우스 상태에서 키나 버튼 하나를 누르거나 뗀다(Input System에는 FlushInputState가 넣는다).
-        // 입력: kind - Key 또는 Button, code - 키 번호(InputKeys)나 버튼 번호(0 왼쪽, 1 오른쪽), down - 누름 여부.
+        // 입력: kind - Key 또는 Button, code - 키 번호(InputKeys)나 버튼 번호(0 왼쪽, 1 오른쪽, 2 가운데: Phase 15 Ping), down - 누름 여부.
         // 출력: 반환값 없음. _keyState나 _mouseState가 바뀌고 dirty 표시가 켜진다.
         private void SetDown(HoldKind kind, int code, bool down)
         {
@@ -778,7 +779,7 @@ namespace ProjectH.Client.Qa
                 _keysDirty = true;
                 return;
             }
-            _mouseState = _mouseState.WithButton(code == 0 ? MouseButton.Left : MouseButton.Right, down);
+            _mouseState = _mouseState.WithButton(code == 0 ? MouseButton.Left : code == 1 ? MouseButton.Right : MouseButton.Middle, down);
             _mouseDirty = true;
         }
 
@@ -854,13 +855,16 @@ namespace ProjectH.Client.Qa
             }
         }
 
+        // 기능: POST /qa/ui 하나를 처리한다(Phase 15: openMap·closeMap 포함).
+        // 입력: request - Body가 {"command": ...}인 요청.
+        // 출력: 반환값 없음. 200(적용), 409(지금 화면에 맞지 않음), 400(모르는 명령)으로 답한다.
         private void ProcessUi(Request request)
         {
             QaJsonResult result = QaJsonReader.TryGetString(request.Body, "command", out string text);
             QaUiCommand command = result == QaJsonResult.Ok ? QaHttp.ParseUiCommand(text) : QaUiCommand.None;
             if (command == QaUiCommand.None)
             {
-                Answer(request, 400, ErrorJson("expected {\"command\": openMenu|closeMenu|openStats|closeStats|toggleDebug}"));
+                Answer(request, 400, ErrorJson("expected {\"command\": openMenu|closeMenu|openStats|closeStats|toggleDebug|openMap|closeMap}"));
                 return;
             }
             bool applied = _ui.QaApply(command);

@@ -1,0 +1,10 @@
+{
+  "name": "map",
+  "description": "Phase 15 team pings and waypoints over the real protocol (headless, about 1 min): team-only delivery, Location, Danger and Item pings with the server checks, Enemy confirmation (visible, behind a map wall, a teammate), the rate limit, the per-player and per-team limits and the lifetime. The Unity map scenarios (minimap_position, map_zone, visual_map) need a player and are in unity.json.",
+  "scenarios": [
+    "Map/map_team.json",
+    "Map/ping_world.json",
+    "Map/ping_enemy.json",
+    "Map/ping_rate_limit.json"
+  ]
+}

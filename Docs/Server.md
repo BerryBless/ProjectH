@@ -43,7 +43,8 @@ MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 �
 | FatalStallSeconds | 30 | 0 = 끔, 아니면 5–3600. 서버 리뷰 M8: Game Loop가 이 시간보다 오래 멈추면 새 연결을 막고 종료 코드 1로 끝낸다("예외 복구") |
 | InputTimeoutSeconds | 10 | 0 = 끔, 아니면 2–300이고 `InputTimeoutSeconds × 1000 ≥ DisconnectTimeoutMs + 2000`(기본 5000이면 7 이상, 최솟값 500이면 3 이상). Join한 peer가 입력을 보내야 하는 간격. 넘으면 `InputTimeout`으로 끊는다. LiteNetLib Timeout보다 먼저 오면 네트워크 끊김이 서버 끊기로 보여 유예를 잃으므로 이 조건을 둔다 |
 
-데이터 파일: `Server/src/ProjectH.Server/weapons.json`, `items.json`, `loot.json`, `zones.json`, `building.json`(Phase 13), `squad.json`(Phase 14, 출력 폴더로 복사). 시작 시 `GameData.LoadDirectory`가 여섯을 읽고 검증한다.
+데이터 파일: `Server/src/ProjectH.Server/weapons.json`, `items.json`, `loot.json`, `zones.json`, `building.json`(Phase 13), `squad.json`(Phase 14), `map.json`(Phase 15, 출력 폴더로 복사). 시작 시 `GameData.LoadDirectory`가 일곱을 읽고 검증한다.
+- `map.json`(`MapCatalog`, Phase 15): Ping 수명(Location·Item·Danger `pingSeconds` 8, Enemy `enemyPingSeconds` 4, 각 1–60초), 플레이어당·팀당 활성 Ping(`pingsPerPlayer` 3 ≤ `pingsPerTeam` 8 ≤ 8, `TeamMarkers` 상한), Enemy·Item 확인 거리(`enemyPingRange` 150, `itemPingRange` 60, 1–500 m), 수신 스레드 속도 제한(`pingsPerSecond` 2, `pingBurst` 4, 각 1–20, `maxMarkerPacketsPerSecond` 20, 그 둘 이상 100 이하). 틀리면 서버가 시작하지 않는다. 코드 안의 같은 값(`MapCatalog.DefaultJson`, 파일과 같음을 `MapCatalogTests`가 고정)은 파일 없이 만드는 테스트용 `GameData`만 쓴다. 규칙은 `Map.md` "지도 UI·Ping".
 - `squad.json`(`SquadCatalog`, Phase 14): 기절 체력·출혈 시간, 소생 시간·거리·체력·피해 취소, 재투입 시간·거리, 카드 수명·소지 최대(1–3), 스테이션 대기, 재투입 장비(무기 id·탄은 `weapons.json`·`items.json`과 맞아야 한다). `friendlyFire`는 false만 된다. 틀리면 서버가 시작하지 않는다. 표는 `Squad.md`. 팀 크기는 설정 `Server:TeamSize`(1–4, 기본 1 Solo)다.
 - `building.json`(`BuildingCatalog`, Phase 13): 재료 Wood·Stone·Metal 각 1개(비용·최대 체력·처음 체력 비율·건설 초·피해 배율), 최대 자원, 채집 도구(사거리·간격·피해·약점 반지름·배율), 채집 대상 4종(체력·한 번 양·부술 때 추가), 건설(사거리, 시야각, 최소 간격, 경기·플레이어 조각 상한, 초당 요청 상한 1–1000), 관심 영역(칸 크기는 건설 칸의 배수이고 맵을 64칸 이하로 나눔, 반지름, 여유). 칸 크기는 20·40·80·160 m만 된다. 파일이 없거나 틀리면 서버가 시작하지 않는다. 코드 안의 같은 값(`BuildingCatalog.DefaultJson`, 파일과 같음을 `BuildingCatalogTests`가 고정)은 파일 없이 만드는 테스트용 `GameData`만 쓴다.
 - `weapons.json`(`WeaponCatalog`): 무기 1–8개, Id 1–255·이름 중복 없음, 이름 1–16 UTF-8 바이트, damage 1–65535, magazineSize 1–255, fireIntervalSeconds·reloadSeconds > 0이고 Tick으로 바꿔 65535 이하, range > 0, spread·recoil ≥ 0, ammoType Light·Medium·Heavy, 모두 유한.
@@ -108,6 +109,8 @@ Snapshot 송신(Phase 8): `Match.SendSnapshots`가 플레이어 목록을 90명�
 |---|---|---|
 | Control 채널 | 3 × (MaxPlayers + ConnectBurstPerIp + ⌈ConnectsPerIpPerSecond / SimHz⌉). 제한이 꺼지면 MaxPlayers × 3(리뷰 1·2차) | TryWrite 실패 → 해당 peer를 `ServerError`로 끊는다(Critical 로그, `kicks serverError`로 센다. 서버가 끊은 것이라 유예 없음). Disconnected 메시지가 유실되면 stale-peer 정리가 대신 처리 |
 | Input 채널 | MaxPlayers × InputBufferPerPlayer | 가장 오래된 입력 폐기(inputDrops) |
+| Marker 채널(Phase 15) | MaxPlayers × 4(`InboundChannels.MarkersPerPlayer`) | 가장 오래된 지도 표시 요청 폐기(`markerInboxDrops`). 수신 스레드가 연결당 한 번에 4개만 넘기고 Game Loop가 Tick마다 채널 용량만큼 비운다 |
+| 팀 Ping(Phase 15, `Match.Map`) | 팀당 8칸 고정 배열(256 × 8, 생성 때 한 번) | 가장 오래된 Ping 교체(`replaced`). 만료·이탈·경기 시작·끝·라운드 리셋에 비운다 |
 | PlayerInputBuffer(플레이어별) | InputBufferPerPlayer(8) | 가장 오래된 입력 폐기(bufferDrops) |
 | `MatchHistoryQueue`(Phase 9) | `Persistence:QueueCapacity`(16) | Reject: 기록을 버리고 `Dropped`를 센다. 생산자 Game Loop(경기당 1회), 소비자 `MatchHistoryWriter` 하나 |
 | `StatsQueryQueue` 요청 채널(Phase 11) | 32 | Reject: 수신 스레드가 요청자에게 `Busy`를 답한다(`busy`). 생산자 수신 스레드, 소비자 `StatsQueryService` 하나 |
@@ -147,12 +150,14 @@ Health peers players graced match=<State>#<Round>
   disconnects timeout other
   rejects full badRequest version connectRate
   kicks kicked joinTimeout inputTimeout serverError congested
-  badPackets unknownId malformed beforeJoin duplicateJoin inputRate wrongDirection handlerException
+  badPackets unknownId malformed beforeJoin duplicateJoin inputRate wrongDirection handlerException buildRate markerRate
   tickFailures loopFailures matchResets stalls movementAnomalies networkErrors playerFailures stallExits callbackErrors
   build pieces cells requests accepted destroyed collapsed duplicates eventPackets syncPackets
   buildRejects noResource outOfRange blocked unsupported occupied rateLimited invalidState invalidRequest budgetFull
   harvest hits envDestroyed syncDeferred
   buildInboxDrops
+  squad downs revives reboots bleedOuts cardsDropped cardsExpired wipes channelsCancelled
+  map pings enemyConfirmed enemyDemoted refused replaced expired waypoints packets markerDrops markerInboxDrops
   db saved failed discarded dropped
   stats requests limited busy unavailable undelivered
 ```
@@ -162,13 +167,14 @@ Health peers players graced match=<State>#<Round>
 - `disconnects timeout`·`other`: 끊긴 연결 수(LiteNetLib 사유가 `Timeout`인지 아닌지).
 - `rejects`: 연결 요청 거절(이유별). 종료 중의 거절도 `full`로 센다. `kicks`: 서버가 끊은 수(코드별. `kicked`는 잘못된 패킷 때문에 끊은 수, `serverError`는 경기 초기화와 Control 채널이 가득 차서 끊은 수, `congested`는 아래 "밀린 연결"로 끊은 수). 종료(`ServerShutdown`)와 Join 거절 뒤의 끊기는 Kick이 아니라 세지 않는다.
 - 밀린 연결(Phase 13 최종 리뷰 A4): `SweepPeers`가 Tick마다 Join한 연결의 신뢰 대기열(LiteNetLib `GetPacketsCountInReliableQueue`, 채널 0 + 1)을 읽는다. 512개(`GameLoop.MaxReliableBacklog`)를 넘은 채 10초(`CongestedSeconds`)가 지나면 `Congested`로 끊는다. 한 번이라도 그 아래로 내려가면 다시 센다(`PeerState.CongestedSinceTick`, Game Loop만 쓴다). 링크가 게임 트래픽을 받지 못하는 연결이 LiteNetLib 메모리를 끝없이 키우지 않게 한다. Match는 GameLoop가 한 번 만든 질의 delegate로 건설 채널 대기열만 읽어, 32개를 넘은 연결의 그 Tick `BuildSync`를 건너뛴다(`syncDeferred`).
-- `badPackets` 7개 항목: 잘못된 패킷(이유별, `Networking.md` "Validation").
+- `badPackets` 9개 항목(Phase 13 `buildRate`, Phase 15 `markerRate` 포함): 잘못된 패킷(이유별, `Networking.md` "Validation").
 - `tickFailures`·`loopFailures`·`matchResets`: 예외 복구 카운터. `stalls`: Watchdog이 센 멈춤.
 - 서버 리뷰: `rejects connectRate`(M2)는 IP별 연결 빈도를 넘어 거절한 요청(Client에는 `ServerFull`로 가지만 `full`에는 세지 않는다). `networkErrors`(M1)는 LiteNetLib가 알린 소켓 오류. `playerFailures`(M7)는 자기 Tick 부분이 던져 경기에서 빠지고 `ServerError`로 끊긴 플레이어. `stallExits`(M8)는 `FatalStallSeconds`를 넘은 멈춤으로 서버를 멈춘 수(프로세스당 최대 1). `callbackErrors`(L9)는 콜백 경계에서 잡은 예외. 정상이면 `networkErrors` 밖은 모두 0이다.
 - `movementAnomalies`(Phase 12 D12): 한 Tick의 이동이 그 모드의 최대 속도 × dt × 1.5를 넘은 수(`MovementLimits`, `Movement.md` "이동 이상 검사"). 서버가 이동을 입력만으로 직접 계산하므로 치트가 아니라 시뮬레이션 버그를 알리는 값이다. 정상이면 언제나 0이다. Phase 13: 건설 조각 안에서 시작한 이동(머리를 가로질러 지은 경사로가 한 번에 2 m 넘게 들어 올리는 경우 등)은 조각이 민 것이라 세지 않는다. 맵 상자·문·채집 대상 안에서 시작한 이동은 그대로 센다.
 - `build`(Phase 13): `pieces`·`cells`는 지금 서 있는 조각 수와 조각이 있는 건설 칸 수(공간 색인), 나머지는 누적이다. `requests`는 Game Loop가 처리한 요청, `accepted`는 지어진 수, `destroyed`는 부서진 조각(붕괴 포함), `collapsed`는 그중 지지를 잃어 무너진 수, `duplicates`는 이미 본 번호라 버린 요청, `eventPackets`·`syncPackets`는 보낸 건설 패킷 수다. `buildRejects`는 거절 코드별 수다. `badPackets`에는 `buildRate`(연결당 초당 상한 초과)가 더해졌다.
 - `harvest`(Phase 13): 채집 타격 수(`hits`)와 부서진 채집 대상 수(`envDestroyed`). `syncDeferred`: 건설 채널이 밀려 Sync를 건너뛴 (연결, Tick) 수. Meter는 `projecth.build.sync_deferred`.
 - 경기 초기화(Phase 13 최종 리뷰 B12): `build`·`harvest`의 누적 값은 새 `Match`에서 0부터 다시 세지만, `HealthCounters`가 버린 경기의 합계를 기준값으로 들고 더하므로 Health 줄과 Meter의 값은 줄지 않는다. `pieces`·`cells`는 지금 값이다.
+- `map`(Phase 15): `pings`는 받아들인 Ping(확인된 Enemy 포함), `enemyConfirmed`·`enemyDemoted`는 Enemy 확인 성공·실패(Location으로 바뀜), `refused`는 받지 않은 요청(경기 밖, 살아 있는 팀원이 아님, 맵 밖, 없거나 먼 Item), `replaced`는 상한 때문에 바뀐 Ping, `expired`는 수명이 끝난 Ping, `waypoints`는 Waypoint 설정·삭제, `packets`는 보낸 `TeamMarkers` 수다. `markerDrops`는 수신 스레드의 연결별 Token Bucket이 버린 `MapMarker`(Kick 없음), `markerInboxDrops`는 가득 찬 Marker 채널이 밀어낸 요청이다. `badPackets markerRate`는 1초에 20개를 넘은 `MapMarker`(끊기 기준). 경기 초기화 때 `CarryMapTotals`로 줄지 않는다. Meter는 `projecth.map.events`(event Tag)와 `projecth.map.marker_drops`(where = rate·inbox).
 - 시작할 때 `Server:BuildInfiniteResources`가 켜져 있으면 Warning 로그를 남긴다(부하 측정 전용).
 - `buildRejects`의 `rateLimited`(Phase 13): 플레이어 큐(8개)가 가득 차 버린 요청도 센다(`requests`에도 들어간다).
 - `buildInboxDrops`(Phase 13): 수신 스레드에서 Game Loop로 가는 유한 채널(`InboundChannels.Build`)이 넘쳐 버린 요청 수. 정상이면 0이다. Meter는 `projecth.build.inbox_drops`.

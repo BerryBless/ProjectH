@@ -20,7 +20,8 @@ namespace ProjectH.Shared.Protocol
         //     their parts).
         // 13: Phase 14 squads (TeamState, PlayerDowned, ChannelState, RebootStations, the Downed movement mode 7, the
         //     InteractHeld button, the RebootCard world item, the card count in InventoryState; downed movement crawls).
-        public const ushort ProtocolVersion = 13;
+        // 14: Phase 15 map pings and waypoints (MapMarker C->S, TeamMarkers S->C).
+        public const ushort ProtocolVersion = 14;
 
         public const int MaxDevPlayerIdBytes = 32;
 

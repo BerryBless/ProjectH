@@ -13,6 +13,10 @@ public sealed class BotConnection : IDisposable
     private readonly EventBasedNetListener _listener = new();
     private readonly NetManager _net;
     private readonly byte[] _buffer = new byte[ProtocolConstants.MaxPacketSize];
+    // Phase 15 D10: TeamMarkers is read here first and copied to the view only when the whole packet parsed, so a refused
+    // packet never leaves the view's lists half overwritten. Fixed size, made once (receive thread = the pump thread).
+    private readonly MarkerPing[] _markerPings = new MarkerPing[MapMarkerConstants.MaxTeamPings];
+    private readonly MarkerWaypoint[] _markerWaypoints = new MarkerWaypoint[MapMarkerConstants.MaxWaypoints];
     private readonly InputCommand[] _sent = new InputCommand[ProtocolConstants.MaxInputsPerPacket];
     private NetPeer? _peer;
     private int _sentCount;
@@ -122,6 +126,34 @@ public sealed class BotConnection : IDisposable
         BuildEditsSent++;
     }
 
+    // 기능: 지도 표시 요청 하나를 신뢰 채널 0으로 보낸다(Phase 15 D7, ReliableOrdered). 봇은 쓰지 않고 QA 도구만 쓴다.
+    // 입력: marker - Ping 또는 Waypoint 요청.
+    // 출력: 반환값 없음. 연결되어 있으면 패킷이 전송되고 MapMarkersSent가 는다.
+    public void SendMapMarker(in MapMarker marker)
+    {
+        if (_peer == null || !Connected || Disconnected) return;
+        var writer = new PacketWriter(_buffer);
+        MapMarker.Write(ref writer, marker);
+        _peer.Send(writer.WrittenSpan, ProtocolConstants.ReliableChannel, DeliveryMethod.ReliableOrdered);
+        MapMarkersSent++;
+    }
+
+    public long MapMarkersSent { get; private set; }
+
+    // 기능: TeamMarkers 본문을 임시 배열에 읽고, 패킷 전체가 맞을 때만 BotView의 목록과 수를 바꾼다(거절된 패킷은 이전 목록을 그대로 둔다).
+    // 입력: reader - PacketId 뒤 본문, view - 반영할 View, pings·waypoints - 임시 배열(MaxTeamPings·MaxWaypoints 칸 이상).
+    // 출력: 반영했으면 true(TeamMarkersReceived가 는다), 거절했으면 false(View는 그대로).
+    internal static bool ApplyTeamMarkers(ref PacketReader reader, BotView view, MarkerPing[] pings, MarkerWaypoint[] waypoints)
+    {
+        if (!TeamMarkersPacket.TryRead(ref reader, pings, waypoints, out int pingCount, out int waypointCount)) return false;
+        Array.Copy(pings, view.Pings, pingCount);
+        Array.Copy(waypoints, view.Waypoints, waypointCount);
+        view.PingCount = pingCount;
+        view.WaypointCount = waypointCount;
+        view.TeamMarkersReceived++;
+        return true;
+    }
+
     public void Dispose() => _net.Stop();
 
     // QA tool (D14, request §127): send bytes as they are, on the reliable channel so the server receives every one
@@ -158,7 +190,7 @@ public sealed class BotConnection : IDisposable
         _peer!.Send(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
-    // 기능: 서버 패킷 하나를 BotView에 반영한다(Phase 14: TeamState, PlayerDowned, ChannelState, RebootStations).
+    // 기능: 서버 패킷 하나를 BotView에 반영한다(Phase 14: TeamState, PlayerDowned, ChannelState, RebootStations, Phase 15: TeamMarkers).
     // 입력: peer·reader·channel·method - LiteNetLib 수신 정보.
     // 출력: 반환값 없음.
     private void OnReceive(NetPeer peer, NetPacketReader reader, byte channel, DeliveryMethod method)
@@ -296,6 +328,10 @@ public sealed class BotConnection : IDisposable
                 break;
             case PacketId.RebootStations:
                 if (RebootStationsState.TryRead(ref r, out var stations)) view.Stations = stations;
+                break;
+            // Phase 15 D10: our team's whole marker list (replaces the last one; a refused packet keeps the last one).
+            case PacketId.TeamMarkers:
+                ApplyTeamMarkers(ref r, view, _markerPings, _markerWaypoints);
                 break;
             case PacketId.BuildInterest:
                 // The window moved: what we keep is not worth tracking per cell for a bot; the next syncs bring it back.

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "name": "Full Map Shows The Zone",
+  "description": "Phase 15 D4 (request §50, §58 map_zone): the server's zone is set to phase 2 (a steady 70 m circle) and the Unity player opens the full map (M path through /qa/ui openMap); the zone ring drawn on the map, turned back into world metres with MapProjection, has the server's centre and radius (within 0.5 m). The map frees the cursor and closes again. Needs --unity-exe; SKIPPED without it.",
+  "tags": ["map", "unity", "zone"],
+  "seed": 15002,
+  "timeoutSeconds": 120,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [
+    { "id": "viewer", "type": "UnityClient", "unity": { "width": 1280, "height": 720 } },
+    { "id": "other", "type": "HeadlessClient" }
+  ],
+  "steps": [
+    { "id": "viewer_launch", "phase": "arrange", "action": "connect", "actor": "viewer" },
+    { "id": "viewer_joined", "action": "waitForUnity", "actor": "viewer", "condition": "joined", "equals": true, "timeoutMilliseconds": 30000 },
+    { "id": "other_connect", "action": "connect", "actor": "other" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.state", "equals": "Playing", "timeoutMilliseconds": 15000 },
+    { "id": "in_game", "action": "waitForUnity", "actor": "viewer", "condition": "screen", "equals": "InGame", "timeoutMilliseconds": 10000 },
+    { "id": "zone_2", "action": "setZone", "zonePhase": 2 },
+    { "id": "zone_set", "action": "waitFor", "condition": "match.zone.phase", "equals": 2, "timeoutMilliseconds": 3000 },
+    { "id": "save_r", "action": "save", "path": "match.zone.radius", "saveAs": "zr" },
+    { "id": "save_x", "action": "save", "path": "match.zone.center.x", "saveAs": "zx" },
+    { "id": "save_z", "action": "save", "path": "match.zone.center.z", "saveAs": "zz" },
+    { "id": "zone_settle", "action": "wait", "milliseconds": 700 },
+
+    { "id": "open_map", "phase": "act", "action": "uiCommand", "actor": "viewer", "command": "openMap" },
+    { "id": "map_open", "phase": "assert", "action": "waitForUnity", "actor": "viewer", "condition": "mapOpen", "equals": true, "timeoutMilliseconds": 2000 },
+    { "id": "cursor_free", "action": "waitForUnity", "actor": "viewer", "condition": "cursorLocked", "equals": false, "timeoutMilliseconds": 2000 },
+    { "id": "ring_radius", "action": "waitForUnity", "actor": "viewer", "condition": "mapZoneRadiusWorld", "approximately": "${zr}", "tolerance": 0.5, "timeoutMilliseconds": 3000 },
+    { "id": "ring_x", "action": "waitForUnity", "actor": "viewer", "condition": "mapZoneCenterWorldX", "approximately": "${zx}", "tolerance": 0.5, "timeoutMilliseconds": 3000 },
+    { "id": "ring_z", "action": "waitForUnity", "actor": "viewer", "condition": "mapZoneCenterWorldZ", "approximately": "${zz}", "tolerance": 0.5, "timeoutMilliseconds": 3000 },
+    { "id": "shot_map", "phase": "act", "action": "captureScreenshot", "actor": "viewer", "name": "full_map_zone" },
+    { "id": "close_map", "action": "uiCommand", "actor": "viewer", "command": "closeMap" },
+    { "id": "map_closed", "phase": "assert", "action": "waitForUnity", "actor": "viewer", "condition": "mapOpen", "equals": false, "timeoutMilliseconds": 2000 }
+  ]
+}

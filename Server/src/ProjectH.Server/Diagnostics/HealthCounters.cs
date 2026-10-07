@@ -16,6 +16,7 @@ public enum BadPacketReason
     WrongDirection,   // a server-to-client packet id
     HandlerException, // the receive handler threw (a server bug, counted against the peer)
     BuildRate,        // Phase 13 D8: above the building catalog's maxRequestsPerSecond
+    MarkerRate,       // Phase 15 D7: more MapMarker packets in one second than map.json maxMarkerPacketsPerSecond
     Count,
 }
 
@@ -30,6 +31,14 @@ public readonly record struct BuildCounts(int Pieces, int Cells, long Requests, 
 // reboots cancelled (since the match object was made; HealthCounters carries them over a match reset).
 public readonly record struct SquadCounts(long Downs, long Revives, long Reboots, long BleedOuts, long CardsDropped, long CardsExpired,
     long Wipes, long ChannelsCancelled);
+
+// Phase 15: pings accepted (Enemy ones confirmed included), Enemy pings the server confirmed, Enemy pings demoted to
+// Location (not an enemy, too far, out of sight, outside the map), requests refused (not in a match, not a living
+// participant with a team, outside the map, an Item that is not there or too far), pings replaced by the per-player or
+// per-team limit, pings expired, waypoint sets and clears, and TeamMarkers packets sent (since the match object was made;
+// HealthCounters carries them over a match reset).
+public readonly record struct MapCounts(long Pings, long EnemyConfirmed, long EnemyDemoted, long Refused, long Replaced, long Expired,
+    long Waypoints, long Packets);
 
 // Phase 10 D9: totals since the server started, for the Health line and the "ProjectH.Server" Meter. Written from
 // LiteNetLib's threads and the game loop, read by the game loop (Health line) and by the Meter's observers on
@@ -98,6 +107,20 @@ public sealed class HealthCounters
     private long _wipes;
     private long _channelsCancelled;
     private SquadCounts _squadBase;
+    // Phase 15 (game loop writes, any thread reads): the map marker totals and the base a match reset carried over.
+    private long _pings;
+    private long _enemyConfirmed;
+    private long _enemyDemoted;
+    private long _markersRefused;
+    private long _pingsReplaced;
+    private long _pingsExpired;
+    private long _waypoints;
+    private long _markerPackets;
+    private MapCounts _mapBase;
+    // Phase 15 D7 (LiteNetLib threads): MapMarker packets the per-connection bucket dropped, and requests the full inbound
+    // Marker channel dropped.
+    private long _markerDrops;
+    private long _markerInboxDrops;
     // Gauges, written by the game loop once per tick.
     private int _peers;
     private int _players;
@@ -199,6 +222,43 @@ public sealed class HealthCounters
 
     public SquadCounts Squad => new(Volatile.Read(ref _downs), Volatile.Read(ref _revives), Volatile.Read(ref _reboots), Volatile.Read(ref _bleedOuts),
         Volatile.Read(ref _cardsDropped), Volatile.Read(ref _cardsExpired), Volatile.Read(ref _wipes), Volatile.Read(ref _channelsCancelled));
+
+    // 기능: 지금 경기의 지도 표시 수치를 시작부터의 합계로 쓴다(리셋으로 넘어온 기준값 + 이 경기 값). Game Loop만 부른다.
+    // 입력: c - 경기 객체의 수치.
+    // 출력: 반환값 없음.
+    public void SetMap(in MapCounts c)
+    {
+        MapCounts b = _mapBase;
+        Volatile.Write(ref _pings, b.Pings + c.Pings);
+        Volatile.Write(ref _enemyConfirmed, b.EnemyConfirmed + c.EnemyConfirmed);
+        Volatile.Write(ref _enemyDemoted, b.EnemyDemoted + c.EnemyDemoted);
+        Volatile.Write(ref _markersRefused, b.Refused + c.Refused);
+        Volatile.Write(ref _pingsReplaced, b.Replaced + c.Replaced);
+        Volatile.Write(ref _pingsExpired, b.Expired + c.Expired);
+        Volatile.Write(ref _waypoints, b.Waypoints + c.Waypoints);
+        Volatile.Write(ref _markerPackets, b.Packets + c.Packets);
+    }
+
+    // 기능: 경기 리셋 때 지금까지 쓴 지도 표시 합계를 기준값으로 넘긴다(합계가 줄지 않게, CarrySquadTotals와 같다).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void CarryMapTotals() => _mapBase = Map;
+
+    public MapCounts Map => new(Volatile.Read(ref _pings), Volatile.Read(ref _enemyConfirmed), Volatile.Read(ref _enemyDemoted),
+        Volatile.Read(ref _markersRefused), Volatile.Read(ref _pingsReplaced), Volatile.Read(ref _pingsExpired), Volatile.Read(ref _waypoints),
+        Volatile.Read(ref _markerPackets));
+
+    // 기능: 연결별 토큰 버킷이 버린 MapMarker 패킷 하나를 센다(Phase 15 D7, 수신 스레드).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void AddMarkerDrop() => Interlocked.Increment(ref _markerDrops);
+    public long MarkerDrops => Interlocked.Read(ref _markerDrops);
+
+    // 기능: 가득 찬 Marker 채널이 밀어낸 요청 하나를 센다(Phase 15 D7, 수신 스레드).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void AddMarkerInboxDrop() => Interlocked.Increment(ref _markerInboxDrops);
+    public long MarkerInboxDrops => Interlocked.Read(ref _markerInboxDrops);
 
     // Build requests the inbound channel dropped (full, DropOldest); written by LiteNetLib threads.
     public void AddBuildInboxDrop() => Interlocked.Increment(ref _buildInboxDrops);

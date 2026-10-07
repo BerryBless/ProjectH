@@ -131,6 +131,9 @@ public sealed class GameLoop : IDisposable
     // the host with exit code 1. time: the clock of the reset window (tests pass a manual one).
     // statsQueries: Phase 11 D8, the statistics path shared with StatsQueryService; null = a queue nobody answers (tests
     // that do not need answers), so requests wait there and, once it is full, are answered Busy.
+    // 기능: Game Loop와 NetManager·채널·수신 처리기·첫 경기를 만든다(Phase 15: Marker 채널과 map.json 속도 제한 수치를 넘긴다).
+    // 입력: options - 서버 설정, data - 게임 데이터, logger - 로그, 나머지 - 위 설명의 테스트용·선택 인자.
+    // 출력: Start 전의 GameLoop.
     public GameLoop(ServerOptions options, GameData data, ILogger logger, StartingLoadout? loadout = null,
         System.Numerics.Vector3[]? dropPoints = null, Action<Persistence.MatchRecord>? matchSink = null,
         Action? onFatal = null, TimeProvider? time = null, StatsQueryQueue? statsQueries = null)
@@ -149,7 +152,7 @@ public sealed class GameLoop : IDisposable
         _failuresBeforeReset = options.SimHz * FailingSecondsBeforeReset;
         _playerFailureWindowTicks = (long)PlayerFailureWindowSeconds * options.SimHz;
         _playerFailureTicks = new long[options.MaxPlayers];
-        _channels = new InboundChannels(options, _stats, _health.AddBuildInboxDrop);
+        _channels = new InboundChannels(options, _stats, _health.AddBuildInboxDrop, _health.AddMarkerInboxDrop);
         _joinTimeoutTicks = (long)options.JoinTimeoutSeconds * options.SimHz;
         _inputTimeoutTicks = (long)options.InputTimeoutSeconds * options.SimHz;
         _congestedTicks = (long)CongestedSeconds * options.SimHz;
@@ -157,7 +160,7 @@ public sealed class GameLoop : IDisposable
         _playerFailed = OnPlayerFailed;
         _statsQueries = statsQueries ?? new StatsQueryQueue();
         _health.StatsQueries = () => _statsQueries.Counts;
-        _listener = new NetworkListener(options, _channels, _stats, _health, _statsQueries, logger, data.Building.MaxRequestsPerSecond);
+        _listener = new NetworkListener(options, _channels, _stats, _health, _statsQueries, logger, data.Building.MaxRequestsPerSecond, data.Map);
         _net = new NetManager(_listener, null)
         {
             UnsyncedEvents = true,
@@ -428,6 +431,10 @@ public sealed class GameLoop : IDisposable
     private const string TickFailuresCause = "ticks failed in a row";
     private const string PlayerFailuresCause = "players' ticks failed (MaxPlayers failures, or 5 ticks with every player failing, within 10 s)";
 
+    // 기능: 경기 객체를 버리고 새로 만든다(모든 연결은 ServerError로 닫는다). 짧은 시간에 너무 많으면 서버를 멈춘다. 건설·분대·지도(Phase 15)
+    //   합계는 기준값으로 넘겨 줄지 않게 한다.
+    // 입력: cause - 리셋 이유(로그).
+    // 출력: 반환값 없음. 새 경기가 생기거나 치명 정지 경로로 간다.
     private void ResetMatch(string cause)
     {
         _consecutiveTickFailures = 0;
@@ -469,6 +476,7 @@ public sealed class GameLoop : IDisposable
         // Final review B12: the thrown-away match's building totals stay in the counters (they never go back).
         _health.CarryBuildTotals();
         _health.CarrySquadTotals();   // Phase 14
+        _health.CarryMapTotals();     // Phase 15
         // The old match's unlogged sink failure would go with it; LogPeriodic logs it with the next stats line.
         _carriedSinkError ??= _match.TakeSinkError();
         try
@@ -497,7 +505,7 @@ public sealed class GameLoop : IDisposable
         }
     }
 
-    // 기능: 한 Tick: 들어온 메시지 처리, 경기 Tick, Health 수치(Phase 14 분대 수치 포함) 갱신, QA 작업.
+    // 기능: 한 Tick: 들어온 메시지 처리(Phase 15 지도 표시 요청 포함), 경기 Tick, Health 수치(Phase 14 분대, Phase 15 지도 수치 포함) 갱신, QA 작업.
     // 입력: 없음.
     // 출력: 반환값 없음.
     internal void RunTick()
@@ -506,6 +514,7 @@ public sealed class GameLoop : IDisposable
         DrainControl();
         DrainInput();
         DrainBuild();
+        DrainMarkers();
         SweepPeers();
         SendStatsReplies();
         _match.Tick();
@@ -514,6 +523,7 @@ public sealed class GameLoop : IDisposable
         _health.SetGauges(_peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State);
         _health.SetBuild(_match.BuildCounts(), _buildRejects);
         _health.SetSquad(_match.SquadCounts());   // Phase 14
+        _health.SetMap(_match.MapCounts());       // Phase 15
         // QA-1 D5: last, so QA commands act between ticks on a finished tick. OnTick catches everything itself: a QA
         // failure must never count as a tick failure (that path resets the match).
         _qa?.OnTick(this);
@@ -577,6 +587,21 @@ public sealed class GameLoop : IDisposable
         {
             if (_peers.TryGetValue(message.PeerId, out var peer) && ReferenceEquals(peer, message.Peer))
                 _match.EnqueueBuild(message.PeerId, message.Request);
+        }
+    }
+
+    // 기능: Marker 채널의 지도 표시 요청을 경기에 넘긴다(Phase 15 D7). 채널 용량만큼만 읽어 한 Tick이 늘어나지 않는다.
+    //   요청은 바로 검증·반영되고, 바뀐 팀의 TeamMarkers는 이 Tick 끝에 간다.
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    private void DrainMarkers()
+    {
+        var reader = _channels.Marker.Reader;
+        int budget = _options.MaxPlayers * InboundChannels.MarkersPerPlayer;
+        while (budget-- > 0 && reader.TryRead(out MarkerMessage message))
+        {
+            if (_peers.TryGetValue(message.PeerId, out var peer) && ReferenceEquals(peer, message.Peer))
+                _match.HandleMarker(message.PeerId, message.Marker);
         }
     }
 
@@ -787,7 +812,7 @@ public sealed class GameLoop : IDisposable
         _listener.ResetLogLimits();
     }
 
-    // 기능: 연결·보호·건설·분대(Phase 14)·DB 수치를 한 줄로 기록한다(시작부터의 합계).
+    // 기능: 연결·보호·건설·분대(Phase 14)·지도 표시(Phase 15)·DB 수치를 한 줄로 기록한다(시작부터의 합계).
     // 입력: 없음.
     // 출력: 반환값 없음. Health 로그 한 줄.
     // Phase 10 D9: connections, protection and database in one line, as totals since the start.
@@ -796,6 +821,7 @@ public sealed class GameLoop : IDisposable
         HealthCounters h = _health;
         BuildCounts b = h.Build;
         SquadCounts sc = h.Squad;
+        MapCounts mc = h.Map;
         PersistenceCounts db = h.Persistence?.Invoke() ?? default;
         StatsQueryCounts sq = h.StatsQueries?.Invoke() ?? default;
         _logger.LogInformation(
@@ -805,7 +831,7 @@ public sealed class GameLoop : IDisposable
             "rejects full={RejectFull} badRequest={RejectBad} version={RejectVersion} connectRate={RejectConnectRate} " +
             "kicks kicked={KickBad} joinTimeout={KickJoin} inputTimeout={KickInput} serverError={KickError} congested={KickCongested} " +
             "badPackets unknownId={BadUnknown} malformed={BadMalformed} beforeJoin={BadBeforeJoin} duplicateJoin={BadDuplicate} " +
-            "inputRate={BadRate} wrongDirection={BadDirection} handlerException={BadHandler} buildRate={BadBuildRate} " +
+            "inputRate={BadRate} wrongDirection={BadDirection} handlerException={BadHandler} buildRate={BadBuildRate} markerRate={BadMarkerRate} " +
             "tickFailures={TickFailures} loopFailures={LoopFailures} matchResets={Resets} stalls={Stalls} movementAnomalies={MovementAnomalies} " +
             "networkErrors={NetworkErrors} playerFailures={PlayerFailures} stallExits={StallExits} callbackErrors={CallbackErrors} " +
             "build pieces={BuildPieces} cells={BuildCells} requests={BuildRequests} accepted={BuildAccepted} destroyed={BuildDestroyed} " +
@@ -817,6 +843,8 @@ public sealed class GameLoop : IDisposable
             "buildInboxDrops={BuildInboxDrops} " +
             "squad downs={SquadDowns} revives={SquadRevives} reboots={SquadReboots} bleedOuts={SquadBleedOuts} cardsDropped={SquadCardsDropped} " +
             "cardsExpired={SquadCardsExpired} wipes={SquadWipes} channelsCancelled={SquadChannelsCancelled} " +
+            "map pings={MapPings} enemyConfirmed={MapEnemyConfirmed} enemyDemoted={MapEnemyDemoted} refused={MapRefused} replaced={MapReplaced} " +
+            "expired={MapExpired} waypoints={MapWaypoints} packets={MapPackets} markerDrops={MapMarkerDrops} markerInboxDrops={MapMarkerInboxDrops} " +
             "db saved={DbSaved} failed={DbFailed} discarded={DbDiscarded} dropped={DbDropped} " +
             "stats requests={StatsRequests} limited={StatsLimited} busy={StatsBusy} unavailable={StatsUnavailable} undelivered={StatsUndelivered}",
             _peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State, _match.Flow.Round,
@@ -827,7 +855,7 @@ public sealed class GameLoop : IDisposable
             h.Kicks(DisconnectCode.Congested),
             h.BadPackets(BadPacketReason.UnknownId), h.BadPackets(BadPacketReason.Malformed), h.BadPackets(BadPacketReason.InputBeforeJoin),
             h.BadPackets(BadPacketReason.DuplicateJoin), h.BadPackets(BadPacketReason.InputRate), h.BadPackets(BadPacketReason.WrongDirection),
-            h.BadPackets(BadPacketReason.HandlerException), h.BadPackets(BadPacketReason.BuildRate),
+            h.BadPackets(BadPacketReason.HandlerException), h.BadPackets(BadPacketReason.BuildRate), h.BadPackets(BadPacketReason.MarkerRate),
             h.TickFailures, h.LoopFailures, h.MatchResets, h.Stalls, h.MovementAnomalies,
             h.NetworkErrors, h.PlayerFailures, h.StallExits, h.CallbackErrors,
             b.Pieces, b.Cells, b.Requests, b.Accepted, b.Destroyed, b.Collapsed, b.Duplicates, b.Edits, b.EventPackets, b.SyncPackets,
@@ -838,6 +866,7 @@ public sealed class GameLoop : IDisposable
             b.HarvestHits, b.EnvironmentDestroyed, b.SyncDeferred,
             h.BuildInboxDrops,
             sc.Downs, sc.Revives, sc.Reboots, sc.BleedOuts, sc.CardsDropped, sc.CardsExpired, sc.Wipes, sc.ChannelsCancelled,
+            mc.Pings, mc.EnemyConfirmed, mc.EnemyDemoted, mc.Refused, mc.Replaced, mc.Expired, mc.Waypoints, mc.Packets, h.MarkerDrops, h.MarkerInboxDrops,
             db.Saved, db.Failed, db.Discarded, db.Dropped,
             sq.Requests, sq.Limited, sq.Busy, sq.Unavailable, sq.Undelivered);
     }

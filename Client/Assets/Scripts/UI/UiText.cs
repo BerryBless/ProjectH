@@ -240,6 +240,15 @@ namespace ProjectH.Client.UI
         // 출력: "기절 · 출혈 12초".
         public static string Bleeding(int seconds) => "기절 · 출혈 " + Int(seconds < 0 ? 0 : seconds) + "초";
 
+        // ---- Phase 15: map and pings ----
+
+        public const string MapHint = "[왼쪽 클릭] 웨이포인트  [오른쪽 클릭] 지우기  [M] 닫기";
+
+        // 기능: 월드 Ping의 거리 문구를 만든다(DistanceText가 정수 m가 바뀔 때만 부른다).
+        // 입력: meters - 정수 거리(m).
+        // 출력: "23 m".
+        public static string Meters(int meters) => Int(meters < 0 ? 0 : meters) + " m";
+
         // 기능: 결과 화면의 순위 줄(Phase 14 D6: 분대면 팀 단위).
         // 입력: placement - 팀 배치, participants - 팀 수(Solo는 사람 수), teams - 분대 경기인지.
         // 출력: "순위 2 / 4팀" 또는 Solo의 "순위 2 / 8명".

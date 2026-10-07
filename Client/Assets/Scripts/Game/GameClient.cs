@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using ProjectH.Client.Bootstrap;
 using ProjectH.Client.CameraControl;
+using ProjectH.Client.Game.Map;
 using ProjectH.Client.Input;
 using ProjectH.Client.Net;
 using ProjectH.Client.UI;
@@ -20,6 +21,8 @@ namespace ProjectH.Client.Game
         private const double InterpolationSnapshots = 2.0;
         // Aim ray length before the weapon catalog arrives.
         private const float DefaultAimRange = 300f;
+        // Phase 15 D6: how far a ping's ray looks (its own ray, cast only on a press, so a short weapon range does not limit it).
+        private const float PingRange = 300f;
 
         private GameObject _world;
         private Material[] _worldMaterials;
@@ -74,6 +77,11 @@ namespace ProjectH.Client.Game
         // The largest team size seen this round (a member who leaves may drop out of TeamState; the result still counts
         // teams). Reset with the team.
         private int _roundTeamSize;
+        // Phase 15: the minimap, full map, world markers, team markers and the ping tap (MapSystem), the camera the world
+        // markers project with, and whether UiFlow has the full map open (UiRoot sets it every frame).
+        private MapSystem _map;
+        private Camera _mainCamera;
+        private bool _mapOpen;
         // Phase 11 D9: entity id -> name from PlayerSpawned. At most one entry per player in the match: removed on
         // despawn, cleared with the match state (disconnect).
         private readonly Dictionary<ushort, string> _names = new Dictionary<ushort, string>();
@@ -224,6 +232,41 @@ namespace ProjectH.Client.Game
             State == ClientState.Joined && _tools.Current == ToolKind.Build && _build.HasCandidate ? _build.CandidateState : (BuildPreviewState?)null;
         // The cursor lock as the game sees it this frame (QA assumption included).
         public bool QaCursorLocked => CursorLocked;
+        // 기능: /qa/status의 지도 필드를 모은다(Phase 15 D14, 미니맵·전체 지도가 그린 값; QaMapStatus 참고). 월드 값은 그린 uv를
+        //   MapProjection.UvToWorld로 되돌린 것이고, uv가 -1(그리지 않음)이면 NaN(JSON null)이다.
+        // 입력: 없음.
+        // 출력: 지도 필드.
+        public Qa.QaMapStatus QaMap
+        {
+            get
+            {
+                float selfU = _map.QaSelfU, selfV = _map.QaSelfV;
+                float zoneU = _map.QaZoneCenterU, zoneV = _map.QaZoneCenterV, radiusU = _map.QaZoneRadiusU;
+                float selfX = float.NaN, selfZ = float.NaN, zoneX = float.NaN, zoneZ = float.NaN;
+                if (selfU >= 0f) MapProjection.UvToWorld(selfU, selfV, out selfX, out selfZ);
+                if (radiusU >= 0f) MapProjection.UvToWorld(zoneU, zoneV, out zoneX, out zoneZ);
+                Qa.QaMapStatus status = QaMapUv;
+                status.MinimapSelfWorldX = selfX;
+                status.MinimapSelfWorldZ = selfZ;
+                status.ZoneCenterWorldX = zoneX;
+                status.ZoneCenterWorldZ = zoneZ;
+                status.ZoneRadiusWorld = radiusU >= 0f ? radiusU * MapProjection.Size : float.NaN;
+                return status;
+            }
+        }
+
+        private Qa.QaMapStatus QaMapUv => new Qa.QaMapStatus
+        {
+            MapOpen = _mapOpen,
+            MinimapSelfU = _map.QaSelfU,
+            MinimapSelfV = _map.QaSelfV,
+            ZoneCurrentRadiusU = _map.QaZoneRadiusU,
+            ZoneCenterU = _map.QaZoneCenterU,
+            ZoneCenterV = _map.QaZoneCenterV,
+            Teammates = _map.QaTeammates,
+            Pings = _map.QaPings,
+            Waypoints = _map.QaWaypoints,
+        };
 #endif
 
         // 기능: 게임 입력 기준으로 커서가 잠겨 있는지 알려 준다.
@@ -257,6 +300,20 @@ namespace ProjectH.Client.Game
         // before every LateUpdate, so UiRoot reads this before the edit can end in the same frame.
         public bool EscapePressed => _input.EscapePressed && !_edit.Active;
         public bool DebugTogglePressed => _input.DebugTogglePressed;
+        // Phase 15 D4: M of this frame, read by UiRoot (UiFlow decides whether the full map opens).
+        public bool MapTogglePressed => _input.MapPressed;
+
+        // 기능: UiFlow의 전체 지도 상태를 받는다(UiRoot가 매 프레임 부른다, Phase 15 D4). 열릴 때 편집 모드를 취소한다(지도가 열려 있으면
+        //   Esc가 편집에 가지 않으므로 편집이 끝나지 않는다).
+        // 입력: open - 전체 지도가 열려 있는지.
+        // 출력: 반환값 없음. 전체 지도가 열리거나 닫힌다.
+        public void SetMapOpen(bool open)
+        {
+            if (open == _mapOpen) return;
+            _mapOpen = open;
+            if (open) _edit.Cancel();
+            _map.SetFullOpen(open);
+        }
 
         // D5: UiRoot passes UiFlow's outputs every frame. Without a screen up a click locks the cursor as before; with
         // one up the cursor is freed and movement, fire, aim and look are zero (inputs still go out, empty).
@@ -321,7 +378,7 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 월드·입력·카메라·HUD·건설 표시(Phase 13.5: 편집 오버레이)·분대 표시(Phase 14: 분대 HUD, 팀원 표지, 스테이션 기둥)·
-        //   네트워크를 만들고 네트워크 이벤트를 구독한다.
+        //   지도(Phase 15: 미니맵, 전체 지도, 월드 표지)·네트워크를 만들고 네트워크 이벤트를 구독한다.
         // 입력: 없음(Unity가 한 번 부른다).
         // 출력: 반환값 없음. 만든 것은 모두 OnDestroy가 해제한다. 배치와 편집은 순번 카운터 하나를 같이 쓴다.
         private void Awake()
@@ -337,6 +394,7 @@ namespace ProjectH.Client.Game
                 cameraGo.AddComponent<AudioListener>();
             }
             _camera = new ShoulderCamera(main);
+            _mainCamera = main;
             _crosshair = new Crosshair();
             _hud = new CombatHud();
             _inventoryHud = new InventoryHud();
@@ -362,6 +420,7 @@ namespace ProjectH.Client.Game
             _squadHud = new SquadHud();
             _markers = new TeammateMarkers(_buildSource);
             _stationViews = new RebootStationViews(_buildSource);
+            _map = new MapSystem(_buildSource);
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             _qaRecorder = Qa.QaInputRecorder.FromLaunch();
@@ -407,6 +466,7 @@ namespace ProjectH.Client.Game
             _net.PlayerDownedReceived += OnPlayerDowned;
             _net.ChannelStateReceived += OnChannelState;
             _net.RebootStationsReceived += OnRebootStations;
+            _net.TeamMarkersReceived += OnTeamMarkers;
         }
 
         // 기능: 한 프레임의 Client 처리: 네트워크 Poll, 재접속, 입력·커서, 원격 플레이어 렌더, 시점과 이동 예측, 로컬 뷰 배치.
@@ -452,6 +512,7 @@ namespace ProjectH.Client.Game
 
         // 기능: 카메라가 움직인 뒤의 프레임 처리: 조준점(과 맞힌 Collider), 입력 전송, 사격 효과, 편집 모드(Phase 13.5), 건설, 표시, HUD.
         //   Phase 14: 분대 관전, 분대 HUD·표지·기절 막대·진행 막대, 소생·재투입 안내(범위 안이면 문·줍기 안내보다 먼저, D7).
+        //   Phase 15: Ping 입력, 전체 지도 클릭 Waypoint, 미니맵·전체 지도·월드 표지.
         // 입력: 없음(Unity가 매 프레임 부른다).
         // 출력: 반환값 없음. 예측 입력이 전송되고 화면이 갱신된다.
         private void LateUpdate()
@@ -534,6 +595,80 @@ namespace ProjectH.Client.Game
             // D9, D12: E means the door first, and aboard, falling or vaulting it does nothing: no item prompt then.
             UpdateInventoryHud(alive, onFoot && door < 0 && !squadTarget, now);
             UpdateMatchHud(alive);
+            UpdateMap(alive, watching, followFeet);
+        }
+
+        // 기능: 지도 한 프레임(Phase 15): 가운데 버튼 Ping(D6, 기절해도 보낸다: canAct·ActionsAllowed를 지나지 않는다), 열린 전체 지도의
+        //   클릭 Waypoint(D4), 그리고 미니맵·전체 지도·월드 표지 그리기(D3, D4, D11).
+        // 입력: alive - 살아 있음(기절 포함), watching - 다른 플레이어를 관전 중, followFeet - 카메라가 따라가는 발(미니맵 중심).
+        // 출력: 반환값 없음. Ping·Waypoint 요청이 나갈 수 있다(프레임마다 Ping 하나, 클릭 하나까지). 누를 때만 광선 하나를 쏘고, 그 밖에는
+        //   할당 없음.
+        private void UpdateMap(bool alive, bool watching, Vector3 followFeet)
+        {
+            float now = Time.unscaledTime;
+            double tick = EstimatedServerTick();
+            // D6: alive or downed, in the match (any player of the dev sandbox), no screen or map up and the cursor locked.
+            bool pingAllowed = PingContext.CanPing(!alive, _hasMatch, _squad.IsInPlay(MyEntityId), _blockedThisFrame, _spectator.Active);
+            bool pressed = pingAllowed && _input.PingPressed;
+            ushort enemy = 0;
+            bool hit = false;
+            Vector3 hitPoint = default;
+            if (pressed)
+            {
+                // FindAimPoint synced the transforms this frame. Teammates' boxes are off, so a player box hit is an enemy.
+                if (Physics.Raycast(_camera.AimRay, out RaycastHit rayHit, PingRange, PlayerViewFactory.AimRaycastMask, QueryTriggerInteraction.Ignore))
+                {
+                    hit = true;
+                    hitPoint = rayHit.point;
+                    _remotePlayers.TryFindEntity(rayHit.collider, out enemy);
+                }
+            }
+            if (_map.UpdatePing(now, pingAllowed, pressed, enemy, hit, hitPoint, _worldItems.Items, out MapMarker ping)) _net.SendMapMarker(ping);
+
+            bool left = _input.FirePressed;
+            bool right = _input.AimPressed;
+            if (_mapOpen && alive && (left || right) && _map.TryClick(_input.PointerPosition, left, right, MyEntityId, out MapMarker waypoint))
+                _net.SendMapMarker(waypoint);
+
+            // Teammates in play wherever they are (every player is in every snapshot), downed ones red.
+            _map.BeginMates();
+            for (int i = 0; i < _squad.Count; i++)
+            {
+                TeamMember member = _squad.Member(i);
+                if (member.EntityId == MyEntityId || !_squad.IsInPlay(member.EntityId)) continue;
+                if (!_remotePlayers.TryGetPose(member.EntityId, _renderTick, out Vector3 feet, out MovementMode mode, out bool drawnAlive) || !drawnAlive)
+                    continue;
+                _map.AddMate(feet, member.State == TeamMemberState.Downed || mode == MovementMode.Downed, NameOf(member.EntityId));
+            }
+
+            var frame = new MapFrame
+            {
+                Center = followFeet,
+                SelfVisible = alive && !watching,
+                Self = _predictor.RenderPosition,
+                Yaw = _camera.Yaw,
+                MyId = MyEntityId,
+                ServerTick = tick,
+            };
+            bool inMatch = _hasMatch && (_match.State == MatchFlowState.Playing || _match.State == MatchFlowState.FinalPhase);
+            if (inMatch && _zone.Phase != 0 && tick > 0)
+            {
+                ZoneMath.Sample(_zone, tick, out float zx, out float zz, out float radius);
+                frame.HasZone = true;
+                frame.ZoneX = zx;
+                frame.ZoneZ = zz;
+                frame.ZoneRadius = radius;
+                // The next circle is known until the shrink ends (then the next phase's ZoneState brings a new one).
+                frame.HasNext = tick < _zone.ShrinkEndTick;
+                frame.NextX = _zone.ToX;
+                frame.NextZ = _zone.ToZ;
+                frame.NextRadius = _zone.ToRadius;
+            }
+            for (int i = 0; i < RebootStations.Count; i++)
+            {
+                if (SquadPrompt.IsCoolingDown(_stations, i, tick)) frame.StationCooling |= (byte)(1 << i);
+            }
+            _map.Draw(frame, _mainCamera, alive ? _predictor.RenderPosition : followFeet);
         }
 
         // 기능: 건설 키를 처리한다(Update, 입력이 막히지 않았을 때). 조각 키는 고르고 건설 모드로 들어가며, T는 재료를 바꾸고,
@@ -836,7 +971,7 @@ namespace ProjectH.Client.Game
             return "?";
         }
 
-        // 기능: 구독을 풀고 만든 것을 만든 역순으로 해제한다(편집 오버레이는 공유 Mesh보다 먼저, Phase 14 분대 표시 포함).
+        // 기능: 구독을 풀고 만든 것을 만든 역순으로 해제한다(편집 오버레이는 공유 Mesh보다 먼저, Phase 14 분대 표시, Phase 15 지도 포함).
         // 입력: 없음(Unity가 부른다, 종료 때도).
         // 출력: 반환값 없음.
         private void OnDestroy()
@@ -879,6 +1014,7 @@ namespace ProjectH.Client.Game
             _net.PlayerDownedReceived -= OnPlayerDowned;
             _net.ChannelStateReceived -= OnChannelState;
             _net.RebootStationsReceived -= OnRebootStations;
+            _net.TeamMarkersReceived -= OnTeamMarkers;
             _net.Dispose();
             ClearMatchState();
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -886,6 +1022,7 @@ namespace ProjectH.Client.Game
             _qaRecorder = null;
 #endif
             _killFeed.Dispose();
+            _map.Dispose();
             _stationViews.Dispose();
             _markers.Dispose();
             _squadHud.Dispose();
@@ -1266,7 +1403,7 @@ namespace ProjectH.Client.Game
             _hud.HideDeath();
         }
 
-        // 기능: 경기 상태를 저장한다. 새 라운드 카운트다운(대기·시작)이면 결과·수송기 경로와 Phase 14 팀·채널을 지운다.
+        // 기능: 경기 상태를 저장한다. 새 라운드 카운트다운(대기·시작)이면 결과·수송기 경로와 Phase 14 팀·채널, Phase 15 팀 Ping·Waypoint를 지운다.
         // 입력: state - 받은 MatchState.
         // 출력: 반환값 없음. 처음 받으면 경기 HUD를 보인다.
         private void OnMatchState(MatchState state)
@@ -1283,6 +1420,7 @@ namespace ProjectH.Client.Game
             {
                 _hasResult = false;
                 ClearRoute();
+                _map.ClearMarkers();   // Phase 15 D5: the old round's pings and waypoints (the server sends an empty list too)
                 // Phase 14 D2: the old round's team is over; the next one comes with the match start.
                 _roundTeamSize = 0;
                 if (_squad.HasTeam || _squad.ChannelCount > 0)
@@ -1344,22 +1482,35 @@ namespace ProjectH.Client.Game
             ResultCount++;
         }
 
-        // Phase 12 D5: sent before the match start's respawns (and at a join or resume during the match).
+        // 기능: 수송기 경로를 저장하고 예측·수송기 표시·전체 지도 경로 선(Phase 15)에 넘긴다.
+        // 입력: route - 받은 경로(Phase 12 D5: 경기 시작의 부활 전, 경기 중 참가·재개 때 온다).
+        // 출력: 반환값 없음.
         private void OnTransportRoute(DropRoute route)
         {
             _route = route;
             _hasRoute = true;
             if (_predictor != null) _predictor.SetRoute(route);
             _transportView.SetRoute(route);
+            _map.SetRoute(route);
         }
 
+        // 기능: 수송기 경로를 지운다(새 라운드 카운트다운). 예측·수송기 표시·전체 지도 경로 선(Phase 15)에서도 지운다.
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         private void ClearRoute()
         {
             if (!_hasRoute) return;
             _hasRoute = false;
             if (_predictor != null) _predictor.ClearRoute();
             _transportView.Clear();
+            _map.ClearRoute();
         }
+
+        // 기능: 우리 팀의 Ping·Waypoint 목록(Phase 15 D10)으로 팀 표시를 통째로 바꾼다.
+        // 입력: pings·pingCount, waypoints·waypointCount - NetClient의 재사용 배열(호출 동안만 유효).
+        // 출력: 반환값 없음.
+        private void OnTeamMarkers(MarkerPing[] pings, int pingCount, MarkerWaypoint[] waypoints, int waypointCount) =>
+            _map.ApplyMarkers(pings, pingCount, waypoints, waypointCount);
 
         private void OnDoorStates(byte openMask)
         {
@@ -1475,7 +1626,8 @@ namespace ProjectH.Client.Game
             Debug.Log($"Reconnecting in {Mathf.Max(0f, _reconnectAt - Time.unscaledTime):F1} s (attempt {_reconnectAttempt + 1}/{DisconnectCodes.MaxReconnectAttempts})");
         }
 
-        // 기능: 경기 상태 전체를 비운다(끊김, 종료). 조각·편집 예측·편집 모드와 오버레이, Phase 14 팀·채널·스테이션·분대 표시도 비운다.
+        // 기능: 경기 상태 전체를 비운다(끊김, 종료). 조각·편집 예측·편집 모드와 오버레이, Phase 14 팀·채널·스테이션·분대 표시,
+        //   Phase 15 팀 Ping·Waypoint·경로 선·지도 아이콘·월드 표지도 비운다.
         // 입력: 없음.
         // 출력: 반환값 없음. 화면 Object는 숨기거나 풀로 돌아간다.
         private void ClearMatchState()
@@ -1523,6 +1675,9 @@ namespace ProjectH.Client.Game
             _nextSwingAt = 0f;
             _hasRoute = false;
             _transportView.Clear();
+            _map.ClearRoute();
+            _map.ClearMarkers();
+            _map.HideAll();
             _spectator.End();
             _zoneView.Clear();
             _matchHud.SetOutside(false);

@@ -21,9 +21,9 @@ public class ProtocolConstantsTests
     }
 
     [Fact]
-    public void ProtocolVersion_IsThirteen()
+    public void ProtocolVersion_IsFourteen()
     {
-        // Phase 14 added the squad packets, the Downed mode, InteractHeld and the card count; v12 clients must be rejected.
-        Assert.Equal((ushort)13, ProtocolConstants.ProtocolVersion);
+        // Phase 15 added MapMarker and TeamMarkers; v13 clients must be rejected.
+        Assert.Equal((ushort)14, ProtocolConstants.ProtocolVersion);
     }
 }

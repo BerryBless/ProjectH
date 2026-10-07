@@ -42,6 +42,11 @@ public static class ActorActions
         // Phase 14 D7: holding E like the client: one Interact press, then InteractHeld in every input until released
         // ("held": false). A revive or reboot goes on only while it is held.
         r.Add(Actor("holdInteract", HoldInteractAsync, optional: new[] { "held" }));
+        // Phase 15 D14: real MapMarker requests. ping: kind location (default), danger, enemy (target = an actor) or item
+        // (itemId); count sends that many copies at once (the rate limit tests). waypoint: set at position, or clear.
+        r.Add(Actor("ping", PingAsync, optional: new[] { "kind", "position", "target", "itemId", "count" }, positions: new[] { "position" },
+            check: CheckPing));
+        r.Add(Actor("waypoint", WaypointAsync, required: new[] { "position|clear" }, optional: new[] { "position", "clear" }, positions: new[] { "position" }));
         r.Add(Actor("pauseInput", (ctx, t) => PauseInputAsync(ctx, true, t)));
         r.Add(Actor("resumeInput", (ctx, t) => PauseInputAsync(ctx, false, t)));
         r.Add(Actor("build", BuildAsync, required: new[] { "piece", "cellX|position" },
@@ -512,6 +517,95 @@ public static class ActorActions
         if (!held) return StepOutcome.Pass("released E (InteractHeld)");
         StepOutcome pressed = await PressButtonsAsync(ctx, InputButtons.Interact, 1, token).ConfigureAwait(false);
         return pressed.Passed ? StepOutcome.Pass("holding E (InteractHeld, one Interact press)") : pressed;
+    }
+
+    // ---- Phase 15: pings and waypoints ----
+
+    private static readonly string[] PingKinds = { "location", "enemy", "item", "danger" };
+
+    // 기능: ping Step의 Literal 인자를 실행 전에 검사한다(종류, 종류별 필수 인자, 횟수).
+    // 입력: s - Step.
+    // 출력: 오류 문장들.
+    private static IEnumerable<string> CheckPing(StepDefinition s)
+    {
+        string kind = "location";
+        if (s.Params.TryGetValue("kind", out JsonElement k) && !Variables.HasReference(k))
+        {
+            kind = k.ValueKind == JsonValueKind.String ? k.GetString()!.ToLowerInvariant() : string.Empty;
+            if (Array.IndexOf(PingKinds, kind) < 0) yield return $"'kind' must be one of {string.Join(", ", PingKinds)}.";
+        }
+        if (kind == "enemy" && !s.Has("target")) yield return "An enemy ping needs 'target' (the actor pinged).";
+        if (kind == "item" && !s.Has("itemId")) yield return "An item ping needs 'itemId'.";
+        if (kind is "location" or "danger" && !s.Has("position")) yield return $"A {kind} ping needs 'position'.";
+        if (s.Params.TryGetValue("count", out JsonElement c) && !Variables.HasReference(c)
+            && (!Comparison.TryNumber(c, out double n) || n < 1 || n > MapMarkerCommand.MaxMarkers || n != Math.Floor(n)))
+            yield return $"'count' must be an integer 1-{MapMarkerCommand.MaxMarkers}.";
+        foreach (string e in CheckTargetActor(s)) yield return e;
+    }
+
+    // 기능: Phase 15 ping: MapMarker 요청을 만들어 count번 한꺼번에 보낸다. 위치에 y가 없으면 지형 높이다. Enemy는 대상 배우의 Entity id와
+    //   (position이 없으면) 이 배우가 아는 대상 위치를 보낸다. 서버의 판정은 player.teamPings·actor.pings로 확인한다.
+    // 입력: ctx - 단계, token - 취소.
+    // 출력: 보낸 내용을 담은 Pass, 연결이 없거나 대상이 없으면 Fail.
+    private static async Task<StepOutcome> PingAsync(StepContext ctx, CancellationToken token)
+    {
+        IQaActor actor = ctx.Actor();
+        if (RequireJoined(actor) is { } notJoined) return notJoined;
+        string kindText = (ctx.String("kind") ?? "location").ToLowerInvariant();
+        MapMarkerKind kind = kindText switch
+        {
+            "location" => MapMarkerKind.Location,
+            "enemy" => MapMarkerKind.Enemy,
+            "item" => MapMarkerKind.Item,
+            "danger" => MapMarkerKind.Danger,
+            _ => throw new QaStepException($"'kind' must be one of {string.Join(", ", PingKinds)}."),
+        };
+        int count = ctx.Int("count", 1, MapMarkerCommand.MaxMarkers) ?? 1;
+        System.Numerics.Vector3 at = ctx.Position("position") is QaPosition p ? p.ToGround() : default;
+        ushort targetId = 0;
+        if (kind == MapMarkerKind.Enemy)
+        {
+            string alias = ctx.RequireString("target");
+            IQaActor target = ctx.Run.Actors.Get(alias);
+            targetId = target.State.EntityId;
+            if (!target.State.Joined || targetId == 0)
+                return StepOutcome.Fail($"Target {alias} is not in the game ({FlowActions.Describe(target.State)}).", "target joined", FlowActions.Describe(target.State));
+            if (ctx.Position("position") == null) at = target.State.Position.ToVector3();
+        }
+        else if (kind == MapMarkerKind.Item)
+        {
+            int id = ctx.Int("itemId", 1, ushort.MaxValue) ?? throw new QaStepException("An item ping needs 'itemId'.");
+            targetId = (ushort)id;
+        }
+        var marker = new MapMarker { Kind = kind, Position = at, TargetId = targetId };
+        var markers = new MapMarker[count];
+        Array.Fill(markers, marker);
+        long sentBefore = actor.State.MapMarkersSent;
+        if (!await SendAppliedAsync(ctx, actor, new MapMarkerCommand(markers), token).ConfigureAwait(false))
+            return StepOutcome.Fail("The actor did not apply the ping command.");
+        ActorState s = actor.State;
+        if (s.MapMarkersSent - sentBefore < count) return StepOutcome.Fail($"Pings not sent: {s.Error}", $"{count} sent", $"{s.MapMarkersSent - sentBefore} sent");
+        return StepOutcome.Pass($"{kind} ping x{count} at ({at.X:0.##}, {at.Y:0.##}, {at.Z:0.##}){(targetId != 0 ? $" target {targetId}" : string.Empty)}");
+    }
+
+    // 기능: Phase 15 waypoint: 이 배우의 Waypoint를 position에 두거나(y가 없으면 지형 높이, 지도 클릭과 같다) 지운다(clear).
+    // 입력: ctx - 단계, token - 취소.
+    // 출력: 보낸 내용을 담은 Pass, 연결이 없으면 Fail.
+    private static async Task<StepOutcome> WaypointAsync(StepContext ctx, CancellationToken token)
+    {
+        IQaActor actor = ctx.Actor();
+        if (RequireJoined(actor) is { } notJoined) return notJoined;
+        bool clear = ctx.Bool("clear") ?? false;
+        QaPosition? position = ctx.Position("position");
+        if (!clear && position == null) throw new QaStepException("'position' or 'clear' is required.");
+        var marker = clear
+            ? new MapMarker { Kind = MapMarkerKind.WaypointClear }
+            : new MapMarker { Kind = MapMarkerKind.WaypointSet, Position = position!.Value.ToGround() };
+        long sentBefore = actor.State.MapMarkersSent;
+        if (!await SendAppliedAsync(ctx, actor, new MapMarkerCommand(new[] { marker }), token).ConfigureAwait(false))
+            return StepOutcome.Fail("The actor did not apply the waypoint command.");
+        if (actor.State.MapMarkersSent == sentBefore) return StepOutcome.Fail($"Waypoint not sent: {actor.State.Error}");
+        return StepOutcome.Pass(clear ? "waypoint cleared" : $"waypoint at {position}");
     }
 
     private static InputButtons ParseButtons(StepContext ctx)

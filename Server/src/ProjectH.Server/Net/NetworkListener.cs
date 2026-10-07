@@ -6,6 +6,7 @@ using LiteNetLib;
 using Microsoft.Extensions.Logging;
 using ProjectH.Server.Diagnostics;
 using ProjectH.Server.Game.Build;
+using ProjectH.Server.Game.Map;
 using ProjectH.Server.Persistence;
 using ProjectH.Shared.Protocol;
 
@@ -52,11 +53,24 @@ public sealed class NetworkListener : INetEventListener
 
     // Phase 13 D8: build requests a peer may send per second (building.json); more are invalid packets.
     private readonly int _maxBuildRequestsPerSecond;
+    // Phase 15 D7 (map.json): MapMarker packets a peer gets through per second and at once, and the per-second count above
+    // which they are invalid packets.
+    private readonly int _pingsPerSecond;
+    private readonly int _pingBurst;
+    private readonly int _maxMarkerPacketsPerSecond;
 
+    // 기능: 수신 처리기를 만든다(Phase 15: MapMarker 속도 제한 수치를 map.json에서 받는다).
+    // 입력: options - 서버 설정, channels - Game Loop로 넘길 채널, stats·health - 수치, statsQueries - 통계 요청 큐, logger - 로그,
+    //   maxBuildRequestsPerSecond - 건설 요청 초당 상한, map - Ping 수치(null = 배포 기본값).
+    // 출력: 연결을 받을 준비가 된 NetworkListener(Manager는 GameLoop가 정한다).
     public NetworkListener(ServerOptions options, InboundChannels channels, ServerStats stats, HealthCounters health,
-        StatsQueryQueue statsQueries, ILogger logger, int maxBuildRequestsPerSecond = 20)
+        StatsQueryQueue statsQueries, ILogger logger, int maxBuildRequestsPerSecond = 20, MapCatalog? map = null)
     {
         _maxBuildRequestsPerSecond = maxBuildRequestsPerSecond;
+        map ??= MapCatalog.Default(options.SimHz);
+        _pingsPerSecond = map.PingsPerSecond;
+        _pingBurst = map.PingBurst;
+        _maxMarkerPacketsPerSecond = map.MaxMarkerPacketsPerSecond;
         _options = options;
         _channels = channels;
         _stats = stats;
@@ -266,6 +280,9 @@ public sealed class NetworkListener : INetEventListener
     // Test seam (D5): a hook that runs at the start of every receive, so a test can make the handler throw.
     internal Action? ReceiveFaultHook { get; set; }
 
+    // 기능: Client 패킷 하나를 검증·파싱해 해당 채널에 넣는다(Join, 입력, 건설, Phase 15 지도 표시, 통계). 잘못된 패킷은 센다.
+    // 입력: peer - 보낸 연결, reader - 받은 바이트.
+    // 출력: 반환값 없음. 채널에 메시지가 들어가거나 잘못된 패킷·속도 초과로 세어진다.
     private void Receive(NetPeer peer, NetPacketReader reader)
     {
         ReceiveFaultHook?.Invoke();
@@ -341,6 +358,33 @@ public sealed class NetworkListener : INetEventListener
                     _channels.Build.Writer.TryWrite(new BuildMessage(peer.Id, peer, new BuildQueueItem(build)));
                 else if (id == PacketId.BuildEditRequest && BuildEditRequest.TryRead(ref packet, out var edit))
                     _channels.Build.Writer.TryWrite(new BuildMessage(peer.Id, peer, new BuildQueueItem(edit)));
+                else
+                    OnBadPacket(peer, BadPacketReason.Malformed);
+                break;
+
+            case PacketId.MapMarker:
+                // Phase 15 D7: only from a joined connection (like input and building; without this case the id would be a
+                // WrongDirection invalid packet). Every packet counts in the 1-second window first, so a flood is invalid
+                // (the kick threshold) even while the bucket drops it; then the bucket lets pingsPerSecond through and drops
+                // the rest without a kick (Health markerDrops), like the input rate.
+                if (peer.Tag is not PeerState markerState || !markerState.JoinRequested)
+                {
+                    OnBadPacket(peer, BadPacketReason.InputBeforeJoin);
+                    break;
+                }
+                long markerNow = Environment.TickCount64;
+                if (!markerState.TryCountMarkerPacket(markerNow, _maxMarkerPacketsPerSecond))
+                {
+                    OnBadPacket(peer, BadPacketReason.MarkerRate);
+                    break;
+                }
+                if (!markerState.TryTakeMarkerToken(markerNow, _pingsPerSecond, _pingBurst))
+                {
+                    _health.AddMarkerDrop();
+                    break;
+                }
+                if (MapMarker.TryRead(ref packet, out var marker))
+                    _channels.Marker.Writer.TryWrite(new MarkerMessage(peer.Id, peer, marker));
                 else
                     OnBadPacket(peer, BadPacketReason.Malformed);
                 break;

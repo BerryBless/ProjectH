@@ -40,6 +40,23 @@ public sealed class BotIntegrationTests
         return condition();
     }
 
+    // Phase 15 D10, D13: the bots' connection reads TeamMarkers (the QA tool's actors are built on it). A dev-mode team of
+    // one: the bot's own ping comes back in its team's list.
+    [Fact]
+    public void ABotConnection_ReadsItsTeamsMarkers()
+    {
+        using GameLoop server = StartServer(new ServerOptions { MaxPlayers = 4, DevRespawn = true }, TestGameData.Create());
+        using BotRunner bots = Bots(server, 1);
+        BotConnection connection = bots.Connection(0);
+        Assert.True(RunUntil(bots, () => connection.View.Joined && connection.View.HasSnapshot, 10000), "joined");
+        connection.SendMapMarker(new MapMarker { Kind = MapMarkerKind.Danger, Position = new Vector3(4f, 0f, 4f) });
+        connection.SendMapMarker(new MapMarker { Kind = MapMarkerKind.WaypointSet, Position = new Vector3(-4f, 0f, 4f) });
+        Assert.True(RunUntil(bots, () => connection.View.PingCount == 1 && connection.View.WaypointCount == 1, 5000), "markers back");
+        Assert.Equal(MapMarkerKind.Danger, connection.View.Pings[0].Kind);
+        Assert.Equal(connection.View.MyId, connection.View.Waypoints[0].OwnerId);
+        Assert.Equal(2, connection.MapMarkersSent);
+    }
+
     [Fact]
     public void ABot_FindsAndPicksUpAWeapon()
     {

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "name": "Map Team Markers",
+  "description": "Phase 15 D5, D8, D10 (request §53-§55): with TeamSize 2 (A, B = team 1; C, D = team 2), A's Location ping and A's waypoint reach A and teammate B as TeamMarkers, never the other team (C's client gets no ping or waypoint, the server shows team 2 none). B's Danger ping joins the list; clearing A's waypoint removes it for the team.",
+  "tags": ["map", "ping", "waypoint", "team"],
+  "seed": 15001,
+  "timeoutSeconds": 120,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "4", "Server:TeamSize": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" }, { "id": "playerC" }, { "id": "playerD" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "c_connect", "action": "connect", "actor": "playerC" },
+    { "id": "d_connect", "action": "connect", "actor": "playerD" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+    { "id": "a_team", "assert": "player.teamId", "actor": "playerA", "equals": 1 },
+    { "id": "c_team", "assert": "player.teamId", "actor": "playerC", "equals": 2 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 0, "z": 0 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": 3, "z": 0 } },
+    { "id": "c_place", "action": "setPosition", "actor": "playerC", "position": { "x": -20, "z": 20 } },
+    { "id": "d_place", "action": "setPosition", "actor": "playerD", "position": { "x": 20, "z": 20 } },
+
+    { "id": "a_ping", "phase": "act", "action": "ping", "actor": "playerA", "kind": "location", "position": { "x": 10, "z": 10 } },
+    { "id": "b_sees_ping", "phase": "assert", "action": "waitFor", "condition": "actor.pingCount", "actor": "playerB", "equals": 1, "timeoutMilliseconds": 3000 },
+    { "id": "b_ping_kind", "assert": "actor.pings.0.kind", "actor": "playerB", "equals": "Location" },
+    { "id": "b_ping_x", "assert": "actor.pings.0.position.x", "actor": "playerB", "approximately": 10, "tolerance": 0.05 },
+    { "id": "a_sees_own_ping", "action": "waitFor", "condition": "actor.pingCount", "actor": "playerA", "equals": 1, "timeoutMilliseconds": 3000 },
+    { "id": "server_team1", "assert": "player.teamPingCount", "actor": "playerB", "equals": 1 },
+    { "id": "server_owner", "assert": "player.teamPings.0.owner", "actor": "playerB", "equals": "qa-playerA" },
+    { "id": "c_no_ping", "assert": "actor.pingCount", "actor": "playerC", "equals": 0 },
+    { "id": "d_no_ping", "assert": "actor.pingCount", "actor": "playerD", "equals": 0 },
+    { "id": "server_team2", "assert": "player.teamPingCount", "actor": "playerC", "equals": 0 },
+
+    { "id": "a_waypoint", "phase": "act", "action": "waypoint", "actor": "playerA", "position": { "x": -30, "z": 40 } },
+    { "id": "b_sees_waypoint", "phase": "assert", "action": "waitFor", "condition": "actor.waypointCount", "actor": "playerB", "equals": 1, "timeoutMilliseconds": 3000 },
+    { "id": "b_waypoint_z", "assert": "actor.waypoints.0.position.z", "actor": "playerB", "approximately": 40, "tolerance": 0.05 },
+    { "id": "a_server_waypoint", "assert": "player.waypoint.x", "actor": "playerA", "approximately": -30, "tolerance": 0.05 },
+    { "id": "c_no_waypoint", "assert": "actor.waypointCount", "actor": "playerC", "equals": 0 },
+    { "id": "server_team2_waypoints", "assert": "player.teamWaypointCount", "actor": "playerD", "equals": 0 },
+
+    { "id": "b_danger", "phase": "act", "action": "ping", "actor": "playerB", "kind": "danger", "position": { "x": 12, "z": 14 } },
+    { "id": "a_sees_two", "phase": "assert", "action": "waitFor", "condition": "actor.pingCount", "actor": "playerA", "equals": 2, "timeoutMilliseconds": 3000 },
+    { "id": "c_still_none", "assert": "actor.pingCount", "actor": "playerC", "equals": 0 },
+
+    { "id": "a_clear", "phase": "act", "action": "waypoint", "actor": "playerA", "clear": true },
+    { "id": "b_waypoint_gone", "phase": "assert", "action": "waitFor", "condition": "actor.waypointCount", "actor": "playerB", "equals": 0, "timeoutMilliseconds": 3000 },
+    { "id": "a_server_no_waypoint", "assert": "player.waypoint", "actor": "playerA", "notExists": true }
+  ]
+}

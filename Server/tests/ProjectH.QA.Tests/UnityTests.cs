@@ -407,7 +407,7 @@ public class UnityTests : IDisposable
         [ { "action": "unityKey", "actor": "viewer", "key": "pageUp" },
           { "action": "unityKey", "actor": "viewer", "key": "w", "holdMs": 0 },
           { "action": "unityKey", "actor": "viewer", "key": "w", "holdMs": 500, "state": "down" },
-          { "action": "unityClick", "actor": "viewer", "button": "middle" },
+          { "action": "unityClick", "actor": "viewer", "button": "back" },
           { "action": "unityClick", "actor": "viewer", "state": "tap" },
           { "action": "unityLook", "actor": "viewer", "dx": 30000 },
           { "action": "unityLook", "actor": "viewer", "dx": 1, "ms": 6000 },
@@ -424,7 +424,7 @@ public class UnityTests : IDisposable
         Has(1, "'key' must be one of");
         Has(2, "'holdMs' must be an integer 1-10000");
         Has(3, "not both");
-        Has(4, "'button' must be left or right");
+        Has(4, "'button' must be left, right or middle");
         Has(5, "'state' must be down or up");
         Has(6, "'dx' must be a number of pixels");
         Has(7, "'ms' must be an integer 0-5000");
@@ -437,6 +437,8 @@ public class UnityTests : IDisposable
         // Good steps validate clean; an async step may outlast its timeout; the default timeout covers the hold.
         ScenarioLoadResult good = ScenarioLoader.Parse(Scenario(Viewer, """
         [ { "action": "unityKey", "actor": "viewer", "key": "f1" },
+          { "action": "unityKey", "actor": "viewer", "key": "m" },
+          { "action": "unityClick", "actor": "viewer", "button": "middle" },
           { "action": "unityKey", "actor": "viewer", "key": "w", "holdMs": 10000, "async": true, "timeoutMilliseconds": 1000 },
           { "action": "unityClick", "actor": "viewer", "button": "right", "state": "down" },
           { "action": "unityLook", "actor": "viewer", "dx": -20000, "dy": 20000, "ms": 0 },
@@ -444,7 +446,7 @@ public class UnityTests : IDisposable
         """));
         Assert.DoesNotContain(ScenarioValidator.Validate(good.Scenario!, ActionRegistry.CreateDefault(), MarkerStore.Empty()), i => i.IsError);
         Assert.True(ActionRegistry.CreateDefault().TryGet("unityKey", out IScenarioActionHandler? key));
-        Assert.Equal(ActionSpec.StandardTimeoutMs + 4000, key.Spec.TimeoutFor(good.Scenario!.Steps[4]));
+        Assert.Equal(ActionSpec.StandardTimeoutMs + 4000, key.Spec.TimeoutFor(good.Scenario!.Steps[6]));
     }
 
     [Fact]

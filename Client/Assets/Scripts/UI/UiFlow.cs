@@ -24,7 +24,10 @@ namespace ProjectH.Client.UI
     // Phase 11 D3: which screen shows, whether the cursor may be locked and whether game input is blocked. Pure (no
     // UnityEngine) so every transition is tested by the server test project (source link, like ZoneMath). UiRoot calls
     // Update once per frame with what GameClient reports, and the command methods from buttons and Esc; the screens only
-    // draw the result. Version changes whenever Screen, StatsOpen or Reconnecting changes, so UiRoot redraws only then.
+    // draw the result. Version changes whenever Screen, StatsOpen, MapOpen or Reconnecting changes, so UiRoot redraws only then.
+    // Phase 15 D4: the full map is not a screen either: it opens over InGame only (MapOpen), frees the cursor and blocks game
+    // input like a screen, closes with M or Esc (Esc closes it before anything else in the game), and any screen change
+    // closes it (a disconnect, a new result).
     //
     //   Title --connect--> Connecting --joined--> InGame <--Esc/continue--> Menu
     //   Connecting --failed (refused, full, unreachable)--> Disconnected --retry--> Connecting
@@ -38,15 +41,18 @@ namespace ProjectH.Client.UI
 
         public UiScreen Screen { get; private set; } = UiScreen.Title;
         public bool StatsOpen { get; private set; }
+        // Phase 15 D4: the full map is open (only ever over InGame).
+        public bool MapOpen { get; private set; }
         // On the Disconnected screen: an automatic reconnect is running (show its progress and Cancel, not Retry).
         public bool Reconnecting { get; private set; }
         public int Version { get; private set; }
 
-        // D5: a click may lock the cursor only in the game with no screen up.
-        public bool AllowCursorLock => Screen == UiScreen.InGame;
+        // D5: a click may lock the cursor only in the game with no screen up. Phase 15 D4: nor with the full map open.
+        public bool AllowCursorLock => Screen == UiScreen.InGame && !MapOpen;
         // D5: movement, fire, aim and look are zero while any screen is up (GameClient also blocks them while the cursor is
         // free). Inputs keep going to the server, empty, so the Phase 10 input timeout never closes a player in a menu.
-        public bool BlocksGameInput => Screen != UiScreen.InGame;
+        // Phase 15 D4: the full map blocks them the same way (the player stops while it is open).
+        public bool BlocksGameInput => Screen != UiScreen.InGame || MapOpen;
 
         // The player asked to connect from the title or the disconnected screen (UiRoot already called Connect).
         public void ConnectRequested()
@@ -61,12 +67,19 @@ namespace ProjectH.Client.UI
             Set(UiScreen.Title);
         }
 
-        // Esc goes back one level: the stats window, then the menu or the result. In the game it opens the menu.
+        // 기능: Esc 한 번을 처리한다: 한 단계 뒤로(통계 창, 그다음 전체 지도(Phase 15), 그다음 메뉴나 결과). 게임 화면에서는 메뉴를 연다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 상태가 바뀌면 Version이 오른다.
         public void EscapePressed()
         {
             if (StatsOpen)
             {
                 CloseStats();
+                return;
+            }
+            if (MapOpen)
+            {
+                CloseMap();
                 return;
             }
             switch (Screen)
@@ -94,6 +107,35 @@ namespace ProjectH.Client.UI
         {
             if (!StatsOpen) return;
             StatsOpen = false;
+            Version++;
+        }
+
+        // 기능: M 한 번을 처리한다(Phase 15 D4): 게임 화면이면 전체 지도를 열거나 닫는다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 게임 화면이 아니면(메뉴·결과·접속 화면) 아무것도 하지 않는다.
+        public void ToggleMap()
+        {
+            if (MapOpen) CloseMap();
+            else OpenMap();
+        }
+
+        // 기능: 전체 지도를 연다(게임 화면에서만, Phase 15 D4).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 열리면 Version이 오른다.
+        public void OpenMap()
+        {
+            if (MapOpen || Screen != UiScreen.InGame) return;
+            MapOpen = true;
+            Version++;
+        }
+
+        // 기능: 전체 지도를 닫는다(Phase 15 D4).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 닫히면 Version이 오른다.
+        public void CloseMap()
+        {
+            if (!MapOpen) return;
+            MapOpen = false;
             Version++;
         }
 
@@ -136,11 +178,15 @@ namespace ProjectH.Client.UI
             }
         }
 
+        // 기능: 화면을 바꾼다. 통계 창과 전체 지도(Phase 15: 게임 화면 위에서만 열린다)는 닫는다.
+        // 입력: screen - 새 화면.
+        // 출력: 반환값 없음. 바뀌었으면 Version이 오른다(같은 화면이고 통계 창이 닫혀 있으면 아무것도 하지 않는다).
         private void Set(UiScreen screen)
         {
             if (screen == Screen && !StatsOpen) return;
             Screen = screen;
             StatsOpen = false;
+            MapOpen = false;
             Version++;
         }
     }

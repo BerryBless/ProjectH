@@ -98,7 +98,8 @@ namespace ProjectH.Client.Tests
         {
             foreach (string name in QaInput.KeyNames)
                 Assert.AreEqual(name, QaInput.KeyNames[Parse("{\"key\":\"" + name + "\"}").Code]);
-            Assert.AreEqual(26, QaInput.KeyNames.Length);
+            Assert.AreEqual(27, QaInput.KeyNames.Length);
+            Assert.AreEqual("m", QaInput.KeyNames[26]);   // Phase 15: appended last (the receiver's key table follows the order)
             AssertRejected("{\"key\":\"W\"}");
             AssertRejected("{\"key\":\"leftAlt\"}");
             AssertRejected("{\"key\":\"6\"}");
@@ -108,7 +109,7 @@ namespace ProjectH.Client.Tests
         }
 
         [Test]
-        public void Button_LeftRight()
+        public void Button_LeftRightMiddle()
         {
             QaInputRequest left = Parse("{\"button\":\"left\"}");
             Assert.AreEqual(QaInputKind.Button, left.Kind);
@@ -117,7 +118,9 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual(1, right.Code);
             Assert.AreEqual(QaInputAction.Hold, right.Action);
             Assert.AreEqual(QaInputAction.Down, Parse("{\"button\":\"left\",\"action\":\"down\"}").Action);
-            AssertRejected("{\"button\":\"middle\"}");
+            Assert.AreEqual(2, Parse("{\"button\":\"middle\"}").Code);   // Phase 15: the ping button
+            AssertRejected("{\"button\":\"back\"}");
+            AssertRejected("{\"button\":\"Middle\"}");
         }
 
         [Test]
@@ -229,6 +232,8 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual("hold w 1500ms", Describe("{\"key\":\"w\",\"holdMs\":1500}"));
             Assert.AreEqual("down left", Describe("{\"button\":\"left\",\"action\":\"down\"}"));
             Assert.AreEqual("up right", Describe("{\"button\":\"right\",\"action\":\"up\"}"));
+            Assert.AreEqual("press middle", Describe("{\"button\":\"middle\"}"));
+            Assert.AreEqual("press m", Describe("{\"key\":\"m\"}"));
             Assert.AreEqual("look 120,-30.5 300ms", Describe("{\"lookX\":120,\"lookY\":-30.5,\"ms\":300}"));
             Assert.AreEqual("releaseAll", Describe("{\"releaseAll\":true}"));
             var sb = new StringBuilder();
@@ -244,6 +249,44 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual("{\"ok\":true,\"devPlayerId\":\"qa1\",\"connected\":true,\"joined\":true,\"screen\":\"InGame\"," +
                             "\"statsOpen\":false,\"debugVisible\":false,\"alive\":true,\"health\":100,\"fps\":60,\"frame\":42," +
                             "\"tool\":\"Build\",\"preview\":\"NoResource\",\"cursorLocked\":true}", sb.ToString());
+        }
+
+        [Test]
+        public void Status_MapFields()
+        {
+            var sb = new StringBuilder();
+            var map = new QaMapStatus
+            {
+                MapOpen = true,
+                MinimapSelfU = 0.53125f,
+                MinimapSelfV = 0.25f,
+                ZoneCurrentRadiusU = 0.375f,
+                ZoneCenterU = 0.5f,
+                ZoneCenterV = -1f,
+                Teammates = 2,
+                Pings = 3,
+                Waypoints = 1,
+                MinimapSelfWorldX = 5f,
+                MinimapSelfWorldZ = -40f,
+                ZoneCenterWorldX = 0f,
+                ZoneCenterWorldZ = float.NaN,
+                ZoneRadiusWorld = 60.004f,
+            };
+            QaResponses.AppendStatus(sb, "qa1", true, true, "InGame", false, false, true, 100, 60, 42, "Weapon", "none", false, map);
+            StringAssert.EndsWith("\"cursorLocked\":false,\"mapOpen\":true,\"minimapSelfU\":0.5313,\"minimapSelfV\":0.25," +
+                                  "\"mapZoneCurrentRadiusU\":0.375,\"mapZoneCenterU\":0.5,\"mapZoneCenterV\":-1,\"mapTeammates\":2," +
+                                  "\"mapPings\":3,\"mapWaypoints\":1,\"minimapSelfWorldX\":5,\"minimapSelfWorldZ\":-40," +
+                                  "\"mapZoneCenterWorldX\":0,\"mapZoneCenterWorldZ\":null,\"mapZoneRadiusWorld\":60}", sb.ToString());
+        }
+
+        [Test]
+        public void UiCommands_OpenAndCloseMap()
+        {
+            Assert.AreEqual(QaUiCommand.OpenMap, QaHttp.ParseUiCommand("openMap"));
+            Assert.AreEqual(QaUiCommand.CloseMap, QaHttp.ParseUiCommand("closeMap"));
+            Assert.AreEqual("openMap", QaHttp.UiCommandName(QaUiCommand.OpenMap));
+            Assert.AreEqual("closeMap", QaHttp.UiCommandName(QaUiCommand.CloseMap));
+            Assert.AreEqual(QaUiCommand.None, QaHttp.ParseUiCommand("toggleMap"));
         }
     }
 }

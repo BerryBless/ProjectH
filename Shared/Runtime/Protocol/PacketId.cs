@@ -48,5 +48,8 @@ namespace ProjectH.Shared.Protocol
         PlayerDowned = 37,
         ChannelState = 38,
         RebootStations = 39,
+        // Phase 15 D7, D10: map pings and waypoints. MapMarker is C->S (channel 0); TeamMarkers is S->C to one team.
+        MapMarker = 40,
+        TeamMarkers = 41,
     }
 }

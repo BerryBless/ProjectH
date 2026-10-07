@@ -127,6 +127,9 @@ public sealed partial class Match
     // map's LootPoints.All; dropPoints null = the map's DropPoints.All (Phase 6 D9).
     // Phase 13 D13: sendBuild sends on the building channel (LiteNetLib channel 1); null = everything through send (tests).
     // buildBacklog: final review A4, a peer's queued reliable packets on the building channel (null = none).
+    // 기능: 경기 객체를 만든다(데이터 카탈로그, Phase 15 지도 수치 포함, 개발 모드면 Loot도 채운다).
+    // 입력: options - 서버 설정, data - 게임 데이터, send - 패킷 전송, 나머지 - 위 설명의 테스트용·선택 인자.
+    // 출력: 대기 상태의 Match.
     public Match(ServerOptions options, GameData data, SendPacket send, StartingLoadout? loadout = null, LootPoint[]? lootPoints = null,
         Vector3[]? dropPoints = null, Action<MatchRecord>? matchSink = null, Action<string>? graceExpired = null,
         Action? movementAnomaly = null, SendPacket? sendBuild = null, Func<int, int>? buildBacklog = null,
@@ -157,6 +160,7 @@ public sealed partial class Match
         _weapons = data.Weapons;
         _items = data.Items;
         _squad = data.Squad;          // Phase 14 D11
+        _map = data.Map;              // Phase 15 D9
         _teamSize = options.TeamSize; // Phase 14 D1
         _building = data.Building;
         _infiniteResources = options.BuildInfiniteResources;
@@ -294,7 +298,8 @@ public sealed partial class Match
         return error;
     }
 
-    // 기능: 연결을 경기에 넣는다(유예 중인 같은 DevPlayerId면 Resume). 새 플레이어는 JoinOrder를 받고(Phase 14 D1, 개발 모드면 팀도), 입장 패킷 묶음과 끝에 분대 상태를 받는다.
+    // 기능: 연결을 경기에 넣는다(유예 중인 같은 DevPlayerId면 Resume). 새 플레이어는 JoinOrder를 받고(Phase 14 D1, 개발 모드면 팀도), 입장 패킷 묶음과 끝에 분대 상태,
+    //   (Phase 15, 팀이 있으면) 팀 지도 표시를 받는다.
     // 입력: peerId - 연결 id, devPlayerId - 검증된 플레이어 이름.
     // 출력: Ok, Resumed, AlreadyJoined 또는 MatchFull.
     public JoinResult TryJoin(int peerId, string devPlayerId)
@@ -354,6 +359,7 @@ public sealed partial class Match
         // Only to the newcomer; the others see it dead from the snapshot flag.
         if (spectator) SendDied(peerId, new PlayerDied { VictimId = player.EntityId });
         SendSquadStateTo(player);   // Phase 14 D2, D10: the stations (and a dev-mode team) last, after everything above
+        SendMarkersTo(player);      // Phase 15 D10: a dev-mode team's pings and waypoints
         return JoinResult.Ok;
     }
 
@@ -385,7 +391,7 @@ public sealed partial class Match
     // 기능: 연결된 또는 유예 중인 플레이어를 경기에서 뺀다. _players를 도는 반복 안에서는 부르지 않는다.
     //   D10: 경기 중 이탈은 탈락이다(소지품은 남은 사람들에게 드롭, 결과 없음). Phase 14: 진행 중인 소생·재투입을 끝내고, 팀이 살아
     //   있으면 들고 있던 카드를 떨어뜨리며, 이 사람의 카드는 사라진다(D9). 그 뒤 분대 전멸을 검사한다(D6: 마지막 Up 구성원이 나가면
-    //   기절한 팀원이 탈락하고, 팀 배치가 이 사람의 기록에도 들어간다).
+    //   기절한 팀원이 탈락하고, 팀 배치가 이 사람의 기록에도 들어간다). Phase 15: 이 사람의 Ping과 Waypoint를 지운다(팀은 Tick 끝에 새 목록을 받는다).
     // 입력: player - 떠나는 플레이어.
     // 출력: 반환값 없음.
     private void RemovePlayer(PlayerEntity player)
@@ -398,6 +404,7 @@ public sealed partial class Match
         foreach (var other in _players) _send(other.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
 
         EndChannelsOf(player);
+        RemoveMarkersOf(player);   // Phase 15
         bool squad = _flow.InMatch && player.Participant && player.TeamId != 0;
         // D10: leaving a match is an elimination. What it carried goes to the ground for the others (the death
         // drop, sent to the remaining players only), and it no longer counts as alive. It gets no result.
@@ -448,6 +455,10 @@ public sealed partial class Match
     // 출력: 반환값 없음.
     public void EnqueueEdit(int peerId, in BuildEditRequest request) => EnqueueBuild(peerId, new BuildQueueItem(request));
 
+    // 기능: 경기 한 Tick: 유예 만료, 경기 흐름, 자기장, 플레이어 Tick, 경기 끝 판정, 그리고 Tick 끝 전송(인벤토리·경기·문·채집·자원·팀·스테이션,
+    //   Phase 15 지도 표시 만료와 TeamMarkers, 건설 사건, Snapshot).
+    // 입력: 없음.
+    // 출력: 반환값 없음. Server Authoritative 경기 상태가 한 Tick 진행되고 바뀐 내용이 전송된다.
     public void Tick()
     {
         // now = the last completed tick; this call simulates tick now + 1. Weapon timers
@@ -525,6 +536,7 @@ public sealed partial class Match
         SendResourceChanges();
         SendTeamChanges();       // Phase 14 D2
         SendStationChanges();    // Phase 14 D10
+        SendMarkerChanges();     // Phase 15 D9, D10: expired pings, then each changed team's TeamMarkers
         SendBuildEvents();
         // After every move of this tick, so all players are recorded at the same moment. A snapshot with
         // ServerTick N shows exactly the positions recorded at N, which is what ViewTick refers to.
@@ -1410,13 +1422,14 @@ public sealed partial class Match
     // 기능: 경기를 끝낸다(D9, Phase 14 D6). 전멸하지 않은 팀의 구성원(서 있음·기절·카드 대기 중, 나간 사람의 기록 포함)은 모두 배치 1이다.
     //   마지막 팀들이 같은 Tick에 전멸했으면 나중에 처리된 팀(배치 1)이 이긴다. 우승 팀이 여럿이면(QA 강제 종료) 플레이어 순서로 마지막
     //   팀이다. WinnerId = 우승 팀에서 경기에 남은 가장 작은 Entity id(모두 나갔으면 0). Solo는 지금과 같다. 진행 중인 소생·재투입은
-    //   끊는다(결과 화면에서는 출혈·채널이 돌지 않는다).
+    //   끊는다(결과 화면에서는 출혈·채널이 돌지 않는다). Phase 15: 모든 Ping·Waypoint를 지우고 Tick 끝에 각 팀에 빈 목록을 보낸다.
     // 입력: now - 마지막 Tick.
     // 출력: 반환값 없음. 결과가 보내지고 기록이 Sink로 간다.
     private void FinishMatch(uint now)
     {
         _flow.Finish(now);
         CancelAllChannels();   // Phase 14 review: no revive or reboot completes on the result screen
+        ClearMarkersAtFinish(); // Phase 15
         byte winnerTeam = 0;
         foreach (var player in _players)
         {
@@ -1871,7 +1884,8 @@ public sealed partial class Match
         Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
-    // 기능: Starting -> Playing 시작 리셋(D3). Phase 14: 분대 상태를 지우고 참가자를 입장 순서로 팀에 묶는다(D1).
+    // 기능: Starting -> Playing 시작 리셋(D3). Phase 14: 분대 상태를 지우고 참가자를 입장 순서로 팀에 묶는다(D1). Phase 15: 지도 표시를 지우고
+    //   새 팀마다 Tick 끝에 빈 TeamMarkers를 보낸다.
     // 입력: now - 마지막 Tick.
     // 출력: 반환값 없음. 경기 세계가 새로 시작된다.
     // D3: Starting -> Playing, in this one tick: everyone to a drop point (Phase 6 D9), empty-handed with Health 100 and
@@ -1883,6 +1897,7 @@ public sealed partial class Match
     private void StartMatch(uint now)
     {
         ClearWorldItems();
+        ClearMarkers();                      // Phase 15: before the teams are made again
         ResetSquadState(keepTeams: false);   // Phase 14: no channel, knock-down or station cooldown survives into the match
         _hasRoute = _airDrop;
         if (_hasRoute)
@@ -1905,6 +1920,7 @@ public sealed partial class Match
         }
         // Phase 14 D1: the participants (everyone here, in join order) form the teams, at least two.
         AssignTeams();
+        MarkAllTeamsDirty();   // Phase 15: every new team starts from an empty TeamMarkers
         _leftParticipants.Clear();
         // Phase 12 D9: every door closed (everyone is aboard or on a drop point, clear of every box); the change goes out
         // at the end of this tick.
@@ -1922,7 +1938,8 @@ public sealed partial class Match
         WinnerId = 0;
     }
 
-    // 기능: Finished -> Closing -> 다음 라운드 리셋(D13). Phase 14: 팀과 분대 상태를 지운다(대기실에는 팀이 없다).
+    // 기능: Finished -> Closing -> 다음 라운드 리셋(D13). Phase 14: 팀과 분대 상태를 지운다(대기실에는 팀이 없다). Phase 15: 남은 지도 표시를
+    //   팀이 지워지기 전에 지우고 알린다.
     // 입력: now - 마지막 Tick.
     // 출력: 반환값 없음.
     // D13: Finished -> Closing -> the next round, in this one tick: everyone alive on the spawn ring with an
@@ -1936,6 +1953,7 @@ public sealed partial class Match
         // Phase 13 D6, D10: the lobby gets the whole map back, without the match's pieces.
         _harvest.Reset();
         ClearBuilds();
+        ClearMarkersAtRoundReset();          // Phase 15: while the teams still exist
         ResetSquadState(keepTeams: false);   // Phase 14: the lobby has no teams
         foreach (var player in _players)
         {
@@ -2236,6 +2254,7 @@ public sealed partial class Match
     }
 
     // 기능: 유예 중인 캐릭터를 새 연결로 넘기고 입장 패킷 묶음을 다시 보낸다. Phase 14 D13: 끝에 팀 상태·스테이션·진행 중인 팀 채널도.
+    //   Phase 15 D10: 그리고 팀 지도 표시.
     // 입력: peerId - 새 연결 id, player - 유예 중인 플레이어.
     // 출력: 반환값 없음.
     // D2: the character goes to the new connection with everything it has (position, health, inventory, placement
@@ -2275,6 +2294,7 @@ public sealed partial class Match
         // The match ended while it was away: FinishMatch sent its result to no connection, so it gets it now.
         if (_flow.State == MatchFlowState.Finished && player.Participant) SendMatchResult(player);
         SendSquadStateTo(player);   // Phase 14 D13: the team, the stations and the team's channels in progress
+        SendMarkersTo(player);      // Phase 15 D10
     }
 
     // Phase 13 D4: the BuildCatalog packet's content, built once.

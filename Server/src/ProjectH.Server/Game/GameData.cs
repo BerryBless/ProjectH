@@ -3,6 +3,7 @@ using System.IO;
 using ProjectH.Server.Game.Build;
 using ProjectH.Server.Game.Combat;
 using ProjectH.Server.Game.Items;
+using ProjectH.Server.Game.Map;
 using ProjectH.Server.Game.Squad;
 using ProjectH.Server.Game.Zone;
 using ProjectH.Shared.Simulation;
@@ -18,13 +19,15 @@ public sealed class GameData
     public const string ZonesFile = "zones.json";
     public const string BuildingFile = BuildingCatalog.FileName;
     public const string SquadFile = SquadCatalog.FileName;
+    public const string MapFile = MapCatalog.FileName;
 
     // Phase 13: building null = the shipped numbers (BuildingCatalog.Default), so tests need no file.
-    // 기능: 데이터 파일들을 묶고 서로 맞는지 검사한다(SimHz, Loot Table 참조, Phase 14 재투입 장비).
-    // 입력: weapons·items·loot·zones - 필수 데이터, building - 건설 수치(null = 기본값), squad - 분대 수치(null = 기본값, Phase 14 D11).
+    // 기능: 데이터 파일들을 묶고 서로 맞는지 검사한다(SimHz, Loot Table 참조, Phase 14 재투입 장비, Phase 15 지도 수치).
+    // 입력: weapons·items·loot·zones - 필수 데이터, building - 건설 수치(null = 기본값), squad - 분대 수치(null = 기본값, Phase 14 D11),
+    //   map - Ping·Waypoint 수치(null = 기본값, Phase 15 D9).
     // 출력: 검증된 GameData. 맞지 않으면 ArgumentException.
     public GameData(WeaponCatalog weapons, ItemCatalog items, LootTable loot, ZoneData zones, BuildingCatalog? building = null,
-        SquadCatalog? squad = null)
+        SquadCatalog? squad = null, MapCatalog? map = null)
     {
         Weapons = weapons ?? throw new ArgumentNullException(nameof(weapons));
         Items = items ?? throw new ArgumentNullException(nameof(items));
@@ -49,6 +52,9 @@ public sealed class GameData
         // Phase 14 D10: the reboot loadout names weapons and ammo of these catalogs.
         string? loadoutError = Squad.RebootLoadout.Validate(this);
         if (loadoutError != null) throw new ArgumentException("squad.json rebootLoadout: " + loadoutError, nameof(squad));
+        Map = map ?? MapCatalog.Default(weapons.SimHz);
+        if (Map.SimHz != weapons.SimHz)
+            throw new ArgumentException($"Weapons were built for SimHz {weapons.SimHz}, map data for {Map.SimHz}.", nameof(map));
     }
 
     public WeaponCatalog Weapons { get; }
@@ -60,8 +66,13 @@ public sealed class GameData
     public BuildingCatalog Building { get; }
     // Phase 14 D11: knock-down, revive and reboot numbers.
     public SquadCatalog Squad { get; }
+    // Phase 15 D9: ping lifetimes and limits, the ping checks' ranges and the MapMarker receive rate.
+    public MapCatalog Map { get; }
     public int SimHz => Weapons.SimHz;
 
+    // 기능: 서버 실행 파일 옆의 데이터 파일을 모두 읽고 GameData로 묶는다(Phase 15: map.json 포함).
+    // 입력: directory - 파일이 있는 폴더, simHz - 서버 Tick 속도.
+    // 출력: 검증된 GameData. 파일이 없거나 틀리면 InvalidOperationException(서버가 시작하지 않는다).
     // The files are copied next to the server executable. A missing or invalid file throws, so the host
     // refuses to start (same as an invalid ServerOptions value).
     public static GameData LoadDirectory(string directory, int simHz)
@@ -72,9 +83,10 @@ public sealed class GameData
         var zones = ZoneData.LoadFile(Path.Combine(directory, ZonesFile), simHz);
         var building = BuildingCatalog.LoadFile(Path.Combine(directory, BuildingFile), simHz);
         var squad = SquadCatalog.LoadFile(Path.Combine(directory, SquadFile), simHz);
+        var map = MapCatalog.LoadFile(Path.Combine(directory, MapFile), simHz);
         try
         {
-            return new GameData(weapons, items, loot, zones, building, squad);
+            return new GameData(weapons, items, loot, zones, building, squad, map);
         }
         catch (ArgumentException ex)
         {

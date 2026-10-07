@@ -270,8 +270,12 @@ public static class FaultActions
         }
     }
 
+    // 기능: 첫 바이트가 Client가 보낼 수 있는 패킷 id인지 본다(garbage가 그 id로 시작하면 다시 고른다). Phase 15: MapMarker는 버킷이
+    //   조용히 버릴 수 있어 잘못된 패킷 수가 흔들리므로 넣었다(BuildEditRequest도 같은 이유로 함께).
+    // 입력: id - 첫 바이트.
+    // 출력: Client→Server 패킷 id면 true.
     private static bool IsClientPacket(byte id) => id is (byte)PacketId.JoinMatchRequest or (byte)PacketId.PlayerInput
-        or (byte)PacketId.StatsRequest or (byte)PacketId.BuildRequest;
+        or (byte)PacketId.StatsRequest or (byte)PacketId.BuildRequest or (byte)PacketId.BuildEditRequest or (byte)PacketId.MapMarker;
 
     // ---- server process ----
 

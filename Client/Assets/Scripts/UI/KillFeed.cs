@@ -11,19 +11,24 @@ namespace ProjectH.Client.UI
     {
         private const int FontSize = 22;
         private const float LineHeight = 30f;
+        // Phase 15 D3: the minimap holds the top right corner (20 px margin + 200 px), so the feed starts under it.
+        private const float Top = -244f;
 
         private readonly KillFeedModel _model = new KillFeedModel();
         private readonly GameObject _root;
         private readonly Text[] _lines = new Text[KillFeedModel.Capacity];
         private int _shownVersion;
 
+        // 기능: Kill Feed Canvas와 줄을 만든다(오른쪽 위, Phase 15부터 미니맵 아래).
+        // 입력: 없음.
+        // 출력: 빈 Kill Feed(Dispose가 Canvas를 파괴한다).
         public KillFeed()
         {
             _root = UiFactory.CreateCanvas("KillFeed", 94, interactive: false);   // above PoiLabel (93), under the crosshair (100)
             for (int i = 0; i < _lines.Length; i++)
             {
                 _lines[i] = UiFactory.CreateText("Line" + i, _root.transform, string.Empty, FontSize, TextAnchor.UpperRight,
-                    new Vector2(1f, 1f), new Vector2(-24f, -24f - LineHeight * i), new Vector2(640f, LineHeight));
+                    new Vector2(1f, 1f), new Vector2(-24f, Top - LineHeight * i), new Vector2(640f, LineHeight));
                 _lines[i].horizontalOverflow = HorizontalWrapMode.Overflow;
             }
         }
