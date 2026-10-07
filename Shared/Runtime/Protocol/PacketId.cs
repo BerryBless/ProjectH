@@ -43,5 +43,10 @@ namespace ProjectH.Shared.Protocol
         HarvestStates = 34,
         // Phase 13.5 D4: editing a piece (C->S, the building channel).
         BuildEditRequest = 35,
+        // Phase 14 D2, D5, D8, D10: squads, knock-downs, revives and reboots (all S->C, channel 0).
+        TeamState = 36,
+        PlayerDowned = 37,
+        ChannelState = 38,
+        RebootStations = 39,
     }
 }

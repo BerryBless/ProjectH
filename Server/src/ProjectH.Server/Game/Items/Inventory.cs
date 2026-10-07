@@ -48,6 +48,46 @@ public sealed class Inventory
     private readonly int[] _resources = new int[3];
     public bool ResourcesChanged;
 
+    // Phase 14 D9: the reboot cards carried (the card slot): each one is its owner's JoinOrder. 0..CardCount-1 are in use;
+    // squad.json maxCardsHeld (at most SquadConstants.MaxCardsHeld) limits the count. Emptied by Clear, a reboot (used up),
+    // the holder's elimination (dropped) and the owner leaving (gone).
+    public readonly uint[] CardOwners = new uint[SquadConstants.MaxCardsHeld];
+    public int CardCount;
+
+    // 기능: 카드 하나를 카드 칸에 넣는다.
+    // 입력: ownerJoinOrder - 카드 주인의 JoinOrder.
+    // 출력: 칸이 남아 있었으면 true(Changed가 켜진다), 가득 찼으면 false.
+    public bool AddCard(uint ownerJoinOrder)
+    {
+        if (CardCount >= CardOwners.Length) return false;
+        CardOwners[CardCount++] = ownerJoinOrder;
+        Changed = true;
+        return true;
+    }
+
+    // 기능: index번째 카드를 칸에서 뺀다(뒤의 카드가 앞으로 온다, 순서 유지).
+    // 입력: index - 0..CardCount-1.
+    // 출력: 반환값 없음. Changed가 켜진다.
+    public void RemoveCardAt(int index)
+    {
+        for (int i = index; i < CardCount - 1; i++) CardOwners[i] = CardOwners[i + 1];
+        CardCount--;
+        CardOwners[CardCount] = 0;
+        Changed = true;
+    }
+
+    // 기능: 이 주인의 카드를 들고 있는지 찾는다.
+    // 입력: ownerJoinOrder - 카드 주인의 JoinOrder.
+    // 출력: 칸 번호, 없으면 -1.
+    public int IndexOfCard(uint ownerJoinOrder)
+    {
+        for (int i = 0; i < CardCount; i++)
+        {
+            if (CardOwners[i] == ownerJoinOrder) return i;
+        }
+        return -1;
+    }
+
     public int Resource(BuildMaterialType material) => _resources[(int)material];
 
     public void SetResource(BuildMaterialType material, int amount)
@@ -70,6 +110,9 @@ public sealed class Inventory
 
     public void SetAmmo(AmmoType type, int value) => _ammo[(int)type - 1] = value;
 
+    // 기능: 인벤토리를 빈 새 생명 상태로 되돌린다(Phase 14: 카드 칸도 비운다).
+    // 입력: 없음.
+    // 출력: 반환값 없음. Changed·ResourcesChanged가 켜진다.
     public void Clear()
     {
         Array.Clear(Slots);
@@ -86,9 +129,13 @@ public sealed class Inventory
         PreviousTool = ToolKind.Weapon;
         Array.Clear(_resources);
         ResourcesChanged = true;
+        Array.Clear(CardOwners);   // Phase 14: a new life carries no card
+        CardCount = 0;
     }
 
-    // now = the current server tick; the client counts the rest of a running use down from it.
+    // 기능: 주인에게 보낼 InventoryState를 만든다(Phase 14: 소지 카드 수 포함).
+    // 입력: now - 지금 서버 Tick(Client는 진행 중인 사용의 남은 시간을 여기서부터 센다).
+    // 출력: InventoryState 값.
     public InventoryState ToWire(uint now)
     {
         var state = new InventoryState
@@ -102,6 +149,7 @@ public sealed class Inventory
             HeavyAmmo = (ushort)GetAmmo(AmmoType.Heavy),
             Medkits = (byte)Medkits,
             ShieldCells = (byte)ShieldCells,
+            RebootCards = (byte)CardCount,   // Phase 14 D9
         };
         for (int i = 0; i < SlotCount; i++)
         {

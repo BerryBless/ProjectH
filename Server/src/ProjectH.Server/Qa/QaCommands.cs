@@ -27,8 +27,12 @@ internal static class QaCommands
     {
         "mark", "setPosition", "setHealth", "setShield", "giveWeapon", "giveAmmo", "giveItem", "giveResource",
         "damagePlayer", "killPlayer", "forceMatchState", "setZone", "spawnLoot", "spawnBuildPiece", "damageBuild", "editBuild",
+        "downPlayer", "giveRebootCard", "setStationCooldown",
     };
 
+    // 기능: QA Arrange 명령 하나를 실행한다(Phase 14: downPlayer, giveRebootCard, setStationCooldown).
+    // 입력: t - QA Tick 문맥, command - 이름, player - 대상 DevPlayerId, runId - 실행 id, args - 인자, logger - 로그.
+    // 출력: QaResult(200, 400, 404, 409).
     public static QaResult Execute(QaTick t, string command, string? player, string? runId, JsonElement args, ILogger logger)
     {
         var a = new QaArgs(args);
@@ -42,6 +46,7 @@ internal static class QaCommands
             case "spawnBuildPiece": return SpawnBuildPiece(m, a);
             case "damageBuild": return DamageBuild(m, a);
             case "editBuild": return EditBuild(m, a);
+            case "setStationCooldown": return SetStationCooldown(m, a);
         }
 
         if (Array.IndexOf(Names, command) < 0)
@@ -60,6 +65,8 @@ internal static class QaCommands
             case "giveItem": return GiveItem(t, p, a);
             case "giveResource": return GiveResource(m, p, a);
             case "damagePlayer": return DamagePlayer(m, p, a);
+            case "downPlayer": return DownPlayer(m, p);
+            case "giveRebootCard": return GiveRebootCard(m, p, a);
             default: return KillPlayer(m, p);
         }
     }
@@ -89,6 +96,9 @@ internal static class QaCommands
         return QaResult.Ok(new { tick = t.Match.ServerTick });
     }
 
+    // 기능: 플레이어를 Tick 사이에 옮긴다(맵 상자·닫힌 문과 겹치면 거절). Phase 14: 기절한 사람은 기절 모드 그대로.
+    // 입력: m - 경기, p - 대상, a - 인자(x, z, y·yaw 선택).
+    // 출력: Ok면 새 위치.
     // A teleport between ticks: the next Step starts from here, so the movement self-check (which compares one Step's
     // start and end) never sees the jump; the lag compensation history starts over here (a rewind must not reach the old
     // place), and the move state is a rested Ground one, as Respawn makes it. A client's next input sets the yaw again.
@@ -108,9 +118,11 @@ internal static class QaCommands
         // movement anomaly (only pieces are exempt there): refuse instead. Pieces are allowed (the simulation lifts out of them).
         if (MovementSimulation.OverlapsAny(position, MoveSettings.Height, m.Doors.World))
             return QaResult.Error(409, $"({x}, {fy}, {z}) overlaps the map (a box or a closed door); pick a free spot or pass y.");
-        p.State = new MoveState { Position = position, Yaw = fyaw, Mode = MovementMode.Ground };
+        // Phase 14: a knocked-down player stays down (only the server's revive or elimination leaves the Downed mode).
+        MovementMode mode = p.IsDowned ? MovementMode.Downed : MovementMode.Ground;
+        p.State = new MoveState { Position = position, Yaw = fyaw, Mode = mode };
         p.Sprinting = false;
-        p.History.Reset(m.ServerTick, position, MovementMode.Ground);
+        p.History.Reset(m.ServerTick, position, mode);
         return QaResult.Ok(new { x = position.X, y = position.Y, z = position.Z, yaw = fyaw });
     }
 
@@ -236,13 +248,53 @@ internal static class QaCommands
         return QaResult.Ok(new { amount = value });
     }
 
+    // 기능: 공격자 없는 피해를 준다(Match.DamagePlayer, Phase 14: 치명이면 기절 또는 탈락).
+    // 입력: m - 경기, p - 대상, a - 인자(amount).
+    // 출력: Ok면 { health, shield, killed, downed }.
     private static QaResult DamagePlayer(Match m, PlayerEntity p, QaArgs a)
     {
         long amount = a.RequiredInteger("amount", 1, 10000);
         if (a.Error != null) return Bad(a);
         if (!m.DamagePlayer(p, (int)amount, out bool killed)) return NotAlive(p);
-        return QaResult.Ok(new { health = p.Health, shield = p.Shield, killed });
+        return QaResult.Ok(new { health = p.Health, shield = p.Shield, killed, downed = p.IsDowned });
     }
+
+    // 기능: Phase 14 downPlayer: 플레이어를 바로 기절시킨다(시나리오 준비, Match.DownPlayer). 같은 팀에 서 있는 구성원이 있어야 한다.
+    // 입력: m - 경기, p - 대상.
+    // 출력: Ok면 { health, downed }, 조건이 맞지 않으면 409.
+    private static QaResult DownPlayer(Match m, PlayerEntity p)
+    {
+        if (!m.DownPlayer(p))
+            return QaResult.Error(409, $"Player '{p.DevPlayerId}' cannot be knocked down (alive {p.Alive}, downed {p.IsDowned}, team {p.TeamId}: a knock-down needs a standing teammate).");
+        return QaResult.Ok(new { health = p.Health, downed = true });
+    }
+
+    // 기능: Phase 14 giveRebootCard: 같은 팀의 탈락한 참가자(owner)의 카드를 플레이어에게 준다(월드에 있던 그 카드는 지운다).
+    // 입력: m - 경기, p - 받는 사람, a - 인자(owner: 카드 주인 DevPlayerId).
+    // 출력: Ok면 { cards }, 주인이 없으면 404, 조건이 맞지 않으면 409.
+    private static QaResult GiveRebootCard(Match m, PlayerEntity p, QaArgs a)
+    {
+        string ownerId = a.RequiredText("owner");
+        if (a.Error != null) return Bad(a);
+        PlayerEntity? owner = FindPlayer(m, ownerId);
+        if (owner == null) return QaResult.Error(404, $"No player '{ownerId}' in the match.");
+        if (!m.GiveCard(p, owner))
+            return QaResult.Error(409, $"'{ownerId}' must be an eliminated teammate of '{p.DevPlayerId}', and '{p.DevPlayerId}' alive with room for a card.");
+        return QaResult.Ok(new { cards = p.Inventory.CardCount });
+    }
+
+    // 기능: Phase 14 setStationCooldown: 스테이션 대기를 바꾼다(0 = 바로 사용 가능). 변경은 Tick 끝 RebootStations로 간다.
+    // 입력: m - 경기, a - 인자(station 0-3, seconds 0-3600).
+    // 출력: Ok면 { station, cooldownEndTick }.
+    private static QaResult SetStationCooldown(Match m, QaArgs a)
+    {
+        long station = a.RequiredInteger("station", 0, RebootStations.Count - 1);
+        long seconds = a.RequiredInteger("seconds", 0, 3600);
+        if (a.Error != null) return Bad(a);
+        m.SetStationCooldown((int)station, (int)seconds);
+        return QaResult.Ok(new { station, cooldownEndTick = (long)m.StationEndTick((int)station) });
+    }
+
 
     private static QaResult KillPlayer(Match m, PlayerEntity p)
     {

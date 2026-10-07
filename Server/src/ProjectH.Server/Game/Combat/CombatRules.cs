@@ -15,6 +15,9 @@ public static class CombatRules
     // Phase 12 D13: crouched or sliding (a 1.2 m box) the eye is at 1.0 m, so a crouched player behind cover cannot shoot
     // over it while it cannot be hit. Must equal the client's AimSolver.CrouchEyeHeight.
     public const float CrouchEyeHeight = 1.0f;
+    // Phase 14 D4: a downed (DBNO) character's eye, where a revive's line of sight starts (it cannot shoot). Must equal the
+    // client's AimSolver copy.
+    public const float DownedEyeHeight = 0.6f;
     public const float MaxPitch = 89f;
     public const float RespawnSeconds = 3f;
     // D6: a shot may rewind other players by at most this much (12 ticks at 30 Hz). The client draws
@@ -22,9 +25,12 @@ public static class CombatRules
     // window; 400 ms keeps RTT up to ~200 ms hittable (CombatRulesTests.MaxRewind_*).
     public const float MaxRewindSeconds = 0.4f;
 
-    // Phase 12 D13: where a shot of a player in this mode starts above its feet.
+    // 기능: 이 모드인 플레이어의 눈(사격·시선 검사의 시작점)이 발에서 얼마나 위에 있는지 돌려준다(Phase 12 D13, Phase 14 D4).
+    // 입력: mode - 이동 모드.
+    // 출력: 웅크리기·슬라이드 1.0 m, 기절 0.6 m, 나머지 1.6 m.
     public static float EyeHeightOf(MovementMode mode) =>
-        mode == MovementMode.Crouch || mode == MovementMode.Slide ? CrouchEyeHeight : EyeHeight;
+        mode == MovementMode.Crouch || mode == MovementMode.Slide ? CrouchEyeHeight
+        : mode == MovementMode.Downed ? DownedEyeHeight : EyeHeight;
 
     // Phase 12 D3, D10: fall damage by the landing speed (m/s). A server rule, so its numbers live here, not in Shared
     // (the simulation only reports the landing speed).

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "name": "Duo Teams And Friendly Fire",
+  "description": "Phase 14 D1-D3 (request §32-§34, §48): four players with TeamSize 2 make two teams in join order (A, B = team 1; C, D = team 2). Each client gets its own team only (TeamState). A real burst at teammate B does nothing (friendly fire off: the shot passes through); the same burst at enemy C hurts.",
+  "tags": ["squad", "team"],
+  "seed": 14001,
+  "timeoutSeconds": 120,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "4", "Server:TeamSize": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" }, { "id": "playerC" }, { "id": "playerD" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "c_connect", "action": "connect", "actor": "playerC" },
+    { "id": "d_connect", "action": "connect", "actor": "playerD" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "teams", "phase": "assert", "assert": "match.teams", "equals": 2 },
+    { "id": "team_size", "assert": "match.teamSize", "equals": 2 },
+    { "id": "a_team", "assert": "player.teamId", "actor": "playerA", "equals": 1 },
+    { "id": "b_team", "assert": "player.teamId", "actor": "playerB", "equals": 1 },
+    { "id": "c_team", "assert": "player.teamId", "actor": "playerC", "equals": 2 },
+    { "id": "d_team", "assert": "player.teamId", "actor": "playerD", "equals": 2 },
+    { "id": "a_client_team", "action": "waitFor", "condition": "actor.teamId", "actor": "playerA", "equals": 1, "timeoutMilliseconds": 3000 },
+    { "id": "c_client_team", "action": "waitFor", "condition": "actor.teamId", "actor": "playerC", "equals": 2, "timeoutMilliseconds": 3000 },
+    { "id": "a_client_members", "assert": "actor.teamIds.1", "actor": "playerA", "exists": true },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Combat_A" },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": "QA_Combat_B" },
+    { "id": "c_place", "action": "setPosition", "actor": "playerC", "position": { "x": 5, "z": -6 } },
+    { "id": "d_place", "action": "setPosition", "actor": "playerD", "position": { "x": -20, "z": 20 } },
+    { "id": "b_health", "action": "setHealth", "actor": "playerB", "value": 100 },
+    { "id": "b_shield", "action": "setShield", "actor": "playerB", "value": 0 },
+    { "id": "c_health", "action": "setHealth", "actor": "playerC", "value": 100 },
+    { "id": "c_shield", "action": "setShield", "actor": "playerC", "value": 0 },
+    { "id": "a_rifle", "action": "giveWeapon", "actor": "playerA", "weapon": "Vesper AR", "rarity": 0 },
+    { "id": "a_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerA", "equals": "Vesper AR", "timeoutMilliseconds": 3000 },
+
+    { "id": "a_fires_at_b", "phase": "act", "action": "fire", "actor": "playerA", "target": "playerB", "count": 3 },
+    { "id": "b_unhurt", "phase": "assert", "assert": "player.health", "actor": "playerB", "equals": 100 },
+    { "id": "a_fires_at_c", "phase": "act", "action": "fire", "actor": "playerA", "target": "playerC", "count": 3 },
+    { "id": "c_hurt", "phase": "assert", "action": "waitFor", "condition": "player.health", "actor": "playerC", "lessThan": 100, "timeoutMilliseconds": 3000 }
+  ]
+}

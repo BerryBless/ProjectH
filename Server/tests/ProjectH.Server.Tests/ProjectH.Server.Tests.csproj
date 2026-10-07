@@ -36,6 +36,8 @@
     <Compile Include="..\..\..\Client\Assets\Scripts\UI\KillFeedModel.cs" Link="ClientCopies\UI\KillFeedModel.cs" />
     <!-- Phase 12 D9: the client's copy of the door rule, compared with the server's DoorRules (DoorTests). -->
     <Compile Include="..\..\..\Client\Assets\Scripts\Game\DoorRule.cs" Link="ClientCopies\DoorRule.cs" />
+    <!-- Phase 14: the client's display copies of the squad.json defaults (SquadCatalogTests compares them). -->
+    <Compile Include="..\..\..\Client\Assets\Scripts\Game\SquadPrompt.cs" Link="ClientCopies\SquadPrompt.cs" />
     <!-- Phase 12 final review: the client's predicted door world, compared with the server's DoorSet (DoorTests). -->
     <Compile Include="..\..\..\Client\Assets\Scripts\Game\PredictedDoors.cs" Link="ClientCopies\PredictedDoors.cs" />
     <!-- Phase 13 D5: the client's copy of the tool rule, compared with the server's HarvestRules.SelectTool (ToolTests). -->

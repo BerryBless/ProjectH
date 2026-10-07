@@ -237,13 +237,14 @@ namespace ProjectH.Shared.Protocol
             }
         }
 
-        // The mode in the flags. A value above Transport (a bad packet) reads as Ground.
+        // The mode in the flags. Phase 14: all 8 values of the 3 bits are modes (7 = Downed); the bound stays so a mode
+        // added past Downed cannot be read by accident.
         public MovementMode Mode
         {
             get
             {
                 int mode = (Flags & ModeMask) >> ModeShift;
-                return mode <= (int)MovementMode.Transport ? (MovementMode)mode : MovementMode.Ground;
+                return mode <= (int)MovementMode.Downed ? (MovementMode)mode : MovementMode.Ground;
             }
         }
 

@@ -157,7 +157,9 @@ namespace ProjectH.Client.UI
         private static bool SameRoute(in DropRoute a, in DropRoute b) =>
             a.StartX == b.StartX && a.StartZ == b.StartZ && a.EndX == b.EndX && a.EndZ == b.EndZ && a.StartTick == b.StartTick;
 
-        // Constant names: no allocation.
+        // 기능: F1 이동 줄의 모드 이름을 돌려준다(Phase 14: Downed 포함).
+        // 입력: mode - 이동 모드.
+        // 출력: 상수 문자열(할당 없음).
         private static string ModeName(MovementMode mode)
         {
             switch (mode)
@@ -168,6 +170,7 @@ namespace ProjectH.Client.UI
                 case MovementMode.Freefall: return "Freefall";
                 case MovementMode.Glide: return "Glide";
                 case MovementMode.Transport: return "Transport";
+                case MovementMode.Downed: return "Downed";
                 default: return "Ground";
             }
         }

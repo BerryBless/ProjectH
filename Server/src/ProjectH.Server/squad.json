@@ -1,0 +1,18 @@
+{
+  // Phase 14 D11: knock-down (DBNO), revive and reboot rules. Validated at startup (SquadCatalog); the reboot loadout's
+  // weapon ids and ammo must fit weapons.json and items.json. friendlyFire: only false is implemented (D3). The reboot
+  // loadout is the Wisp SMG (id 3): the catalog has no pistol, and it is the weakest weapon.
+  "friendlyFire": false,
+  "downedHealth": 100,
+  "bleedOutSeconds": 30,
+  "reviveSeconds": 5,
+  "reviveRange": 2.0,
+  "reviveHealth": 30,
+  "reviveCancelOnDamage": true,
+  "rebootSeconds": 5,
+  "rebootRange": 3.0,
+  "cardLifetimeSeconds": 90,
+  "maxCardsHeld": 3,
+  "stationCooldownSeconds": 30,
+  "rebootLoadout": { "shield": 0, "weapons": [ { "id": 3, "rarity": 0 } ], "lightAmmo": 30 }
+}

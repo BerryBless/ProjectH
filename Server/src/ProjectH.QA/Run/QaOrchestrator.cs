@@ -632,7 +632,7 @@ public sealed class QaOrchestrator
         "connect" or "disconnect" or "reconnect" or "connectAll" or "disconnectAll" or "pauseInput" or "resumeInput"
             or "networkFault" or "clearNetworkFault" or "blockNetwork" or "unblockNetwork" or "dropConnection" or "sendInvalidPackets" => "Network",
         "moveTo" or "moveVector" or "look" or "aim" or "fire" or "stopFire" or "press" or "release" or "switchWeapon" or "jump"
-            or "sprint" or "crouch" or "build" or "buildEdit" or "spawnActors" or "playInputs" or "moveVectorAll" => "Actor",
+            or "sprint" or "crouch" or "holdInteract" or "build" or "buildEdit" or "spawnActors" or "playInputs" or "moveVectorAll" => "Actor",
         _ => "QA",
     };
 

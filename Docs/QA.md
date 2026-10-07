@@ -89,7 +89,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
   - 413: 16 KB 초과
   - 503: 큐 가득
   - 504: 실행되지 않음. 다시 해도 안전하다.
-- 이벤트 종류: PlayerJoined/Resumed/Graced/Left/Damaged/Healed/Killed/Respawned, InventoryChanged, MatchStateChanged, ZoneChanged, BuildPlaced/Destroyed, MatchReset.
+- 이벤트 종류: PlayerJoined/Resumed/Graced/Left/Damaged/Healed/Killed/Respawned, InventoryChanged, MatchStateChanged, ZoneChanged, BuildPlaced/Destroyed, MatchReset. Phase 14: PlayerDowned(`by`, `health`), PlayerRevived(`health`, `mode`), PlayerRebooted(경기 중 참가자가 다시 살아남, 개발 모드 부활은 PlayerRespawned). 기절·소생으로 체력이 뛰는 것과 출혈(Tick당 1)은 Damaged·Healed가 아니다.
   - 명령의 효과는 다음 Tick의 이벤트로 나온다.
   - `ItemPickedUp`은 없다. InventoryChanged로 대신한다.
 
@@ -221,6 +221,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `switchWeapon` | actor, `slot`(0–2) | 슬롯 키를 누르고 바뀔 때까지 기다린다. 슬롯은 0부터이고 `player.currentSlot`과 같다 |
 | `jump` | actor | 한 번 누른다 |
 | `sprint` / `crouch` | actor, `held?`(true) | 누르기·떼기 |
+| `holdInteract` | actor, `held?`(true) | Phase 14 D7: Client처럼 E를 누르고 있는다(`Interact` 한 번 + 매 입력 `InteractHeld`). `held: false`면 뗀다. 소생·재투입은 누르고 있는 동안만 이어진다 |
 
 `fire`·`press`가 Timeout이나 취소로 끝나면 남은 누름을 버린다. 그래서 다음 Step으로 새지 않는다.
 
@@ -257,6 +258,9 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `spawnLoot` | `kind`, `position` 또는 `x`,`z`, `id?`, `rarity?`, `amount?` → `result.itemId` |
 | `spawnBuildPiece` | `piece`, `material`, `cellX`,`level`,`cellZ` 또는 `position`, `rotation?` → `result.pieceId` |
 | `damageBuild` | `pieceId`, `amount` → `{destroyed, health, standing}` |
+| `downPlayer` | actor (Arrange 전용). Phase 14: 바로 기절시킨다. 같은 팀에 서 있는 구성원이 있어야 한다(없으면 409) |
+| `giveRebootCard` | actor, `owner`(카드 주인 DevPlayerId, 예: `qa-playerA`) (Arrange 전용). 같은 팀의 탈락한 참가자 카드를 준다(월드의 그 카드는 지운다) → `{cards}` |
+| `setStationCooldown` | `station`(0–3), `seconds`(0–3600, 0 = 바로 사용 가능) → `{station, cooldownEndTick}` |
 | `editBuild` | `pieceId`, `edit`(0–4095), `rotation?` → `{code, edit, rotation}` | Phase 13.5. 플레이어 없이 편집한다(소유자·사거리·시선 검사 없음, 상태 유효성과 경사로 지지는 본다). 거절은 409 |
 
 ## Assertions
@@ -265,7 +269,10 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 |---|---|---|
 | `player.<필드…>` | `GET /qa/players/qa-<actor>` | `player.health`, `player.position.x`, `player.weapon.name`, `player.ammo.medium`, `player.weapons.0.name`, `player.graced`, `player.placement` |
 | `player.exists` | 위. 404면 false | |
-| `player.state` | 위에서 계산 | Alive / Dead / Graced / Disconnected |
+| `player.state` | 위에서 계산 | Alive / Dead / Graced / Disconnected / Downed(Phase 14) |
+| Phase 14 `player.*` | 위 | `player.teamId`, `player.joinOrder`, `player.downed`, `player.downedBy`, `player.revivedBy`, `player.rebootCards`, `player.channel.kind`(revive/reboot), `player.channel.target`, `player.channel.station`, `player.channel.endTick`(진행 중이 아니면 `player.channel` 없음) |
+| Phase 14 `match.*` | 위 | `match.teamSize`, `match.teams`, `match.teamsAlive`, `match.worldCards`, `match.stations.<i>.coolingDown`·`cooldownEndTick`·`position` |
+| Phase 14 `actor.*` | Actor가 받은 것 | `actor.teamId`, `actor.teamIds`, `actor.teamStates`(TeamMemberState 이름), `actor.rebootCards`, `actor.downsSeen`, `actor.channelActive`, `actor.channelKind`, `actor.channelActor`, `actor.stationsCooling`(대기 마스크) |
 | `match.<필드…>` | `GET /qa/match` | `match.state`, `match.alive`, `match.winner`, `match.zone.phase`, `match.zone.center` |
 | `match.playerCount`·`aliveCount`·`zonePhase`·`playing` | 별칭 | `playing` = Playing 또는 FinalPhase |
 | `build.count`, `build.<필드>` | `GET /qa/build`(`at`·`radius` 선택) | |
@@ -424,6 +431,15 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `Network/invalid_packet.json` | 127 | 잘못된 패킷 9개(unknownId, truncated, oversized) → badPackets 9, 연결 유지 → garbage 15개 더(합 24 ≥ 20) → A만 Kicked. C의 Input Flood 120개 → C Kicked. 서버 계속 실행, tickFailures 0, B는 계속 Snapshot 수신 | ~3.5 s |
 | `ServerProcess/shutdown.json` | 129 | 2명 접속 중 `stopServer` → 두 Client 모두 `ServerShutdown` 수신, 종료 코드 0, 종료 시간 측정값 ≈0.1 s(기준 8 s) → `server.running` false | ~4 s |
 | `ServerProcess/restart.json` | 78 | 경기 중 `restartServer`(정상 종료 → 같은 인자·Seed로 새 프로세스, 새 Port) → 빈 Match → 두 Actor 재접속(새 플레이어) → 새 경기 Playing → 사격 피해 | ~5 s |
+| `Squad/visual_squad.json` | 33, 36, 39, 43 | Unity Player가 Duo로 들어가(먼저 입장 → 팀 1) 스크린샷: 분대 HUD, 초록 팀원·표지와 주황 적, 팀원 기절(빨강 HUD·표지, Kill Feed 기절 줄), 소생 안내, 실제 E 누름으로 진행 막대, Reboot Station 기둥, 내 기절 화면(납작한 몸, 출혈 막대) | ~23 s |
+| `Squad/duo_basic.json` | 32–34, 48 | TeamSize 2, 4명 → 입장 순서로 팀 1(A, B)·팀 2(C, D), 각 Client는 자기 팀만 받음 → A가 팀원 B를 쏴도 피해 없음(관통), 적 C는 피해 | ~4.5 s |
+| `Squad/dbno.json` | 35, 36, 38 | C의 실제 사격으로 A 체력 0 → 팀원 B가 서 있어 기절(Downed, 실드 0, downedBy C, 생존 수 그대로) → A의 사격 불가, 기어가기 | ~6 s |
+| `Squad/dbno_bleedout.json` | 37 | downPlayer → 15 s 뒤 체력 < 60 → 30 s에 탈락(PlayerKilled), 잠정 배치 2, 카드 1장 | ~33 s |
+| `Squad/revive.json` | 39 | B가 기절한 A 옆에서 holdInteract → 채널 revive, 팀에 ChannelState → 5 s 뒤 A Ground, 체력 30, 실드 0 | ~8 s |
+| `Squad/revive_cancel.json` | 40 | E를 놓으면 취소, 다시 시작 뒤 걸어서 멀어지면 취소. A는 기절 그대로, 출혈 계속 | ~6.5 s |
+| `Squad/squad_elimination.json` | 41 | A 기절 → C가 B를 사격으로 탈락 → A도 같은 Tick에 탈락, 둘 다 팀 배치 2, 카드 없음 → Finished, 승자 C, C·D 배치 1 | ~4.5 s |
+| `Squad/reboot.json` | 42–45 | A 탈락 → 카드 → B가 실제 E로 줍기 → 스테이션 0에서 holdInteract → 5 s 뒤 A가 스테이션 옆 Ground, Wisp SMG + Light 30, 실드 0, 카드 소모, 스테이션 대기 | ~8.5 s |
+| `Squad/reconnect_dbno.json` | 47 | 기절한 A가 끊김 → 유예 중 출혈 계속 → 재접속: 같은 Entity, 기절 그대로, TeamState 다시 받음 → B가 소생 | ~11 s |
 | `Persistence/db_down.json` | 77, 128 | DB 정상 확인 → `stopDb` → 경기 종료 → 저장 3회 실패 후 `db.failed` +1, saved 그대로, 서버 계속, 다음 경기 시작 → `startDb` → 다음 경기 종료 → `db.saved` +1. Docker나 `projecth-mysql` 컨테이너가 없거나 멈춰 있으면 첫 Step에서 나머지를 SKIPPED로 끝낸다(결과 SKIPPED, 종료 코드 0. `--fail-on-skip`이면 1) | 아래 표 참고 |
 
 Stress Test 시나리오(baseline, movement, combat, building, mixed_match, reconnect_churn, final_zone, soak, soak_match_reset)는 아래 "Stress"에 있다.
@@ -435,6 +451,7 @@ Stress Test 시나리오(baseline, movement, combat, building, mixed_match, reco
 | `smoke` | connect, move_to, basic_hit | ~16 s |
 | `building` | Phase 13 건설 3개 + Phase 13.5 편집 6개(헤드리스) | ~50 s |
 | `pre-push` | §93: connect, move, shoot, pickup, death, reconnect | ~30 s |
+| `squad` | Phase 14 분대 8개(헤드리스, TeamSize 2): duo_basic, dbno, dbno_bleedout, revive, revive_cancel, squad_elimination, reboot, reconnect_dbno. 2026-10-08 8/8 통과 | ~85 s |
 | `full-regression` | 모든 카테고리. Stress, Persistence, ServerProcess, Recorded 포함 | ~6 min |
 | `faults` | QA-3: latency_loss_combat, lag_compensation, network_drop, invalid_packet, input_timeout, shutdown, restart, db_down | ~1 min |
 | `stress` | QA-5 D35: Load 파일 3개(bots_50, load_bots_10, load_bots_50). 같은 이름의 카테고리가 있으므로 `suite:stress`로 부른다. Stress 시나리오는 아래 `stress-*` | ~3.2 min |
@@ -1185,6 +1202,24 @@ Development Player(Unity 6000.3.24f1, `phase13_5-building-edit` 963bed8 + 아래
 발견한 문제:
 - **수정함(시나리오):** 순간이동 직후 같은 Tick에 H를 누르면 Player 카메라가 아직 이전 위치(창 구멍 정면)를 보고 있어 광선이 구멍을 지나 편집이 시작되지 않았다. Reset 단계 앞에 500 ms 대기를 넣었다. 게임 동작이 아니라 시나리오 타이밍 문제다.
 - 건축 도구를 든 채 편집하면 같은 벽 자리의 빨간 "이미 있음" 미리보기 유령이 창 구멍 너머로 보인다. 기존 미리보기 규칙대로이고 다듬기 항목이다.
+- Critical·High 문제는 없다.
+
+## Phase 14 Unity 검증 (2026-10-08)
+
+Development Player(`phase14-squad` 작업 트리 복사본, batchmode)로 확인했다. 같은 복사본에서 EditMode 266/266이 통과했고 컴파일 오류는 0이다. 스크린샷은 에이전트가 직접 보고 판정했다.
+
+| 항목 | 결과 | 근거 |
+|---|---|---|
+| 아군 표시, 분대 HUD | PASS | `visual_squad.json`: 왼쪽 위에 "qa-viewer (나)"와 "qa-mate" 체력 막대, 팀원은 초록 캡슐과 초록 마름모, 적은 주황 |
+| 팀원 기절 | PASS | 분대 줄이 빨강 "기절"로 바뀌고 Kill Feed에 "자기장 ▸ qa-mate 기절"(QA `downPlayer`는 공격자가 없다) |
+| 소생 안내·진행(실제 입력) | PASS | "[E] 길게 눌러 소생", E를 누르고 있는 동안 "소생 중" 막대가 차고, 끝나면 팀원 체력 30 |
+| Reboot Station | PASS | Rustvale 근처 청록 기둥 |
+| 내 기절 화면 | PASS | 몸이 납작해지고 카메라가 낮아지며 "기절 · 출혈 29초" 막대, 분대 줄 "기절" |
+| Phase 13.5 회귀 | PASS | 같은 Player로 `unity_build_input.json`, `Smoke/unity_client.json` |
+
+다듬기(Known Issue):
+- 출혈 문구(빨강)가 밝은 배경 위에서 잘 안 읽힌다. 테두리나 배경 판이 있으면 좋다.
+- 3인칭 카메라에서 바로 앞에 쓰러진 팀원은 내 몸에 가려진다(표지는 보인다).
 - Critical·High 문제는 없다.
 
 ## Adding New Actions

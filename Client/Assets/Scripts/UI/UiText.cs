@@ -186,6 +186,72 @@ namespace ProjectH.Client.UI
         // Phase 12 D10: killer null = the zone or a fall ("낙하 ▸ 피해자").
         public static string KillLine(string killer, string victim, DeathCause cause) => (killer ?? CauseName(cause)) + " ▸ " + victim;
 
+        // ---- Squads (Phase 14 D5, D6, D8-D10, D14) ----
+
+        // Constant hints and labels: asking every frame allocates nothing.
+        public const string HintRevive = "[E] 길게 눌러 소생";
+        public const string HintReboot = "[E] 길게 눌러 재투입";
+        public const string HintRebootCooling = "재투입 스테이션 대기 중";
+        public const string ChannelReviving = "소생 중";
+        public const string ChannelRevived = "소생 받는 중";
+        public const string ChannelRebooting = "재투입 중";
+        public const string RebootCardName = "재투입 카드";
+        public const string Teammate = "팀원";
+
+        // 기능: Kill Feed의 기절 줄을 만든다("가해자 ▸ 피해자 기절").
+        // 입력: attacker - 기절시킨 사람의 이름(null이면 원인 이름), victim - 기절한 사람의 이름, cause - 공격자가 없을 때의 원인.
+        // 출력: 기절 줄 문자열(기절 사건마다 한 번 만든다).
+        public static string DownedLine(string attacker, string victim, DeathCause cause) =>
+            (attacker ?? CauseName(cause)) + " ▸ " + victim + " 기절";
+
+        // 기능: 분대 HUD 한 줄의 상태 문구를 고른다.
+        // 입력: state - TeamState의 구성원 상태, flags - 탈락한 구성원의 카드 위치.
+        // 출력: 상수 문자열. 살아 있으면 빈 문자열.
+        public static string MemberStatus(TeamMemberState state, TeamMemberFlags flags)
+        {
+            switch (state)
+            {
+                case TeamMemberState.Downed: return "기절";
+                case TeamMemberState.Rebooting: return "재투입 중";
+                case TeamMemberState.Eliminated:
+                    if ((flags & TeamMemberFlags.CardHeld) != 0) return "탈락 · 카드 보유";
+                    if ((flags & TeamMemberFlags.CardDropped) != 0) return "탈락 · 카드 떨어짐";
+                    return "탈락";
+                default: return string.Empty;
+            }
+        }
+
+        // 기능: 분대 HUD 한 줄을 만든다("alice (나)  기절").
+        // 입력: name - 구성원 이름(null이면 "플레이어 n"), entityId - 구성원 id, status - MemberStatus 문구, self - 나인지.
+        // 출력: 줄 문자열(값이 바뀔 때만 부른다).
+        public static string SquadRow(string name, ushort entityId, string status, bool self)
+        {
+            string head = self ? NameOr(name, entityId) + " (나)" : NameOr(name, entityId);
+            return string.IsNullOrEmpty(status) ? head : head + "  " + status;
+        }
+
+        // 기능: 소지한 재투입 카드 수 줄을 만든다.
+        // 입력: cards - 소지 카드 수.
+        // 출력: "재투입 카드 2장", 0이면 빈 문자열.
+        public static string CardsLine(int cards) => cards <= 0 ? string.Empty : RebootCardName + " " + Int(cards) + "장";
+
+        // 기능: 기절 막대의 문구를 만든다.
+        // 입력: seconds - 출혈로 탈락할 때까지 남은 초(표시용 추정).
+        // 출력: "기절 · 출혈 12초".
+        public static string Bleeding(int seconds) => "기절 · 출혈 " + Int(seconds < 0 ? 0 : seconds) + "초";
+
+        // 기능: 결과 화면의 순위 줄(Phase 14 D6: 분대면 팀 단위).
+        // 입력: placement - 팀 배치, participants - 팀 수(Solo는 사람 수), teams - 분대 경기인지.
+        // 출력: "순위 2 / 4팀" 또는 Solo의 "순위 2 / 8명".
+        public static string Placement(int placement, int participants, bool teams) =>
+            teams ? "순위 " + Int(placement) + " / " + Int(participants) + "팀" : Placement(placement, participants);
+
+        // 기능: 결과 화면의 우승 줄(Phase 14 D6: 분대면 우승 팀의 가장 작은 id 구성원 이름).
+        // 입력: winnerName - 우승자(분대는 우승 팀 대표) 이름, null이면 없음, teams - 분대 경기인지.
+        // 출력: "우승 팀: alice" 또는 Solo의 Winner 문구.
+        public static string Winner(string winnerName, bool teams) =>
+            teams && winnerName != null ? "우승 팀: " + winnerName : Winner(winnerName);
+
         // ---- Statistics (D8) ----
 
         // Ok has no status line; the summary and the rows say it all.

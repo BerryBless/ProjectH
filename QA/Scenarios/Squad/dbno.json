@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "name": "Knock-Down",
+  "description": "Phase 14 D4, D5 (request §35, §36, §38): C's real fire takes A to 0 while teammate B stands: A is knocked down, not eliminated. It stays alive in the Downed mode with the downed health, no shield, and counts as alive; its client sees itself downed. It crawls but cannot fire.",
+  "tags": ["squad", "dbno"],
+  "seed": 14002,
+  "timeoutSeconds": 120,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "4", "Server:TeamSize": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" }, { "id": "playerC" }, { "id": "playerD" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "c_connect", "action": "connect", "actor": "playerC" },
+    { "id": "d_connect", "action": "connect", "actor": "playerD" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+    { "id": "alive_before", "action": "save", "path": "match.alive", "saveAs": "aliveBefore" },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Combat_A" },
+    { "id": "c_place", "action": "setPosition", "actor": "playerC", "position": "QA_Combat_B" },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": -20, "z": 20 } },
+    { "id": "d_place", "action": "setPosition", "actor": "playerD", "position": { "x": 20, "z": 20 } },
+    { "id": "a_health", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "a_shield", "action": "setShield", "actor": "playerA", "value": 0 },
+    { "id": "a_rifle", "action": "giveWeapon", "actor": "playerA", "weapon": "Vesper AR", "rarity": 0 },
+    { "id": "c_rifle", "action": "giveWeapon", "actor": "playerC", "weapon": "Vesper AR", "rarity": 0 },
+    { "id": "c_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerC", "equals": "Vesper AR", "timeoutMilliseconds": 3000 },
+
+    { "id": "c_fire", "phase": "act", "action": "fire", "actor": "playerC", "target": "playerA", "count": 8 },
+
+    { "id": "a_downed_event", "phase": "assert", "action": "waitForEvent", "event": "PlayerDowned", "actor": "playerA", "timeoutMilliseconds": 5000 },
+    { "id": "a_downed", "assert": "player.downed", "actor": "playerA", "equals": true },
+    { "id": "a_state", "assert": "player.state", "actor": "playerA", "equals": "Downed" },
+    { "id": "a_alive", "assert": "player.alive", "actor": "playerA", "equals": true },
+    { "id": "a_mode", "assert": "player.mode", "actor": "playerA", "equals": "Downed" },
+    { "id": "a_by", "assert": "player.downedBy", "actor": "playerA", "equals": "qa-playerC" },
+    { "id": "a_no_shield", "assert": "player.shield", "actor": "playerA", "equals": 0 },
+    { "id": "alive_kept", "assert": "match.alive", "equals": "${aliveBefore}" },
+    { "id": "a_not_killed", "assert": "event.PlayerKilled", "actor": "playerA", "equals": 0 },
+    { "id": "a_client_mode", "action": "waitFor", "condition": "actor.mode", "actor": "playerA", "equals": "Downed", "timeoutMilliseconds": 2000 },
+    { "id": "c_heard", "action": "waitFor", "condition": "actor.downsSeen", "actor": "playerC", "greaterThan": 0, "timeoutMilliseconds": 2000 },
+    { "id": "c_health_before", "action": "save", "path": "player.health", "actor": "playerC", "saveAs": "cHealth" },
+    { "id": "a_ammo_before", "action": "save", "path": "player.weapon.magAmmo", "actor": "playerA", "saveAs": "aMag" },
+
+    { "id": "a_tries_to_fire", "phase": "act", "action": "press", "actor": "playerA", "button": "Fire", "count": 3 },
+    { "id": "a_crawls", "action": "moveVector", "actor": "playerA", "y": 1, "milliseconds": 1500 },
+
+    { "id": "a_did_not_fire", "phase": "assert", "assert": "player.weapon.magAmmo", "actor": "playerA", "equals": "${aMag}" },
+    { "id": "c_unhurt", "assert": "player.health", "actor": "playerC", "equals": "${cHealth}" },
+    { "id": "a_still_down", "assert": "player.downed", "actor": "playerA", "equals": true }
+  ]
+}

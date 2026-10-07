@@ -89,6 +89,12 @@ namespace ProjectH.Shared.Simulation
         // this close above walkable ground (GameMapTests), so their collision is unchanged.
         public const float StepUpHeight = 0.1f;
 
+        // Phase 14 D4: a downed (DBNO) character crawls at CrawlSpeed with a DownedHeight collision and hit box. Its eye
+        // (where its view and a revive's line of sight start) is the server's CombatRules.DownedEyeHeight and the client's
+        // AimSolver copy, not here: no shot starts from a downed character.
+        public const float CrawlSpeed = 1.5f;
+        public const float DownedHeight = 0.9f;
+
         // Fall damage (D3, D10) is a server rule: its numbers are CombatRules.FallDamage*, not here.
     }
 }

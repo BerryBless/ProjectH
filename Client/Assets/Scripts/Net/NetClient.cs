@@ -95,6 +95,12 @@ namespace ProjectH.Client.Net
         public event Action<uint, uint> BuildDestroyedReceived;
         public event Action<uint> BuildResetReceived;
         public event Action<ulong> BuildInterestReceived;
+        // Phase 14 D2, D5, D8, D10: our team, a knock-down (to everyone), a revive or reboot channel of our team, and the
+        // reboot stations' cooldowns. Structs, so raising them does not allocate.
+        public event Action<TeamState> TeamStateReceived;
+        public event Action<PlayerDowned> PlayerDownedReceived;
+        public event Action<ChannelState> ChannelStateReceived;
+        public event Action<RebootStationsState> RebootStationsReceived;
 
         public ClientState State { get; private set; } = ClientState.Disconnected;
         public string LastError { get; private set; }
@@ -283,7 +289,8 @@ namespace ProjectH.Client.Net
             }
         }
 
-        // 기능: 받은 패킷 하나를 읽어 해당 이벤트를 올린다(Phase 13.5: BuildEvents의 Edited 기록 포함). 메인 스레드에서 Poll이 부른다.
+        // 기능: 받은 패킷 하나를 읽어 해당 이벤트를 올린다(Phase 13.5: BuildEvents의 Edited 기록 포함, Phase 14: 분대 패킷 4종).
+        //   메인 스레드에서 Poll이 부른다.
         // 입력: peer - 보낸 쪽(지금 연결이 아니면 무시), reader - 패킷, channelNumber·deliveryMethod - 쓰지 않는다.
         // 출력: 반환값 없음. 읽기에 실패한 기록이 있으면 그 패킷의 나머지는 버린다.
         void INetEventListener.OnNetworkReceive(NetPeer peer, NetPacketReader reader, byte channelNumber, DeliveryMethod deliveryMethod)
@@ -457,6 +464,22 @@ namespace ProjectH.Client.Net
 
                 case PacketId.BuildInterest:
                     if (BuildInterestPacket.TryRead(ref packet, out ulong cells)) BuildInterestReceived?.Invoke(cells);
+                    break;
+
+                case PacketId.TeamState:
+                    if (TeamState.TryRead(ref packet, out var team)) TeamStateReceived?.Invoke(team);
+                    break;
+
+                case PacketId.PlayerDowned:
+                    if (PlayerDowned.TryRead(ref packet, out var downed)) PlayerDownedReceived?.Invoke(downed);
+                    break;
+
+                case PacketId.ChannelState:
+                    if (ChannelState.TryRead(ref packet, out var channel)) ChannelStateReceived?.Invoke(channel);
+                    break;
+
+                case PacketId.RebootStations:
+                    if (RebootStationsState.TryRead(ref packet, out var stations)) RebootStationsReceived?.Invoke(stations);
                     break;
             }
         }

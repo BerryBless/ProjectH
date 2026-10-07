@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "name": "Revive",
+  "description": "Phase 14 D7, D8 (request §39): B holds E (InteractHeld in every input) next to its knocked-down teammate A. The server starts the revive (ChannelState to the team), pauses A's bleed, and after reviveSeconds (5 s) A stands up with reviveHealth (30) and no shield.",
+  "tags": ["squad", "revive"],
+  "seed": 14004,
+  "timeoutSeconds": 120,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "4", "Server:TeamSize": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" }, { "id": "playerC" }, { "id": "playerD" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "c_connect", "action": "connect", "actor": "playerC" },
+    { "id": "d_connect", "action": "connect", "actor": "playerD" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 0, "z": 4 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": 1.2, "z": 4, "yaw": 270 } },
+    { "id": "c_place", "action": "setPosition", "actor": "playerC", "position": { "x": -20, "z": 20 } },
+    { "id": "d_place", "action": "setPosition", "actor": "playerD", "position": { "x": 20, "z": 20 } },
+    { "id": "a_down", "action": "downPlayer", "actor": "playerA" },
+    { "id": "a_downed", "action": "waitFor", "condition": "player.downed", "actor": "playerA", "equals": true, "timeoutMilliseconds": 2000 },
+
+    { "id": "b_hold", "phase": "act", "action": "holdInteract", "actor": "playerB" },
+    { "id": "b_reviving", "phase": "assert", "action": "waitFor", "condition": "player.channel.kind", "actor": "playerB", "equals": "revive", "timeoutMilliseconds": 2000 },
+    { "id": "a_revived_by", "assert": "player.revivedBy", "actor": "playerA", "equals": "qa-playerB" },
+    { "id": "team_told", "action": "waitFor", "condition": "actor.channelActive", "actor": "playerA", "equals": true, "timeoutMilliseconds": 2000 },
+    { "id": "a_up", "action": "waitFor", "condition": "player.downed", "actor": "playerA", "equals": false, "timeoutMilliseconds": 8000 },
+    { "id": "revived_event", "action": "waitForEvent", "event": "PlayerRevived", "actor": "playerA", "timeoutMilliseconds": 2000 },
+    { "id": "a_alive", "assert": "player.alive", "actor": "playerA", "equals": true },
+    { "id": "a_health", "assert": "player.health", "actor": "playerA", "equals": 30 },
+    { "id": "a_shield", "assert": "player.shield", "actor": "playerA", "equals": 0 },
+    { "id": "a_mode", "assert": "player.mode", "actor": "playerA", "equals": "Ground" },
+    { "id": "b_done", "assert": "player.channel", "actor": "playerB", "notExists": true },
+    { "id": "b_release", "phase": "act", "action": "holdInteract", "actor": "playerB", "held": false }
+  ]
+}

@@ -1,4 +1,5 @@
 using System.Numerics;
+using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Bots;
 
@@ -14,6 +15,15 @@ public static class BotAim
     public static Vector3 Eye(Vector3 feet) => feet + new Vector3(0f, EyeHeight, 0f);
 
     public static Vector3 Chest(Vector3 feet) => feet + new Vector3(0f, ChestHeight, 0f);
+
+    // Phase 14 D4: a knocked-down body is 0.9 m tall (MovementTuning.DownedHeight); its middle is aimed at instead.
+    public const float DownedChestHeight = 0.45f;
+
+    // 기능: 이 모드인 상대의 어디를 겨눌지 돌려준다(기절이면 낮은 몸의 가운데, 아니면 가슴).
+    // 입력: feet - 상대의 발, mode - 상대의 이동 모드.
+    // 출력: 겨눌 점.
+    public static Vector3 Chest(Vector3 feet, MovementMode mode) =>
+        feet + new Vector3(0f, mode == MovementMode.Downed ? DownedChestHeight : ChestHeight, 0f);
 
     public static void Solve(Vector3 eye, Vector3 target, out float yaw, out float pitch)
     {

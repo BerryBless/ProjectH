@@ -114,6 +114,8 @@ namespace ProjectH.Client.Input
         public Vector2 LookDelta => _look.ReadValue<Vector2>();
         public bool Sprint => _sprint.IsPressed();
         public bool FirePressed => _fire.WasPressedThisFrame();
+        // Phase 14 D7: E is down now (sent as InteractHeld in every input; the press stays the queued Interact).
+        public bool InteractHeld => _interact.IsPressed();
         public bool FireHeld => _fire.IsPressed();
         public bool AimHeld => _aim.IsPressed();
         // Phase 13.5 D10: right click this frame (edit mode's Reset) and H this frame (start or confirm an edit).

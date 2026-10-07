@@ -26,6 +26,11 @@ public readonly record struct BuildCounts(int Pieces, int Cells, long Requests, 
     long Duplicates, long HarvestHits, long EnvironmentDestroyed, long EventPackets, long SyncPackets, long DamageDestroyed = 0,
     long SyncDeferred = 0, long Edits = 0);
 
+// Phase 14: knock-downs, revives, reboots, bleed-outs, reboot cards dropped and expired, squads wiped out and revives or
+// reboots cancelled (since the match object was made; HealthCounters carries them over a match reset).
+public readonly record struct SquadCounts(long Downs, long Revives, long Reboots, long BleedOuts, long CardsDropped, long CardsExpired,
+    long Wipes, long ChannelsCancelled);
+
 // Phase 10 D9: totals since the server started, for the Health line and the "ProjectH.Server" Meter. Written from
 // LiteNetLib's threads and the game loop, read by the game loop (Health line) and by the Meter's observers on
 // whatever thread polls them. Interlocked/Volatile only, no lock: each value is independent, so a slightly
@@ -83,6 +88,16 @@ public sealed class HealthCounters
     private readonly long[] _buildRejectBase = new long[(int)BuildResultCode.NotFound + 1];
     private long _buildInboxDrops;
     private readonly long[] _buildRejects = new long[(int)BuildResultCode.NotFound + 1];
+    // Phase 14 (game loop writes, any thread reads): the squad totals and the base a match reset carried over.
+    private long _downs;
+    private long _revives;
+    private long _reboots;
+    private long _bleedOuts;
+    private long _cardsDropped;
+    private long _cardsExpired;
+    private long _wipes;
+    private long _channelsCancelled;
+    private SquadCounts _squadBase;
     // Gauges, written by the game loop once per tick.
     private int _peers;
     private int _players;
@@ -160,6 +175,30 @@ public sealed class HealthCounters
         Volatile.Read(ref _buildDuplicates), Volatile.Read(ref _harvestHits), Volatile.Read(ref _environmentDestroyed),
         Volatile.Read(ref _buildEventPackets), Volatile.Read(ref _buildSyncPackets), Volatile.Read(ref _buildDamageDestroyed),
         Volatile.Read(ref _buildSyncDeferred), Volatile.Read(ref _buildEdits));
+
+    // 기능: 지금 경기의 분대 수치를 시작부터의 합계로 쓴다(리셋으로 넘어온 기준값 + 이 경기 값). Game Loop만 부른다.
+    // 입력: c - 경기 객체의 수치.
+    // 출력: 반환값 없음.
+    public void SetSquad(in SquadCounts c)
+    {
+        SquadCounts b = _squadBase;
+        Volatile.Write(ref _downs, b.Downs + c.Downs);
+        Volatile.Write(ref _revives, b.Revives + c.Revives);
+        Volatile.Write(ref _reboots, b.Reboots + c.Reboots);
+        Volatile.Write(ref _bleedOuts, b.BleedOuts + c.BleedOuts);
+        Volatile.Write(ref _cardsDropped, b.CardsDropped + c.CardsDropped);
+        Volatile.Write(ref _cardsExpired, b.CardsExpired + c.CardsExpired);
+        Volatile.Write(ref _wipes, b.Wipes + c.Wipes);
+        Volatile.Write(ref _channelsCancelled, b.ChannelsCancelled + c.ChannelsCancelled);
+    }
+
+    // 기능: 경기 리셋 때 지금까지 쓴 분대 합계를 기준값으로 넘긴다(합계가 줄지 않게, CarryBuildTotals와 같다).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void CarrySquadTotals() => _squadBase = Squad;
+
+    public SquadCounts Squad => new(Volatile.Read(ref _downs), Volatile.Read(ref _revives), Volatile.Read(ref _reboots), Volatile.Read(ref _bleedOuts),
+        Volatile.Read(ref _cardsDropped), Volatile.Read(ref _cardsExpired), Volatile.Read(ref _wipes), Volatile.Read(ref _channelsCancelled));
 
     // Build requests the inbound channel dropped (full, DropOldest); written by LiteNetLib threads.
     public void AddBuildInboxDrop() => Interlocked.Increment(ref _buildInboxDrops);

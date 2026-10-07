@@ -199,7 +199,7 @@ namespace ProjectH.Shared.Protocol
     // S->C, ReliableOrdered, to everyone: the player is alive again at Position with full Health,
     // Shield 0 and empty-handed (no weapon, no ammo); it re-arms from loot (D9).
     // Phase 12 D11: Mode is the movement mode it starts in: Transport at a match start (aboard the drop transport),
-    // Ground otherwise.
+    // Ground otherwise. Phase 14: every mode value up to Downed reads (the server sends Ground for a reboot).
     public struct PlayerRespawned
     {
         public ushort EntityId;
@@ -224,7 +224,7 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadVector3(out r.Position);
             reader.TryReadSingle(out r.Yaw);
             reader.TryReadByte(out byte mode);
-            if (mode > (byte)MovementMode.Transport) return false;
+            if (mode > (byte)MovementMode.Downed) return false;
             r.Mode = (MovementMode)mode;
             return Finite.Check(r.Position) && Finite.Check(r.Yaw);
         }

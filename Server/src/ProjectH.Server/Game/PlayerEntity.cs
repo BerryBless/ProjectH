@@ -1,6 +1,7 @@
 using ProjectH.Server.Game.Build;
 using ProjectH.Server.Game.Combat;
 using ProjectH.Server.Game.Items;
+using ProjectH.Shared.Protocol;
 using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Server.Game;
@@ -88,6 +89,31 @@ public sealed class PlayerEntity
 
     // Feet position at the end of each recent tick, for rewinding this player as a target (D6).
     public readonly PositionHistory History = new();
+
+    // Phase 14 D1: the join counter of the match object (1, 2, ...; only grows, never reused, unlike EntityId), the order
+    // teams are made in and how a reboot card names its owner. Set once at the join.
+    public uint JoinOrder;
+    // Phase 14 D1: the team, 1.. during a match (fixed at its start); 0 = no team (lobby, a late spectator). Match.SameTeam
+    // is the only gameplay test of it.
+    public byte TeamId;
+    // Phase 14 D5: who knocked this player down (null: the zone, a fall, QA, or not downed) and how; the kill of a bleed-out
+    // or a squad wipe goes to DownedBy if it is still in the match. BleedCarry counts the bleed between whole health points.
+    public PlayerEntity? DownedBy;
+    public DeathCause DownedCause;
+    public uint BleedCarry;
+    // Phase 14 D8, D10: the revive or reboot this player is doing (ChannelActive), its kind, the downed teammate or the
+    // station index, and the tick it completes. RevivedBy: the reviver of this downed player (its bleed pauses).
+    public bool ChannelActive;
+    public ChannelKind Channel;
+    public PlayerEntity? ReviveTarget;
+    public int ChannelStation;
+    public uint ChannelEndTick;
+    public PlayerEntity? RevivedBy;
+
+    // Phase 14 D4: knocked down (DBNO): alive in the Downed movement mode, which only the server enters and leaves.
+    public bool IsDowned => Alive && State.Mode == MovementMode.Downed;
+    // Phase 14 D6: alive and standing (an Up member keeps its team in and can revive).
+    public bool IsUp => Alive && State.Mode != MovementMode.Downed;
 
     // Phase 10 D2: the tick the reconnect grace ends at (only meaningful while PeerId is NoPeer).
     public uint GraceEndTick;

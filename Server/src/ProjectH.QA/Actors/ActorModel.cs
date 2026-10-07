@@ -98,6 +98,18 @@ public sealed record ActorState
     // build results it received over its life, by BuildResultCode (index = code).
     public string? Role { get; init; }
     public IReadOnlyList<long> BuildCodeCounts { get; init; } = Array.Empty<long>();
+    // Phase 14: what this client knows of its squad: its team (0 = no TeamState yet), the members' entity ids and states
+    // (TeamMemberState names, same order), the cards it carries (InventoryState), the knock-downs it heard (PlayerDowned),
+    // its team's latest channel (ChannelState: active, kind, actor) and the stations cooling down (bit i = station i).
+    public int TeamId { get; init; }
+    public IReadOnlyList<ushort> TeamIds { get; init; } = Array.Empty<ushort>();
+    public IReadOnlyList<string> TeamStates { get; init; } = Array.Empty<string>();
+    public int RebootCards { get; init; }
+    public int DownsSeen { get; init; }
+    public bool ChannelActive { get; init; }
+    public string ChannelKind { get; init; } = string.Empty;
+    public int ChannelActor { get; init; }
+    public int StationsCooling { get; init; }
     // The newest command applied (ActorCommand.Id).
     public long LastCommandId { get; init; }
     // Last exception of this actor's pump work (the pump keeps running).

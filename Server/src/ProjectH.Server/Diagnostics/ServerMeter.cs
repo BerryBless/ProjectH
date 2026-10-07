@@ -72,6 +72,8 @@ public sealed class ServerMeter : IDisposable
         _meter.CreateObservableCounter("projecth.build.edits", () => h.Build.Edits, description: "Edits that changed a building piece (Phase 13.5)");
         _meter.CreateObservableCounter("projecth.harvest.hits", () => h.Build.HarvestHits);
         _meter.CreateObservableCounter("projecth.harvest.destroyed", () => h.Build.EnvironmentDestroyed);
+        // Phase 14: squads (since the server started).
+        _meter.CreateObservableCounter("projecth.squad.events", () => SquadEvents(h), description: "Knock-downs, revives, reboots, bleed-outs, cards and wipes");
         _meter.CreateObservableCounter("projecth.db_records", () => DbRecords(h));
         _meter.CreateObservableCounter("projecth.stats_queries", () => StatsQueries(h));
     }
@@ -110,6 +112,25 @@ public sealed class ServerMeter : IDisposable
             result[code] = new Measurement<long>(h.BuildRejects((BuildResultCode)code), Tag("result", ((BuildResultCode)code).ToString()));
         result[^1] = new Measurement<long>(h.Build.Duplicates, Tag("result", "Duplicate"));
         return result;
+    }
+
+    // 기능: Phase 14 분대 사건 수를 종류 Tag로 나눠 돌려준다.
+    // 입력: h - 합계.
+    // 출력: Measurement 배열(관찰자가 읽을 때마다 만든다, Tick 경로 아님).
+    private static Measurement<long>[] SquadEvents(HealthCounters h)
+    {
+        SquadCounts c = h.Squad;
+        return new[]
+        {
+            new Measurement<long>(c.Downs, Tag("event", "down")),
+            new Measurement<long>(c.Revives, Tag("event", "revive")),
+            new Measurement<long>(c.Reboots, Tag("event", "reboot")),
+            new Measurement<long>(c.BleedOuts, Tag("event", "bleed_out")),
+            new Measurement<long>(c.CardsDropped, Tag("event", "card_dropped")),
+            new Measurement<long>(c.CardsExpired, Tag("event", "card_expired")),
+            new Measurement<long>(c.Wipes, Tag("event", "wipe")),
+            new Measurement<long>(c.ChannelsCancelled, Tag("event", "channel_cancelled")),
+        };
     }
 
     private static Measurement<long>[] DbRecords(HealthCounters h)

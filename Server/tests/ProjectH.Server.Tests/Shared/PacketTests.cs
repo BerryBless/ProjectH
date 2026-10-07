@@ -198,8 +198,8 @@ public class PacketTests
         Assert.Equal(InputButtons.Jump | InputButtons.Sprint | InputButtons.Fire | InputButtons.Reload |
                      InputButtons.Slot1 | InputButtons.Slot2 | InputButtons.Slot3 | InputButtons.Interact |
                      InputButtons.Drop | InputButtons.UseMedkit | InputButtons.UseShieldCell | InputButtons.Crouch |
-                     InputButtons.ToolHarvest | InputButtons.ToolBuild, read.Get(0).Buttons);
-        Assert.Equal(0x3FFF, (int)read.Get(0).Buttons);   // Phase 13: ToolHarvest (4096) and ToolBuild (8192) are known
+                     InputButtons.ToolHarvest | InputButtons.ToolBuild | InputButtons.InteractHeld, read.Get(0).Buttons);
+        Assert.Equal(0x7FFF, (int)read.Get(0).Buttons);   // Phase 13: ToolHarvest (4096) and ToolBuild (8192); Phase 14: InteractHeld (16384)
     }
 
     [Fact]

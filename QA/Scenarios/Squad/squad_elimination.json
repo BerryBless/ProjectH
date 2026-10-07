@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "name": "Squad Elimination",
+  "description": "Phase 14 D6 (request §41): A is knocked down; C's real fire then takes A's last standing teammate B. B is eliminated (no standing teammate: no knock-down) and A goes with it in the same tick. Both get the team placement 2; with one team left the match finishes and both C and D are first, the winner being C (the winning team's smallest entity id).",
+  "tags": ["squad", "elimination"],
+  "seed": 14006,
+  "timeoutSeconds": 120,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "4", "Server:TeamSize": "2", "Server:ResultSeconds": "15" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" }, { "id": "playerC" }, { "id": "playerD" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "c_connect", "action": "connect", "actor": "playerC" },
+    { "id": "d_connect", "action": "connect", "actor": "playerD" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": -20, "z": 20 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": "QA_Combat_A" },
+    { "id": "c_place", "action": "setPosition", "actor": "playerC", "position": "QA_Combat_B" },
+    { "id": "d_place", "action": "setPosition", "actor": "playerD", "position": { "x": 20, "z": 20 } },
+    { "id": "b_health", "action": "setHealth", "actor": "playerB", "value": 100 },
+    { "id": "b_shield", "action": "setShield", "actor": "playerB", "value": 0 },
+    { "id": "a_down", "action": "downPlayer", "actor": "playerA" },
+    { "id": "c_rifle", "action": "giveWeapon", "actor": "playerC", "weapon": "Vesper AR", "rarity": 0 },
+    { "id": "c_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerC", "equals": "Vesper AR", "timeoutMilliseconds": 3000 },
+
+    { "id": "c_fire", "phase": "act", "action": "fire", "actor": "playerC", "target": "playerB", "count": 8 },
+
+    { "id": "b_out", "phase": "assert", "action": "waitFor", "condition": "player.alive", "actor": "playerB", "equals": false, "timeoutMilliseconds": 5000 },
+    { "id": "a_out", "assert": "player.alive", "actor": "playerA", "equals": false },
+    { "id": "b_not_downed", "assert": "event.PlayerDowned", "actor": "playerB", "equals": 0 },
+    { "id": "a_placement", "assert": "player.placement", "actor": "playerA", "equals": 2 },
+    { "id": "b_placement", "assert": "player.placement", "actor": "playerB", "equals": 2 },
+    { "id": "no_cards", "assert": "match.worldCards", "equals": 0 },
+    { "id": "match_finished", "action": "waitFor", "condition": "match.state", "equals": "Finished", "timeoutMilliseconds": 5000 },
+    { "id": "winner", "assert": "match.winner", "equals": "qa-playerC" },
+    { "id": "c_first", "assert": "player.placement", "actor": "playerC", "equals": 1 },
+    { "id": "d_first", "assert": "player.placement", "actor": "playerD", "equals": 1 },
+    { "id": "c_kills", "assert": "player.kills", "actor": "playerC", "equals": 1 }
+  ]
+}

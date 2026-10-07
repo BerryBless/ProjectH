@@ -25,7 +25,8 @@ namespace ProjectH.Client.Game
         private const float MaxAccumulatedSeconds = 0.25f; // after a hitch, do not burst-simulate
 
         // Held buttons go into every step; queued presses only into a frame's last step (see Advance).
-        private const InputButtons HeldButtons = InputButtons.Sprint | InputButtons.Fire | InputButtons.Crouch;
+        // Phase 14 D7: InteractHeld (E down) is held: a revive or reboot goes on only while every input carries it.
+        private const InputButtons HeldButtons = InputButtons.Sprint | InputButtons.Fire | InputButtons.Crouch | InputButtons.InteractHeld;
         private const InputButtons QueuedButtons = InputButtons.Jump | InputButtons.Reload | InputButtons.Slot1 | InputButtons.Slot2 |
                                                    InputButtons.Slot3 | InputButtons.Interact | InputButtons.Drop |
                                                    InputButtons.UseMedkit | InputButtons.UseShieldCell | InputButtons.ToolBuild |
@@ -109,8 +110,11 @@ namespace ProjectH.Client.Game
         public static bool ActionsAllowed(MovementMode mode) =>
             mode == MovementMode.Ground || mode == MovementMode.Crouch || mode == MovementMode.Slide;
 
-        // Returns how many simulation steps ran (each generated one input).
-        // held: Sprint, Fire and Crouch, applied to every step. queued: Jump, Reload, Slot1-3, Interact, Drop, UseMedkit and
+        // 기능: 프레임 시간만큼 고정 Tick 시뮬레이션을 돌리고 Step마다 입력 하나를 만든다(죽어 있으면 빈 입력).
+        // 입력: deltaTime - 프레임 시간, move - 이동 입력, yaw - 카메라 방향, held - 누르고 있는 버튼(Sprint·Fire·Crouch·
+        //   Phase 14 InteractHeld, 모든 Step에 들어간다), queued - 누른 순간 버튼(마지막 Step에만, 쓴 비트는 지운다).
+        // 출력: 돈 Step 수(만든 입력 수).
+        // held: Sprint, Fire, Crouch and InteractHeld, applied to every step. queued: Jump, Reload, Slot1-3, Interact, Drop, UseMedkit and
         // UseShieldCell presses; they ride on
         // the last step, because GameClient sends one packet per frame holding only the newest
         // MaxInputsPerPacket inputs, so on a hitch frame an earlier step may never be sent. Consumed bits are cleared.

@@ -21,6 +21,9 @@ namespace ProjectH.Shared.Simulation
         Crouch = 2048,        // Phase 12 D7: held. C toggles it on the client, Ctrl holds it.
         ToolHarvest = 4096,   // Phase 13 D5: F, pressed: the harvest tool
         ToolBuild = 8192,     // Phase 13 D5: Q, pressed: build mode, or back to the tool before it
+        // Phase 14 D7: held. E is down: set in every input while it is held (a revive or a reboot goes on only while it
+        // comes). Interact above stays the press (pick up, doors).
+        InteractHeld = 16384,
     }
 
     // One fixed-tick input. Seq increases by one per client simulation step and is how the

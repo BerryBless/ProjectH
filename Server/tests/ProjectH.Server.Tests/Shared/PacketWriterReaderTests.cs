@@ -76,7 +76,7 @@ public class PacketWriterReaderTests
 
     [Theory]
     [InlineData(0)]
-    [InlineData(36)]   // one above PacketId.BuildEditRequest (Phase 13.5)
+    [InlineData(40)]   // one above PacketId.RebootStations (Phase 14)
     [InlineData(255)]
     public void PacketId_OutOfRange_IsRejected(byte raw)
     {

@@ -144,7 +144,7 @@ public class TraversalPacketTests
     [Fact]
     public void EntityFlags_CarryAliveModeSprintAndExhaustion()
     {
-        for (int m = 0; m <= (int)MovementMode.Transport; m++)
+        for (int m = 0; m <= (int)MovementMode.Downed; m++)
         {
             var mode = (MovementMode)m;
             foreach (bool alive in new[] { false, true })
@@ -163,8 +163,8 @@ public class TraversalPacketTests
                 Assert.Equal(0, read.Flags & 0xC0);
             }
         }
-        // Mode bits 7 (no such mode) read as Ground.
-        Assert.Equal(MovementMode.Ground, new SnapshotEntity { Flags = 0x0F }.Mode);
+        // Phase 14: mode bits 7 are Downed (every value of the 3 bits is a mode now).
+        Assert.Equal(MovementMode.Downed, new SnapshotEntity { Flags = 0x0F }.Mode);
     }
 
     [Fact]
@@ -224,7 +224,12 @@ public class TraversalPacketTests
         Assert.True(PlayerRespawned.TryRead(ref reader, out PlayerRespawned read));
         Assert.Equal(MovementMode.Transport, read.Mode);
 
-        _buffer[writer.Length - 1] = 7;   // no such mode
+        _buffer[writer.Length - 1] = 7;   // Phase 14: Downed reads
+        reader = ReaderAfterId(writer.Length, PacketId.PlayerRespawned);
+        Assert.True(PlayerRespawned.TryRead(ref reader, out read));
+        Assert.Equal(MovementMode.Downed, read.Mode);
+
+        _buffer[writer.Length - 1] = 8;   // no such mode
         reader = ReaderAfterId(writer.Length, PacketId.PlayerRespawned);
         Assert.False(PlayerRespawned.TryRead(ref reader, out _));
     }
@@ -248,7 +253,7 @@ public class TraversalPacketTests
     public void TheCrouchButton_GoesThrough_AndUnknownBitsDoNot()
     {
         var packet = new PlayerInputPacket { Count = 1 };
-        packet.Set(0, new InputCommand { Seq = 1, Buttons = InputButtons.Crouch | (InputButtons)0x4000 | (InputButtons)0x8000 });   // Phase 13: 0x1000 and 0x2000 are tools
+        packet.Set(0, new InputCommand { Seq = 1, Buttons = InputButtons.Crouch | (InputButtons)0x8000 });   // Phase 13: 0x1000 and 0x2000 are tools, Phase 14: 0x4000 InteractHeld
         var writer = new PacketWriter(_buffer);
         PlayerInputPacket.Write(ref writer, packet);
         var reader = ReaderAfterId(writer.Length, PacketId.PlayerInput);

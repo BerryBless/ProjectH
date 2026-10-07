@@ -36,15 +36,16 @@ internal sealed class RoyaleHarness
     public RoyaleHarness(StartingLoadout? loadout = null, string zonesJson = TestGameData.ZonesJson, int maxPlayers = 6,
         int minPlayers = 2, string lootJson = TestGameData.LootJson, bool record = true,
         Vector3[]? dropPoints = null, Action<ProjectH.Server.Persistence.MatchRecord>? matchSink = null,
-        int reconnectGraceSeconds = 10, Action<string>? graceExpired = null, bool airDrop = false)
+        int reconnectGraceSeconds = 10, Action<string>? graceExpired = null, bool airDrop = false, int teamSize = 1,
+        ProjectH.Server.Game.Squad.SquadCatalog? squad = null)
     {
         SendPacket send = record ? (peer, data, method) => Packets.Add(new Sent(peer, data.ToArray(), method)) : static (_, _, _) => { };
         Match = new Match(new ServerOptions
             {
                 MaxPlayers = maxPlayers, MinPlayers = minPlayers, StartCountdownSeconds = 1, ResultSeconds = 1,
-                ReconnectGraceSeconds = reconnectGraceSeconds, AirDrop = airDrop,
+                ReconnectGraceSeconds = reconnectGraceSeconds, AirDrop = airDrop, TeamSize = teamSize,
             },
-            TestGameData.Create(lootJson: lootJson, zonesJson: zonesJson), send, loadout, dropPoints: dropPoints ?? LobbyRingDrops,
+            TestGameData.Create(lootJson: lootJson, zonesJson: zonesJson, squad: squad), send, loadout, dropPoints: dropPoints ?? LobbyRingDrops,
             matchSink: matchSink, graceExpired: graceExpired);
     }
 

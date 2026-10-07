@@ -35,6 +35,7 @@ MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 �
 | SpawnSeed | 1 | ≥ 0. 투입 지점 섞기 시드. 경기마다 `SpawnSeed + 판 번호`. `AirDrop`이면 수송기 경로의 시드이기도 하다 |
 | AirDrop | true | Phase 12: 경기가 수송기에서 시작한다(`BattleRoyale.md` "공중 투입". Zone 시계는 경로가 끝나는 Tick에 시작). false면 Phase 6의 투입 지점에서 땅으로 시작한다(Phase 5–11 규칙 테스트와 Phase 11과의 부하 비교용). `DevRespawn`이 true면 이 값과 상관없이 땅에서 시작한다 |
 | BuildInfiniteResources | false | Phase 13: true면 건설에 자원이 들지 않는다(부하 테스트용, `Building.md` "자원"). 운영은 false |
+| TeamSize | 1 | 1–4. Phase 14: 팀 크기(1 Solo, 2 Duo, 4 Squad). 경기 시작 때 참가자를 입장 순서로 묶는다(언제나 2팀 이상). 기절·소생·Reboot은 2 이상에서만 생긴다(`Squad.md`) |
 | ReconnectGraceSeconds | 10 | 0–60, 0 = 끔. 경기 중 끊긴 참가자가 캐릭터를 지키는 시간(`Networking.md` "끊기와 재접속") |
 | JoinTimeoutSeconds | 5 | 1–60. 연결한 뒤 Join해야 하는 시간. 넘으면 `JoinTimeout`으로 끊는다 |
 | ConnectBurstPerIp | 20 | 0 = 끔, 아니면 1–10000. 서버 리뷰 M2: 한 IP가 한 번에 할 수 있는 연결 요청 수(Token Bucket 크기). 넘으면 `ServerFull`로 거절하고 `rejects connectRate`로 센다(`Networking.md` "Validation"). 봇 여러 명을 한 PC에서 붙이는 부하 테스트는 200을 준다 |
@@ -42,7 +43,8 @@ MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 �
 | FatalStallSeconds | 30 | 0 = 끔, 아니면 5–3600. 서버 리뷰 M8: Game Loop가 이 시간보다 오래 멈추면 새 연결을 막고 종료 코드 1로 끝낸다("예외 복구") |
 | InputTimeoutSeconds | 10 | 0 = 끔, 아니면 2–300이고 `InputTimeoutSeconds × 1000 ≥ DisconnectTimeoutMs + 2000`(기본 5000이면 7 이상, 최솟값 500이면 3 이상). Join한 peer가 입력을 보내야 하는 간격. 넘으면 `InputTimeout`으로 끊는다. LiteNetLib Timeout보다 먼저 오면 네트워크 끊김이 서버 끊기로 보여 유예를 잃으므로 이 조건을 둔다 |
 
-데이터 파일: `Server/src/ProjectH.Server/weapons.json`, `items.json`, `loot.json`, `zones.json`, `building.json`(Phase 13, 출력 폴더로 복사). 시작 시 `GameData.LoadDirectory`가 다섯을 읽고 검증한다.
+데이터 파일: `Server/src/ProjectH.Server/weapons.json`, `items.json`, `loot.json`, `zones.json`, `building.json`(Phase 13), `squad.json`(Phase 14, 출력 폴더로 복사). 시작 시 `GameData.LoadDirectory`가 여섯을 읽고 검증한다.
+- `squad.json`(`SquadCatalog`, Phase 14): 기절 체력·출혈 시간, 소생 시간·거리·체력·피해 취소, 재투입 시간·거리, 카드 수명·소지 최대(1–3), 스테이션 대기, 재투입 장비(무기 id·탄은 `weapons.json`·`items.json`과 맞아야 한다). `friendlyFire`는 false만 된다. 틀리면 서버가 시작하지 않는다. 표는 `Squad.md`. 팀 크기는 설정 `Server:TeamSize`(1–4, 기본 1 Solo)다.
 - `building.json`(`BuildingCatalog`, Phase 13): 재료 Wood·Stone·Metal 각 1개(비용·최대 체력·처음 체력 비율·건설 초·피해 배율), 최대 자원, 채집 도구(사거리·간격·피해·약점 반지름·배율), 채집 대상 4종(체력·한 번 양·부술 때 추가), 건설(사거리, 시야각, 최소 간격, 경기·플레이어 조각 상한, 초당 요청 상한 1–1000), 관심 영역(칸 크기는 건설 칸의 배수이고 맵을 64칸 이하로 나눔, 반지름, 여유). 칸 크기는 20·40·80·160 m만 된다. 파일이 없거나 틀리면 서버가 시작하지 않는다. 코드 안의 같은 값(`BuildingCatalog.DefaultJson`, 파일과 같음을 `BuildingCatalogTests`가 고정)은 파일 없이 만드는 테스트용 `GameData`만 쓴다.
 - `weapons.json`(`WeaponCatalog`): 무기 1–8개, Id 1–255·이름 중복 없음, 이름 1–16 UTF-8 바이트, damage 1–65535, magazineSize 1–255, fireIntervalSeconds·reloadSeconds > 0이고 Tick으로 바꿔 65535 이하, range > 0, spread·recoil ≥ 0, ammoType Light·Medium·Heavy, 모두 유한.
 - `items.json`(`ItemCatalog`): 등급 정확히 5개(이름 중복 없음, 배율 0 초과 10 이하), 탄약 Light·Medium·Heavy 각 1개(max 1–65535, pickupAmount 1–max), 소모품 Medkit·ShieldCell 각 1개(useSeconds > 0, heal·shield ≥ 0이고 합 > 0, maxStack 1–255). 이름은 1–16 UTF-8 바이트이고 목록 안에서 중복 없음.

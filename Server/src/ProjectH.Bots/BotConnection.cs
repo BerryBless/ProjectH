@@ -158,6 +158,9 @@ public sealed class BotConnection : IDisposable
         _peer!.Send(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 서버 패킷 하나를 BotView에 반영한다(Phase 14: TeamState, PlayerDowned, ChannelState, RebootStations).
+    // 입력: peer·reader·channel·method - LiteNetLib 수신 정보.
+    // 출력: 반환값 없음.
     private void OnReceive(NetPeer peer, NetPacketReader reader, byte channel, DeliveryMethod method)
     {
         PacketsIn++;
@@ -272,6 +275,27 @@ public sealed class BotConnection : IDisposable
                 for (int i = 0; i < edited && BuildEventsPacket.TryReadEdited(ref r, out uint editedId, out ushort state); i++) view.ApplyEdited(editedId, state);
                 for (int i = 0; i < health && BuildEventsPacket.TryReadHealth(ref r, out _, out _); i++) { }
                 for (int i = 0; i < destroyed && BuildEventsPacket.TryReadDestroyed(ref r, out uint gone); i++) view.RemovePiece(gone);
+                break;
+            // Phase 14 D2, D5, D8, D10.
+            case PacketId.TeamState:
+                if (TeamState.TryRead(ref r, out var team))
+                {
+                    view.Team = team;
+                    view.HasTeam = true;
+                }
+                break;
+            case PacketId.PlayerDowned:
+                if (PlayerDowned.TryRead(ref r, out _)) view.DownsSeen++;
+                break;
+            case PacketId.ChannelState:
+                if (ChannelState.TryRead(ref r, out var channelState))
+                {
+                    view.LastChannel = channelState;
+                    view.HasChannel = true;
+                }
+                break;
+            case PacketId.RebootStations:
+                if (RebootStationsState.TryRead(ref r, out var stations)) view.Stations = stations;
                 break;
             case PacketId.BuildInterest:
                 // The window moved: what we keep is not worth tracking per cell for a bot; the next syncs bring it back.

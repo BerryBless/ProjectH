@@ -60,6 +60,38 @@ public sealed class BotView
     // Grows with every change to Pieces or PieceShapes (readers republish only on a change).
     public long PieceVersion;
 
+    // Phase 14 D2: our team as the server last told it (TeamState; only our own team ever comes), the knock-downs heard,
+    // the latest channel event of our team, and the reboot stations' cooldowns. Fixed-size values, nothing grows.
+    public bool HasTeam;
+    public TeamState Team;
+    public int DownsSeen;
+    public bool HasChannel;
+    public ChannelState LastChannel;
+    public RebootStationsState Stations;
+
+    // 기능: 이 Entity가 우리 팀원(자기 제외)인지 본다(D15: 봇은 팀원을 겨누지 않는다).
+    // 입력: id - Entity id.
+    // 출력: 마지막 TeamState에 있는 다른 구성원이면 true.
+    public bool IsTeammate(ushort id)
+    {
+        if (!HasTeam || id == MyId) return false;
+        for (int i = 0; i < Team.Count; i++)
+        {
+            if (Team.Get(i).EntityId == id) return true;
+        }
+        return false;
+    }
+
+    // 기능: 우리 팀의 경기 밖 상태를 지운다(새 라운드: 다음 경기 시작에 새 TeamState가 온다).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void ClearTeam()
+    {
+        HasTeam = false;
+        Team = default;
+        HasChannel = false;
+    }
+
     // QA tool: the latest BuildResults in arrival order (a ring of RecentBuildResultCount; BuildResultCount counts
     // every one received, so a reader that remembers the count it saw finds the new ones).
     public const int RecentBuildResultCount = 16;
@@ -133,13 +165,20 @@ public sealed class BotView
         return false;
     }
 
+    // 기능: MatchState를 반영한다. 새 라운드의 대기·카운트다운이면 지난 라운드의 경로와 팀(Phase 14)을 지운다.
+    // 입력: match - 받은 경기 상태.
+    // 출력: 반환값 없음.
     // MatchState. Phase 12: a new round's countdown (WaitingForPlayers, Starting) ends the last round's route; the next one
     // comes with the next match start, after this state on the same ordered channel.
     public void ApplyMatch(in MatchState match)
     {
         Match = match;
         HasMatchState = true;
-        if (match.State == MatchFlowState.WaitingForPlayers || match.State == MatchFlowState.Starting) HasRoute = false;
+        if (match.State == MatchFlowState.WaitingForPlayers || match.State == MatchFlowState.Starting)
+        {
+            HasRoute = false;
+            ClearTeam();   // Phase 14: the lobby has no teams
+        }
     }
 
     // Phase 7 D4 rule 2: the dev sandbox (no MatchState ever) is always "in a match".

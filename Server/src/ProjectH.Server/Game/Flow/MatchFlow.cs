@@ -41,8 +41,12 @@ public sealed class MatchFlow
     public ushort Round { get; private set; } = 1;
     // Fixed when the match starts (D3): everyone connected at that tick.
     public int Participants { get; private set; }
-    // Participants not yet eliminated (dead or left, D10).
+    // Participants not yet eliminated (dead or left, D10). Phase 14 D6: players, so a knocked-down player counts.
     public int Alive { get; private set; }
+    // Phase 14 D6: the teams of the match (MatchResult.Participants) and the ones not yet wiped out. Until Match sets the
+    // teams at the start (SetTeams) every participant is its own team (Solo), so the flow alone behaves as before.
+    public int Teams { get; private set; }
+    public int TeamsAlive { get; private set; }
 
     public bool InMatch => !DevRespawn && (State == MatchFlowState.Playing || State == MatchFlowState.FinalPhase);
     // D2: shots before (and after) the match hurt nobody.
@@ -50,6 +54,9 @@ public sealed class MatchFlow
     // D4: death is permanent; only the dev sandbox respawns.
     public bool RespawnAllowed => DevRespawn;
 
+    // 기능: Match.Tick 1단계의 상태 전환. 시작 Tick에 참가자·생존 수를 정하고 팀 수는 Solo 값(참가자 수)으로 둔다(Phase 14: Match가 SetTeams로 바꾼다).
+    // 입력: now - 마지막 Tick, playerCount - 연결된 플레이어 수.
+    // 출력: Match가 할 일(None, MatchStarted, RoundClosed).
     // Step 1 of Match.Tick (now = the last completed tick). playerCount = connected players.
     public FlowEvent Update(uint now, int playerCount)
     {
@@ -71,6 +78,8 @@ public sealed class MatchFlow
                 Enter(MatchFlowState.Playing, 0);
                 Participants = playerCount;
                 Alive = playerCount;
+                Teams = playerCount;
+                TeamsAlive = playerCount;
                 return FlowEvent.MatchStarted;
 
             case MatchFlowState.Finished:
@@ -83,6 +92,9 @@ public sealed class MatchFlow
         }
     }
 
+    // 기능: Closing이 끝난 다음 라운드를 연다(라운드 +1, 참가자·생존·팀 수 0).
+    // 입력: now - 마지막 Tick, playerCount - 연결된 플레이어 수.
+    // 출력: 반환값 없음.
     // Closing is over (Match reset the round in the same tick): the next round waits or counts down (D13).
     public void Reopen(uint now, int playerCount)
     {
@@ -90,6 +102,8 @@ public sealed class MatchFlow
         unchecked { Round++; }
         Participants = 0;
         Alive = 0;
+        Teams = 0;
+        TeamsAlive = 0;
         if (playerCount >= MinPlayers) Enter(MatchFlowState.Starting, now + _countdownTicks);
         else Enter(MatchFlowState.WaitingForPlayers, 0);
     }
@@ -113,19 +127,56 @@ public sealed class MatchFlow
         if (State == MatchFlowState.Playing) State = MatchFlowState.FinalPhase;
     }
 
-    // A participant died or left during the match (D9, D10). Returns its placement: the living participants
-    // left after it + 1, so the first of five to go is 5th and, when the last two go in the same tick, the one
-    // processed last is 1st.
+    // 기능: Solo 탈락(D9, D10): 참가자 한 명과 그 팀 하나가 함께 빠진다. 배치는 남은 팀 수(= Solo의 남은 사람 수)이므로 다섯 중
+    //   처음 빠진 사람은 5등, 마지막 둘이 같은 Tick에 빠지면 나중에 처리된 쪽이 1등이다.
+    // 입력: 없음.
+    // 출력: 그 배치(경기 밖이면 0).
     public byte Eliminate()
     {
         if (!InMatch || Alive <= 0) return 0;
-        byte placement = (byte)Alive;
         Alive--;
+        return EliminateTeam();
+    }
+
+    // 기능: Phase 14 D6: 참가자 한 명이 빠진다(사람 수만 줄고 팀 배치는 EliminateTeam이 정한다).
+    // 입력: 없음.
+    // 출력: 반환값 없음. Alive가 1 줄어든다(경기 밖이거나 0이면 그대로).
+    public void EliminatePlayer()
+    {
+        if (InMatch && Alive > 0) Alive--;
+    }
+
+    // 기능: Phase 14 D6: 한 팀이 전멸했다. 배치 = 그 순간 남은 팀 수.
+    // 입력: 없음.
+    // 출력: 그 팀의 배치(경기 밖이거나 남은 팀이 없으면 0).
+    public byte EliminateTeam()
+    {
+        if (!InMatch || TeamsAlive <= 0) return 0;
+        byte placement = (byte)TeamsAlive;
+        TeamsAlive--;
         return placement;
     }
 
-    // Step 5 of Match.Tick (D9): one or no participant left.
-    public bool ShouldFinish => InMatch && Alive <= 1;
+    // 기능: Phase 14 D10: 재투입된 참가자 한 명이 다시 살아 있는 사람으로 센다(팀은 전멸하지 않은 상태였다).
+    // 입력: 없음.
+    // 출력: 반환값 없음. Alive가 1 늘어난다(참가자 수를 넘지 않는다).
+    public void RestorePlayer()
+    {
+        if (InMatch && Alive < Participants) Alive++;
+    }
+
+    // 기능: Phase 14 D1: 경기 시작 Tick에 Match가 묶은 팀 수를 정한다(Update가 둔 Solo 값 대신).
+    // 입력: teams - 팀 수(1..참가자 수).
+    // 출력: 반환값 없음. Teams와 TeamsAlive가 바뀐다.
+    public void SetTeams(int teams)
+    {
+        if (!InMatch) return;
+        Teams = Math.Clamp(teams, 0, Participants);
+        TeamsAlive = Teams;
+    }
+
+    // Step 5 of Match.Tick (D9): one or no participant left. Phase 14 D6: one or no team left.
+    public bool ShouldFinish => InMatch && TeamsAlive <= 1;
 
     public void Finish(uint now)
     {

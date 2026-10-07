@@ -83,5 +83,16 @@ namespace ProjectH.Client.Tests
                 return false;
             }
         }
+
+        // Phase 14 D14: a downed character is drawn flat, as tall as its 0.9 m hit box.
+        [Test]
+        public void Downed_IsFlat_WithTheDownedHitBox()
+        {
+            PlayerPose downed = PlayerPose.For(MovementMode.Downed, true, true);
+            Assert.AreEqual(MovementTuning.DownedHeight, downed.BodyHeight, 1e-6f);
+            Assert.AreEqual(MovementTuning.DownedHeight, downed.HitHeight, 1e-6f);
+            Assert.IsFalse(downed.Prone);
+            Assert.AreEqual(0f, downed.Lean);   // no sprint lean
+        }
     }
 }

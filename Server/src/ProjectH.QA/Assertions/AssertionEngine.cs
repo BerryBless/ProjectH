@@ -193,11 +193,15 @@ public static class AssertionEngine
     }
 
     // §28 `player.state`: Alive / Dead / Graced (kept for reconnect) / Disconnected, from the player DTO's flags.
+    // 기능: 서버 플레이어 DTO에서 player.state 값을 만든다(Graced, Disconnected, Phase 14 Downed, Alive, Dead 순서로 본다).
+    // 입력: player - /qa/players의 한 플레이어.
+    // 출력: 상태 이름.
     private static string DerivedPlayerState(JsonElement player)
     {
         bool Flag(string name) => JsonPath.Child(player, name) is { ValueKind: JsonValueKind.True };
         if (Flag("graced")) return "Graced";
         if (JsonPath.Child(player, "connected") is { ValueKind: JsonValueKind.False }) return "Disconnected";
+        if (Flag("downed")) return "Downed";   // Phase 14: knocked down (alive)
         return Flag("alive") ? "Alive" : "Dead";
     }
 

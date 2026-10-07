@@ -29,6 +29,11 @@ public static class ServerCommandActions
             new[] { "y", "z", "cellZ", "level", "rotation" }, positions: true));
         r.Add(Command("damageBuild", ActorUse.None, new[] { "pieceId", "amount" }));
         r.Add(Command("editBuild", ActorUse.None, new[] { "pieceId", "edit" }, new[] { "rotation" }));   // Phase 13.5
+        // Phase 14: knock a player down at once (needs a standing teammate), give it an eliminated teammate's reboot card
+        // ('owner' = that teammate's DevPlayerId), set a reboot station's cooldown (0 = ready).
+        r.Add(Command("downPlayer", ActorUse.Required, Array.Empty<string>(), arrangeOnly: true));
+        r.Add(Command("giveRebootCard", ActorUse.Required, new[] { "owner" }, arrangeOnly: true));
+        r.Add(Command("setStationCooldown", ActorUse.None, new[] { "station", "seconds" }));
     }
 
     private static DelegateAction Command(string name, ActorUse actor, string[] required, string[]? optional = null,

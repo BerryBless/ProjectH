@@ -18,7 +18,9 @@ namespace ProjectH.Shared.Protocol
         // 12: Phase 13.5 building edit (BuildEditRequest, the NotOwner and NotFound results, the edit state in bits 20-31 of
         //     a piece record's grid word, the Edited records and the 9-byte BuildEvents header; edited pieces collide by
         //     their parts).
-        public const ushort ProtocolVersion = 12;
+        // 13: Phase 14 squads (TeamState, PlayerDowned, ChannelState, RebootStations, the Downed movement mode 7, the
+        //     InteractHeld button, the RebootCard world item, the card count in InventoryState; downed movement crawls).
+        public const ushort ProtocolVersion = 13;
 
         public const int MaxDevPlayerIdBytes = 32;
 

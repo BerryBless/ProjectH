@@ -82,6 +82,9 @@ namespace ProjectH.Shared.Simulation
             Run(ref state, input, deltaTime, new Scene(world.Boxes, world.BoxIds, world.Slopes, world.SlopeIds, terrain), out result);
         }
 
+        // 기능: 한 Tick의 이동을 모드별 함수로 나눠 계산한다(Phase 12 D1). Phase 14 D4: Downed는 지면 이동을 기어가기로 한다.
+        // 입력: state - 이어서 계산할 상태, input - 이 Tick의 입력(검증 전), deltaTime - Tick 길이(초), scene - 충돌 대상.
+        // 출력: 반환값 없음. state가 다음 Tick 상태로 바뀌고 result에 착지 속도·막힘·질주가 담긴다.
         private static void Run(ref MoveState state, in InputCommand input, float deltaTime, Scene scene, out StepResult result)
         {
             result = new StepResult();
@@ -119,15 +122,23 @@ namespace ProjectH.Shared.Simulation
                 case MovementMode.Glide:
                     StepAir(ref state, input.Buttons, moveX, moveY, sin, cos, deltaTime, scene);
                     return;
+                case MovementMode.Downed:
+                    // Phase 14 D4: the ground step at crawl speed. Jump, sprint and crouch do nothing and no vault starts, so
+                    // the mode never changes here (only the server leaves it).
+                    StepGround(ref state, input.Buttons & ~(InputButtons.Jump | InputButtons.Sprint | InputButtons.Crouch), move, Vector2.Zero,
+                        deltaTime, scene, ref result);
+                    return;
             }
             // D8: a vault may start on a jump press while moving forward; it faces where the character looks.
             var forward = new Vector2(sin, cos);
             StepGround(ref state, input.Buttons, move, moveY > 0f ? forward : Vector2.Zero, deltaTime, scene, ref result);
         }
 
-        // Ground, Crouch and Slide (D7), walking, sprinting, jumping and falling (D3 air momentum).
-        // move: the input direction in world X/Z, length 0..1. vaultDirection: the facing direction when the input moves
-        // forward (a vault may start), else zero.
+        // 기능: Ground·Crouch·Slide(D7)와 Phase 14 Downed의 걷기·질주·점프·낙하(D3 공중 관성)를 계산한다.
+        // 입력: state - 상태, buttons - 이 Tick의 버튼(Downed는 점프·질주·웅크리기를 뺀 값), move - 월드 X/Z 입력 방향(길이 0..1),
+        //   vaultDirection - 앞으로 움직일 때 바라보는 방향(Vault 시작 가능), 아니면 0, deltaTime - Tick 길이, scene - 충돌 대상,
+        //   result - 결과.
+        // 출력: 반환값 없음. state의 위치·속도·모드와 result가 갱신된다.
         private static void StepGround(ref MoveState state, InputButtons buttons, Vector2 move, Vector2 vaultDirection, float deltaTime,
             Scene scene, ref StepResult result)
         {
@@ -173,6 +184,7 @@ namespace ProjectH.Shared.Simulation
             else if (grounded)
             {
                 float speed = state.Mode == MovementMode.Crouch ? MovementTuning.CrouchSpeed
+                    : state.Mode == MovementMode.Downed ? MovementTuning.CrawlSpeed
                     : sprinting ? MoveSettings.SprintSpeed : MoveSettings.WalkSpeed;
                 state.HorizontalVelocity = move * speed;
             }
@@ -493,13 +505,17 @@ namespace ProjectH.Shared.Simulation
             state.HorizontalVelocity = direction * speed;
         }
 
-        // D3: in the air the velocity carries over. The input accelerates it by AirAcceleration, and the speed never
-        // grows above the larger of what it was and the walking speed (a standing jump can still drift).
+        // 기능: 공중에서 입력으로 수평 속도를 바꾼다(D3). 속도는 원래 속도와 모드의 걷기 속도(웅크리기·기절은 각자의 속도) 중 큰 값을
+        //   넘지 않는다(제자리 점프도 조금 움직일 수 있다).
+        // 입력: state - 상태, move - 월드 X/Z 입력 방향, deltaTime - Tick 길이.
+        // 출력: 반환값 없음. state.HorizontalVelocity가 바뀐다.
         private static void AirControl(ref MoveState state, Vector2 move, float deltaTime)
         {
             if (move.X == 0f && move.Y == 0f) return;
             Vector2 velocity = state.HorizontalVelocity;
-            float limit = MathF.Max(velocity.Length(), state.Mode == MovementMode.Crouch ? MovementTuning.CrouchSpeed : MoveSettings.WalkSpeed);
+            float walk = state.Mode == MovementMode.Crouch ? MovementTuning.CrouchSpeed
+                : state.Mode == MovementMode.Downed ? MovementTuning.CrawlSpeed : MoveSettings.WalkSpeed;
+            float limit = MathF.Max(velocity.Length(), walk);
             velocity += move * (MovementTuning.AirAcceleration * deltaTime);
             float speed = velocity.Length();
             if (speed > limit) velocity *= limit / speed;
@@ -830,9 +846,12 @@ namespace ProjectH.Shared.Simulation
             return ticks > 255f ? (byte)255 : (byte)ticks;
         }
 
-        // D7, D13: the collision (and hit) box height of a mode.
+        // 기능: 모드의 충돌(과 피격) 상자 높이를 돌려준다(D7, D13, Phase 14 D4).
+        // 입력: mode - 이동 모드.
+        // 출력: 웅크리기·슬라이드는 CrouchHeight, 기절은 DownedHeight, 나머지는 서 있는 높이.
         public static float CollisionHeight(MovementMode mode) =>
-            mode == MovementMode.Crouch || mode == MovementMode.Slide ? MovementTuning.CrouchHeight : MoveSettings.Height;
+            mode == MovementMode.Crouch || mode == MovementMode.Slide ? MovementTuning.CrouchHeight
+            : mode == MovementMode.Downed ? MovementTuning.DownedHeight : MoveSettings.Height;
 
         // D7: the standing box fits at these feet (nothing in the 0.6 m above a crouch).
         public static bool CanStand(Vector3 feet, ReadOnlySpan<Box> world) => !OverlapsAny(feet, MoveSettings.Height, world);

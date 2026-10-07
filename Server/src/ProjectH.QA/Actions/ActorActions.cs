@@ -39,6 +39,9 @@ public static class ActorActions
         r.Add(Actor("jump", (ctx, t) => PressButtonsAsync(ctx, InputButtons.Jump, 1, t)));
         r.Add(Actor("sprint", (ctx, t) => HoldAsync(ctx, InputButtons.Sprint, t), optional: new[] { "held" }));
         r.Add(Actor("crouch", (ctx, t) => HoldAsync(ctx, InputButtons.Crouch, t), optional: new[] { "held" }));
+        // Phase 14 D7: holding E like the client: one Interact press, then InteractHeld in every input until released
+        // ("held": false). A revive or reboot goes on only while it is held.
+        r.Add(Actor("holdInteract", HoldInteractAsync, optional: new[] { "held" }));
         r.Add(Actor("pauseInput", (ctx, t) => PauseInputAsync(ctx, true, t)));
         r.Add(Actor("resumeInput", (ctx, t) => PauseInputAsync(ctx, false, t)));
         r.Add(Actor("build", BuildAsync, required: new[] { "piece", "cellX|position" },
@@ -497,6 +500,18 @@ public static class ActorActions
         bool held = ctx.Bool("held") ?? true;
         await ctx.Actor().SendAsync(new HoldCommand(button, held), token).ConfigureAwait(false);
         return StepOutcome.Pass(held ? $"holding {button}" : $"released {button}");
+    }
+
+    // 기능: Phase 14 holdInteract: E를 누르기 시작하거나(InteractHeld 유지 + Interact 한 번) 놓는다(held false).
+    // 입력: ctx - 단계, token - 취소.
+    // 출력: 보낸 내용을 담은 Pass.
+    private static async Task<StepOutcome> HoldInteractAsync(StepContext ctx, CancellationToken token)
+    {
+        bool held = ctx.Bool("held") ?? true;
+        await ctx.Actor().SendAsync(new HoldCommand(InputButtons.InteractHeld, held), token).ConfigureAwait(false);
+        if (!held) return StepOutcome.Pass("released E (InteractHeld)");
+        StepOutcome pressed = await PressButtonsAsync(ctx, InputButtons.Interact, 1, token).ConfigureAwait(false);
+        return pressed.Passed ? StepOutcome.Pass("holding E (InteractHeld, one Interact press)") : pressed;
     }
 
     private static InputButtons ParseButtons(StepContext ctx)

@@ -10,6 +10,9 @@ public static class MovementLimits
 {
     public const float Slack = 1.5f;
 
+    // 기능: 모드의 가장 빠른 수평 속도와 수직 속도의 합(m/s)을 돌려준다.
+    // 입력: mode - 이동 모드.
+    // 출력: 한 Tick 이동 한계의 속도 부분. Transport는 0(Step하지 않는다). Phase 14: Downed는 지면 모드와 같다(기어가다 떨어질 수 있다).
     public static float MaxSpeed(MovementMode mode)
     {
         switch (mode)
@@ -17,6 +20,7 @@ public static class MovementLimits
             case MovementMode.Ground:
             case MovementMode.Crouch:
             case MovementMode.Slide:
+            case MovementMode.Downed:
                 // A slide jump carries the slide's top speed. Ground-mode gravity has no terminal speed, but a fall long enough
                 // to pass this bound is not reachable on this map; the bound holds through the Slack and the per-tick allowance.
                 return MovementTuning.SlideMaxSpeed + MovementTuning.FreefallTerminalSpeed;

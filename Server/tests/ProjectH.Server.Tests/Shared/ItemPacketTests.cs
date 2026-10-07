@@ -225,7 +225,7 @@ public class ItemPacketTests
     }
 
     [Fact]
-    public void InventoryState_RoundTrip_Is22Bytes()
+    public void InventoryState_RoundTrip_Is23Bytes()
     {
         var state = new InventoryState
         {
@@ -239,11 +239,12 @@ public class ItemPacketTests
             ShieldCells = 6,
             Using = ConsumableType.ShieldCell,
             UseRemainingTicks = 59,
+            RebootCards = 2,
         };
         var writer = new PacketWriter(_buffer);
         InventoryState.Write(ref writer, state);
         Assert.Equal(1 + InventoryState.PayloadSize, writer.Length);
-        Assert.Equal(22, writer.Length);
+        Assert.Equal(23, writer.Length);   // Phase 14: the card count byte
 
         var reader = ReaderAfterId(writer.Length, PacketId.InventoryState);
         Assert.True(InventoryState.TryRead(ref reader, out var read));
@@ -257,6 +258,12 @@ public class ItemPacketTests
         Assert.Equal(6, read.ShieldCells);
         Assert.Equal(ConsumableType.ShieldCell, read.Using);
         Assert.Equal(59, read.UseRemainingTicks);
+        Assert.Equal(2, read.RebootCards);
+
+        // More cards than anyone can hold is refused.
+        _buffer[writer.Length - 1] = SquadConstants.MaxCardsHeld + 1;
+        reader = ReaderAfterId(writer.Length, PacketId.InventoryState);
+        Assert.False(InventoryState.TryRead(ref reader, out _));
     }
 
     [Fact]

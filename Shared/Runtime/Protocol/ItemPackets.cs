@@ -18,6 +18,7 @@ namespace ProjectH.Shared.Protocol
         Ammo = 2,         // DefId = AmmoType, Amount = rounds
         Consumable = 3,   // DefId = ConsumableType, Amount = count
         Material = 4,     // Phase 13 D15: DefId = BuildMaterialType + 1, Amount = resources (a dead player's, picked up on touch)
+        RebootCard = 5,   // Phase 14 D9: DefId 0, Rarity 0, Amount = the card owner's entity id (only its team is told of it)
     }
 
     public enum ConsumableType : byte
@@ -201,6 +202,8 @@ namespace ProjectH.Shared.Protocol
                     return item.DefId >= 1 && item.DefId <= ItemConstants.ConsumableTypeCount && item.Rarity == 0 && item.Amount > 0;
                 case ItemKind.Material:
                     return item.DefId >= 1 && item.DefId <= 3 && item.Rarity == 0 && item.Amount > 0;
+                case ItemKind.RebootCard:
+                    return item.DefId == 0 && item.Rarity == 0 && item.Amount > 0;
                 default:
                     return false;
             }
@@ -274,9 +277,10 @@ namespace ProjectH.Shared.Protocol
 
     // S->C, ReliableOrdered, to its owner only, at the end of a tick in which the inventory changed
     // (D14). Shots do not count as a change: the snapshot self block carries the current magazine.
+    // Phase 14 D9: plus the reboot cards held (0..SquadConstants.MaxCardsHeld), the last byte.
     public struct InventoryState
     {
-        public const int PayloadSize = 21;   // 3 x 3 + 1 + 3 x 2 + 1 + 1 + 1 + 2
+        public const int PayloadSize = 22;   // 3 x 3 + 1 + 3 x 2 + 1 + 1 + 1 + 2 + 1
 
         public InventorySlotState Slot0;
         public InventorySlotState Slot1;
@@ -289,6 +293,7 @@ namespace ProjectH.Shared.Protocol
         public byte ShieldCells;
         public ConsumableType Using;        // None when no heal is being used
         public ushort UseRemainingTicks;    // 0 when Using is None
+        public byte RebootCards;            // Phase 14 D9
 
         public InventorySlotState GetSlot(int slot)
         {
@@ -349,6 +354,7 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte(s.ShieldCells);
             writer.WriteByte((byte)s.Using);
             writer.WriteUInt16(s.UseRemainingTicks);
+            writer.WriteByte(s.RebootCards);
         }
 
         public static bool TryRead(ref PacketReader reader, out InventoryState s)
@@ -373,7 +379,9 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadByte(out byte usingKind);
             s.Using = (ConsumableType)usingKind;
             reader.TryReadUInt16(out s.UseRemainingTicks);
-            return s.CurrentSlot < ItemConstants.WeaponSlotCount && usingKind <= ItemConstants.ConsumableTypeCount;
+            reader.TryReadByte(out s.RebootCards);
+            return s.CurrentSlot < ItemConstants.WeaponSlotCount && usingKind <= ItemConstants.ConsumableTypeCount &&
+                   s.RebootCards <= SquadConstants.MaxCardsHeld;
         }
     }
 

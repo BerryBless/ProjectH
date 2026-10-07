@@ -13,11 +13,11 @@ namespace ProjectH.Server.Tests.Qa;
 // into its match (no connection: their packets go nowhere). A work item submitted here runs in the next RunTick.
 internal sealed class QaHarness : IDisposable
 {
-    public QaHarness(QaOptions? qa = null, int minPlayers = 2)
+    public QaHarness(QaOptions? qa = null, int minPlayers = 2, int teamSize = 1)
     {
         Options = new ServerOptions
         {
-            Port = 0, MaxPlayers = 8, MinPlayers = minPlayers, StartCountdownSeconds = 1, ResultSeconds = 1, AirDrop = false,
+            Port = 0, MaxPlayers = 8, MinPlayers = minPlayers, StartCountdownSeconds = 1, ResultSeconds = 1, AirDrop = false, TeamSize = teamSize,
         };
         Loop = new GameLoop(Options, TestGameData.Create(), NullLogger.Instance);
         Qa = new QaControl(Options, qa ?? new QaOptions(), NullLogger.Instance, "Development");

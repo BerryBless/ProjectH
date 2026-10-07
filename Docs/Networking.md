@@ -1,7 +1,7 @@
 # Networking
 
 Transport: LiteNetLib 2.1.4 (UDP). 프레이밍 `[PacketId: byte][payload]`, little-endian, 수기 직렬화(`PacketWriter`/`PacketReader`).
-`ProtocolVersion`(현재 11. Phase 13: 건설 패킷 6종과 채집 패킷 3종(`PacketId` 26–34), 건설 전용 채널 1, 입력 버튼 `ToolHarvest`·`ToolBuild`, Snapshot의 도구(Self 무기 칸 바이트의 위 2비트, Entity `Flags` bit6–7), 아이템 종류 `Material`이 생겼다("건설과 채집 (Phase 13)", `Building.md`). Phase 12: 이동 모드를 Snapshot Entity의 `Flags`에 싣고, 수신자 블록(Self)이 6B에서 14B가 됐고, `Crouch` 버튼, 새 패킷 `TransportRoute`·`DoorStates`, `PlayerRespawned.Mode`, `PlayerDied.Cause`가 생겼다. 이동 규칙도 바뀌었다("투입과 문 (Phase 12)", `Movement.md`). Phase 11: 전적 패킷 `StatsRequest`/`StatsResponse`가 생겼고 `PlayerSpawned`에 이름(`Name`)이 들어갔다("전적 조회 (Phase 11 D8)"). Phase 10: 서버가 끊을 때 이유 코드(`DisconnectCode`)를 보내고 `JoinResult.Resumed`가 생겼다("끊기와 재접속 (Phase 10)"). 패킷 형식은 같다. Phase 8: Snapshot을 여러 패킷으로 나누고 엔티티를 양자화했다("Snapshot 분할과 양자화"). Phase 6: 지형과 새 맵 박스로 이동 결과가 바뀌었다. 패킷 형식은 같다. Phase 3에서 입력 명령·Snapshot 형식이 바뀌고 전투 패킷이 생겼고, Phase 4에서 Buttons가 2B가 되고 무기 카탈로그에 탄약 종류가, 아이템 패킷 6종이 생겼고, Phase 5에서 경기 패킷 3종(`MatchState`, `ZoneState`, `MatchResult`)과 `PlayerDied`의 Placement가 생겼다) 불일치 연결은 접속 단계(`OnConnectionRequest`)에서 `RejectReason.VersionMismatch`로 거절된다. 그 외 거절 사유: `ServerFull`(연결 수 ≥ MaxPlayers, 서버 종료 중, 또는 같은 IP의 연결 요청이 너무 잦음. 서버 리뷰 M2), `BadRequest`(연결 데이터 없음·파싱 실패·DevPlayerId가 이름 규칙에 어긋남. 아래 "Validation"). Client는 거절 사유를 끊김 화면이 한국어로 보여 준다(`UiText.Reject`).
+`ProtocolVersion`(현재 13. Phase 14: 분대 패킷 4종(`TeamState` 36, `PlayerDowned` 37, `ChannelState` 38, `RebootStations` 39), 이동 모드 `Downed` 7, 입력 버튼 `InteractHeld`, 아이템 종류 `RebootCard`, `InventoryState`의 카드 수("분대 (Phase 14)", `Squad.md`). Phase 13.5: 편집(`BuildEditRequest` 35, v12). Phase 13: 건설 패킷 6종과 채집 패킷 3종(`PacketId` 26–34), 건설 전용 채널 1, 입력 버튼 `ToolHarvest`·`ToolBuild`, Snapshot의 도구(Self 무기 칸 바이트의 위 2비트, Entity `Flags` bit6–7), 아이템 종류 `Material`이 생겼다("건설과 채집 (Phase 13)", `Building.md`). Phase 12: 이동 모드를 Snapshot Entity의 `Flags`에 싣고, 수신자 블록(Self)이 6B에서 14B가 됐고, `Crouch` 버튼, 새 패킷 `TransportRoute`·`DoorStates`, `PlayerRespawned.Mode`, `PlayerDied.Cause`가 생겼다. 이동 규칙도 바뀌었다("투입과 문 (Phase 12)", `Movement.md`). Phase 11: 전적 패킷 `StatsRequest`/`StatsResponse`가 생겼고 `PlayerSpawned`에 이름(`Name`)이 들어갔다("전적 조회 (Phase 11 D8)"). Phase 10: 서버가 끊을 때 이유 코드(`DisconnectCode`)를 보내고 `JoinResult.Resumed`가 생겼다("끊기와 재접속 (Phase 10)"). 패킷 형식은 같다. Phase 8: Snapshot을 여러 패킷으로 나누고 엔티티를 양자화했다("Snapshot 분할과 양자화"). Phase 6: 지형과 새 맵 박스로 이동 결과가 바뀌었다. 패킷 형식은 같다. Phase 3에서 입력 명령·Snapshot 형식이 바뀌고 전투 패킷이 생겼고, Phase 4에서 Buttons가 2B가 되고 무기 카탈로그에 탄약 종류가, 아이템 패킷 6종이 생겼고, Phase 5에서 경기 패킷 3종(`MatchState`, `ZoneState`, `MatchResult`)과 `PlayerDied`의 Placement가 생겼다) 불일치 연결은 접속 단계(`OnConnectionRequest`)에서 `RejectReason.VersionMismatch`로 거절된다. 그 외 거절 사유: `ServerFull`(연결 수 ≥ MaxPlayers, 서버 종료 중, 또는 같은 IP의 연결 요청이 너무 잦음. 서버 리뷰 M2), `BadRequest`(연결 데이터 없음·파싱 실패·DevPlayerId가 이름 규칙에 어긋남. 아래 "Validation"). Client는 거절 사유를 끊김 화면이 한국어로 보여 준다(`UiText.Reject`).
 
 ## MTU
 
@@ -23,13 +23,13 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
 | WorldItems | S→C(새로 들어온 사람) | ReliableOrdered | ItemCatalog 직후. 월드 아이템 전체를 50개씩 나눠서: Count 1–50 + [ItemId u16, Kind, DefId, Rarity, Amount u16, Position] × Count(개체마다 19B). 패킷 최대 952B, 256개면 6개 패킷 |
 | ItemSpawned | S→C(전원) | ReliableOrdered | 아이템 1개(패킷 20B).  새 아이템이거나 수량 변경(ItemId 기준 Upsert) |
 | ItemRemoved | S→C(전원) | ReliableOrdered | ItemId |
-| InventoryState | S→C(본인) | ReliableOrdered | Join 때와, 인벤토리가 바뀐 Tick 끝에 1회(발사는 제외). 칸 3 × (WeaponId(0 = 빈 칸), Rarity, MagAmmo), CurrentSlot, 탄약 3 × u16, Medkits, ShieldCells, Using(0 없음, 1 Medkit, 2 ShieldCell), UseRemainingTicks. 22B |
+| InventoryState | S→C(본인) | ReliableOrdered | Join 때와, 인벤토리가 바뀐 Tick 끝에 1회(발사는 제외). 칸 3 × (WeaponId(0 = 빈 칸), Rarity, MagAmmo), CurrentSlot, 탄약 3 × u16, Medkits, ShieldCells, Using(0 없음, 1 Medkit, 2 ShieldCell), UseRemainingTicks, `RebootCards`(Phase 14, 0–3. 3보다 크면 읽기 실패). 23B |
 | PickupResult | S→C(누른 사람) | ReliableOrdered | Result(Ok / NothingInRange / Full), ItemId. 안내 표시용 |
 | ShotFired | S→C(전원) | Unreliable | ShooterId, Start(눈), End(멈춘 곳) |
-| HitConfirmed | S→C(쏜 사람) | ReliableOrdered | TargetId, Damage(무기의 명목 피해. 실제로 깎인 양이 아니다), Killed |
+| HitConfirmed | S→C(쏜 사람) | ReliableOrdered | TargetId, Damage(무기의 명목 피해. 실제로 깎인 양이 아니다), Killed(탈락시켰을 때만. Phase 14: 기절시킨 명중은 false) |
 | DamageTaken | S→C(맞은 사람) | ReliableOrdered | AttackerId, Damage, FromDirection(맞은 쪽 → 쏜 쪽 단위 벡터) |
-| PlayerDied | S→C(전원) | ReliableOrdered | VictimId, KillerId(0 = 처치자 없음), Placement(경기 중 사망이면 남은 생존자 수 + 1, 아니면 0), `Cause`(0 자기장·플레이어, 1 낙하. 1보다 크면 읽기 실패). 7B. 처치자가 있으면 `Cause`는 0이다. 경기 중 들어온 사람에게는 본인에게만 `VictimId = 자기, KillerId 0, Placement 0, Cause 0`으로 보낸다(관전 시작) |
-| PlayerRespawned | S→C(전원) | ReliableOrdered | EntityId, Position, Yaw, `Mode`(시작 이동 모드: 경기 시작의 공중 투입이면 `Transport` 6, 아니면 `Ground` 0. 6보다 크면 읽기 실패). 20B. 경기 시작·판 재시작 때 모두의 Spawn 이동에도 쓴다 |
+| PlayerDied | S→C(전원) | ReliableOrdered | VictimId, KillerId(0 = 처치자 없음), Placement(경기 중 탈락이면 1 이상: Solo는 남은 생존자 수 + 1, Phase 14 팀 경기는 팀이 전멸했으면 팀 배치, 살아 있으면 그 순간 남은 팀 수(잠정). 경기 밖이면 0), `Cause`(0 자기장·플레이어, 1 낙하. 1보다 크면 읽기 실패). 7B. 처치자가 있으면 `Cause`는 0이다. 경기 중 들어온 사람에게는 본인에게만 `VictimId = 자기, KillerId 0, Placement 0, Cause 0`으로 보낸다(관전 시작) |
+| PlayerRespawned | S→C(전원) | ReliableOrdered | EntityId, Position, Yaw, `Mode`(시작 이동 모드: 경기 시작의 공중 투입이면 `Transport` 6, 아니면 `Ground` 0. Phase 14: `Downed` 7까지 읽힌다(재투입은 `Ground`). 7보다 크면 읽기 실패). 20B. 경기 시작·판 재시작 때 모두의 Spawn 이동에도 쓴다 |
 | TransportRoute | S→C | ReliableOrdered | 시작 X·Z, 끝 X·Z, 고도(float 5개), 시작 Tick, 길이 Tick(u32 2개) = 29B. 경기 시작 때(`PlayerRespawned`보다 먼저 보낸다. 같은 채널이라 그 순서로 도착한다)와 경기 중 Join·Resume 때. Client는 이 값으로 수송기 위치를 서버 Tick마다 계산한다(`DropRoute.PositionAt`). 좌표가 ±127 밖이거나 고도가 음수이거나 길이가 0 또는 76800 Tick(10분) 초과면 읽기 실패 |
 | DoorStates | S→C | ReliableOrdered | 열린 문 비트 마스크(bit i = `GameMap.Doors[i]`, 문 5개) = 2B. 문이 바뀐 Tick의 끝(Tick당 최대 1개), 판 시작(모두 닫힘), Join·Resume 때. 없는 문의 비트가 켜져 있으면 읽기 실패 |
 | MatchState | S→C(전원, 바뀐 Tick 끝)·Join | ReliableOrdered | State(0 Waiting, 1 Starting, 2 Playing, 3 FinalPhase, 4 Finished, 5 Closing), StateEndTick u32(0 = 타이머 없음), Alive, Participants, Round u16, MinPlayers. 11B. 경기 전에는 Alive·Participants가 접속자 수다 |
@@ -40,6 +40,10 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
 | ResourcesState · HarvestHit · HarvestStates | S→C | ReliableOrdered(채널 0) | Phase 13. 자원 7B(본인, 바뀐 Tick 끝·Join·Resume), 채집 타격 18B(휘두른 사람), 부서진 채집 대상 마스크 9B(바뀐 Tick 끝·Join·Resume) |
 | BuildRequest | C→S | ReliableOrdered(채널 1) | Phase 13. 9B. Join한 연결만, 연결당 초당 20개 |
 | BuildResult · BuildEvents · BuildSync · BuildInterest | S→C | ReliableOrdered(채널 1) | Phase 13. 8B, 헤더 8B + 기록(Placed 14B, Health 6B, Destroyed 4B), 헤더 7B + 조각 16B × 최대 74(1191B), 9B. `Building.md` "네트워크" |
+| TeamState | S→C(자기 팀 구성원) | ReliableOrdered | Phase 14 D2. TeamId, Count 1–4, 구성원 × (EntityId u16, State: Up 0 / Downed 1 / Eliminated 2 / Rebooting 3, 10 단위로 올린 체력, Flags: CardDropped 1 / CardHeld 2) = 최대 23B. 경기 시작, 경기 중 Join·Resume, 바뀐 Tick 끝. 자기 팀만(적 팀 구성은 보내지 않는다) |
+| PlayerDowned | S→C(전원) | ReliableOrdered | Phase 14 D5. VictimId, AttackerId(0 = 없음), Cause(0 자기장, 1 낙하). 6B. Kill Feed "A ▸ B 기절" |
+| ChannelState | S→C(행위자 팀) | ReliableOrdered | Phase 14 D8. Kind(Revive 0 / Reboot 1), ActorId, Target(소생: 대상 Entity id, 재투입: 스테이션 번호), EndTick u32, Active. 11B. 시작·끝(완료·취소), Resume 때 진행 중인 것 |
+| RebootStations | S→C(전원) | ReliableOrdered | Phase 14 D10. 대기 마스크(bit i = `RebootStations.All[i]`) + 끝 Tick u32 × 4 = 18B. 바뀐 Tick 끝, 경기 시작·리셋, Join·Resume |
 | StatsResponse | S→C(요청한 사람) | ReliableOrdered | Status(0 Ok, 1 NoRecord, 2 Unavailable, 3 Busy), 요약(Matches, Wins, Kills, Deaths, Damage, SurvivalSeconds, 각 u32, 서버가 자른다), Count 0–10, 행(EndedUnixSeconds u32, Round u32, Players, Placement(0 = 순위 없음), Kills u16, Damage u32, SurvivalMs u32 = 20B) × Count, 최신순. Ok가 아니면 요약 0, 행 없음. 최대 227B |
 
 - Snapshot 헤더 13B(`Part`, `PartCount` 포함) + 수신자 블록 14B = 27B(Phase 12. 그 전에는 블록 6B로 19B), 엔티티 13B(Phase 12에서도 그대로. 이동 모드는 빈 `Flags` 비트에 넣었다). LiteNetLib은 Sequenced 패킷을 분할하지 않으므로 패킷 하나가 `MaxPacketSize` 1200B 이내여야 한다 → 패킷당 최대 90명 = 27 + 13 × 90 = 1197B(`PacketTests`가 고정, 3B 여유), 50명 = 27 + 13 × 50 = 677B(Phase 7의 1167B에서 -42.0 %. Phase 8~11은 669B). 수신자 블록을 읽을 때 기력이 가득(10000)보다 크면 헤더 읽기가 실패한다(범위 밖 블록 거절). 한 경기 최대 100명(`MaxSnapshotEntities`), Snapshot은 최대 2패킷(`MaxSnapshotParts`), `MaxPlayers ≤ 100`(기본 16, 시작 시 검증). 서버는 payload를 한 번 쓰고 수신자마다 AckInputSeq와 수신자 블록만 덮어쓴다(`WorldSnapshotHeader.PatchRecipient`).
@@ -55,6 +59,7 @@ LiteNetLib의 기본 단일 패킷 한도는 1020B라 Snapshot 한도(1200B)보�
   | 11 | 2048 | `Crouch` | Phase 12. 누르고 있는 상태(토글은 Client가 만든다). 뛰어내리기·글라이더·Vault는 Jump, 문은 Interact를 다시 쓴다 |
   | 12 | 4096 | `ToolHarvest` | Phase 13. F(누름). 알려진 비트는 0x3FFF가 된다 |
   | 13 | 8192 | `ToolBuild` | Phase 13. Q(누름). 건축 모드에서는 Fire가 배치 대신 아무것도 쏘지 않고, 배치는 `BuildRequest`로 간다 |
+  | 14 | 16384 | `InteractHeld` | Phase 14 D7. E가 눌려 있는 동안 매 입력에 켠다(누르고 있는 상태). 소생·재투입은 이 비트가 오는 동안만 이어진다. 줍기·문은 `Interact`(누름) 그대로. 알려진 비트는 0x7FFF가 된다 |
 - 이 표의 패킷 크기(`ItemCatalog` 219B, `WorldItems` 952B, `ItemSpawned` 20B, `InventoryState` 22B, 입력 패킷 92B, `MatchState` 11B, `ZoneState` 36B, `MatchResult` 6B, `StatsResponse` 227B 등)는 모두 PacketId 1B를 포함한 전체 바이트 수다. 새 패킷은 모두 1200B 이하다(`ItemPacketTests`, `MatchPacketTests`가 고정). Snapshot 크기는 위 Snapshot 항목을 본다(Phase 7까지는 50명 1167B, v7은 669B, v10은 677B). Phase 12의 `TransportRoute` 29B, `DoorStates` 2B, `PlayerRespawned` 20B, `PlayerDied` 7B도 `TraversalPacketTests`·`MatchPacketTests`가 고정한다. Zone 원은 Snapshot에 싣지 않는다(시작·끝 값과 Tick으로 양쪽이 같은 식으로 보간한다).
 - Client가 "누구를 맞혔다"고 보내는 필드는 없다. 명중은 서버가 조준 방향으로 판정한다.
 - Join 결과: Resumed는 끊겼던 참가자가 같은 Entity로 돌아온 것이다("끊기와 재접속"). 늦은 합류와 같은 전체 상태가 이어진다. MatchFull이면 응답만 보내고, 그 연결은 Join한 것으로 치지 않는다. 1초 뒤(응답이 먼저 나가도록) 코드 없이(`None`) 끊는다. Client는 Join 실패를 받으면 자동 재접속을 멈춘다(Phase 10). 이미 참가한 peer의 중복 Join은 서버 Match에 도달하지 않는다(아래 Validation).
@@ -220,6 +225,18 @@ Step 순서:
 - **밀린 건설 채널(최종 리뷰 A4):** 건설 채널의 신뢰 대기열이 32개를 넘은 연결은 그 Tick의 `BuildSync`를 건너뛴다. 사건·창·결과는 계속 간다. 오래 밀리면 `Congested`로 끊는다(위 표).
 - **누르는 키(최종 리뷰 A5):** 서버는 E(Interact), G(Drop), F(ToolHarvest), Q(ToolBuild), 1–3(Slot), R(Reload)을 직전 실제 입력에 없던 때만 처리한다. 키를 쥔 채 보내는 수정 Client도 줍기·버리기·문·도구 전환을 Tick마다 되풀이하지 못한다. Client와 봇은 이미 누름을 한 입력에만 싣는다(`LocalPlayerPredictor`의 queued 버튼). Fire·회복·점프·달리기·웅크리기는 쥔 상태 그대로다.
 - **Fuzz:** 새 파서 9개 모두 `ProtocolFuzzTests`에 들어 있다.
+
+## 분대 (Phase 14)
+
+설계 근거: `Docs/specs/2026-10-08-phase14-squad-dbno-design.md` D2, D4, D5, D7–D10, D13, D16. 규칙은 `Squad.md`다.
+
+- **새 패킷 4종(36–39)은 모두 S→C, 채널 0 ReliableOrdered다.** `PacketReader.TryReadPacketId`의 상한은 `RebootStations`(39)다. 새 리더 4개 모두 `ProtocolFuzzTests`에 들어 있다.
+- **Snapshot은 그대로다(Entity 13B).** 기절은 비어 있던 이동 모드 값 7(`Downed`)이다. 3비트의 8개 값이 모두 모드가 됐다. Alive 비트는 켜진 채다. 피격 상자 높이는 0.9 m.
+- **TeamState:** 받는 사람의 자기 팀만. 바뀔 때만(상태·10 단위 체력·카드 플래그). 나간 구성원은 목록에서 빠진다(Count가 줄어든다). 경기 밖(대기실·리셋 뒤)에는 오지 않는다. Solo도 1명짜리 팀으로 온다.
+- **RebootCard 월드 아이템:** `ItemKind.RebootCard` 5, DefId 0, Rarity 0, `Amount` = 주인 Entity id. 주인 팀에게만 `ItemSpawned`·`ItemRemoved`·`WorldItems`로 간다. 다른 팀은 카드가 있는 줄 모른다. 줍기는 `Interact`(누름)이고 서버가 같은 팀 카드만 고른다.
+- **진행률:** `ChannelState.EndTick`과 서버 Tick으로만 계산한다(Client 타이머 금지). 시작 Tick은 받은 때를 기억해 쓴다(길이는 서버 설정).
+- **접속 순서:** Join·Resume 때 기존 묶음의 끝에 `RebootStations`, (팀이 있으면) `TeamState`, (Resume이면) 팀의 진행 중인 `ChannelState`가 붙는다.
+- **HitConfirmed.Killed:** 탈락시켰을 때만 true다. 기절시킨 명중은 false(Client 명중 표시도 그렇게 맞춘다).
 
 ## 전적 조회 (Phase 11 D8)
 

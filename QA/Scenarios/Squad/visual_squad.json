@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "name": "Squad Visuals On A Unity Client (Screenshots)",
+  "description": "Phase 14 D14: a Unity Development player in a duo (it joins first, so it shares team 1 with 'mate') and the report gets screenshots of the squad HUD with the teammate's green body and marker beside an orange enemy, the teammate knocked down (red marker, flat body), the revive prompt and its progress bar while the player really holds E (InteractHeld), a reboot station pillar, and the player's own knocked-down screen with the bleed-out bar. Needs --unity-exe; SKIPPED without it.",
+  "tags": ["squad", "unity", "slow"],
+  "seed": 14101,
+  "timeoutSeconds": 240,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "4", "Server:TeamSize": "2" } },
+  "actors": [
+    { "id": "viewer", "type": "UnityClient", "unity": { "width": 1600, "height": 900 } },
+    { "id": "mate", "type": "HeadlessClient" },
+    { "id": "enemy1", "type": "HeadlessClient" },
+    { "id": "enemy2", "type": "HeadlessClient" }
+  ],
+  "steps": [
+    { "id": "viewer_launch", "phase": "arrange", "action": "connect", "actor": "viewer" },
+    { "id": "viewer_joined", "action": "waitForUnity", "actor": "viewer", "condition": "joined", "equals": true, "timeoutMilliseconds": 30000 },
+    { "id": "mate_connect", "action": "connect", "actor": "mate" },
+    { "id": "enemy1_connect", "action": "connect", "actor": "enemy1" },
+    { "id": "enemy2_connect", "action": "connect", "actor": "enemy2" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+    { "id": "in_game", "action": "waitForUnity", "actor": "viewer", "condition": "screen", "equals": "InGame", "timeoutMilliseconds": 10000 },
+
+    { "id": "viewer_place", "action": "setPosition", "actor": "viewer", "position": { "x": 0, "z": -2, "yaw": 0 } },
+    { "id": "mate_place", "action": "setPosition", "actor": "mate", "position": { "x": -1.5, "z": 5, "yaw": 180 } },
+    { "id": "enemy1_place", "action": "setPosition", "actor": "enemy1", "position": { "x": 2.5, "z": 7, "yaw": 180 } },
+    { "id": "enemy2_place", "action": "setPosition", "actor": "enemy2", "position": { "x": 40, "z": -40 } },
+    { "id": "place_settle", "action": "wait", "milliseconds": 1000 },
+    { "id": "shot_squad", "phase": "act", "action": "captureScreenshot", "actor": "viewer", "name": "squad_hud_teammate_green_enemy_orange" },
+
+    { "id": "mate_down", "action": "downPlayer", "actor": "mate" },
+    { "id": "mate_downed", "action": "waitFor", "condition": "player.downed", "actor": "mate", "equals": true, "timeoutMilliseconds": 2000 },
+    { "id": "down_settle", "action": "wait", "milliseconds": 700 },
+    { "id": "shot_mate_downed", "action": "captureScreenshot", "actor": "viewer", "name": "teammate_downed_red_marker" },
+
+    { "id": "viewer_to_mate", "action": "setPosition", "actor": "viewer", "position": { "x": -1.5, "z": 3.6 } },
+    { "id": "near_settle", "action": "wait", "milliseconds": 700 },
+    { "id": "shot_prompt", "action": "captureScreenshot", "actor": "viewer", "name": "revive_prompt" },
+    { "id": "hold_e", "action": "unityKey", "actor": "viewer", "key": "e", "holdMs": 6500, "async": true, "description": "Really hold E: InteractHeld in every input" },
+    { "id": "reviving", "phase": "assert", "action": "waitFor", "condition": "player.channel.kind", "actor": "viewer", "equals": "revive", "timeoutMilliseconds": 3000 },
+    { "id": "progress_settle", "phase": "act", "action": "wait", "milliseconds": 2000 },
+    { "id": "shot_progress", "action": "captureScreenshot", "actor": "viewer", "name": "revive_progress" },
+    { "id": "mate_up", "phase": "assert", "action": "waitFor", "condition": "player.downed", "actor": "mate", "equals": false, "timeoutMilliseconds": 8000 },
+
+    { "id": "viewer_to_station", "phase": "act", "action": "setPosition", "actor": "viewer", "position": { "x": -42, "z": 35 } },
+    { "id": "station_settle", "action": "wait", "milliseconds": 1000 },
+    { "id": "shot_station", "action": "captureScreenshot", "actor": "viewer", "name": "reboot_station_pillar" },
+
+    { "id": "viewer_down", "action": "downPlayer", "actor": "viewer" },
+    { "id": "viewer_downed", "phase": "assert", "action": "waitFor", "condition": "player.downed", "actor": "viewer", "equals": true, "timeoutMilliseconds": 2000 },
+    { "id": "viewer_down_settle", "phase": "act", "action": "wait", "milliseconds": 1500 },
+    { "id": "shot_viewer_downed", "action": "captureScreenshot", "actor": "viewer", "name": "own_downed_bleed_bar" }
+  ]
+}

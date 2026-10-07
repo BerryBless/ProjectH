@@ -40,6 +40,18 @@ namespace ProjectH.Client.Game
             return target;
         }
 
+        // 기능: 분대 관전의 이번 프레임 대상을 고른다(Phase 14 D12). 살아 있는 팀원이 있으면 그중에서 고르고(지금 대상이 팀원이면 유지,
+        //   아니면 다음 팀원), 이때 처치자 선호는 건드리지 않는다. 팀원이 모두 탈락했으면 기존 Follow(처치자 → 다음 사람)를 따른다.
+        // 입력: alive·count - 살아 있는 원격 플레이어, teammates·teamCount - 그중 경기 안의 팀원, current - 지금 대상,
+        //   preferred - 처치자(대상을 찾으면 Follow가 지운다).
+        // 출력: 따라갈 id, 아무도 없으면 0.
+        public static ushort FollowSquad(ushort[] alive, int count, ushort[] teammates, int teamCount, ushort current, ref ushort preferred)
+        {
+            if (teamCount > 0)
+                return current != 0 && Contains(teammates, teamCount, current) ? current : Next(teammates, teamCount, current);
+            return Follow(alive, count, current, ref preferred);
+        }
+
         public static bool Contains(ushort[] alive, int count, ushort id)
         {
             for (int i = 0; i < count; i++)

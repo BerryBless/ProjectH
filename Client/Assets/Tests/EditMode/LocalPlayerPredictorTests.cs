@@ -355,5 +355,56 @@ namespace ProjectH.Client.Tests
             predictor.Reconcile(new SnapshotEntity { Position = new System.Numerics.Vector3(9f, 0f, 9f), Flags = 0 }, Rested, 4, 0);   // old life's body
             Assert.AreEqual(afterRespawn, predictor.PredictedPosition);
         }
+
+        // Phase 14 D7: InteractHeld (E down) goes into every step like the other held buttons; the E press stays the queued
+        // Interact on the last step only.
+        [Test]
+        public void InteractHeld_GoesToEveryStep_AndThePressToTheLast()
+        {
+            var predictor = NewPredictor();
+            InputButtons queued = InputButtons.Interact;
+            predictor.Advance(3 * Step + 0.0005f, Vector2.zero, 0f, InputButtons.InteractHeld, ref queued);
+
+            Assert.AreEqual(InputButtons.InteractHeld, predictor.InputAt(1).Buttons);
+            Assert.AreEqual(InputButtons.InteractHeld, predictor.InputAt(2).Buttons);
+            Assert.AreEqual(InputButtons.InteractHeld | InputButtons.Interact, predictor.InputAt(3).Buttons);
+            Assert.AreEqual(InputButtons.None, queued);
+            // The bit survives the input packet's known-button mask.
+            Assert.IsTrue(predictor.TryBuildInputPacket(out PlayerInputPacket packet));
+            var buffer = new byte[ProtocolConstants.MaxPacketSize];
+            var writer = new PacketWriter(buffer);
+            PlayerInputPacket.Write(ref writer, packet);
+            var reader = new PacketReader(writer.WrittenSpan);
+            Assert.IsTrue(reader.TryReadPacketId(out _));
+            Assert.IsTrue(PlayerInputPacket.TryRead(ref reader, out PlayerInputPacket read));
+            Assert.AreEqual(InputButtons.InteractHeld, read.Input0.Buttons);
+            Assert.AreEqual(InputButtons.InteractHeld | InputButtons.Interact, read.Input2.Buttons);
+        }
+
+        [Test]
+        public void InteractHeld_IsNotSentWhileDead()
+        {
+            var predictor = NewPredictor();
+            predictor.SetDead();
+            AdvanceSteps(predictor, 2, Vector2.zero, InputButtons.InteractHeld);
+            Assert.AreEqual(InputButtons.None, predictor.InputAt(1).Buttons);
+            Assert.AreEqual(InputButtons.None, predictor.InputAt(2).Buttons);
+        }
+
+        // Phase 14 D4: downed (the server's mode) the prediction crawls with the Shared rule, ignores jump, sprint and crouch,
+        // never leaves Downed on its own, and no action is allowed.
+        [Test]
+        public void Downed_Crawls_AndActsOnNothing()
+        {
+            var predictor = new LocalPlayerPredictor(SimHz, new MoveState { Mode = MovementMode.Downed });
+            InputButtons queued = InputButtons.Jump;
+            predictor.Advance(10 * Step + 0.0005f, Vector2.up, 0f, InputButtons.Sprint | InputButtons.Crouch, ref queued);
+
+            Assert.AreEqual(MovementMode.Downed, predictor.Mode);
+            Assert.AreEqual(MovementTuning.CrawlSpeed, predictor.HorizontalSpeed, 1e-3f);
+            Assert.IsFalse(predictor.Sprinting);
+            Assert.IsFalse(LocalPlayerPredictor.ActionsAllowed(MovementMode.Downed));
+            Assert.IsFalse(predictor.ActionsAllowedAt(predictor.LastSeq));
+        }
     }
 }

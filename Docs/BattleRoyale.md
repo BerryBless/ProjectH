@@ -85,3 +85,7 @@ stateDiagram-v2
 ## 아직 없는 것 (D15)
 
 팀·분대, 기절, 관전자 채팅, 지형 가중 Zone, Zone 경고 음향. Phase 6 D14: 2층 건물, 미니맵. Phase 12 D17: 지도 UI(낙하 지점 고르기. 수송기 경로는 F1 문구와 월드의 수송기로만 보인다)와 새 애니메이션 에셋. (Phase 5 때 "없는 것"이던 비행기·낙하산 투입은 Phase 12에서, 킬로그 UI는 Phase 11에서, 재접속은 Phase 10에서, 전적 저장은 Phase 9에서 생겼다.)
+
+## 팀 경기 (Phase 14)
+
+`ServerOptions.TeamSize`가 2 이상이면 경기 시작 때 참가자가 입장 순서로 팀이 되고, 순위·승자·종료는 팀 단위다(`MatchFlow.TeamsAlive`, 종료 = 남은 팀 ≤ 1, `MatchResult.Participants` = 팀 수). 기절·소생·Reboot과 `PlayerDied.Placement`의 잠정 값 규칙은 `Squad.md`에 있다. Solo(TeamSize 1, 기본)는 위 규칙 그대로다.

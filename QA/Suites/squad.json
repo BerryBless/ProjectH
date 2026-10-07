@@ -1,0 +1,14 @@
+{
+  "name": "squad",
+  "description": "Phase 14 squads over the real protocol (headless, TeamSize 2, about 4 min): teams and friendly fire, knock-down, bleed-out, revive, revive cancel, squad elimination, reboot, reconnect while knocked down.",
+  "scenarios": [
+    "Squad/duo_basic.json",
+    "Squad/dbno.json",
+    "Squad/dbno_bleedout.json",
+    "Squad/revive.json",
+    "Squad/revive_cancel.json",
+    "Squad/squad_elimination.json",
+    "Squad/reboot.json",
+    "Squad/reconnect_dbno.json"
+  ]
+}

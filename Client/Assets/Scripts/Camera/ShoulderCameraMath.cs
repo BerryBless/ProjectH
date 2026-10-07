@@ -48,6 +48,8 @@ namespace ProjectH.Client.CameraControl
         // Phase 12 D14: the mode targets, and how fast the camera eases to them (no shake anywhere).
         public const float SprintFov = 66f;
         public const float CrouchPivotHeight = 1.1f;
+        // Phase 14 D14: downed, the camera drops near the ground (the downed eye is 0.6 m).
+        public const float DownedPivotHeight = 0.7f;
         public const float AirDistance = 6f;
         public const float AirFov = 70f;
         public const float TransportDistance = 12f;
@@ -55,8 +57,10 @@ namespace ProjectH.Client.CameraControl
 
         public static CameraTargets Hip => new CameraTargets { PivotHeight = PivotHeight, Distance = HipDistance, FieldOfView = HipFov };
 
-        // D14: sprinting widens the view; crouched or sliding the pivot is lower; falling and gliding the camera backs off
-        // with a wider view; aboard it follows the transport from further away.
+        // 기능: 모드가 원하는 허리 카메라 값을 고른다(D14: 질주는 넓게, 웅크리기·슬라이드는 낮게, 낙하·글라이드는 멀고 넓게,
+        //   탑승은 더 멀리. Phase 14: 기절은 더 낮게).
+        // 입력: mode - 따라가는 캐릭터의 이동 모드, sprinting - 질주 중인지.
+        // 출력: 기준 높이·거리·FOV 목표.
         public static CameraTargets TargetsFor(MovementMode mode, bool sprinting)
         {
             CameraTargets targets = Hip;
@@ -65,6 +69,9 @@ namespace ProjectH.Client.CameraControl
                 case MovementMode.Crouch:
                 case MovementMode.Slide:
                     targets.PivotHeight = CrouchPivotHeight;
+                    break;
+                case MovementMode.Downed:
+                    targets.PivotHeight = DownedPivotHeight;
                     break;
                 case MovementMode.Freefall:
                 case MovementMode.Glide:

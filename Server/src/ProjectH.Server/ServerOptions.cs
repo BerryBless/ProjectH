@@ -38,6 +38,9 @@ public sealed class ServerOptions
     // Phase 13 D17 (request §136): building costs nothing (load tests: --Server:BuildInfiniteResources=true). Off in
     // production; bots in a real match follow the normal resource rules.
     public bool BuildInfiniteResources { get; set; }
+    // Phase 14 D1: players per team, 1 Solo (default), 2 Duo, 4 Squad (1-4). A match groups its participants by join order
+    // into teams of this size (always at least two teams).
+    public int TeamSize { get; set; } = 1;
 
     // Phase 10 (D2-D4): a participant who drops during a match keeps its character this long (0 = off); a connection
     // must join within JoinTimeoutSeconds; a joined player that sends no input for InputTimeoutSeconds is disconnected
@@ -74,6 +77,9 @@ public sealed class ServerOptions
     public int MaxInputPacketsPerSecond => SimHz * 2;
     public int InputBurst => SimHz;
 
+    // 기능: 시작 때 설정 값을 검사한다(Phase 14: TeamSize 1-4).
+    // 입력: 없음.
+    // 출력: 맞으면 null, 틀리면 이유.
     public string? Validate()
     {
         if (Port < 0 || Port > 65535) return "Port must be 0-65535.";
@@ -96,6 +102,7 @@ public sealed class ServerOptions
         if (ResultSeconds < 1 || ResultSeconds > 300) return "ResultSeconds must be 1-300.";
         if (ZoneSeed < 0) return "ZoneSeed must be 0 or more.";
         if (SpawnSeed < 0) return "SpawnSeed must be 0 or more.";
+        if (TeamSize < 1 || TeamSize > SquadConstants.MaxTeamSize) return $"TeamSize must be 1-{SquadConstants.MaxTeamSize} (1 Solo, 2 Duo, 4 Squad).";
         if (ReconnectGraceSeconds < 0 || ReconnectGraceSeconds > 60) return "ReconnectGraceSeconds must be 0-60 (0 = off).";
         if (JoinTimeoutSeconds < 1 || JoinTimeoutSeconds > 60) return "JoinTimeoutSeconds must be 1-60.";
         // Below 2 s a normal hitch (a scene load, a GC pause on a weak machine) would disconnect live players.

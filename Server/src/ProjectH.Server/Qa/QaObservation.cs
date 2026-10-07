@@ -148,6 +148,7 @@ internal sealed class QaEvents
         public int Kills;
         public int Inventory;
         public bool Present;
+        public bool Downed;   // Phase 14
     }
 
     private readonly QaEvent?[] _ring = new QaEvent?[QaOptions.EventCapacity];
@@ -194,6 +195,9 @@ internal sealed class QaEvents
         return new { next, oldest = Oldest, latest = _nextSeq - 1, dropped = missed, droppedTotal = DroppedTotal, events };
     }
 
+    // 기능: 이전 Tick과 비교해 QA 사건을 만든다. Phase 14: PlayerDowned·PlayerRevived·PlayerRebooted, 기절·소생의 체력 변화와 출혈은 피해·회복 사건이 아니다.
+    // 입력: match - 지금 경기.
+    // 출력: 반환값 없음. 사건 Ring에 추가된다.
     public void Diff(Match match)
     {
         uint tick = match.ServerTick;
@@ -232,6 +236,7 @@ internal sealed class QaEvents
                 _players.Add(p, new Seen
                 {
                     Graced = p.IsGraced, Alive = p.Alive, Health = p.Health, Shield = p.Shield, Kills = p.Kills, Inventory = inventory, Present = true,
+                    Downed = p.IsDowned,
                 });
                 Add(tick, "PlayerJoined", p.DevPlayerId, new Dictionary<string, object?> { ["entityId"] = (int)p.EntityId, ["alive"] = p.Alive });
                 continue;
@@ -239,15 +244,25 @@ internal sealed class QaEvents
             seen.Present = true;
             if (seen.Graced != p.IsGraced) Add(tick, p.IsGraced ? "PlayerGraced" : "PlayerResumed", p.DevPlayerId);
 
+            // Phase 14: a knock-down sets the downed health (up from 0) and a revive the revive health: those jumps are the
+            // PlayerDowned and PlayerRevived events, not damage or a heal.
+            bool downChanged = seen.Downed != p.IsDowned;
+            if (!seen.Downed && p.IsDowned)
+                Add(tick, "PlayerDowned", p.DevPlayerId, new Dictionary<string, object?> { ["by"] = p.DownedBy?.DevPlayerId, ["health"] = p.Health });
+            else if (seen.Downed && p.IsUp)
+                Add(tick, "PlayerRevived", p.DevPlayerId, new Dictionary<string, object?> { ["health"] = p.Health, ["mode"] = p.State.Mode.ToString() });
             int before = seen.Health + seen.Shield;
             int now = p.Health + p.Shield;
-            if (!stateChanged && now < before)
+            // The bleed takes one health point every few ticks (squad.json): not an event, or the ring would fill with it.
+            bool bleed = seen.Downed && p.IsDowned && before - now == 1;
+            if (downChanged || bleed) { }
+            else if (!stateChanged && now < before)
                 Add(tick, "PlayerDamaged", p.DevPlayerId, new Dictionary<string, object?> { ["amount"] = before - now, ["health"] = p.Health, ["shield"] = p.Shield });
             else if (!stateChanged && now > before && seen.Alive && p.Alive)
                 Add(tick, "PlayerHealed", p.DevPlayerId, new Dictionary<string, object?> { ["amount"] = now - before, ["health"] = p.Health, ["shield"] = p.Shield });
 
             if (seen.Alive && !p.Alive) _killed.Add(p);
-            else if (!seen.Alive && p.Alive) Add(tick, "PlayerRespawned", p.DevPlayerId);
+            else if (!seen.Alive && p.Alive) Add(tick, p.Participant && !stateChanged ? "PlayerRebooted" : "PlayerRespawned", p.DevPlayerId);
             if (p.Kills > seen.Kills)
             {
                 _killer = p;
@@ -261,6 +276,7 @@ internal sealed class QaEvents
             seen.Shield = p.Shield;
             seen.Kills = p.Kills;
             seen.Inventory = inventory;
+            seen.Downed = p.IsDowned;
         }
 
         // D6: the killer is a guess: the one player whose kills rose this tick (none or several: unknown).

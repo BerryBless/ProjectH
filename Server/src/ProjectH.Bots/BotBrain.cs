@@ -14,6 +14,7 @@ public enum BotGoal : byte
     Loot = 5,      // walk to a useful item and press E (rule 6)
     Wander = 6,    // walk to a random point in the zone (rule 7)
     Deploy = 7,    // Phase 12 D15: ride the transport, jump, steer the fall to the landing target
+    Crawl = 8,     // Phase 14 D15: knocked down: crawl towards the nearest teammate (bots do not revive yet)
 }
 
 // Phase 7 D4-D7: one bot's decisions. Decide() re-plans every DecideInterval from the BotView; Act() turns the plan
@@ -89,6 +90,9 @@ public sealed class BotBrain
     public Vector3 LandingTarget => _landingTarget;
     public uint JumpTick => _jumpTick;
 
+    // 기능: 봇의 이번 Tick 입력을 정한다(죽음, 투입, Phase 14 기절이면 팀원 쪽으로 기어감, 그 외 결정과 행동).
+    // 입력: view - 봇이 아는 것, now - 지금 시각(초), command - 이번 입력.
+    // 출력: 보낼 입력이 있으면 true.
     // This tick's input. False = send nothing (not joined, or no snapshot yet). A dead or spectating bot returns true
     // with an empty input (Phase 10 D4), so the server's input timeout does not close it.
     public bool Tick(BotView view, float now, out InputCommand command)
@@ -112,6 +116,13 @@ public sealed class BotBrain
         // Phase 12 D15: aboard, falling or gliding nothing else is possible (D12): ride, jump, steer the fall.
         if (Deploy(view, now, ref command))
         {
+            command.ViewTick = view.ServerTick;
+            return true;
+        }
+        // Phase 14 D15: knocked down nothing but crawling is possible (the server blocks every action).
+        if (view.MyMode == MovementMode.Downed)
+        {
+            Crawl(view, now, ref command);
             command.ViewTick = view.ServerTick;
             return true;
         }
@@ -207,6 +218,36 @@ public sealed class BotBrain
         return Math.Clamp(tick, first, last);
     }
 
+    // 기능: 기절한 봇이 가장 가까운 팀원 쪽으로 기어간다(D15). 보이는 팀원이 없으면 멈춘다.
+    // 입력: view - 봇이 아는 것, now - 지금 시각(초), command - 이번 입력.
+    // 출력: 반환값 없음. command의 이동이 정해진다.
+    private void Crawl(BotView view, float now, ref InputCommand command)
+    {
+        if (Goal != BotGoal.Crawl) _steering.Reset(view.MyPosition, view.MyPosition, now);
+        Goal = BotGoal.Crawl;
+        Vector3 me = view.MyPosition;
+        int best = -1;
+        float bestDistance = float.MaxValue;
+        for (int i = 0; i < view.OtherCount; i++)
+        {
+            ref readonly SnapshotEntity other = ref view.Others[i];
+            if (!other.IsAlive || other.Mode == MovementMode.Downed || !view.IsTeammate(other.EntityId)) continue;
+            float d = BotAim.HorizontalDistance(me, other.Position);
+            if (d >= bestDistance) continue;
+            best = i;
+            bestDistance = d;
+        }
+        command.Yaw = _bodyYaw;
+        if (best < 0 || bestDistance < CrawlStopDistance) return;
+        GoalPoint = view.Others[best].Position;
+        Walk(me, GoalPoint, now, ref command, out _);
+        command.Buttons &= ~(InputButtons.Jump | InputButtons.Sprint);
+        _bodyYaw = command.Yaw;
+    }
+
+    // Phase 14 D15: a crawling bot stops this close to its teammate (inside the 2 m revive range).
+    private const float CrawlStopDistance = 1.5f;
+
     private void Decide(BotView view, float now)
     {
         Vector3 me = view.MyPosition;
@@ -272,6 +313,9 @@ public sealed class BotBrain
         return true;
     }
 
+    // 기능: 사거리 안, 보이는, 무시하지 않은 가장 가까운 적을 고른다(Phase 14 D15: 팀원은 제외, 기절한 적은 낮게 겨눠 포함).
+    // 입력: view - 봇이 아는 것, now - 지금 시각, target - 고른 Entity id.
+    // 출력: 골랐으면 true.
     // Rule 4: the nearest living, visible, not ignored enemy within range, if this bot has a weapon with rounds.
     private bool TryPickTarget(BotView view, float now, out ushort target)
     {
@@ -294,14 +338,15 @@ public sealed class BotBrain
             for (int i = 0; i < view.OtherCount; i++)
             {
                 ref readonly SnapshotEntity other = ref view.Others[i];
-                if (!other.IsAlive || IsIgnored(other.EntityId, now)) continue;
+                // Phase 14 D15: never a teammate; a knocked-down enemy stays a target (it can be finished).
+                if (!other.IsAlive || IsIgnored(other.EntityId, now) || view.IsTeammate(other.EntityId)) continue;
                 float d = Vector3.Distance(view.MyPosition, other.Position);
                 if (d > range || d <= floor || d >= bestDistance) continue;
                 best = i;
                 bestDistance = d;
             }
             if (best < 0) return false;
-            if (LineOfSight.Clear(eye, BotAim.Chest(view.Others[best].Position), GameMap.Boxes, GameMap.Terrain))
+            if (LineOfSight.Clear(eye, BotAim.Chest(view.Others[best].Position, view.Others[best].Mode), GameMap.Boxes, GameMap.Terrain))
             {
                 target = view.Others[best].EntityId;
                 return true;
@@ -330,6 +375,9 @@ public sealed class BotBrain
         return magazine > 0 || view.Reserve(weapon.AmmoType) > 0;
     }
 
+    // 기능: 가까운 적이 없고(Phase 14: 팀원은 적이 아니다) 체력·실드가 낮으면 회복 버튼을 고른다.
+    // 입력: view - 봇이 아는 것, button - 누를 버튼.
+    // 출력: 회복할 것이면 true.
     // Rule 5: no enemy close, and Health or Shield low with the matching item. A running heal keeps the goal.
     private static bool TryHeal(BotView view, out InputButtons button)
     {
@@ -337,7 +385,8 @@ public sealed class BotBrain
         if (!view.HasInventory) return false;
         for (int i = 0; i < view.OtherCount; i++)
         {
-            if (view.Others[i].IsAlive && Vector3.Distance(view.MyPosition, view.Others[i].Position) < HealSafeDistance) return false;
+            if (view.Others[i].IsAlive && !view.IsTeammate(view.Others[i].EntityId) &&
+                Vector3.Distance(view.MyPosition, view.Others[i].Position) < HealSafeDistance) return false;
         }
         if (view.Inventory.Using != ConsumableType.None) return true;   // wait for it to finish
         if (view.Self.Health < HealHealthBelow && view.Inventory.Medkits > 0) button = InputButtons.UseMedkit;
@@ -506,6 +555,9 @@ public sealed class BotBrain
         _nextButton = now + ButtonRepeatSeconds;
     }
 
+    // 기능: 표적을 겨누고 쏘며 옆으로 움직인다(Phase 14: 기절한 표적은 낮은 몸 가운데를 겨눈다).
+    // 입력: view - 봇이 아는 것, now - 지금 시각, command - 이번 입력.
+    // 출력: 반환값 없음.
     private void ActFight(BotView view, float now, ref InputCommand command)
     {
         int index = FindOther(view, Target);
@@ -523,7 +575,7 @@ public sealed class BotBrain
             _aimErrorPitch = BotAim.RollError(_rng, distance);
             _nextAimRoll = now + AimErrorRefreshSeconds;
         }
-        BotAim.Solve(BotAim.Eye(me), BotAim.Chest(enemy), out float yaw, out float pitch);
+        BotAim.Solve(BotAim.Eye(me), BotAim.Chest(enemy, view.Others[index].Mode), out float yaw, out float pitch);
         command.AimYaw = yaw + _aimErrorYaw;
         command.AimPitch = pitch + _aimErrorPitch;
         command.Yaw = yaw;

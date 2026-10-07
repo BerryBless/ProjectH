@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "name": "Reconnect While Knocked Down",
+  "description": "Phase 14 D13 (request §47): a knocked-down A drops. It is graced like any living participant: it keeps bleeding on the server. It comes back within ReconnectGraceSeconds and resumes the same downed character; the resume sends its team again (TeamState), and teammate B can still revive it.",
+  "tags": ["squad", "reconnect", "dbno"],
+  "seed": 14008,
+  "timeoutSeconds": 120,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "4", "Server:TeamSize": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" }, { "id": "playerC" }, { "id": "playerD" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "c_connect", "action": "connect", "actor": "playerC" },
+    { "id": "d_connect", "action": "connect", "actor": "playerD" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 0, "z": 4 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": 1.2, "z": 4, "yaw": 270 } },
+    { "id": "c_place", "action": "setPosition", "actor": "playerC", "position": { "x": -20, "z": 20 } },
+    { "id": "d_place", "action": "setPosition", "actor": "playerD", "position": { "x": 20, "z": 20 } },
+    { "id": "a_down", "action": "downPlayer", "actor": "playerA" },
+    { "id": "a_downed", "action": "waitFor", "condition": "player.downed", "actor": "playerA", "equals": true, "timeoutMilliseconds": 2000 },
+    { "id": "a_entity", "action": "save", "path": "player.entityId", "actor": "playerA", "saveAs": "aEntity" },
+
+    { "id": "a_drop", "phase": "act", "action": "disconnect", "actor": "playerA" },
+    { "id": "a_graced", "phase": "assert", "action": "waitFor", "condition": "player.graced", "actor": "playerA", "equals": true, "timeoutMilliseconds": 3000 },
+    { "id": "a_health_away", "action": "save", "path": "player.health", "actor": "playerA", "saveAs": "aHealth" },
+    { "id": "a_away", "phase": "act", "action": "wait", "milliseconds": 2500 },
+    { "id": "bleeds_while_away", "phase": "assert", "assert": "player.health", "actor": "playerA", "lessThan": "${aHealth}" },
+    { "id": "a_reconnect", "phase": "act", "action": "reconnect", "actor": "playerA" },
+
+    { "id": "resumed_event", "phase": "assert", "action": "waitForEvent", "event": "PlayerResumed", "actor": "playerA", "timeoutMilliseconds": 3000 },
+    { "id": "a_same_entity", "assert": "player.entityId", "actor": "playerA", "equals": "${aEntity}" },
+    { "id": "a_still_down", "assert": "player.downed", "actor": "playerA", "equals": true },
+    { "id": "a_client_mode", "action": "waitFor", "condition": "actor.mode", "actor": "playerA", "equals": "Downed", "timeoutMilliseconds": 3000 },
+    { "id": "a_client_team", "action": "waitFor", "condition": "actor.teamId", "actor": "playerA", "equals": 1, "timeoutMilliseconds": 3000 },
+
+    { "id": "b_hold", "phase": "act", "action": "holdInteract", "actor": "playerB" },
+    { "id": "a_up", "phase": "assert", "action": "waitFor", "condition": "player.downed", "actor": "playerA", "equals": false, "timeoutMilliseconds": 8000 },
+    { "id": "a_health_revived", "assert": "player.health", "actor": "playerA", "equals": 30 },
+    { "id": "b_release", "phase": "act", "action": "holdInteract", "actor": "playerB", "held": false }
+  ]
+}

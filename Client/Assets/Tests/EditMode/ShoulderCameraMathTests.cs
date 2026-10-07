@@ -176,5 +176,15 @@ namespace ProjectH.Client.Tests
             AssertVector(Vector3.down, ShoulderCameraMath.Forward(0f, 90f));
             AssertVector(new Vector3(0f, 0f, -1f), ShoulderCameraMath.Right(90f));
         }
+
+        // Phase 14 D14: downed, the camera drops lower than crouched.
+        [Test]
+        public void CameraTargets_Downed_IsLow()
+        {
+            CameraTargets downed = ShoulderCameraMath.TargetsFor(ProjectH.Shared.Simulation.MovementMode.Downed, true);
+            Assert.AreEqual(ShoulderCameraMath.DownedPivotHeight, downed.PivotHeight, 1e-6f);
+            Assert.Less(downed.PivotHeight, ShoulderCameraMath.CrouchPivotHeight);
+            Assert.AreEqual(ShoulderCameraMath.HipFov, downed.FieldOfView, 1e-6f);   // no sprint widening
+        }
     }
 }

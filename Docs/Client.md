@@ -112,6 +112,21 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
 - **F1:** 건설 줄 "도구 · 조각/재료 · 구조물 n(표시 n, 무시 n) · 요청 n(n/s) · 거절 n 코드"(0.25초마다, 바뀔 때만). 요청 §190에 따라 Development Build와 Editor에서만 보인다(`Debug.isDebugBuild`). 다른 F1 줄은 전과 같다.
 - **Lifetime:** `PieceMeshes`, `BuildPieceViews`, `BuildPreview`, `HarvestEffects`, `BuildHud`는 `Awake`에서 만들고 `OnDestroy`에서 해제한다. 이벤트 구독이 9개 늘었다(`BuildCatalogReceived`, `ResourcesReceived`, `BuildResultReceived`, `BuildPieceReceived`, `BuildHealthReceived`, `BuildDestroyedReceived`, `BuildResetReceived`, `BuildInterestReceived`, `HarvestHitReceived`). 연결이 끊기면(`ClearMatchState`) 조각·유령·효과를 모두 치운다.
 
+## 분대 (Phase 14)
+
+`Squad.md`가 규칙이다(D14). Client는 서버가 정한 것을 보여 주기만 한다. 파일: `Game/SquadState`(우리 팀과 채널 고정 4칸, 진행률은 `ChannelState.EndTick`과 서버 Tick 추정으로만), `SquadHudText`(바뀔 때만 문자열), `SquadHud`(왼쪽 위 팀원 줄 4개 + 체력 막대, 카드 줄, 기절 막대, 진행 막대), `SquadPrompt`(가까운 기절 팀원 2 m·스테이션 수평 3 m/높이 2 m, 출혈 남은 초. `squad.json` 기본값의 표시용 복사본이라 서버 `SquadCatalogTests`가 같은지 고정한다), `TeammateMarkers`(팀원 머리 위 마름모 풀 3개, 초록·기절 빨강), `RebootStationViews`(기둥 4개, 공유 원기둥 Mesh, 대기 중 회색, Collider 없음).
+
+- **팀원 표시(§33):** 팀원 캡슐은 초록(나 파랑, 적 주황). 팀원의 원격 피격 Collider를 끈다(아군 사격 통과: 조준점이 팀원에 멈추지 않고 뒤의 적에 찍힌다). 편집 대상 고르기도 팀원을 지나간다.
+- **분대 HUD:** 팀이 2명 이상일 때만 보인다(Solo의 1인 팀은 숨김). 이름, 체력 막대, 상태(기절·탈락·카드·재투입 중), 소지 카드 수.
+- **기절:** 내 화면은 카메라 기준 높이 0.7(`ShoulderCameraMath`), "기절 · 출혈 n초" 막대, 조준점 숨김. 기절한 캡슐은 높이 0.9(`PlayerPose`). 눈높이 0.6(`AimSolver.DownedEyeHeight` = 서버 `CombatRules.DownedEyeHeight`). 기어가기는 Shared `MovementSimulation`으로 예측한다. `LocalPlayerPredictor.ActionsAllowed` 복사본에는 Downed를 넣지 않는다(행동 불가).
+- **소생·재투입:** E가 눌려 있는 동안 매 입력에 `InteractHeld`(`InputReader`). 안내 "[E] 길게 눌러 소생/재투입"과 진행 막대. 소생·재투입 대상이 있으면 문·줍기 안내를 끈다(D7 우선순위). 알려진 차이: 그 프레임에도 E 누름(`Interact`)은 보내므로 기절 팀원 옆의 문에서 Client 문 예측이 한 번 잘못 열릴 수 있고, 서버 `DoorStates`가 바로 고친다.
+- **카드:** 바닥의 카드(납작한 초록 판, 우리 팀 카드만 서버가 알려 준다), 카드 줍기 안내, HUD의 소지 카드 수(`InventoryState.RebootCards`).
+- **Kill Feed:** `PlayerDowned`마다 "A ▸ B 기절" 줄.
+- **관전(D12):** 살아 있는 팀원 먼저(처치자 선호는 보존), 클릭 순환도 팀원 안에서. 팀이 모두 탈락하면 지금 흐름.
+- **결과:** 우승 = 배치 1(팀 배치). 분대면 "순위 n / m팀", "우승 팀: 이름"(`UiText.Placement`·`Winner`의 teams 오버로드). `PlayerDied.Placement`는 잠정 값이라 쓰지 않는다. 신규 관전자 안내는 "피해자 = 나, Placement 0, 처치자 0, Zone, 내가 팀에 없음"일 때만이다.
+- **EditMode 테스트:** `SquadStateTests`, `SquadHudTextTests`, `SquadPromptTests`, `SpectatorTargetsTests`(분대 관전), `LocalPlayerPredictorTests`(InteractHeld, 기절 기어가기·행동 불가), `PlayerPoseTests`, `AimSolverTests`, `ShoulderCameraMathTests`.
+- **Lifetime:** `SquadHud`, `TeammateMarkers`, `RebootStationViews`는 `Awake`에서 만들고 `OnDestroy`에서 해제한다(각자 Material 소유). 이벤트 구독 4개(`TeamStateReceived`, `PlayerDownedReceived`, `ChannelStateReceived`, `RebootStationsReceived`). 끊김(`ClearMatchState`)과 새 라운드 카운트다운에 분대 상태를 비운다. 매 프레임 할당 없음.
+
 ## 화면과 흐름 (Phase 11)
 
 설계 근거: `Docs/specs/2026-10-01-phase11-game-ui-design.md`. 어느 화면을 보일지는 `UiFlow`(D3)가 정한다. `UiRoot`가 매 프레임 `GameClient`가 말하는 것(연결 상태, 재접속 중인지, 지금까지 받은 `MatchResult` 수, 마지막 `MatchState`)을 `UiFlow.Update`에 넣고, 버튼과 Esc는 `UiFlow`의 명령 메서드를 부른다. 화면은 그 결과만 그린다. `UiFlow`의 상태는 `Title`, `Connecting`, `InGame`, `Menu`, `Disconnected`, `Result`다.

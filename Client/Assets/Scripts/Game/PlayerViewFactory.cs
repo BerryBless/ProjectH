@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace ProjectH.Client.Game
 {
-    // One character on screen (Phase 12 D14). The root sits at the feet, never rotates and carries the remote hit box,
+    // One character on screen (Phase 12 D14). Phase 14 D3, D14: a teammate is green and has no active hit box (shots pass). The root sits at the feet, never rotates and carries the remote hit box,
     // so the box stays axis-aligned like the server's AABB (D7) at the mode's height (D13). The capsule child shows the
     // pose (PlayerPose: height, lean, lying down), a flat wing child the glider. Transforms change only when the pose
     // does, besides the per-frame position and facing. Created on spawn and destroyed on despawn.
@@ -18,6 +18,7 @@ namespace ProjectH.Client.Game
         private readonly Transform _wingsTransform;
         private readonly BoxCollider _collider;   // null for the local player
         private bool _alive = true;
+        private bool _teammate;   // Phase 14 D14: drawn green
         private bool _hidden;
         private PlayerPose _pose;
         private bool _hasPose;
@@ -35,13 +36,26 @@ namespace ProjectH.Client.Game
 
         public Transform Root { get; }
 
-        // D13 (Phase 3): dead players are grey and lying down, and a dead remote player's hit box is off.
+        // 기능: 생존 상태를 바꾼다(D13, Phase 3: 죽으면 회색으로 눕고 원격 플레이어의 피격 상자가 꺼진다).
+        // 입력: alive - 살아 있는지.
+        // 출력: 반환값 없음. 몸 Material과 다음 Place의 자세가 바뀐다.
         public void SetAlive(bool alive)
         {
             if (alive == _alive) return;
             _alive = alive;
-            _bodyRenderer.sharedMaterial = PlayerViewFactory.BodyMaterial(_isLocal, alive);
+            _bodyRenderer.sharedMaterial = PlayerViewFactory.BodyMaterial(_isLocal, _teammate, alive);
             _hasPose = false;   // the pose depends on it
+        }
+
+        // 기능: 같은 팀 표시를 바꾼다(Phase 14 D14: 팀원 초록, 적 주황; 내 몸은 그대로 파랑).
+        // 입력: teammate - 우리 팀 구성원인지.
+        // 출력: 반환값 없음. 바뀌면 몸 Material이 바뀌고, 다음 Place에서 피격 상자가 켜지거나 꺼진다(팀원은 조준 광선이 지나간다, D3).
+        public void SetTeammate(bool teammate)
+        {
+            if (teammate == _teammate) return;
+            _teammate = teammate;
+            _bodyRenderer.sharedMaterial = PlayerViewFactory.BodyMaterial(_isLocal, teammate, _alive);
+            _hasPose = false;   // the collider depends on it
         }
 
         // Every frame: where the feet are drawn, the facing, and the mode's pose.
@@ -78,7 +92,8 @@ namespace ProjectH.Client.Game
             {
                 _collider.size = new Vector3(2f * MoveSettings.HalfWidth, pose.HitHeight, 2f * MoveSettings.HalfWidth);
                 _collider.center = new Vector3(0f, pose.HitHeight * 0.5f, 0f);
-                _collider.enabled = _alive && !pose.Hidden;
+                // Phase 14 D3: shots pass through teammates, so the aim ray must too (the aim point lands on the enemy behind).
+                _collider.enabled = _alive && !pose.Hidden && !_teammate;
             }
         }
 
@@ -103,6 +118,7 @@ namespace ProjectH.Client.Game
 
         private static Material _localMaterial;
         private static Material _remoteMaterial;
+        private static Material _teamMaterial;   // Phase 14 D14
         private static Material _deadMaterial;
         private static Material _wingMaterial;
 
@@ -142,27 +158,38 @@ namespace ProjectH.Client.Game
             return view;
         }
 
-        internal static Material BodyMaterial(bool isLocal, bool alive) =>
-            alive ? (isLocal ? _localMaterial : _remoteMaterial) : _deadMaterial;
+        // 기능: 몸 Material을 고른다(나 파랑, 팀원 초록, 적 주황, 죽음 회색).
+        // 입력: isLocal - 내 몸인지, teammate - 팀원인지(내 몸이면 무시), alive - 살아 있는지.
+        // 출력: 공유 Material.
+        internal static Material BodyMaterial(bool isLocal, bool teammate, bool alive) =>
+            !alive ? _deadMaterial : isLocal ? _localMaterial : teammate ? _teamMaterial : _remoteMaterial;
 
-        // Called by GameClient.OnDestroy: the cached materials live exactly as long as the client.
+        // 기능: 캐시한 Material을 모두 파괴한다(GameClient.OnDestroy가 부른다: Material은 Client와 수명이 같다).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 다음 Create가 다시 만든다.
         public static void ReleaseMaterials()
         {
             if (_localMaterial != null) Object.Destroy(_localMaterial);
             if (_remoteMaterial != null) Object.Destroy(_remoteMaterial);
+            if (_teamMaterial != null) Object.Destroy(_teamMaterial);
             if (_deadMaterial != null) Object.Destroy(_deadMaterial);
             if (_wingMaterial != null) Object.Destroy(_wingMaterial);
             _localMaterial = null;
             _remoteMaterial = null;
+            _teamMaterial = null;
             _deadMaterial = null;
             _wingMaterial = null;
         }
 
+        // 기능: 없는 공유 Material을 만든다(Phase 14: 팀원 초록 포함).
+        // 입력: template - 복사할 Lit Material.
+        // 출력: 반환값 없음.
         private static void EnsureMaterials(Material template)
         {
             // Explicit == null (not ??=): Unity's null check also catches destroyed materials.
             if (_localMaterial == null) _localMaterial = Tinted(template, new Color(0.2f, 0.6f, 1f));
             if (_remoteMaterial == null) _remoteMaterial = Tinted(template, new Color(1f, 0.45f, 0.2f));
+            if (_teamMaterial == null) _teamMaterial = Tinted(template, new Color(0.3f, 0.85f, 0.35f));
             if (_deadMaterial == null) _deadMaterial = Tinted(template, new Color(0.45f, 0.45f, 0.45f));
             if (_wingMaterial == null) _wingMaterial = Tinted(template, new Color(0.95f, 0.85f, 0.25f));
         }

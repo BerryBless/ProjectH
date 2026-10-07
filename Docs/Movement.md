@@ -15,9 +15,10 @@ Phase 12 기준. 설계 근거와 결정 D1–D17: `Docs/specs/2026-10-02-phase1
 | 4 | `Freefall` | 1.8 m | `StepAir` | 아니오 | 4 | 엎드린 캡슐 |
 | 5 | `Glide` | 1.8 m | `StepAir` | 아니오 | 5 | 머리 위 납작한 상자(날개) |
 | 6 | `Transport` | 1.8 m | `DropTransport.Ride`(`Step`은 Yaw만 반영한다) | 아니오 | 6 | 숨김(그리지도 맞히지도 않는다) |
+| 7 | `Downed` | 0.9 m(`MovementTuning.DownedHeight`) | `StepGround`(기어가기, 아래 "기절") | 아니오 | 7 | 납작한 캡슐(Phase 14, `Client.md`) |
 
 - **행동 가능:** 지상·웅크리기·슬라이드만이다. 다른 모드에서는 사격·재장전·줍기·상호작용·회복·칸 바꾸기·버리기가 안 된다. 이미 진행 중인 재장전과 회복은 계속된다. 서버 `Match.ActionsAllowed`가 이동이 끝난 뒤의 모드로 판단하고, Client `LocalPlayerPredictor.ActionsAllowed`가 같은 표를 쓴다.
-- **Snapshot 표현:** `SnapshotEntity.Flags`의 bit0 살아 있음, bit1–3 모드, bit4 달리는 중, bit5 기진이다(`Networking.md`). 모르는 모드 값(7)은 `Ground`로 읽는다.
+- **Snapshot 표현:** `SnapshotEntity.Flags`의 bit0 살아 있음, bit1–3 모드, bit4 달리는 중, bit5 기진이다(`Networking.md`). Phase 14부터 3비트의 8개 값이 모두 모드다(7 = `Downed`).
 - **맞는 높이:** 웅크리기·슬라이드는 1.2 m, 나머지는 1.8 m다. 사격의 눈은 웅크리기·슬라이드에서 발 + 1.0 m(`CombatRules.CrouchEyeHeight`, Client `AimSolver`와 같다), 그 밖에는 1.6 m다. 위치 기록(`PositionHistory`)에 모드도 남기므로 되감기에서도 그때의 높이로 맞힌다. `Transport` 탑승자는 맞지 않는다.
 - Client의 뷰와 `BoxCollider`(조준 광선용)의 높이는 `PlayerPose.HitHeight`로 서버와 같다. 캡슐의 모양은 자세만 보여 줄 뿐이다.
 
@@ -48,6 +49,17 @@ stateDiagram-v2
   - 탑승 중의 이동(Yaw만 반영된다)
   - 달리기 속도가 아닌 낮은 상자 위 점프(Hurdle은 6 m/s 이상일 때만이고, 아니면 보통 점프다)
 - Client `InputReader`는 C를 켜고 끄는 토글로, Ctrl을 누르는 동안으로 받아 둘 다 `Crouch` 버튼(누른 상태)으로 보낸다. 토글은 Jump나 Sprint를 누르면 꺼진다. 메뉴가 떠 있거나 커서가 풀려 입력이 막혀 있으면 C와 Ctrl은 무시한다. 내 캐릭터가 나타날 때(Spawn), 부활할 때, 죽을 때 토글을 끈다.
+
+## 기절 (Phase 14 D4)
+
+- `Downed`는 서버만 들어가고 나온다(치명 피해로 기절, 소생 완료로 `Ground`·`Crouch`, `Squad.md`). 시뮬레이션은 이 모드를 바꾸지 않는다.
+- 지상 Step과 같되 속도 `MovementTuning.CrawlSpeed` 1.5 m/s, Jump·Sprint·Crouch 버튼은 무시한다(점프·달리기·자세 전환·Vault·슬라이드 없음). 달리는 중 플래그는 언제나 false, 기력은 회복된다.
+- 공중이면(기어가다 떨어지면) 중력으로 떨어지고 착지 속도를 보고한다. 서버는 그 착지에 낙하 피해를 준다(기절 체력을 깎고, 0이면 탈락). 공중 조작 한계도 `CrawlSpeed`다.
+- 상자 높이 0.9 m라 웅크리기(1.2 m)로 못 들어가는 낮은 틈으로도 기어 들어간다. 그런 자리에서는 소생이 시작되지 않는다(일어서며 조각을 뚫지 않게, `Squad.md`).
+- 눈높이는 0.6 m(서버 `CombatRules.DownedEyeHeight`, Client `AimSolver`의 복사본). 기절 중에는 쏠 수 없고, 소생의 시선 검사가 대상의 눈을 이 높이로 본다.
+- 행동 가능 모드가 아니다: 서버 `ActionsAllowed`(Ground·Crouch·Slide)에 넣지 않았고 Client 복사본에도 넣지 않는다.
+- 이동 이상 검사(`MovementLimits.MaxSpeed`)는 지면 모드와 같은 한계를 쓴다(기어가다 떨어질 수 있다).
+- 테스트: `SquadSharedTests`(속도·막힌 동작·Vault 없음·낙하·0.9 m 상자·같은 입력 같은 결과).
 
 ## 수치 (`MovementTuning`)
 

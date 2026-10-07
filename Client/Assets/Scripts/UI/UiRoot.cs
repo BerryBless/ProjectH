@@ -140,12 +140,18 @@ namespace ProjectH.Client.UI
             _shownVersion = _flow.Version;
         }
 
+        // 기능: 결과 화면에 최신 MatchResult를 채운다(결과 화면이 열릴 때 한 번). Phase 14 D6: 우승 = 배치 1, 분대면 팀 단위 문구.
+        // 입력: 없음(GameClient의 결과와 이번 판의 사망 기록을 읽는다).
+        // 출력: 반환값 없음.
         private void ShowResult()
         {
             MatchResult r = _client.Result;
-            bool won = r.WinnerId != 0 && r.WinnerId == _client.MyEntityId;
+            // Phase 14 D6: placements are the team's (Solo: a team of one), so placement 1 is a win for every member of the
+            // winning team, also one who is out waiting for its card. WinnerId is the winning team's smallest entity id.
+            bool won = r.Placement == 1;
+            bool teams = _client.SquadMatch;
             string winner = r.WinnerId == 0 ? null : UiText.NameOr(_client.NameOf(r.WinnerId), r.WinnerId);
-            _result.Show(won, r.Placement, r.Participants, r.Kills, winner, _client.DiedThisRound, _client.KilledByZone, _client.LastDeathCause,
+            _result.Show(won, r.Placement, r.Participants, teams, r.Kills, winner, _client.DiedThisRound, _client.KilledByZone, _client.LastDeathCause,
                 _client.KillerName);
         }
 

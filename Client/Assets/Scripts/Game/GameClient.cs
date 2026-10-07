@@ -62,6 +62,18 @@ namespace ProjectH.Client.Game
         private readonly BuildAudio _buildAudio = new BuildAudio();
         private Material _buildSource;
         private float _nextSwingAt;
+        // Phase 14 D2, D8, D10, D14: our team and its channels (cleared with the match state and at a new round's countdown),
+        // the squad HUD, the teammate markers, the reboot station pillars and the newest station cooldowns. _downedFeet is
+        // the fixed buffer of downed teammates the revive hint looks at (refilled every frame).
+        private readonly SquadState _squad = new SquadState();
+        private SquadHud _squadHud;
+        private TeammateMarkers _markers;
+        private RebootStationViews _stationViews;
+        private RebootStationsState _stations;
+        private readonly System.Numerics.Vector3[] _downedFeet = new System.Numerics.Vector3[SquadConstants.MaxTeamSize];
+        // The largest team size seen this round (a member who leaves may drop out of TeamState; the result still counts
+        // teams). Reset with the team.
+        private int _roundTeamSize;
         // Phase 11 D9: entity id -> name from PlayerSpawned. At most one entry per player in the match: removed on
         // despawn, cleared with the match state (disconnect).
         private readonly Dictionary<ushort, string> _names = new Dictionary<ushort, string>();
@@ -175,6 +187,8 @@ namespace ProjectH.Client.Game
         // True when nobody killed us (KillerId 0): the zone or, since Phase 12, a fall (LastDeathCause says which).
         public bool KilledByZone => _killedByZone;
         public DeathCause LastDeathCause => _deathCause;
+        // Phase 14 D6: our team had more than one member this round (the result counts teams, not players).
+        public bool SquadMatch => _roundTeamSize > 1;
 
         // Phase 12 D14: the F1 movement line (UiRoot owns the overlay; the values are the local prediction's).
         public void TickMovementDebug(DebugOverlay overlay, float now)
@@ -306,7 +320,8 @@ namespace ProjectH.Client.Game
             _reconnectPending = false;
         }
 
-        // 기능: 월드·입력·카메라·HUD·건설 표시(Phase 13.5: 편집 오버레이)·네트워크를 만들고 네트워크 이벤트를 구독한다.
+        // 기능: 월드·입력·카메라·HUD·건설 표시(Phase 13.5: 편집 오버레이)·분대 표시(Phase 14: 분대 HUD, 팀원 표지, 스테이션 기둥)·
+        //   네트워크를 만들고 네트워크 이벤트를 구독한다.
         // 입력: 없음(Unity가 한 번 부른다).
         // 출력: 반환값 없음. 만든 것은 모두 OnDestroy가 해제한다. 배치와 편집은 순번 카운터 하나를 같이 쓴다.
         private void Awake()
@@ -344,6 +359,9 @@ namespace ProjectH.Client.Game
             _editOverlay = new BuildEditOverlay(_pieceMeshes, _buildSource);
             _harvestEffects = new HarvestEffects(_buildSource);
             _buildHud = new BuildHud();
+            _squadHud = new SquadHud();
+            _markers = new TeammateMarkers(_buildSource);
+            _stationViews = new RebootStationViews(_buildSource);
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             _qaRecorder = Qa.QaInputRecorder.FromLaunch();
@@ -385,9 +403,14 @@ namespace ProjectH.Client.Game
             _net.BuildResetReceived += OnBuildReset;
             _net.BuildInterestReceived += OnBuildInterest;
             _net.HarvestHitReceived += OnHarvestHit;
+            _net.TeamStateReceived += OnTeamState;
+            _net.PlayerDownedReceived += OnPlayerDowned;
+            _net.ChannelStateReceived += OnChannelState;
+            _net.RebootStationsReceived += OnRebootStations;
         }
 
         // 기능: 한 프레임의 Client 처리: 네트워크 Poll, 재접속, 입력·커서, 원격 플레이어 렌더, 시점과 이동 예측, 로컬 뷰 배치.
+        //   Phase 14 D7: E가 눌려 있으면 이번 프레임의 모든 입력에 InteractHeld를 켠다.
         // 입력: 없음(Unity가 매 프레임 부른다).
         // 출력: 반환값 없음. 예측 상태와 보낼 입력 Step 수(_pendingSteps)가 갱신된다. 커서 잠금은 CursorLocked(QA 가정 포함)로 본다.
         private void Update()
@@ -415,6 +438,7 @@ namespace ProjectH.Client.Game
             InputButtons held = InputButtons.None;
             if (!blocked && _input.Sprint) held |= InputButtons.Sprint;
             if (!blocked && _input.CrouchHeld) held |= InputButtons.Crouch;   // Phase 12 D7
+            if (!blocked && _input.InteractHeld) held |= InputButtons.InteractHeld;   // Phase 14 D7
             if (_fireHeld) held |= InputButtons.Fire;
             held = _edit.MaskHeld(held);   // Phase 13.5 D10: no shot while the left button picks edit tiles
             if (blocked) _input.QueuedButtons = InputButtons.None;
@@ -427,6 +451,7 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 카메라가 움직인 뒤의 프레임 처리: 조준점(과 맞힌 Collider), 입력 전송, 사격 효과, 편집 모드(Phase 13.5), 건설, 표시, HUD.
+        //   Phase 14: 분대 관전, 분대 HUD·표지·기절 막대·진행 막대, 소생·재투입 안내(범위 안이면 문·줍기 안내보다 먼저, D7).
         // 입력: 없음(Unity가 매 프레임 부른다).
         // 출력: 반환값 없음. 예측 입력이 전송되고 화면이 갱신된다.
         private void LateUpdate()
@@ -446,7 +471,7 @@ namespace ProjectH.Client.Game
             bool alive = !_predictor.IsDead;
 
             // D5: dead in a match, the camera follows the watched player where it is drawn; otherwise our own view.
-            _spectator.Update(_remotePlayers);
+            _spectator.Update(_remotePlayers, _squad);
             bool watching = _spectator.TryGetFeet(_remotePlayers, _renderTick, out Vector3 watched);
             Vector3 followFeet = watching ? watched : _predictor.RenderPosition;
             // Phase 12 D14: the camera eases to our own mode (a watched player gets the standard camera).
@@ -455,7 +480,8 @@ namespace ProjectH.Client.Game
             // Phase 6 D7: the place name of whoever the camera follows. Text changes only when the place does.
             _poiLabel.SetVisible(true);
             _poiLabel.SetPosition(followFeet);
-            _crosshair.SetVisible(alive && !_blockedThisFrame);
+            // Phase 14 D4: downed, nothing can be aimed or fired.
+            _crosshair.SetVisible(alive && !_blockedThisFrame && _predictor.Mode != MovementMode.Downed);
 
             // After the camera moved, so aim, tracer and the sent inputs all use the crosshair of this frame.
             Vector3 aimPoint = FindAimPoint(out Collider aimCollider);
@@ -497,14 +523,16 @@ namespace ProjectH.Client.Game
             bool onFoot = LocalPlayerPredictor.ActionsAllowed(_predictor.Mode);
             // Shown on foot and in the air alike (the energy recovers while falling, too).
             _hud.SetEnergy(energy, alive && (energy < 1f || _predictor.Sprinting), _predictor.Exhausted);
-            int door = alive && onFoot ? DoorRule.FindTarget(_predictor.PredictedPosition.ToNumerics(), _predictor.RenderYaw, GameMap.Doors) : -1;
-            _hud.SetHint(Hint(alive, door));
+            // Phase 14 D7: a revive or reboot in range (or under way) comes before the door and the item prompt, like the server.
+            string squadHint = UpdateSquad(alive, out bool squadTarget);
+            int door = alive && onFoot && !squadTarget ? DoorRule.FindTarget(_predictor.PredictedPosition.ToNumerics(), _predictor.RenderYaw, GameMap.Doors) : -1;
+            _hud.SetHint(squadHint ?? Hint(alive, door));
             if (_weapons != null && _weapons.HasWeapon) _hud.SetWeapon(_weapons.Current.Name, _weapons.Ammo, _weapons.Reserve, _weapons.Reloading);
             else _hud.ClearWeapon();
             _hud.Tick(_camera.Yaw, now);
 
             // D9, D12: E means the door first, and aboard, falling or vaulting it does nothing: no item prompt then.
-            UpdateInventoryHud(alive, onFoot && door < 0, now);
+            UpdateInventoryHud(alive, onFoot && door < 0 && !squadTarget, now);
             UpdateMatchHud(alive);
         }
 
@@ -632,6 +660,81 @@ namespace ProjectH.Client.Game
                 _buildStore.Ignored, _build.Sent + _edit.Sent, _build.Refused + _edit.Refused, _lastBuildRefusal);
         }
 
+        // 기능: 분대 표시 한 프레임(Phase 14 D14): 분대 HUD 줄(2명 이상일 때), 소지 카드, 팀원 표지(경기 안의 팀원, 기절이면 빨강),
+        //   내 기절 막대, 나와 관련된 소생·재투입 진행 막대(서버 Tick 기준), 그리고 소생·재투입 안내를 고른다.
+        // 입력: alive - 살아 있음, targetInRange - 결과(소생·재투입 대상이 범위 안이거나 내가 진행 중이면 true: 문·줍기 안내를 끈다).
+        // 출력: 안내 문구(UiText 상수) 또는 null. 문자열은 바뀔 때만 만들고 이 함수는 할당하지 않는다.
+        private string UpdateSquad(bool alive, out bool targetInRange)
+        {
+            targetInRange = false;
+            double tick = EstimatedServerTick();
+            _squad.ExpireChannels(tick, _simHz);
+            _squadHud.SetVisible(true);
+
+            int rows = 0;
+            if (_squad.Count > 1)
+            {
+                for (int i = 0; i < _squad.Count; i++)
+                {
+                    TeamMember member = _squad.Member(i);
+                    _squadHud.SetRow(i, member.EntityId, NameOf(member.EntityId), member.State, member.Health, member.Flags, member.EntityId == MyEntityId);
+                    rows = i + 1;
+                }
+            }
+            _squadHud.HideRowsFrom(rows);
+            _squadHud.SetCards(alive ? _inventory.RebootCards : 0);
+
+            // Teammates in play that are drawn: a marker each, and the downed ones are revive candidates.
+            int markers = 0;
+            int downed = 0;
+            for (int i = 0; i < _squad.Count; i++)
+            {
+                TeamMember member = _squad.Member(i);
+                if (member.EntityId == MyEntityId || !_squad.IsInPlay(member.EntityId)) continue;
+                if (!_remotePlayers.TryGetPose(member.EntityId, _renderTick, out Vector3 feet, out MovementMode mode, out bool drawnAlive) ||
+                    !drawnAlive || mode == MovementMode.Transport)
+                    continue;
+                bool isDowned = member.State == TeamMemberState.Downed || mode == MovementMode.Downed;
+                _markers.Show(markers++, feet, PlayerPose.For(mode, false, true).BodyHeight, isDowned, _camera.Yaw);
+                if (isDowned && downed < _downedFeet.Length) _downedFeet[downed++] = feet.ToNumerics();
+            }
+            _markers.HideFrom(markers);
+
+            bool meDowned = alive && _predictor.Mode == MovementMode.Downed;
+            _squadHud.SetBleed(meDowned ? SquadPrompt.BleedSecondsLeft(_health) : -1, _health);
+
+            string label = null;
+            float progress = 0f;
+            if (alive && _squad.TryGetChannelOf(MyEntityId, out ChannelView channel))
+            {
+                label = channel.ActorId != MyEntityId ? UiText.ChannelRevived
+                    : channel.Kind == ChannelKind.Revive ? UiText.ChannelReviving : UiText.ChannelRebooting;
+                progress = SquadState.Progress(channel.StartTick, channel.EndTick, tick);
+            }
+            _squadHud.SetChannel(label, progress);
+
+            bool up = alive && LocalPlayerPredictor.ActionsAllowed(_predictor.Mode) && !_spectator.Active;
+            if (!up) return null;
+            if (label != null)
+            {
+                // Our own channel: the bar says it all, and E keeps holding it.
+                targetInRange = true;
+                return null;
+            }
+            System.Numerics.Vector3 myFeet = _predictor.PredictedPosition.ToNumerics();
+            if (SquadPrompt.NearestDowned(myFeet, _downedFeet, downed) >= 0)
+            {
+                targetInRange = true;
+                return UiText.HintRevive;
+            }
+            if (_inventory.RebootCards == 0) return null;
+            int station = SquadPrompt.NearestStation(myFeet);
+            if (station < 0) return null;
+            if (SquadPrompt.IsCoolingDown(_stations, station, tick)) return UiText.HintRebootCooling;
+            targetInRange = true;
+            return UiText.HintReboot;
+        }
+
         // Phase 12 D14: aboard (inside the jump window) "jump", in freefall "glider", next to a door "open"/"close".
         private string Hint(bool alive, int door)
         {
@@ -677,8 +780,10 @@ namespace ProjectH.Client.Game
             _matchHud.SetSpectating(watched, NameOf(watched));
         }
 
-        // D15: slots, heals, the heal bar and the "[E]" prompt. Strings are rebuilt only on change (InventoryHudText).
-        // Phase 12: prompt false hides the item prompt only (the heal bar stays).
+        // 기능: 슬롯, 회복템, 회복 막대, "[E]" 줍기 안내를 갱신한다(D15, 문자열은 바뀔 때만 InventoryHudText가 만든다).
+        //   Phase 14 D9: 재투입 카드는 "[E] 줍기: 주인 [재투입 카드]"로 안내한다.
+        // 입력: alive - 살아 있음, prompt - 줍기 안내를 보일지(false면 안내만 숨기고 회복 막대는 남긴다, Phase 12), now - 현재 시각.
+        // 출력: 반환값 없음.
         private void UpdateInventoryHud(bool alive, bool prompt, float now)
         {
             _inventoryHud.Tick(now);
@@ -706,6 +811,10 @@ namespace ProjectH.Client.Game
             WorldItemData item = _worldItems.Items[target];
             switch (item.Kind)
             {
+                case ItemKind.RebootCard:
+                    // Phase 14 D9: Amount is the card's owner. Its cached name (or a constant), so asking every frame does not allocate.
+                    _inventoryHud.SetPrompt(item.ItemId, item.Amount, NameOf(item.Amount) ?? UiText.Teammate, UiText.RebootCardName);
+                    break;
                 case ItemKind.Weapon:
                     _inventoryHud.SetPrompt(item.ItemId, item.Amount, WeaponName(item.DefId), _itemCatalog.Rarities[item.Rarity].Name);
                     break;
@@ -727,7 +836,7 @@ namespace ProjectH.Client.Game
             return "?";
         }
 
-        // 기능: 구독을 풀고 만든 것을 만든 역순으로 해제한다(편집 오버레이는 공유 Mesh보다 먼저).
+        // 기능: 구독을 풀고 만든 것을 만든 역순으로 해제한다(편집 오버레이는 공유 Mesh보다 먼저, Phase 14 분대 표시 포함).
         // 입력: 없음(Unity가 부른다, 종료 때도).
         // 출력: 반환값 없음.
         private void OnDestroy()
@@ -766,6 +875,10 @@ namespace ProjectH.Client.Game
             _net.BuildResetReceived -= OnBuildReset;
             _net.BuildInterestReceived -= OnBuildInterest;
             _net.HarvestHitReceived -= OnHarvestHit;
+            _net.TeamStateReceived -= OnTeamState;
+            _net.PlayerDownedReceived -= OnPlayerDowned;
+            _net.ChannelStateReceived -= OnChannelState;
+            _net.RebootStationsReceived -= OnRebootStations;
             _net.Dispose();
             ClearMatchState();
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -773,6 +886,9 @@ namespace ProjectH.Client.Game
             _qaRecorder = null;
 #endif
             _killFeed.Dispose();
+            _stationViews.Dispose();
+            _markers.Dispose();
+            _squadHud.Dispose();
             _buildHud.Dispose();
             _harvestEffects.Dispose();
             _buildPreview.Dispose();
@@ -1006,6 +1122,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 플레이어 등장을 처리한다. 나면 예측과 내 뷰를 만들고, 남이면 원격 뷰를 만든다(Phase 14: 팀원이면 초록).
+        // 입력: spawned - 등장 이벤트(이름 포함).
+        // 출력: 반환값 없음. 이름 표에 등록된다.
         private void OnSpawned(PlayerSpawned spawned)
         {
             _names[spawned.EntityId] = spawned.Name;
@@ -1028,6 +1147,7 @@ namespace ProjectH.Client.Game
                 return;
             }
             _remotePlayers.Spawn(spawned, _clock != null ? _clock.LatestTick : 0);
+            _remotePlayers.SetTeammate(spawned.EntityId, _squad.Contains(spawned.EntityId));   // Phase 14 D14
         }
 
         private void OnDespawned(ushort entityId)
@@ -1077,13 +1197,18 @@ namespace ProjectH.Client.Game
             _hud.ShowDamage(damage.FromDirection.ToUnity(), Time.time);
         }
 
+        // 기능: 사망(탈락) 사건을 처리한다: Kill Feed 줄, 내 사망이면 예측 정지·관전 시작(경기 중) 또는 부활 카운트다운(개발 모드).
+        // 입력: died - 사망 사건.
+        // 출력: 반환값 없음. 팀이 살아 있는 중의 Placement는 잠정 값이라 쓰지 않는다(최종 순위는 MatchResult, Phase 14 D6).
         private void OnPlayerDied(PlayerDied died)
         {
-            // Phase 11 D10: every death but the "you are spectating" notice a newcomer gets at join (Match sends it with
-            // no killer and no placement; a zone death in a match has a placement, and the dev sandbox has no zone). The
-            // line is built once here, so the feed allocates per death, never per frame.
+            // Phase 11 D10: every death but the "you are spectating" notice a newcomer gets at join (Match sends it about the
+            // newcomer itself, with no killer and no placement; a zone death in a match has a placement, and the dev sandbox
+            // has no zone). The line is built once here, so the feed allocates per death, never per frame.
             // Phase 12 D10: a fall also has no killer and, in the dev sandbox, no placement: its cause tells it apart.
-            bool notice = died.KillerId == 0 && died.Placement == 0 && died.Cause == DeathCause.Zone;
+            // Phase 14: a newcomer has no team (TeamId 0, no TeamState), so a player on a team is never told the notice.
+            bool notice = died.VictimId == MyEntityId && died.KillerId == 0 && died.Placement == 0 && died.Cause == DeathCause.Zone &&
+                          !_squad.Contains(MyEntityId);
             string killer = died.KillerId == 0 ? null : UiText.NameOr(NameOf(died.KillerId), died.KillerId);
             if (!notice) _killFeed.Add(UiText.KillLine(killer, UiText.NameOr(NameOf(died.VictimId), died.VictimId), died.Cause), Time.unscaledTime);
 
@@ -1141,6 +1266,9 @@ namespace ProjectH.Client.Game
             _hud.HideDeath();
         }
 
+        // 기능: 경기 상태를 저장한다. 새 라운드 카운트다운(대기·시작)이면 결과·수송기 경로와 Phase 14 팀·채널을 지운다.
+        // 입력: state - 받은 MatchState.
+        // 출력: 반환값 없음. 처음 받으면 경기 HUD를 보인다.
         private void OnMatchState(MatchState state)
         {
             _match = state;
@@ -1155,7 +1283,51 @@ namespace ProjectH.Client.Game
             {
                 _hasResult = false;
                 ClearRoute();
+                // Phase 14 D2: the old round's team is over; the next one comes with the match start.
+                _roundTeamSize = 0;
+                if (_squad.HasTeam || _squad.ChannelCount > 0)
+                {
+                    _squad.Clear();
+                    _remotePlayers.ApplyTeam(_squad);
+                }
             }
+        }
+
+        // 기능: 우리 팀 상태(Phase 14 D2)를 적용하고 원격 플레이어의 팀원 색을 다시 맞춘다.
+        // 입력: team - 받은 TeamState(우리 팀만 온다).
+        // 출력: 반환값 없음.
+        private void OnTeamState(TeamState team)
+        {
+            _squad.Apply(team);
+            if (team.Count > _roundTeamSize) _roundTeamSize = team.Count;
+            _remotePlayers.ApplyTeam(_squad);
+        }
+
+        // 기능: 기절 사건(Phase 14 D5)을 Kill Feed에 "A ▸ B 기절"로 더한다(사건마다 한 번 문자열을 만든다).
+        // 입력: downed - 기절 사건(AttackerId 0이면 원인 이름).
+        // 출력: 반환값 없음.
+        private void OnPlayerDowned(PlayerDowned downed)
+        {
+            string attacker = downed.AttackerId == 0 ? null : UiText.NameOr(NameOf(downed.AttackerId), downed.AttackerId);
+            _killFeed.Add(UiText.DownedLine(attacker, UiText.NameOr(NameOf(downed.VictimId), downed.VictimId), downed.Cause), Time.unscaledTime);
+        }
+
+        // 기능: 소생·재투입 진행 상태(Phase 14 D8)를 적용한다. 진행 막대는 받은 순간의 추정 서버 Tick에서 끝 Tick까지다.
+        // 입력: channel - 받은 ChannelState.
+        // 출력: 반환값 없음.
+        private void OnChannelState(ChannelState channel)
+        {
+            double tick = EstimatedServerTick();
+            _squad.ApplyChannel(channel, tick > 0 ? tick : channel.EndTick);
+        }
+
+        // 기능: 스테이션 대기 상태(Phase 14 D10)를 저장하고 기둥 색에 반영한다.
+        // 입력: stations - 받은 RebootStations 상태.
+        // 출력: 반환값 없음.
+        private void OnRebootStations(RebootStationsState stations)
+        {
+            _stations = stations;
+            _stationViews.Apply(stations);
         }
 
         private void OnZoneState(ZoneState zone)
@@ -1303,7 +1475,7 @@ namespace ProjectH.Client.Game
             Debug.Log($"Reconnecting in {Mathf.Max(0f, _reconnectAt - Time.unscaledTime):F1} s (attempt {_reconnectAttempt + 1}/{DisconnectCodes.MaxReconnectAttempts})");
         }
 
-        // 기능: 경기 상태 전체를 비운다(끊김, 종료). 조각·편집 예측·편집 모드와 오버레이도 비운다.
+        // 기능: 경기 상태 전체를 비운다(끊김, 종료). 조각·편집 예측·편집 모드와 오버레이, Phase 14 팀·채널·스테이션·분대 표시도 비운다.
         // 입력: 없음.
         // 출력: 반환값 없음. 화면 Object는 숨기거나 풀로 돌아간다.
         private void ClearMatchState()
@@ -1364,6 +1536,16 @@ namespace ProjectH.Client.Game
             _inventoryHud.SetPrompt(0, 0, null, null);
             _inventoryHud.SetVisible(false);
             _fireEffects.HideAll();
+            _squad.Clear();
+            _roundTeamSize = 0;
+            _stations = default;
+            _stationViews.Apply(default);
+            _markers.HideFrom(0);
+            _squadHud.HideRowsFrom(0);
+            _squadHud.SetCards(0);
+            _squadHud.SetBleed(-1, 0);
+            _squadHud.SetChannel(null, 0f);
+            _squadHud.SetVisible(false);
         }
     }
 }

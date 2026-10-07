@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "name": "Reboot",
+  "description": "Phase 14 D9, D10 (request §42-§45): A is eliminated with teammate B standing: A's reboot card drops. B picks it up with a real E press, carries it to station 0 (Rustvale) and holds E there. After rebootSeconds (5 s) A is back beside the station on the ground with the reboot loadout (Wisp SMG, 30 light rounds, no shield), the card is used up and the station cools down.",
+  "tags": ["squad", "reboot"],
+  "seed": 14007,
+  "timeoutSeconds": 120,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "4", "Server:TeamSize": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" }, { "id": "playerC" }, { "id": "playerD" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "c_connect", "action": "connect", "actor": "playerC" },
+    { "id": "d_connect", "action": "connect", "actor": "playerD" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 0, "z": 4 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": 0, "z": 8 } },
+    { "id": "c_place", "action": "setPosition", "actor": "playerC", "position": { "x": -20, "z": -20 } },
+    { "id": "d_place", "action": "setPosition", "actor": "playerD", "position": { "x": 20, "z": -20 } },
+    { "id": "a_kill", "action": "killPlayer", "actor": "playerA" },
+    { "id": "card_dropped", "action": "waitFor", "condition": "match.worldCards", "equals": 1, "timeoutMilliseconds": 2000 },
+    { "id": "b_on_card", "action": "setPosition", "actor": "playerB", "position": { "x": 0, "z": 4.5 } },
+
+    { "id": "b_pick_up", "phase": "act", "action": "press", "actor": "playerB", "button": "Interact" },
+    { "id": "b_has_card", "phase": "assert", "action": "waitFor", "condition": "player.rebootCards", "actor": "playerB", "equals": 1, "timeoutMilliseconds": 3000 },
+    { "id": "b_client_card", "action": "waitFor", "condition": "actor.rebootCards", "actor": "playerB", "equals": 1, "timeoutMilliseconds": 2000 },
+    { "id": "card_taken", "assert": "match.worldCards", "equals": 0 },
+
+    { "id": "b_to_station", "phase": "arrange", "action": "setPosition", "actor": "playerB", "position": { "x": -40.5, "z": 42 } },
+    { "id": "b_hold", "phase": "act", "action": "holdInteract", "actor": "playerB" },
+    { "id": "b_rebooting", "phase": "assert", "action": "waitFor", "condition": "player.channel.kind", "actor": "playerB", "equals": "reboot", "timeoutMilliseconds": 2000 },
+    { "id": "a_back", "action": "waitFor", "condition": "player.alive", "actor": "playerA", "equals": true, "timeoutMilliseconds": 8000 },
+    { "id": "rebooted_event", "action": "waitForEvent", "event": "PlayerRebooted", "actor": "playerA", "timeoutMilliseconds": 2000 },
+    { "id": "a_mode", "assert": "player.mode", "actor": "playerA", "equals": "Ground" },
+    { "id": "a_near_station", "assert": "player.position.x", "actor": "playerA", "between": [-44, -40] },
+    { "id": "a_weapon", "assert": "player.weapon.name", "actor": "playerA", "equals": "Wisp SMG" },
+    { "id": "a_ammo", "assert": "player.ammo.light", "actor": "playerA", "equals": 30 },
+    { "id": "a_shield", "assert": "player.shield", "actor": "playerA", "equals": 0 },
+    { "id": "a_health", "assert": "player.health", "actor": "playerA", "equals": 100 },
+    { "id": "card_used", "assert": "player.rebootCards", "actor": "playerB", "equals": 0 },
+    { "id": "station_cooling", "assert": "match.stations.0.coolingDown", "equals": true },
+    { "id": "client_station", "action": "waitFor", "condition": "actor.stationsCooling", "actor": "playerC", "equals": 1, "timeoutMilliseconds": 2000 },
+    { "id": "b_release", "phase": "act", "action": "holdInteract", "actor": "playerB", "held": false }
+  ]
+}

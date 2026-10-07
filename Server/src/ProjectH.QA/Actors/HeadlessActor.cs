@@ -766,6 +766,9 @@ public sealed class HeadlessActor : IQaActor
         }
     }
 
+    // 기능: 시나리오 의도(이동·조준·버튼)로 이번 입력을 만든다(Phase 14: 기절한 표적은 낮은 몸 가운데를 겨눈다).
+    // 입력: view - 이 Client가 아는 것, now - 지금 시각(초).
+    // 출력: 보낼 InputCommand.
     private InputCommand BuildInput(BotView view, float now)
     {
         var command = new InputCommand();
@@ -787,10 +790,16 @@ public sealed class HeadlessActor : IQaActor
             case AimMode.Actor:
                 // The target as this client sees it (its latest snapshot), chest height, like the bots aim.
                 Vector3 target;
-                if (view.TryGetOther(_aimEntity, out SnapshotEntity other)) target = other.Position;
+                // Phase 14: a knocked-down target is aimed at the middle of its low body.
+                MovementMode targetMode = MovementMode.Ground;
+                if (view.TryGetOther(_aimEntity, out SnapshotEntity other))
+                {
+                    target = other.Position;
+                    targetMode = other.Mode;
+                }
                 else if (_aimFallback != null) target = _aimFallback.State.Position.ToVector3();
                 else target = me;
-                BotAim.Solve(BotAim.Eye(me), BotAim.Chest(target), out aimYaw, out aimPitch);
+                BotAim.Solve(BotAim.Eye(me), BotAim.Chest(target, targetMode), out aimYaw, out aimPitch);
                 break;
             default:
                 aiming = false;
@@ -886,6 +895,9 @@ public sealed class HeadlessActor : IQaActor
         return _current.Buttons;
     }
 
+    // 기능: 이번 Pump Tick의 ActorState를 만들어 발행한다(Phase 14: 팀, 구성원 상태, 카드, 기절 소식, 채널, 스테이션).
+    // 입력: 없음.
+    // 출력: 반환값 없음. State가 바뀐다.
     private void Publish()
     {
         BotConnection? c = _connection;
@@ -964,10 +976,41 @@ public sealed class HeadlessActor : IQaActor
                 PlaybackCompleted = _playCompleted,
                 Role = _brain?.Role,
                 BuildCodeCounts = _buildCodesPublished,
+                TeamId = v.HasTeam ? v.Team.TeamId : 0,
+                TeamIds = TeamIdsOf(v),
+                TeamStates = TeamStatesOf(v),
+                RebootCards = v.HasInventory ? v.Inventory.RebootCards : 0,
+                DownsSeen = v.DownsSeen,
+                ChannelActive = v.HasChannel && v.LastChannel.Active,
+                ChannelKind = v.HasChannel ? v.LastChannel.Kind.ToString() : string.Empty,
+                ChannelActor = v.HasChannel ? v.LastChannel.ActorId : 0,
+                StationsCooling = v.Stations.CooldownMask,
                 Error = _error,
             };
         }
         Volatile.Write(ref _state, state);
+    }
+
+    // 기능: Phase 14: 마지막 TeamState의 구성원 Entity id 목록을 만든다(상태 발행용, 최대 4개).
+    // 입력: v - 봇 View.
+    // 출력: id 배열(팀이 없으면 빈 배열).
+    private static ushort[] TeamIdsOf(BotView v)
+    {
+        if (!v.HasTeam) return Array.Empty<ushort>();
+        var ids = new ushort[v.Team.Count];
+        for (int i = 0; i < ids.Length; i++) ids[i] = v.Team.Get(i).EntityId;
+        return ids;
+    }
+
+    // 기능: Phase 14: 마지막 TeamState의 구성원 상태 이름 목록을 만든다(TeamIds와 같은 순서).
+    // 입력: v - 봇 View.
+    // 출력: 상태 이름 배열(팀이 없으면 빈 배열).
+    private static string[] TeamStatesOf(BotView v)
+    {
+        if (!v.HasTeam) return Array.Empty<string>();
+        var states = new string[v.Team.Count];
+        for (int i = 0; i < states.Length; i++) states[i] = v.Team.Get(i).State.ToString();
+        return states;
     }
 
     private static ushort[] VisibleIds(BotView v)

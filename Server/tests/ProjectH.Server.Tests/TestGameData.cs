@@ -134,9 +134,10 @@ internal static class TestGameData
         return loot!;
     }
 
-    public static GameData Create(int simHz = 30, float autoRange = 100f, string lootJson = LootJson, string zonesJson = ZonesJson)
+    public static GameData Create(int simHz = 30, float autoRange = 100f, string lootJson = LootJson, string zonesJson = ZonesJson,
+        ProjectH.Server.Game.Squad.SquadCatalog? squad = null)
     {
         ItemCatalog items = Items(simHz);
-        return new GameData(TestWeapons.Create(simHz, autoRange), items, Loot(items, lootJson), Zones(simHz, zonesJson));
+        return new GameData(TestWeapons.Create(simHz, autoRange), items, Loot(items, lootJson), Zones(simHz, zonesJson), squad: squad);
     }
 }

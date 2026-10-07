@@ -468,6 +468,7 @@ public sealed class GameLoop : IDisposable
         _health.AddMatchReset();
         // Final review B12: the thrown-away match's building totals stay in the counters (they never go back).
         _health.CarryBuildTotals();
+        _health.CarrySquadTotals();   // Phase 14
         // The old match's unlogged sink failure would go with it; LogPeriodic logs it with the next stats line.
         _carriedSinkError ??= _match.TakeSinkError();
         try
@@ -496,6 +497,9 @@ public sealed class GameLoop : IDisposable
         }
     }
 
+    // 기능: 한 Tick: 들어온 메시지 처리, 경기 Tick, Health 수치(Phase 14 분대 수치 포함) 갱신, QA 작업.
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     internal void RunTick()
     {
         Interlocked.Increment(ref _loopTick);   // read by tests from another thread (LoopTicks)
@@ -509,6 +513,7 @@ public sealed class GameLoop : IDisposable
         if (_match.EveryPlayerFailed && RecordInWindow(_allFailedTicks, ref _allFailedCount, ref _allFailedNext)) _resetForPlayerFailures = true;
         _health.SetGauges(_peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State);
         _health.SetBuild(_match.BuildCounts(), _buildRejects);
+        _health.SetSquad(_match.SquadCounts());   // Phase 14
         // QA-1 D5: last, so QA commands act between ticks on a finished tick. OnTick catches everything itself: a QA
         // failure must never count as a tick failure (that path resets the match).
         _qa?.OnTick(this);
@@ -782,11 +787,15 @@ public sealed class GameLoop : IDisposable
         _listener.ResetLogLimits();
     }
 
+    // 기능: 연결·보호·건설·분대(Phase 14)·DB 수치를 한 줄로 기록한다(시작부터의 합계).
+    // 입력: 없음.
+    // 출력: 반환값 없음. Health 로그 한 줄.
     // Phase 10 D9: connections, protection and database in one line, as totals since the start.
     private void LogHealth()
     {
         HealthCounters h = _health;
         BuildCounts b = h.Build;
+        SquadCounts sc = h.Squad;
         PersistenceCounts db = h.Persistence?.Invoke() ?? default;
         StatsQueryCounts sq = h.StatsQueries?.Invoke() ?? default;
         _logger.LogInformation(
@@ -806,6 +815,8 @@ public sealed class GameLoop : IDisposable
             "notOwner={RejectNotOwner} notFound={RejectNotFound} " +
             "harvest hits={HarvestHits} envDestroyed={HarvestDestroyed} syncDeferred={BuildSyncDeferred} " +
             "buildInboxDrops={BuildInboxDrops} " +
+            "squad downs={SquadDowns} revives={SquadRevives} reboots={SquadReboots} bleedOuts={SquadBleedOuts} cardsDropped={SquadCardsDropped} " +
+            "cardsExpired={SquadCardsExpired} wipes={SquadWipes} channelsCancelled={SquadChannelsCancelled} " +
             "db saved={DbSaved} failed={DbFailed} discarded={DbDiscarded} dropped={DbDropped} " +
             "stats requests={StatsRequests} limited={StatsLimited} busy={StatsBusy} unavailable={StatsUnavailable} undelivered={StatsUndelivered}",
             _peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State, _match.Flow.Round,
@@ -826,6 +837,7 @@ public sealed class GameLoop : IDisposable
             h.BuildRejects(BuildResultCode.NotOwner), h.BuildRejects(BuildResultCode.NotFound),
             b.HarvestHits, b.EnvironmentDestroyed, b.SyncDeferred,
             h.BuildInboxDrops,
+            sc.Downs, sc.Revives, sc.Reboots, sc.BleedOuts, sc.CardsDropped, sc.CardsExpired, sc.Wipes, sc.ChannelsCancelled,
             db.Saved, db.Failed, db.Discarded, db.Dropped,
             sq.Requests, sq.Limited, sq.Busy, sq.Unavailable, sq.Undelivered);
     }

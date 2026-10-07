@@ -50,5 +50,14 @@ namespace ProjectH.Client.Tests
         {
             Assert.IsFalse(AimSolver.TrySolve(Eye, Eye + new Vector3(0.001f, 0f, 0f), out _, out _));
         }
+
+        // Phase 14 D4: the downed eye equals the server's CombatRules.DownedEyeHeight (0.6 m).
+        [Test]
+        public void EyeHeight_Downed()
+        {
+            Assert.AreEqual(0.6f, AimSolver.EyeHeightOf(ProjectH.Shared.Simulation.MovementMode.Downed), 1e-6f);
+            Assert.AreEqual(AimSolver.EyeHeight, AimSolver.EyeHeightOf(ProjectH.Shared.Simulation.MovementMode.Ground), 1e-6f);
+            Assert.AreEqual(AimSolver.CrouchEyeHeight, AimSolver.EyeHeightOf(ProjectH.Shared.Simulation.MovementMode.Crouch), 1e-6f);
+        }
     }
 }

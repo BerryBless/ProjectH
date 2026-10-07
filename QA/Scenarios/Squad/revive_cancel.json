@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "name": "Revive Cancelled",
+  "description": "Phase 14 D8 (request §40): a revive stops when the reviver lets go of E, and again when it walks out of range (past reviveRange + 0.5 m). The target stays down each time and its bleed goes on.",
+  "tags": ["squad", "revive"],
+  "seed": 14005,
+  "timeoutSeconds": 120,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "4", "Server:TeamSize": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" }, { "id": "playerC" }, { "id": "playerD" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "c_connect", "action": "connect", "actor": "playerC" },
+    { "id": "d_connect", "action": "connect", "actor": "playerD" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 0, "z": 4 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": 1.2, "z": 4, "yaw": 90 } },
+    { "id": "c_place", "action": "setPosition", "actor": "playerC", "position": { "x": -20, "z": 20 } },
+    { "id": "d_place", "action": "setPosition", "actor": "playerD", "position": { "x": 20, "z": 20 } },
+    { "id": "a_down", "action": "downPlayer", "actor": "playerA" },
+    { "id": "a_downed", "action": "waitFor", "condition": "player.downed", "actor": "playerA", "equals": true, "timeoutMilliseconds": 2000 },
+
+    { "id": "b_hold", "phase": "act", "action": "holdInteract", "actor": "playerB" },
+    { "id": "b_reviving", "action": "waitFor", "condition": "player.channel.kind", "actor": "playerB", "equals": "revive", "timeoutMilliseconds": 2000 },
+    { "id": "b_wait", "action": "wait", "milliseconds": 1500 },
+    { "id": "b_let_go", "action": "holdInteract", "actor": "playerB", "held": false },
+    { "id": "cancelled_release", "phase": "assert", "action": "waitFor", "condition": "player.channel", "actor": "playerB", "notExists": true, "timeoutMilliseconds": 2000 },
+    { "id": "a_down_1", "assert": "player.downed", "actor": "playerA", "equals": true },
+    { "id": "a_free_1", "assert": "player.revivedBy", "actor": "playerA", "notExists": true },
+
+    { "id": "b_hold_again", "phase": "act", "action": "holdInteract", "actor": "playerB" },
+    { "id": "b_reviving_again", "action": "waitFor", "condition": "player.channel.kind", "actor": "playerB", "equals": "revive", "timeoutMilliseconds": 2000 },
+    { "id": "b_walks_away", "action": "moveVector", "actor": "playerB", "y": 1, "milliseconds": 1500 },
+    { "id": "cancelled_distance", "phase": "assert", "action": "waitFor", "condition": "player.channel", "actor": "playerB", "notExists": true, "timeoutMilliseconds": 2000 },
+    { "id": "a_down_2", "assert": "player.downed", "actor": "playerA", "equals": true },
+    { "id": "a_health_now", "action": "save", "path": "player.health", "actor": "playerA", "saveAs": "aHealth" },
+    { "id": "bleed_goes_on", "action": "waitFor", "condition": "player.health", "actor": "playerA", "lessThan": "${aHealth}", "timeoutMilliseconds": 2000 },
+    { "id": "b_release", "phase": "act", "action": "holdInteract", "actor": "playerB", "held": false }
+  ]
+}

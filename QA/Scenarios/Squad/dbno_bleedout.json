@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "name": "Bleed-Out",
+  "description": "Phase 14 D5 (request §37): a knocked-down A (QA downPlayer, team still standing) bleeds its downed health away in squad.json bleedOutSeconds (30 s), timed by the server only, then is eliminated. Its team still stands, so its placement is the provisional teams-left value (never 0) and it drops a reboot card.",
+  "tags": ["squad", "dbno"],
+  "seed": 14003,
+  "timeoutSeconds": 150,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "4", "Server:TeamSize": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" }, { "id": "playerC" }, { "id": "playerD" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "c_connect", "action": "connect", "actor": "playerC" },
+    { "id": "d_connect", "action": "connect", "actor": "playerD" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Spawn_A" },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": -20, "z": 20 } },
+    { "id": "a_down", "action": "downPlayer", "actor": "playerA" },
+    { "id": "a_downed", "action": "waitFor", "condition": "player.downed", "actor": "playerA", "equals": true, "timeoutMilliseconds": 2000 },
+
+    { "id": "half_way", "phase": "act", "action": "wait", "milliseconds": 15000 },
+    { "id": "a_bleeding", "phase": "assert", "assert": "player.health", "actor": "playerA", "lessThan": 60 },
+    { "id": "a_still_down", "assert": "player.downed", "actor": "playerA", "equals": true },
+    { "id": "a_out", "action": "waitFor", "condition": "player.alive", "actor": "playerA", "equals": false, "timeoutMilliseconds": 20000 },
+    { "id": "a_killed_event", "action": "waitForEvent", "event": "PlayerKilled", "actor": "playerA", "timeoutMilliseconds": 3000 },
+    { "id": "a_placement", "assert": "player.placement", "actor": "playerA", "equals": 2 },
+    { "id": "b_still_in", "assert": "player.alive", "actor": "playerB", "equals": true },
+    { "id": "card_dropped", "action": "waitFor", "condition": "match.worldCards", "equals": 1, "timeoutMilliseconds": 2000 },
+    { "id": "still_playing", "assert": "match.playing", "equals": true }
+  ]
+}

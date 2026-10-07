@@ -12,6 +12,8 @@ namespace ProjectH.Client.Game
         public const float SprintLean = 10f;
         public const float SlideLean = -30f;      // leaning back
         public const float VaultLean = 20f;
+        // Phase 14 D14: a downed character is drawn flat, as tall as its hit box.
+        public const float DownedBody = MovementTuning.DownedHeight;
 
         public float BodyHeight;   // metres
         public float Lean;         // degrees about the character's right axis; positive leans forward
@@ -20,6 +22,9 @@ namespace ProjectH.Client.Game
         public bool Hidden;        // aboard the transport: neither drawn nor hit
         public float HitHeight;    // MovementSimulation.CollisionHeight of the mode
 
+        // 기능: 모드·질주·생존으로 캡슐을 어떻게 그릴지 정한다(Phase 14: 기절은 높이 0.9 m로 납작하게).
+        // 입력: mode - 이동 모드, sprinting - 질주 중인지, alive - 살아 있는지(죽으면 누운 회색).
+        // 출력: 몸 높이·기울기·엎드림·날개·숨김·맞는 높이.
         public static PlayerPose For(MovementMode mode, bool sprinting, bool alive)
         {
             var pose = new PlayerPose { BodyHeight = StandingBody, HitHeight = MovementSimulation.CollisionHeight(mode) };
@@ -48,6 +53,9 @@ namespace ProjectH.Client.Game
                     break;
                 case MovementMode.Transport:
                     pose.Hidden = true;
+                    break;
+                case MovementMode.Downed:
+                    pose.BodyHeight = DownedBody;
                     break;
                 default:
                     if (sprinting) pose.Lean = SprintLean;

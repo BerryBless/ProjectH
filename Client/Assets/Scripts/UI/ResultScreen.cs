@@ -43,15 +43,18 @@ namespace ProjectH.Client.UI
             _root.SetActive(visible);
         }
 
-        // Once when the result screen opens. winnerName null = no winner; killerName is used when died && !noKiller, and the
-        // cause (the zone or a fall, Phase 12 D10) when noKiller.
-        public void Show(bool won, int placement, int participants, int kills, string winnerName, bool died, bool noKiller,
+        // 기능: 결과 화면이 열릴 때 한 번 문자열을 채운다.
+        // 입력: won - 우승(배치 1), placement·participants - 배치와 참가 수(Phase 14: 분대면 팀 배치와 팀 수), teams - 분대 경기인지,
+        //   kills - 처치 수, winnerName - 우승자(분대는 우승 팀의 가장 작은 id) 이름(null = 없음), died - 이번 판에 탈락했는지,
+        //   noKiller - 처치자 없음(자기장·낙하, Phase 12 D10은 cause가 정한다), cause - 그 원인, killerName - 처치자 이름.
+        // 출력: 반환값 없음.
+        public void Show(bool won, int placement, int participants, bool teams, int kills, string winnerName, bool died, bool noKiller,
             DeathCause cause, string killerName)
         {
             _title.text = UiText.ResultTitle(won);
-            _placement.text = UiText.Placement(placement, participants);
+            _placement.text = UiText.Placement(placement, participants, teams);
             _kills.text = UiText.Kills(kills);
-            _winner.text = UiText.Winner(winnerName);
+            _winner.text = UiText.Winner(winnerName, teams);
             _killedBy.text = UiText.KilledBy(died && !won, noKiller, cause, killerName);
             _shownSeconds = -1;
         }

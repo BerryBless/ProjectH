@@ -26,9 +26,13 @@ namespace ProjectH.Client.Game
         private readonly Material _medkitMaterial;
         private readonly Material _shieldCellMaterial;
         private readonly Material _resourceMaterial;
+        private readonly Material _cardMaterial;   // Phase 14 D9: a teammate's reboot card (only its team is told of it)
         private int _freeCount;
         private int _created;
 
+        // 기능: 공유 Mesh 3개와 Material(희귀도 5, 탄, 구급상자, 실드 셀, 자원, Phase 14 재투입 카드)을 만든다.
+        // 입력: 없음.
+        // 출력: 빈 아이템 목록과 풀을 가진 객체(Dispose가 해제한다).
         public WorldItemViews()
         {
             _root = new GameObject("WorldItems");
@@ -41,6 +45,7 @@ namespace ProjectH.Client.Game
             _medkitMaterial = new Material(template) { color = new Color(0.95f, 0.3f, 0.3f) };
             _shieldCellMaterial = new Material(template) { color = new Color(0.3f, 0.85f, 1f) };
             _resourceMaterial = new Material(template) { color = new Color(0.55f, 0.4f, 0.25f) };   // Phase 13 D15
+            _cardMaterial = new Material(template) { color = new Color(0.3f, 0.95f, 0.6f) };
         }
 
         public WorldItemList Items => _items;
@@ -89,6 +94,9 @@ namespace ProjectH.Client.Game
             for (int i = 0; i < _items.Count; i++) _views[i].localRotation = spin;
         }
 
+        // 기능: 풀의 뷰(뿌리의 자식)와 만든 Material을 모두 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);   // every pooled view is its child
@@ -97,8 +105,12 @@ namespace ProjectH.Client.Game
             if (_medkitMaterial != null) Object.Destroy(_medkitMaterial);
             if (_shieldCellMaterial != null) Object.Destroy(_shieldCellMaterial);
             if (_resourceMaterial != null) Object.Destroy(_resourceMaterial);
+            if (_cardMaterial != null) Object.Destroy(_cardMaterial);
         }
 
+        // 기능: 아이템 종류에 맞는 공유 Mesh·Material·크기를 뷰에 입힌다(Phase 14: 재투입 카드는 납작한 초록 판).
+        // 입력: view - 풀에서 빌린 뷰, item - 월드 아이템.
+        // 출력: 반환값 없음.
         private void Dress(Transform view, in WorldItemData item)
         {
             var filter = view.GetComponent<MeshFilter>();
@@ -119,6 +131,11 @@ namespace ProjectH.Client.Game
                     filter.sharedMesh = _cube;
                     renderer.sharedMaterial = _resourceMaterial;
                     view.localScale = new Vector3(0.4f, 0.25f, 0.4f);
+                    break;
+                case ItemKind.RebootCard:
+                    filter.sharedMesh = _cube;
+                    renderer.sharedMaterial = _cardMaterial;
+                    view.localScale = new Vector3(0.45f, 0.06f, 0.3f);
                     break;
                 default:
                     filter.sharedMesh = _sphere;

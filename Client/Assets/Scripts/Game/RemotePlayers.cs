@@ -41,6 +41,37 @@ namespace ProjectH.Client.Game
             _entries.Add(spawned.EntityId, entry);
         }
 
+        // 기능: 한 원격 플레이어의 팀원 표시를 정한다(Phase 14 D14).
+        // 입력: entityId - 플레이어 id, teammate - 우리 팀인지.
+        // 출력: 반환값 없음. 모르는 id면 아무것도 하지 않는다.
+        public void SetTeammate(ushort entityId, bool teammate)
+        {
+            if (_entries.TryGetValue(entityId, out Entry entry)) entry.View.SetTeammate(teammate);
+        }
+
+        // 기능: 모든 원격 플레이어의 팀원 표시를 팀 상태에 맞춘다(TeamState를 받거나 팀을 비울 때).
+        // 입력: squad - 우리 팀.
+        // 출력: 반환값 없음. 할당 없음(구조체 열거자).
+        public void ApplyTeam(SquadState squad)
+        {
+            foreach (var pair in _entries) pair.Value.View.SetTeammate(squad.Contains(pair.Key));
+        }
+
+        // 기능: 원격 플레이어가 renderTick에 그려지는 발·모드와 생존 여부를 돌려준다(팀원 표지, 소생 안내).
+        // 입력: entityId - 플레이어 id, renderTick - 렌더 Tick.
+        // 출력: 샘플이 있으면 true와 발·모드·생존(Snapshot 비트), 없으면 false.
+        public bool TryGetPose(ushort entityId, double renderTick, out Vector3 feet, out MovementMode mode, out bool alive)
+        {
+            feet = default;
+            mode = MovementMode.Ground;
+            alive = false;
+            if (!_entries.TryGetValue(entityId, out Entry entry) ||
+                !entry.Interpolator.TrySample(renderTick, out feet, out _, out mode, out _, out _))
+                return false;
+            alive = entry.Alive;
+            return true;
+        }
+
         public void Despawn(ushort entityId)
         {
             if (_entries.Remove(entityId, out Entry entry)) entry.View.Destroy();

@@ -20,7 +20,7 @@ public delegate void SendPacket(int peerId, ReadOnlySpan<byte> data, DeliveryMet
 
 // All player state of one match. Game loop thread only: the network thread never touches it,
 // so nothing here takes a lock.
-public sealed class Match
+public sealed partial class Match
 {
     private const float SpawnRadius = 5f;
     // Phase 6 D9: when there are more participants than drop points, each further lap stands this far east, then
@@ -102,8 +102,10 @@ public sealed class Match
     private readonly bool _infiniteResources;
     private readonly BuildCatalogData _buildCatalogWire;
     // Participants who left during the current match, recorded when they left (they are no longer in _players).
-    // At most MaxPlayers entries; cleared when a match starts.
-    private readonly List<PlayerRecord> _leftParticipants = new();
+    // At most MaxPlayers entries; cleared when a match starts. Phase 14 D6: with its team, so the team's placement (decided
+    // later, at the wipe or the finish) is written into the record.
+    private readonly List<LeftParticipant> _leftParticipants = new();
+    private readonly record struct LeftParticipant(PlayerRecord Record, byte TeamId);
     private DateTime _matchStartedUtc;
     private uint _matchStartTick;
     // What every client was last told (D11): a new MatchState or ZoneState is broadcast at the end of a tick only
@@ -154,6 +156,8 @@ public sealed class Match
             throw new ArgumentException($"Game data was built for SimHz {data.SimHz}, the match runs at {options.SimHz}.", nameof(data));
         _weapons = data.Weapons;
         _items = data.Items;
+        _squad = data.Squad;          // Phase 14 D11
+        _teamSize = options.TeamSize; // Phase 14 D1
         _building = data.Building;
         _infiniteResources = options.BuildInfiniteResources;
         _harvest = new HarvestWorld(_building);
@@ -290,6 +294,9 @@ public sealed class Match
         return error;
     }
 
+    // 기능: 연결을 경기에 넣는다(유예 중인 같은 DevPlayerId면 Resume). 새 플레이어는 JoinOrder를 받고(Phase 14 D1, 개발 모드면 팀도), 입장 패킷 묶음과 끝에 분대 상태를 받는다.
+    // 입력: peerId - 연결 id, devPlayerId - 검증된 플레이어 이름.
+    // 출력: Ok, Resumed, AlreadyJoined 또는 MatchFull.
     public JoinResult TryJoin(int peerId, string devPlayerId)
     {
         if (_playersByPeer.ContainsKey(peerId)) return JoinResult.AlreadyJoined;
@@ -307,6 +314,8 @@ public sealed class Match
         }
 
         var player = new PlayerEntity(AllocateEntityId(), peerId, devPlayerId, _inputCapacity);
+        player.JoinOrder = ++_joinCounter;   // Phase 14 D1
+        if (_flow.DevRespawn) AssignDevTeam(player);
         player.State.Position = SpawnPosition(player.EntityId);
         ResetCombat(player);
         // D10: a newcomer during a match spectates until the next round (dead, not a participant). It never
@@ -320,7 +329,7 @@ public sealed class Match
         SendJoinResponse(peerId, JoinResult.Ok, player.EntityId);
         // Before any spawn: the client needs the weapon and item data before it can show them (D4, D2).
         SendCatalogs(peerId);
-        SendWorldItems(peerId);
+        SendWorldItems(player);
         SendInventory(player);
         // Everyone (including itself) to the newcomer, then the newcomer to everyone else.
         foreach (var other in _players) SendSpawned(peerId, other);
@@ -344,6 +353,7 @@ public sealed class Match
         // Reliable, after its own spawn: the newcomer's client knows it is dead (spectating) before any input.
         // Only to the newcomer; the others see it dead from the snapshot flag.
         if (spectator) SendDied(peerId, new PlayerDied { VictimId = player.EntityId });
+        SendSquadStateTo(player);   // Phase 14 D2, D10: the stations (and a dev-mode team) last, after everything above
         return JoinResult.Ok;
     }
 
@@ -372,7 +382,12 @@ public sealed class Match
         if (_playersByPeer.Remove(peerId, out var player)) RemovePlayer(player);
     }
 
-    // Leave for a connected or a graced player. Never called inside a loop over _players.
+    // 기능: 연결된 또는 유예 중인 플레이어를 경기에서 뺀다. _players를 도는 반복 안에서는 부르지 않는다.
+    //   D10: 경기 중 이탈은 탈락이다(소지품은 남은 사람들에게 드롭, 결과 없음). Phase 14: 진행 중인 소생·재투입을 끝내고, 팀이 살아
+    //   있으면 들고 있던 카드를 떨어뜨리며, 이 사람의 카드는 사라진다(D9). 그 뒤 분대 전멸을 검사한다(D6: 마지막 Up 구성원이 나가면
+    //   기절한 팀원이 탈락하고, 팀 배치가 이 사람의 기록에도 들어간다).
+    // 입력: player - 떠나는 플레이어.
+    // 출력: 반환값 없음.
     private void RemovePlayer(PlayerEntity player)
     {
         _players.Remove(player);
@@ -382,17 +397,25 @@ public sealed class Match
         PlayerDespawned.Write(ref writer, new PlayerDespawned { EntityId = player.EntityId });
         foreach (var other in _players) _send(other.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
 
+        EndChannelsOf(player);
+        bool squad = _flow.InMatch && player.Participant && player.TeamId != 0;
         // D10: leaving a match is an elimination. What it carried goes to the ground for the others (the death
         // drop, sent to the remaining players only), and it no longer counts as alive. It gets no result.
         if (_flow.InMatch && player.Participant && player.Alive)
         {
             player.Alive = false;
-            player.Placement = _flow.Eliminate();
+            _flow.EliminatePlayer();
+            // Phase 14: a provisional placement (the teams left now); the team's own one replaces it at the wipe or finish.
+            player.Placement = (byte)_flow.TeamsAlive;
             player.EliminatedTick = ServerTick;
             DropEverything(player);
+            if (squad && !_teamOut[player.TeamId] && HasUpMember(player.TeamId, null)) DropHeldCards(player);
         }
+        ClearHeldCards(player);
+        RemoveCardsOf(player);
         // Phase 9: a participant who leaves still belongs to the match record.
-        if (_flow.InMatch && player.Participant && _matchSink != null) _leftParticipants.Add(RecordOf(player, ServerTick));
+        if (_flow.InMatch && player.Participant && _matchSink != null) _leftParticipants.Add(new LeftParticipant(RecordOf(player, ServerTick), player.TeamId));
+        if (squad) CheckTeam(player.TeamId);
     }
 
     public void EnqueueInput(int peerId, in PlayerInputPacket packet)
@@ -459,6 +482,7 @@ public sealed class Match
             }
         }
         RefillLootPoints(now);
+        if (_flow.InMatch) ExpireCards(now);   // Phase 14 D9
         // Phase 13 D15: resources lying in reach are picked up on touch.
         if (now % ItemRules.MaterialPickupEveryTicks == 0) PickUpMaterials();
 
@@ -499,6 +523,8 @@ public sealed class Match
         SendDoorChanges();
         SendHarvestChanges();
         SendResourceChanges();
+        SendTeamChanges();       // Phase 14 D2
+        SendStationChanges();    // Phase 14 D10
         SendBuildEvents();
         // After every move of this tick, so all players are recorded at the same moment. A snapshot with
         // ServerTick N shows exactly the positions recorded at N, which is what ViewTick refers to.
@@ -506,7 +532,10 @@ public sealed class Match
         if (ServerTick % (uint)_snapshotEveryTicks == 0) SendSnapshots();
     }
 
-    // One player's part of the tick: input, move, reload, actions, consumable (server review M7: Tick isolates it).
+    // 기능: 한 플레이어의 Tick 부분(server review M7: Tick이 격리한다): 입력, (Phase 14 기절이면 출혈), 이동, 재장전, 행동,
+    //   (Phase 14 소생·재투입 진행), 회복 완료.
+    // 입력: player - 플레이어, now - 마지막으로 끝난 Tick.
+    // 출력: 반환값 없음. 플레이어 상태가 갱신된다.
     private void TickPlayer(PlayerEntity player, uint now)
     {
         int fault = FaultEntityId;
@@ -516,6 +545,8 @@ public sealed class Match
         // D9: a dead player's input is still taken and acked (LastProcessedSeq) but moves and fires nothing.
         // A player killed earlier in this loop is already dead here.
         if (!player.Alive) return;
+        // Phase 14 D5: a knocked-down player bleeds every tick, input or not (the server times it, request §37).
+        if (player.IsDowned && Bleed(player)) return;
 
         // Phase 12 D5: a rider is placed on the route at the tick being simulated (now + 1, the tick its snapshot
         // reports) and may jump. Everyone else steps with the same boxes and terrain as client prediction
@@ -530,6 +561,8 @@ public sealed class Match
         // Gated, the fire button's held state still follows the input: landing with Fire held must not fire a
         // semi-automatic weapon without a new press (the client's WeaponState does the same).
         else if (sent) player.FireHeld = (input.Buttons & InputButtons.Fire) != 0;
+        // Phase 14 D7, D8: a held E revives or reboots (after the actions, so a shot or a key of this input cancels it).
+        if (player.Alive) UpdateChannel(player, input, sent, previous, now);
         ConsumableRules.Complete(player, _items, now);   // step 9: every tick, input or not
     }
 
@@ -553,8 +586,9 @@ public sealed class Match
         _failedPlayers.Clear();
     }
 
-    // One Step and the Phase 12 checks of its result: the movement self-check (D12) and fall damage (D10). Returns false
-    // when the landing killed the player.
+    // 기능: 한 번의 Step과 그 결과의 Phase 12 검사(이동 자체 검사 D12, 낙하 피해 D10).
+    // 입력: player - 플레이어, input - 이 Tick 입력.
+    // 출력: 착지로 탈락했으면 false(Phase 14: 기절은 true, 이어지는 행동은 모드가 막는다).
     private bool Move(PlayerEntity player, in InputCommand input)
     {
         MovementMode before = player.State.Mode;
@@ -582,7 +616,8 @@ public sealed class Match
         }
 
         // D10: like shots, a fall hurts only when damage is allowed (the dev sandbox, or during the match).
-        return !(step.LandingSpeed > 0f && _flow.DamageAllowed && ApplyFallDamage(player, step.LandingSpeed));
+        if (step.LandingSpeed > 0f && _flow.DamageAllowed) ApplyFallDamage(player, step.LandingSpeed);
+        return player.Alive;
     }
 
     // Phase 13 D3: the colliders a step at these feet may touch: map boxes, closed doors, standing harvestables and the
@@ -671,6 +706,7 @@ public sealed class Match
             return BuildResultCode.Blocked;
 
         if (!ApplyEdit(slot, before, after)) return BuildResultCode.Unsupported;
+        CancelChannel(player);   // Phase 14 D8: an edit is another action
         id = piece.Id;
         changed = true;
         return BuildResultCode.Ok;
@@ -768,6 +804,9 @@ public sealed class Match
         return penetrates;
     }
 
+    // 기능: 배치 요청을 순서대로 검증하고 맞으면 조각을 놓는다(Phase 14: 놓으면 진행 중인 소생·재투입이 끊긴다).
+    // 입력: player - 요청자, request - 배치 요청, tick - 시뮬레이션 중인 Tick(CreatedTick), id - 새 조각 id.
+    // 출력: 결과 코드(Ok면 id가 새 조각).
     // D9 (request §45): every check in order; the first that fails is the answer, and nothing changes then. On success the
     // resources go first, then the piece is made and announced (request §51). tick: the tick being simulated (the piece's
     // CreatedTick).
@@ -803,6 +842,7 @@ public sealed class Match
         player.Inventory.SetResource(material, have - cost);
         id = _build.Add(shape, material, player.EntityId, tick, grounded);
         ConsumableRules.Cancel(player.Inventory);   // final review B9: placing interrupts a heal, like firing
+        CancelChannel(player);                      // Phase 14 D8: and a revive or reboot
         if (id == 0) return BuildResultCode.BudgetFull;   // unreachable: the budget was checked
         _build.TryGetSlot(id, out int slot);
         _support.Add(slot, shape);
@@ -983,19 +1023,20 @@ public sealed class Match
     private static bool ActionsAllowed(MovementMode mode) =>
         mode == MovementMode.Ground || mode == MovementMode.Crouch || mode == MovementMode.Slide;
 
-    // Phase 12 D10: health only (the shield does not stop it, like the zone) and a DamageTaken from nobody; a fatal fall
-    // is a death without a killer, cause Fall. Returns true when it killed.
-    private bool ApplyFallDamage(PlayerEntity player, float landingSpeed)
+    // 기능: 낙하 피해(Phase 12 D10): 체력만 줄이고(실드는 막지 않는다) 공격자 없는 DamageTaken을 보낸다. 치명이면 치명 경로 하나
+    //   (Phase 14 D6: 기절 또는 탈락, 원인 Fall). 기절한 채 기어서 떨어져도 같다. 진행 중인 소생·재투입은 정책대로 끊긴다.
+    // 입력: player - 착지한 플레이어, landingSpeed - 착지 속도(m/s).
+    // 출력: 반환값 없음.
+    private void ApplyFallDamage(PlayerEntity player, float landingSpeed)
     {
         int damage = CombatRules.FallDamage(landingSpeed);
-        if (damage <= 0) return false;
+        if (damage <= 0) return;
         player.Health = Math.Max(0, player.Health - damage);
         var writer = new PacketWriter(_sendBuffer);
         DamageTaken.Write(ref writer, new DamageTaken { AttackerId = 0, Damage = (ushort)damage, FromDirection = Vector3.Zero });
         _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
-        if (player.Health > 0) return false;
-        Kill(player, null, DeathCause.Fall);
-        return true;
+        OnDamaged(player);
+        if (player.Health == 0) ApplyFatal(player, null, DeathCause.Fall);
     }
 
     // One buffered input per tick (Phase 0). Returns false when the input is made up by the server.
@@ -1025,6 +1066,9 @@ public sealed class Match
         return false;
     }
 
+    // 기능: 살아 있는 플레이어의 실제 입력 하나를 spec §2 순서로 처리한다. Phase 14 D7: 소생·재투입 대상이 범위 안이면 E 누름은 문·줍기를 하지 않는다.
+    // 입력: player - 행위자, input - 받은 입력, previous - 직전 실제 입력의 버튼, now - 마지막 Tick.
+    // 출력: 반환값 없음.
     // One real input of a living player, in the spec §2 order: cancel use -> tool -> slot -> drop -> pickup ->
     // reload -> fire -> start use. (Movement came first; finishing a use comes after, every tick.)
     // Phase 13 D5: Fire acts by the tool in hand: a shot (Weapon), a swing (Harvest), nothing (Build: placing is a
@@ -1039,8 +1083,9 @@ public sealed class Match
         HarvestRules.SelectTool(player, buttons);
         WeaponRules.SelectSlot(player, buttons);
         if ((buttons & InputButtons.Drop) != 0) DropCurrentWeapon(player);
-        // Phase 12 D9: E acts on a door in front first, an item otherwise.
-        if ((buttons & InputButtons.Interact) != 0 && !ToggleDoor(player)) Pickup(player);
+        // Phase 12 D9: E acts on a door in front first, an item otherwise. Phase 14 D7: neither while a revive or reboot target
+        // is in reach (holding E there starts that instead).
+        if ((buttons & InputButtons.Interact) != 0 && !HasChannelTarget(player, now) && !ToggleDoor(player)) Pickup(player);
 
         bool aimValid = CombatRules.TryAimDirection(input.AimYaw, input.AimPitch, out Vector3 direction);
         bool fire = (buttons & InputButtons.Fire) != 0;
@@ -1114,6 +1159,9 @@ public sealed class Match
         _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 한 발을 쏜다: 맵·조각·플레이어(되감은 위치) 중 가장 가까운 것에 맞는다. Phase 14 D3: 같은 팀은 건너뛴다(관통).
+    // 입력: shooter - 사수, direction - 조준 방향(단위 벡터), viewTick - 사수가 본 Tick.
+    // 출력: 반환값 없음. ShotFired가 방송되고 맞은 대상이 피해를 받는다.
     // D7: from the eye along the aim, the nearest map surface (box, terrain or floor plane) or living player stops the shot. The
     // client only sent a direction; which player is hit is decided here (D12, request §17).
     // D6: other players are tested where the shooter saw them, at ViewTick (clamped to the last
@@ -1135,7 +1183,9 @@ public sealed class Match
         PlayerEntity? target = null;
         foreach (var other in _players)
         {
-            if (other == shooter || !other.Alive) continue;
+            // Phase 14 D3: friendly fire is off: a shot passes through teammates (it can hit an enemy behind one).
+            if (other == shooter || !other.Alive || SameTeam(shooter, other)) continue;
+
             // Phase 12 D13: the hit box has the height of the mode the target was in then; a transport rider is not hit.
             Vector3 feet = other.History.Sample(rewindTick, out MovementMode mode);
             if (mode == MovementMode.Transport) continue;
@@ -1250,11 +1300,16 @@ public sealed class Match
         PiecesDestroyed++;
     }
 
+    // 기능: 사격 명중을 반영한다: 피해, 처치 기여, HitConfirmed(사수), DamageTaken(대상), 진행 끊기(Phase 14 D8), 치명이면 치명 경로 하나.
+    //   Phase 14: HitConfirmed.Killed는 탈락일 때만 true다(기절시킨 명중은 false, Solo는 지금과 같다).
+    // 입력: shooter - 사수, target - 맞은 플레이어(다른 팀), damage - 피해량.
+    // 출력: 반환값 없음.
     private void ApplyHit(PlayerEntity shooter, PlayerEntity target, ushort damage)
     {
         int before = target.Health + target.Shield;
-        bool killed = CombatRules.ApplyDamage(ref target.Health, ref target.Shield, damage);
+        bool fatal = CombatRules.ApplyDamage(ref target.Health, ref target.Shield, damage);
         if (_flow.InMatch && shooter.Participant && shooter != target) shooter.DamageDealt += before - (target.Health + target.Shield);
+        bool killed = fatal && (target.IsDowned || !CanBeDowned(target));
 
         var writer = new PacketWriter(_sendBuffer);
         HitConfirmed.Write(ref writer, new HitConfirmed { TargetId = target.EntityId, Damage = damage, Killed = killed });
@@ -1271,24 +1326,32 @@ public sealed class Match
         });
         _send(target.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
 
-        if (killed) Kill(target, shooter);
+        OnDamaged(target);
+        if (fatal) ApplyFatal(target, shooter, DeathCause.Zone);
     }
 
-    // QA-1 (damagePlayer): damage from nobody, like a fall but through the shield (the shot rule, CombatRules.ApplyDamage).
-    // The victim hears DamageTaken; a fatal one is a death without a killer. Returns false for a dead player.
+    // 기능: QA-1 damagePlayer: 공격자 없는 피해(낙하처럼, 단 실드를 먼저 깎는 사격 규칙). 대상은 DamageTaken을 듣고, 치명이면
+    //   치명 경로 하나(Phase 14 D6: 같은 팀에 서 있는 구성원이 있으면 기절, 기절한 사람은 탈락).
+    // 입력: target - 대상, damage - 피해량, killed - 탈락했는지.
+    // 출력: 살아 있던 대상이면 true, 아니면 false.
     internal bool DamagePlayer(PlayerEntity target, int damage, out bool killed)
     {
         killed = false;
         if (!target.Alive || damage <= 0) return false;
-        killed = CombatRules.ApplyDamage(ref target.Health, ref target.Shield, damage);
+        bool fatal = CombatRules.ApplyDamage(ref target.Health, ref target.Shield, damage);
         var writer = new PacketWriter(_sendBuffer);
         DamageTaken.Write(ref writer, new DamageTaken { AttackerId = 0, Damage = (ushort)Math.Min(damage, ushort.MaxValue), FromDirection = Vector3.Zero });
         _send(target.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
-        if (killed) Kill(target, null);
+        OnDamaged(target);
+        if (fatal) ApplyFatal(target, null, DeathCause.Zone);
+        killed = !target.Alive;
         return true;
     }
 
-    // QA-1 (killPlayer): the real death path (placement, PlayerDied, the death drop); the finish check follows next tick.
+    // 기능: QA-1 killPlayer: 진짜 탈락 경로(배치, PlayerDied, 소지품 드롭). Phase 14 D6: 기절 없이 바로 탈락한다(팀이 살아 있으면 카드를
+    //   떨어뜨리고, 서 있는 팀원이 없으면 분대 전멸). 종료 검사는 다음 Tick이다.
+    // 입력: victim - 대상.
+    // 출력: 살아 있던 대상이면 true.
     internal bool KillPlayer(PlayerEntity victim)
     {
         if (!victim.Alive) return false;
@@ -1321,6 +1384,9 @@ public sealed class Match
     internal bool IsGrounded(PlayerEntity player) =>
         MovementSimulation.IsGrounded(player.State, GatherAround(player.State.Position), GameMap.Terrain);
 
+    // 기능: 자기장 단계를 넘기고 매 초 원 밖의 플레이어 체력을 줄인다. 체력 0은 치명 경로 하나(Phase 14: 기절 또는 탈락), 피해는 진행을 끊는다.
+    // 입력: now - 마지막 Tick.
+    // 출력: 반환값 없음.
     // D7, D8: the next phase when the shrink is over, then, once per second since the start, zone damage to
     // everyone outside the circle at this tick. Health only: the shield does not stop the zone. Players are
     // processed in list order, which fixes the placements of deaths in the same tick (D9).
@@ -1335,21 +1401,38 @@ public sealed class Match
             // Phase 12: a transport rider is above the map (its route reaches outside the circle), not in it.
             if (!player.Alive || player.State.Mode == MovementMode.Transport || !_zone.IsOutside(player.State.Position, now)) continue;
             player.Health = Math.Max(0, player.Health - damage);
-            if (player.Health == 0) Kill(player, null);
+            OnDamaged(player);
+            // Phase 14 D6: the one fatal path (a knock-down, or an elimination).
+            if (player.Health == 0) ApplyFatal(player, null, DeathCause.Zone);
         }
     }
 
-    // D9: the living participant wins; when the last ones died in the same tick, the one processed last (the
-    // only placement 1). A winner who already left is no winner (0).
+    // 기능: 경기를 끝낸다(D9, Phase 14 D6). 전멸하지 않은 팀의 구성원(서 있음·기절·카드 대기 중, 나간 사람의 기록 포함)은 모두 배치 1이다.
+    //   마지막 팀들이 같은 Tick에 전멸했으면 나중에 처리된 팀(배치 1)이 이긴다. 우승 팀이 여럿이면(QA 강제 종료) 플레이어 순서로 마지막
+    //   팀이다. WinnerId = 우승 팀에서 경기에 남은 가장 작은 Entity id(모두 나갔으면 0). Solo는 지금과 같다. 진행 중인 소생·재투입은
+    //   끊는다(결과 화면에서는 출혈·채널이 돌지 않는다).
+    // 입력: now - 마지막 Tick.
+    // 출력: 반환값 없음. 결과가 보내지고 기록이 Sink로 간다.
     private void FinishMatch(uint now)
     {
         _flow.Finish(now);
-        PlayerEntity? winner = null;
+        CancelAllChannels();   // Phase 14 review: no revive or reboot completes on the result screen
+        byte winnerTeam = 0;
         foreach (var player in _players)
         {
             if (!player.Participant) continue;
-            if (player.Alive) player.Placement = 1;
-            if (player.Placement == 1) winner = player;
+            if (player.TeamId != 0 && !_teamOut[player.TeamId]) player.Placement = 1;
+            if (player.Placement == 1) winnerTeam = player.TeamId;
+        }
+        for (int i = 0; i < _leftParticipants.Count; i++)
+        {
+            LeftParticipant left = _leftParticipants[i];
+            if (left.TeamId != 0 && !_teamOut[left.TeamId]) _leftParticipants[i] = left with { Record = left.Record with { Placement = 1 } };
+        }
+        PlayerEntity? winner = null;
+        foreach (var player in _players)
+        {
+            if (player.Participant && player.TeamId == winnerTeam && winnerTeam != 0 && (winner == null || player.EntityId < winner.EntityId)) winner = player;
         }
         WinnerId = winner?.EntityId ?? 0;
 
@@ -1436,12 +1519,16 @@ public sealed class Match
         }
     }
 
+    // 기능: 범위 안 가장 가까운 아이템을 줍는다(서버가 고른다). Phase 14 D9: 카드는 같은 팀 것만 대상이고 카드 칸으로 간다.
+    // 입력: player - 줍는 사람.
+    // 출력: 반환값 없음. PickupResult가 간다.
     // D8, D9: the server picks the nearest item in range itself; the client never names one, so it cannot
     // reach for a far item. Items are processed in player order within a tick, so when two players reach
     // for the same item the first one takes it and the second finds it gone.
     private void Pickup(PlayerEntity player)
     {
-        int index = _worldItems.FindNearest(player.State.Position, ItemRules.PickupRange, ItemRules.PickupHeight);
+        // Phase 14 D9: only the player's own team's reboot cards are candidates.
+        int index = _worldItems.FindNearest(player.State.Position, ItemRules.PickupRange, ItemRules.PickupHeight, player.TeamId);
         if (index < 0)
         {
             SendPickupResult(player, PickupResultCode.NothingInRange, 0);
@@ -1449,6 +1536,11 @@ public sealed class Match
         }
 
         WorldItemData item = _worldItems[index].Data;
+        if (item.Kind == ItemKind.RebootCard)
+        {
+            SendPickupResult(player, PickupCard(player, index), item.ItemId);
+            return;
+        }
         if (item.Kind == ItemKind.Weapon)
         {
             bool taken = PickupWeapon(player, index, item);
@@ -1711,6 +1803,9 @@ public sealed class Match
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 참가자에게 경기 결과를 보낸다. Phase 14 D6: Participants는 팀 수, Placement는 팀 배치(Solo는 지금과 같다).
+    // 입력: player - 받는 참가자.
+    // 출력: 반환값 없음.
     private void SendMatchResult(PlayerEntity player)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -1719,7 +1814,8 @@ public sealed class Match
             WinnerId = WinnerId,
             Placement = player.Placement,
             Kills = (byte)Math.Min(player.Kills, byte.MaxValue),
-            Participants = (byte)_flow.Participants,
+            // Phase 14 D6: teams (Solo: one per participant, as before); Placement is the team's.
+            Participants = (byte)_flow.Teams,
         });
         _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
@@ -1731,39 +1827,24 @@ public sealed class Match
         _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
-    // D9: death is decided here. The same ReliableOrdered channel carries DamageTaken, PlayerDied and
-    // PlayerRespawned, so every client sees them in that order.
-    // killer null = the zone (Phase 5 D8) or a fall (Phase 12 D10, cause): KillerId 0, nobody gets the kill. During a
-    // match the death is permanent and takes the next placement (D9); the killer's count rises unless it killed itself (D12).
+    // 기능: 탈락은 여기서 정해진다(D9). DamageTaken·PlayerDied·PlayerRespawned는 같은 ReliableOrdered 채널이라 모든 Client가 그 순서로 본다.
+    //   killer null = 자기장(Phase 5 D8)이나 낙하(Phase 12 D10, cause): KillerId 0, 처치 없음. 경기 중 탈락은 영구다.
+    //   Phase 14 D6: 같은 팀에 서 있는 다른 구성원이 없으면 팀이 전멸한다(배치 = 남은 팀 수, 기절한 팀원도 같은 Tick에 탈락).
+    //   팀이 살아 있으면 이 사람만 탈락하고 Reboot 카드를 떨어뜨리며, PlayerDied.Placement는 그 순간 남은 팀 수(자기 팀 포함, 잠정,
+    //   항상 1 이상, 리더 결정: 0은 늦은 관전자 안내에만 쓴다)다. 최종 배치는 팀 전멸·경기 종료 때 정해지고 MatchResult로 간다.
+    //   Solo는 언제나 팀 전멸이므로 지금과 같다.
+    // 입력: victim - 탈락자(살아 있음, 기절 포함), killer - 처치자(null = 없음), cause - 처치자가 없을 때의 원인.
+    // 출력: 반환값 없음.
     private void Kill(PlayerEntity victim, PlayerEntity? killer, DeathCause cause = DeathCause.Zone)
     {
-        victim.Alive = false;
-        victim.RespawnAtTick = ServerTick + _respawnTicks;
-        // The reload dies with the player; otherwise the corpse's snapshots would report it (D10).
-        victim.Reloading = false;
-        victim.ReloadEndTick = 0;
-        // Likewise the heal channel: DropEverything does not call Inventory.Clear, and a late Complete
-        // must not heal the corpse or the respawned player.
-        ConsumableRules.Cancel(victim.Inventory);
-
-        byte placement = 0;
-        if (_flow.InMatch && victim.Participant)
+        byte team = victim.TeamId;
+        bool squad = _flow.InMatch && victim.Participant && team != 0 && !_teamOut[team];
+        if (squad && !HasUpMember(team, victim))
         {
-            placement = _flow.Eliminate();
-            victim.Placement = placement;
-            victim.EliminatedTick = ServerTick;
-            if (killer != null && killer != victim) killer.Kills++;
+            WipeTeam(team, victim, killer, cause, announce: true);
+            return;
         }
-
-        var writer = new PacketWriter(_sendBuffer);
-        PlayerDied.Write(ref writer, new PlayerDied
-        {
-            VictimId = victim.EntityId, KillerId = killer?.EntityId ?? 0, Placement = placement, Cause = killer == null ? cause : DeathCause.Zone,
-        });
-        Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
-
-        // After PlayerDied, so every client hears of the death before the items appear.
-        DropEverything(victim);
+        EliminateOne(victim, killer, cause, squad ? (byte)_flow.TeamsAlive : (byte)0, announce: true, teamSurvives: squad);
     }
 
     private void Respawn(PlayerEntity player) => Respawn(player, SpawnPosition(player.EntityId));
@@ -1790,6 +1871,9 @@ public sealed class Match
         Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: Starting -> Playing 시작 리셋(D3). Phase 14: 분대 상태를 지우고 참가자를 입장 순서로 팀에 묶는다(D1).
+    // 입력: now - 마지막 Tick.
+    // 출력: 반환값 없음. 경기 세계가 새로 시작된다.
     // D3: Starting -> Playing, in this one tick: everyone to a drop point (Phase 6 D9), empty-handed with Health 100 and
     // Shield 0 (the loadout), the world cleared and filled with this match's loot, the participants fixed, the
     // zone started. Respawn keeps Seq, so clients re-sync their prediction exactly as after a death.
@@ -1799,6 +1883,7 @@ public sealed class Match
     private void StartMatch(uint now)
     {
         ClearWorldItems();
+        ResetSquadState(keepTeams: false);   // Phase 14: no channel, knock-down or station cooldown survives into the match
         _hasRoute = _airDrop;
         if (_hasRoute)
         {
@@ -1818,6 +1903,8 @@ public sealed class Match
             player.DamageDealt = 0;
             player.EliminatedTick = 0;
         }
+        // Phase 14 D1: the participants (everyone here, in join order) form the teams, at least two.
+        AssignTeams();
         _leftParticipants.Clear();
         // Phase 12 D9: every door closed (everyone is aboard or on a drop point, clear of every box); the change goes out
         // at the end of this tick.
@@ -1835,6 +1922,9 @@ public sealed class Match
         WinnerId = 0;
     }
 
+    // 기능: Finished -> Closing -> 다음 라운드 리셋(D13). Phase 14: 팀과 분대 상태를 지운다(대기실에는 팀이 없다).
+    // 입력: now - 마지막 Tick.
+    // 출력: 반환값 없음.
     // D13: Finished -> Closing -> the next round, in this one tick: everyone alive on the spawn ring with an
     // empty inventory, no items in the world (no loot before a match, D2), no zone.
     private void CloseRound(uint now)
@@ -1846,6 +1936,7 @@ public sealed class Match
         // Phase 13 D6, D10: the lobby gets the whole map back, without the match's pieces.
         _harvest.Reset();
         ClearBuilds();
+        ResetSquadState(keepTeams: false);   // Phase 14: the lobby has no teams
         foreach (var player in _players)
         {
             Respawn(player);
@@ -1856,15 +1947,20 @@ public sealed class Match
         _flow.Reopen(now, _players.Count);
     }
 
-    // Removes every world item, telling every client. Spawn-point timers are not involved (the spawner restarts).
+    // 기능: 월드 아이템을 모두 지우고 알린다(Phase 14: 카드는 그 팀에게만).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    // Removes every world item, telling every client (Phase 14: a card only its team). Spawn-point timers are not
+    // involved (the spawner restarts).
     private void ClearWorldItems()
     {
         while (_worldItems.Count > 0)
         {
             int last = _worldItems.Count - 1;
             ushort itemId = _worldItems[last].Data.ItemId;
+            byte team = _worldItems[last].CardTeam;
             _worldItems.RemoveAt(last);
-            BroadcastItemRemoved(itemId);
+            BroadcastItemRemoved(itemId, team);
         }
     }
 
@@ -1991,19 +2087,32 @@ public sealed class Match
         _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
-    // D13, D14: the whole list in chunks of WorldItemsPacket.MaxItems (at most 256 items = 6 packets).
-    private void SendWorldItems(int peerId)
+    // 기능: 월드 아이템 목록 전체를 WorldItemsPacket.MaxItems 단위로 보낸다(D13, D14, 최대 256개 = 6 패킷). Phase 14 D9: 다른 팀의
+    //   카드는 빼고 보낸다.
+    // 입력: recipient - 받는 사람(입장·Resume).
+    // 출력: 반환값 없음.
+    private void SendWorldItems(PlayerEntity recipient)
     {
-        for (int start = 0; start < _worldItems.Count; start += WorldItemsPacket.MaxItems)
+        int visible = 0;
+        for (int i = 0; i < _worldItems.Count; i++)
         {
-            int count = Math.Min(WorldItemsPacket.MaxItems, _worldItems.Count - start);
+            ref readonly WorldItem item = ref _worldItems[i];
+            if (item.Data.Kind == ItemKind.RebootCard && (recipient.TeamId == 0 || item.CardTeam != recipient.TeamId)) continue;
+            _visibleItems[visible++] = i;
+        }
+        for (int start = 0; start < visible; start += WorldItemsPacket.MaxItems)
+        {
+            int count = Math.Min(WorldItemsPacket.MaxItems, visible - start);
             var writer = new PacketWriter(_sendBuffer);
             WorldItemsPacket.WriteHeader(ref writer, count);
-            for (int i = 0; i < count; i++) WorldItemData.Write(ref writer, _worldItems[start + i].Data);
-            _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+            for (int i = 0; i < count; i++) WorldItemData.Write(ref writer, _worldItems[_visibleItems[start + i]].Data);
+            _send(recipient.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
         }
     }
 
+    // 기능: 아이템을 월드에 넣고 모두에게 알린다(밀려난 드롭이 있으면 그 제거도). 카드는 SpawnCard가 만든다(Phase 14).
+    // 입력: roll - 아이템, position - 위치, spawnPoint - Loot Point(-1 = 드롭).
+    // 출력: 새 아이템 id, 넣지 못했으면 0.
     // Every change to the world item list goes through these three, so each one reaches every client.
     // Each finishes its send before returning: none of them keeps a PacketWriter on _sendBuffer open
     // across another send. Returns the new id, or 0 when the store could not take the item.
@@ -2011,7 +2120,7 @@ public sealed class Match
     {
         if (!_worldItems.TryAdd(roll.Kind, roll.DefId, roll.Rarity, roll.Amount, position, spawnPoint, out ushort itemId, out ushort evictedId))
             return 0;
-        if (evictedId != 0) BroadcastItemRemoved(evictedId);
+        if (evictedId != 0) BroadcastItemRemoved(evictedId, 0);   // never a card (cards are not evicted)
 
         var writer = new PacketWriter(_sendBuffer);
         ItemSpawnedPacket.Write(ref writer, _worldItems[_worldItems.Count - 1].Data);
@@ -2019,12 +2128,16 @@ public sealed class Match
         return itemId;
     }
 
+    // 기능: index의 아이템을 지우고 알린다(Phase 14: 카드는 그 팀에게만). Loot Point 아이템이면 그 점의 타이머를 시작한다.
+    // 입력: index - 아이템 index.
+    // 출력: 반환값 없음.
     internal void RemoveItemAt(int index)
     {
         ushort itemId = _worldItems[index].Data.ItemId;
         int spawnPoint = _worldItems[index].SpawnPoint;
+        byte team = _worldItems[index].CardTeam;
         _worldItems.RemoveAt(index);
-        BroadcastItemRemoved(itemId);
+        BroadcastItemRemoved(itemId, team);
         if (spawnPoint >= 0) _loot.OnTaken(spawnPoint, ServerTick);
     }
 
@@ -2047,20 +2160,26 @@ public sealed class Match
         return false;
     }
 
+    // 기능: 일부만 주운 아이템의 남은 양을 바꾸고 알린다(ItemSpawned upsert, Phase 14: 카드면 그 팀에게만).
+    // 입력: index - 아이템 index, amount - 남은 양.
+    // 출력: 반환값 없음.
     // Partial pickup (D9): the rest stays where it was. Sent as ItemSpawned, which clients treat as an upsert.
     internal void SetItemAmount(int index, ushort amount)
     {
         _worldItems.SetAmount(index, amount);
         var writer = new PacketWriter(_sendBuffer);
         ItemSpawnedPacket.Write(ref writer, _worldItems[index].Data);
-        Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+        BroadcastTeam(writer.WrittenSpan, _worldItems[index].CardTeam);
     }
 
-    private void BroadcastItemRemoved(ushort itemId)
+    // 기능: 아이템 제거를 알린다.
+    // 입력: itemId - 지운 아이템 id, team - 카드면 그 팀(그 팀만 안다), 아니면 0(모두).
+    // 출력: 반환값 없음.
+    private void BroadcastItemRemoved(ushort itemId, byte team)
     {
         var writer = new PacketWriter(_sendBuffer);
         ItemRemoved.Write(ref writer, new ItemRemoved { ItemId = itemId });
-        Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+        BroadcastTeam(writer.WrittenSpan, team);
     }
 
     private void SendSpawned(int recipientPeerId, PlayerEntity player)
@@ -2116,6 +2235,9 @@ public sealed class Match
         return null;
     }
 
+    // 기능: 유예 중인 캐릭터를 새 연결로 넘기고 입장 패킷 묶음을 다시 보낸다. Phase 14 D13: 끝에 팀 상태·스테이션·진행 중인 팀 채널도.
+    // 입력: peerId - 새 연결 id, player - 유예 중인 플레이어.
+    // 출력: 반환값 없음.
     // D2: the character goes to the new connection with everything it has (position, health, inventory, placement
     // state). The new client numbers its inputs from 1, so the input state starts over. It gets what a late joiner
     // gets; the others never saw it leave, so they are told nothing.
@@ -2135,7 +2257,7 @@ public sealed class Match
 
         SendJoinResponse(peerId, JoinResult.Resumed, player.EntityId);
         SendCatalogs(peerId);
-        SendWorldItems(peerId);
+        SendWorldItems(player);
         SendInventory(player);
         foreach (var other in _players) SendSpawned(peerId, other);
         if (!_flow.DevRespawn)
@@ -2152,6 +2274,7 @@ public sealed class Match
         StartBuildSync(player);      // Phase 13 D14: the client's old pieces are not trusted
         // The match ended while it was away: FinishMatch sent its result to no connection, so it gets it now.
         if (_flow.State == MatchFlowState.Finished && player.Participant) SendMatchResult(player);
+        SendSquadStateTo(player);   // Phase 14 D13: the team, the stations and the team's channels in progress
     }
 
     // Phase 13 D4: the BuildCatalog packet's content, built once.
@@ -2198,6 +2321,9 @@ public sealed class Match
         return false;
     }
 
+    // 기능: 끝난 경기의 기록을 만든다(남은 참가자 + 나간 참가자, Phase 14: 나간 사람의 배치는 팀 배치로 고쳐진 값).
+    // 입력: now - 마지막 Tick, winner - 우승 플레이어(null = 경기에 없음).
+    // 출력: MatchRecord.
     // Phase 9 D4: the record of the match that just finished: every participant still here plus those who left. Built
     // once per match on the game loop thread (the only allocation of the finish tick); the sink must not block.
     private MatchRecord BuildRecord(uint now, PlayerEntity? winner)
@@ -2207,16 +2333,17 @@ public sealed class Match
         {
             if (player.Participant) players.Add(RecordOf(player, now));
         }
-        players.AddRange(_leftParticipants);
+        foreach (LeftParticipant left in _leftParticipants) players.Add(left.Record);
         // A winner who left (the last two left before this tick, D9) gets no MatchResult, but the record keeps its win.
         string? winnerId = winner?.DevPlayerId;
         if (winnerId == null)
         {
-            foreach (PlayerRecord left in _leftParticipants)
+            foreach (LeftParticipant left in _leftParticipants)
             {
-                if (left.Placement == 1) winnerId = left.DevPlayerId;
+                if (left.Record.Placement == 1) winnerId = left.Record.DevPlayerId;
             }
         }
+
         return new MatchRecord(_flow.Round, _matchStartedUtc, DateTime.UtcNow, winnerId, players);
     }
 

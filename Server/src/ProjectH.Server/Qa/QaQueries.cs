@@ -19,14 +19,26 @@ public sealed record QaPlayerDto(
     string DevPlayerId, int EntityId, bool Connected, bool Graced, bool Alive, bool Participant, int Health, int Shield,
     QaVec3 Position, QaVec3 Velocity, float Yaw, MovementMode Mode, bool Grounded, int CurrentSlot, ToolKind Tool,
     QaWeaponDto? Weapon, QaWeaponDto[] Weapons, QaAmmoDto Ammo, int Medkits, int ShieldCells, QaResourcesDto Resources,
-    int Kills, int Placement, int DamageDealt, long LastProcessedSeq, bool Reloading);
+    int Kills, int Placement, int DamageDealt, long LastProcessedSeq, bool Reloading,
+    // Phase 14: the team (0 = none), knocked down, who knocked it down, cards held, its revive or reboot in progress, and
+    // whether a teammate is reviving it.
+    int TeamId = 0, int JoinOrder = 0, bool Downed = false, string? DownedBy = null, int RebootCards = 0, QaChannelDto? Channel = null,
+    string? RevivedBy = null);
+
+// Phase 14: a revive (target = the downed teammate's DevPlayerId) or reboot (station = the index) in progress.
+public sealed record QaChannelDto(string Kind, string? Target, int Station, long EndTick);
+
+// Phase 14: a reboot station and its cooldown.
+public sealed record QaStationDto(int Index, QaVec3 Position, bool CoolingDown, long CooldownEndTick);
 
 public sealed record QaZoneDto(int Phase, int PhaseCount, QaVec2 Center, float Radius, QaVec2 TargetCenter, float TargetRadius,
     long ShrinkStartTick, long ShrinkEndTick, int DamagePerSecond);
 
 public sealed record QaMatchDto(
     MatchFlowState State, int Round, long Tick, double ElapsedSeconds, long StateEndTick, int MinPlayers, int Players, int Connected,
-    int Graced, int Participants, int Alive, string? Winner, QaZoneDto Zone, int BuildPieces, int WorldItems, bool AirDropRoute);
+    int Graced, int Participants, int Alive, string? Winner, QaZoneDto Zone, int BuildPieces, int WorldItems, bool AirDropRoute,
+    // Phase 14: the team size, the teams of the match, the teams not yet wiped out, reboot cards in the world, and the stations.
+    int TeamSize = 1, int Teams = 0, int TeamsAlive = 0, int WorldCards = 0, QaStationDto[]? Stations = null);
 
 public sealed record QaPieceDto(long Id, BuildPieceType Type, BuildMaterialType Material, int CellX, int Level, int CellZ, int Rotation,
     QaVec3 Center, int Health, int MaxHealth, int Damage, int Owner, long CreatedTick, bool Grounded, int Edit = 0);
@@ -41,6 +53,9 @@ internal static class QaQueries
         typeof(QaQueries).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
         ?? typeof(QaQueries).Assembly.GetName().Version?.ToString() ?? "unknown";
 
+    // 기능: GET /qa/health 본문을 만든다(Phase 14: options.teamSize).
+    // 입력: t - QA Tick 문맥.
+    // 출력: 익명 객체.
     public static object Health(QaTick t)
     {
         QaControl qa = t.Qa;
@@ -73,6 +88,7 @@ internal static class QaQueries
                 devRespawn = o.DevRespawn,
                 airDrop = o.AirDrop,
                 buildInfiniteResources = o.BuildInfiniteResources,
+                teamSize = o.TeamSize,
                 reconnectGraceSeconds = o.ReconnectGraceSeconds,
                 inputTimeoutSeconds = o.InputTimeoutSeconds,
                 joinTimeoutSeconds = o.JoinTimeoutSeconds,
@@ -94,6 +110,9 @@ internal static class QaQueries
         return players;
     }
 
+    // 기능: 플레이어 하나의 QA DTO를 만든다(Phase 14: 팀, 기절, 기절시킨 사람, 카드, 진행, 소생자).
+    // 입력: m - 경기, p - 플레이어.
+    // 출력: QaPlayerDto.
     public static QaPlayerDto Player(Match m, PlayerEntity p)
     {
         Inventory inv = p.Inventory;
@@ -115,9 +134,40 @@ internal static class QaQueries
             new QaAmmoDto(inv.GetAmmo(AmmoType.Light), inv.GetAmmo(AmmoType.Medium), inv.GetAmmo(AmmoType.Heavy)),
             inv.Medkits, inv.ShieldCells,
             new QaResourcesDto(inv.Resource(BuildMaterialType.Wood), inv.Resource(BuildMaterialType.Stone), inv.Resource(BuildMaterialType.Metal)),
-            p.Kills, p.Placement, p.DamageDealt, p.LastProcessedSeq, p.Reloading);
+            p.Kills, p.Placement, p.DamageDealt, p.LastProcessedSeq, p.Reloading,
+            p.TeamId, (int)p.JoinOrder, p.IsDowned, p.IsDowned ? p.DownedBy?.DevPlayerId : null, inv.CardCount, ChannelView(p),
+            p.IsDowned ? p.RevivedBy?.DevPlayerId : null);
     }
 
+    // 기능: Phase 14: 플레이어의 진행 중인 소생·재투입을 DTO로 만든다.
+    // 입력: p - 플레이어.
+    // 출력: 진행 중이면 QaChannelDto, 아니면 null.
+    private static QaChannelDto? ChannelView(PlayerEntity p)
+    {
+        if (!p.ChannelActive) return null;
+        return p.Channel == ChannelKind.Revive
+            ? new QaChannelDto("revive", p.ReviveTarget?.DevPlayerId, -1, p.ChannelEndTick)
+            : new QaChannelDto("reboot", null, p.ChannelStation, p.ChannelEndTick);
+    }
+
+    // 기능: Phase 14: 스테이션 위치와 대기 상태를 DTO로 만든다.
+    // 입력: m - 경기.
+    // 출력: 스테이션 DTO 배열(RebootStations 순서).
+    private static QaStationDto[] Stations(Match m)
+    {
+        var stations = new QaStationDto[RebootStations.Count];
+        for (int i = 0; i < stations.Length; i++)
+        {
+            System.Numerics.Vector3 at = RebootStations.All[i];
+            uint end = m.StationEndTick(i);
+            stations[i] = new QaStationDto(i, new QaVec3(at.X, at.Y, at.Z), end > m.ServerTick, end > m.ServerTick ? end : 0);
+        }
+        return stations;
+    }
+
+    // 기능: 경기의 QA DTO를 만든다(Phase 14: 팀 크기·팀 수·남은 팀·월드 카드·스테이션).
+    // 입력: m - 경기, simHz - Tick 속도.
+    // 출력: QaMatchDto.
     public static QaMatchDto Match(Match m, int simHz)
     {
         int connected = m.PlayerCount - m.GracedCount;
@@ -134,7 +184,8 @@ internal static class QaQueries
         SafeZoneView(m, out QaZoneDto zone);
         MatchState wire = m.Flow.ToWire(m.PlayerCount);
         return new QaMatchDto(m.Flow.State, m.Flow.Round, m.ServerTick, elapsed, m.Flow.StateEndTick, m.Flow.MinPlayers, m.PlayerCount,
-            connected, m.GracedCount, wire.Participants, wire.Alive, winner, zone, m.BuildPieces, m.WorldItems.Count, m.HasRoute);
+            connected, m.GracedCount, wire.Participants, wire.Alive, winner, zone, m.BuildPieces, m.WorldItems.Count, m.HasRoute,
+            m.TeamSize, m.Flow.Teams, m.Flow.TeamsAlive, m.WorldItems.CardCount, Stations(m));
     }
 
     private static void SafeZoneView(Match m, out QaZoneDto zone)

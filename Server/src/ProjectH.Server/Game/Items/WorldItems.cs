@@ -9,8 +9,15 @@ public struct WorldItem
     public WorldItemData Data;
     public int SpawnPoint;   // index of the loot point that made it, -1 for a dropped item
     public ulong Order;      // add order; the dropped item with the lowest Order is evicted first (D13)
+    // Phase 14 D9, server only (not on the wire): a RebootCard's team (only it is told of the card and may pick it up), its
+    // owner's JoinOrder (an entity id is reused, a join order is not) and the tick it disappears at. 0 for other items.
+    public byte CardTeam;
+    public uint CardOwner;
+    public uint ExpireTick;
 
     public bool IsDropped => SpawnPoint < 0;
+    // Phase 14 D9: a card is never evicted (at most one per participant, so it cannot fill the store).
+    public bool IsEvictable => SpawnPoint < 0 && Data.Kind != ItemKind.RebootCard;
 }
 
 // Every item in the world (D13): a fixed array of Capacity records, so the list, the join packets and
@@ -28,15 +35,19 @@ public sealed class WorldItems
     public int Count => _count;
     // Phase 13 final review C: how many of them are Material items (the touch pickup skips its scan without any).
     public int MaterialCount { get; private set; }
+    // Phase 14 D9: how many of them are RebootCard items (the expiry scan and the TeamState card flags skip without any).
+    public int CardCount { get; private set; }
 
     // index 0..Count-1
     public ref readonly WorldItem this[int index] => ref _items[index];
 
-    // Adds an item and gives it the next free id. When the store is full the oldest dropped item is
-    // evicted first and its id returned in evictedId (0 when nothing was evicted). Spawn-point items are
-    // never evicted; if every record is one (impossible while spawn points < Capacity) nothing is added.
+    // 기능: 아이템을 넣고 다음 빈 id를 준다. 가득 차 있으면 가장 오래된 떨어뜨린 아이템을 먼저 지우고 그 id를 evictedId로
+    //   돌려준다. Spawn Point 아이템과 Phase 14 카드는 지우지 않는다. 지울 것이 없으면 넣지 않는다.
+    // 입력: kind·defId·rarity·amount·position - 아이템, spawnPoint - 만든 Loot Point(-1 = 떨어뜨림), itemId·evictedId - 결과,
+    //   cardTeam·cardOwner·expireTick - RebootCard의 팀, 주인 JoinOrder, 사라지는 Tick(다른 아이템은 0).
+    // 출력: 넣었으면 true.
     public bool TryAdd(ItemKind kind, byte defId, byte rarity, ushort amount, Vector3 position, int spawnPoint,
-        out ushort itemId, out ushort evictedId)
+        out ushort itemId, out ushort evictedId, byte cardTeam = 0, uint cardOwner = 0, uint expireTick = 0)
     {
         itemId = 0;
         evictedId = 0;
@@ -45,7 +56,7 @@ public sealed class WorldItems
             int oldest = -1;
             for (int i = 0; i < _count; i++)
             {
-                if (_items[i].IsDropped && (oldest < 0 || _items[i].Order < _items[oldest].Order)) oldest = i;
+                if (_items[i].IsEvictable && (oldest < 0 || _items[i].Order < _items[oldest].Order)) oldest = i;
             }
             if (oldest < 0) return false;
             evictedId = _items[oldest].Data.ItemId;
@@ -58,8 +69,12 @@ public sealed class WorldItems
             Data = new WorldItemData { ItemId = itemId, Kind = kind, DefId = defId, Rarity = rarity, Amount = amount, Position = position },
             SpawnPoint = spawnPoint,
             Order = _nextOrder++,
+            CardTeam = cardTeam,
+            CardOwner = cardOwner,
+            ExpireTick = expireTick,
         };
         if (kind == ItemKind.Material) MaterialCount++;
+        if (kind == ItemKind.RebootCard) CardCount++;
         _count++;
         return true;
     }
@@ -73,9 +88,13 @@ public sealed class WorldItems
         return -1;
     }
 
+    // 기능: index의 아이템을 지운다(마지막 기록이 빈 자리로 온다). Material·카드 수를 맞춘다.
+    // 입력: index - 0..Count-1.
+    // 출력: 반환값 없음.
     public void RemoveAt(int index)
     {
         if (_items[index].Data.Kind == ItemKind.Material) MaterialCount--;
+        if (_items[index].Data.Kind == ItemKind.RebootCard) CardCount--;
         _count--;
         _items[index] = _items[_count];
         _items[_count] = default;
@@ -90,7 +109,10 @@ public sealed class WorldItems
     // and verticalRange up or down, or -1. Ties go to the lower ItemId, so the result does not depend on
     // the storage order (the client prompt applies the same rule to its own list). Phase 13 D15: never a Material
     // item (those are picked up on touch).
-    public int FindNearest(Vector3 feet, float horizontalRange, float verticalRange)
+    // 기능: 범위 안에서 발에 가장 가까운 줍기 대상을 찾는다(Material 제외). Phase 14 D9: 카드는 cardTeam의 카드만 대상이다.
+    // 입력: feet - 발 위치, horizontalRange·verticalRange - 범위, cardTeam - 줍는 사람의 팀(0 = 카드는 모두 건너뜀).
+    // 출력: 아이템 index, 없으면 -1.
+    public int FindNearest(Vector3 feet, float horizontalRange, float verticalRange, byte cardTeam = 0)
     {
         int best = -1;
         float bestDistance = 0f;
@@ -98,6 +120,7 @@ public sealed class WorldItems
         for (int i = 0; i < _count; i++)
         {
             if (_items[i].Data.Kind == ItemKind.Material) continue;
+            if (_items[i].Data.Kind == ItemKind.RebootCard && (cardTeam == 0 || _items[i].CardTeam != cardTeam)) continue;
             Vector3 d = _items[i].Data.Position - feet;
             float horizontalSq = d.X * d.X + d.Z * d.Z;
             if (horizontalSq > rangeSq || d.Y > verticalRange || d.Y < -verticalRange) continue;

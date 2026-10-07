@@ -81,5 +81,35 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual(0, SpectatorTargets.Follow(new ushort[4], 0, 0, ref preferred));
             Assert.AreEqual(7, preferred);   // the killer's snapshot may not have arrived yet
         }
+
+        // Phase 14 D12: an eliminated player watches its living teammates first; the killer waits until the team is gone.
+        [Test]
+        public void FollowSquad_PrefersTheTeam_AndKeepsTheKillerForLater()
+        {
+            ushort[] alive = { 7, 2, 5, 9 };
+            ushort[] team = { 9, 5 };
+            ushort preferred = 7;   // the killer
+
+            ushort target = SpectatorTargets.FollowSquad(alive, 4, team, 2, 0, ref preferred);
+            Assert.AreEqual(5, target);           // the smallest teammate id
+            Assert.AreEqual(7, preferred);        // not used yet
+            Assert.AreEqual(5, SpectatorTargets.FollowSquad(alive, 4, team, 2, 5, ref preferred));   // kept while alive
+
+            // Teammate 5 is out: the next teammate.
+            Assert.AreEqual(9, SpectatorTargets.FollowSquad(alive, 4, new ushort[] { 9 }, 1, 5, ref preferred));
+
+            // The whole team is out (9 died too): the old flow, killer first.
+            ushort[] others = { 7, 2 };
+            Assert.AreEqual(7, SpectatorTargets.FollowSquad(others, 2, team, 0, 9, ref preferred));
+            Assert.AreEqual(0, preferred);
+        }
+
+        [Test]
+        public void FollowSquad_WithoutATeam_IsTheOldFlow()
+        {
+            ushort preferred = 7;
+            Assert.AreEqual(7, SpectatorTargets.FollowSquad(Alive, 3, new ushort[0], 0, 0, ref preferred));
+            Assert.AreEqual(0, preferred);
+        }
     }
 }
