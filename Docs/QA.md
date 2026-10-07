@@ -410,6 +410,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `UI/visual_screens.json` | 로드맵 §9 | Unity Player가 3인 경기에 들어가 HUD, Esc 메뉴, F1, Kill Feed, 결과, 전적 창(DB 꺼짐 안내), 서버 Crash 뒤 재접속 화면, 같은 Port로 다시 뜬 서버에 재입장한 화면을 찍는다 | ~20 s |
 | `Building/visual_building.json` | 로드맵 §10 | Unity Player가 15 m 앞의 건설을 본다. 실제 입력으로 짓는 나무 벽(짓는 중 → 완성), 돌·나무·금속 벽, 바닥·경사로·지붕, 자원 줄(1600×900), 실제 사격 피해 두 단계, 지지벽 파괴 뒤 다리 붕괴(먼지)와 그 뒤를 찍는다 | ~17 s |
 | `Building/unity_build_input.json` | 로드맵 §10, §87 | Unity Player를 가상 키보드·마우스로 움직인다(`unityKey`·`unityClick`·`unityLook`). W 걷기, Q 건축 모드(Player·서버 둘 다 Build), Z 벽 → 미리보기 Valid, 클릭 배치(서버 조각 1, 나무 차감) → 같은 자리 Invalid, 자기 벽에 막힘, Phase 13.5 H 편집 → 칸 클릭 → H 확정(서버 Edit > 0) → H, 우클릭 Reset(Edit 0), F 채집(나무 증가), 버튼을 누른 채 회전하는 Turbo(조각 증가), 1 무기 | ~18 s |
+| `Building/visual_building_edit.json` | Phase 13.5 D12 | `spawnBuildPiece` + `editBuild`로 만든 편집 조각을 Unity Player가 본다: 남쪽 벽(회전 0)과 서쪽 벽(회전 1)의 창·문·반벽·큰 개구부, 바닥 1/4·절반·대각선, 지붕 경사·통로·평지붕, 방향을 바꾼 경사로. Player는 순간이동 뒤에도 자기 카메라 방향을 유지하므로 `unityLook`(0.1°/px)으로 돌린다 | ~16 s |
 | `Manual/ime_name.json` | 88–90 | 한글 IME 이름 입력 Manual Check 2개(CI에서는 SKIPPED) | 사람 |
 | `Manual/editor_ui.json` | 로드맵 §9 | Editor 수동 검증(Phase 11 UI). 서버를 127.0.0.1:7777(Editor 기본 주소)에 띄우고 Headless 상대 2명을 둔다. 사람이 Editor로 접속해 타이틀·한글 글꼴·IME·접속·이름·ESC 메뉴·F1·Kill Feed·결과·전적·끊김·재접속을 PASS/FAIL로 답한다. Kill Feed와 결과 화면은 상대를 `killPlayer`로 제거해 만든다. 끊김은 `stopServer`, 재접속은 같은 Port로 `startServer` | 사람 |
 | `Manual/editor_building.json` | 로드맵 §10 | Editor 수동 검증(Phase 13 건설). DevRespawn 서버를 7777에 띄우고 QA_Build_Test 근처에 돌·나무·금속 벽과 두 칸 다리를 놓는다. 사람이 채집·미리보기(유효/무효)·벽·바닥·경사로·지붕·Turbo·건설 중 표시·충돌·피해를 확인한다. 마지막에 도구가 다리 밑 돌벽을 부수고(`damageBuild`) 붕괴 연출을 묻는다 | 사람 |
@@ -1169,6 +1170,22 @@ Baseline Player Count 비교(D40 묶음, steady 30 s, `batch-20261002-202122-417
 - **수정함(High, QA 도구):** Unity 수신기의 무작위 연결 끊김(위 "Unity Client Actor"의 수정). Unity 시나리오가 아무 Step에서나 실패했다.
 - **다듬기(Known Issue):** 타이틀 키 안내에 Phase 12·13 키(C 웅크리기, Q 건축, F 채집, Z/X/V/B 조각, T 재료)가 없다. 자원 줄이 Development 빌드 워터마크와 겹친다. 손상 1단계(25 % 어둡게)의 대비가 약하다.
 - Critical·High 게임플레이 문제는 없다.
+
+## Phase 13.5 Unity 검증 (2026-10-08)
+
+Development Player(Unity 6000.3.24f1, `phase13_5-building-edit` 963bed8 + 아래 시나리오 수정)를 작업 트리 복사본에서 batchmode로 빌드했다. 사용자의 Editor가 프로젝트를 열고 있어서다. 같은 복사본에서 EditMode 테스트 241/241이 통과했고 컴파일 오류는 0이다. 스크린샷은 에이전트가 직접 보고 판정했다.
+
+| 항목 | 결과 | 근거 |
+|---|---|---|
+| 편집 시작·칸 선택·확정(실제 입력) | PASS, 3회 연속 | `unity_build_input.json`: H → 가운데 칸 클릭(3 × 3 격자, 선택 칸 표시) → H. 서버 Edit 16(창), 화면에 창이 보인다 |
+| Reset(우클릭) | PASS, 3회 연속 | 단단한 왼쪽 열을 겨눈 뒤 H → 우클릭 → 서버 Edit 0 |
+| 편집 모양 그리기, 벽 두 방향 | PASS | `visual_building_edit.json`: 회전 0과 회전 1 벽 모두 창·문·반벽이 자기 모서리 위에 있다(리뷰 Medium, Mesh 캐시 키 회전 수정 확인) |
+| 바닥·지붕·경사로 편집 | PASS | 위에서 본 장면: 바닥 1/4(앞 왼쪽 빠짐)·절반(앞 절반 빠짐)·대각선, 지붕 한쪽 경사·가운데 구멍 통로·평지붕, +X로 오르는 경사로 |
+
+발견한 문제:
+- **수정함(시나리오):** 순간이동 직후 같은 Tick에 H를 누르면 Player 카메라가 아직 이전 위치(창 구멍 정면)를 보고 있어 광선이 구멍을 지나 편집이 시작되지 않았다. Reset 단계 앞에 500 ms 대기를 넣었다. 게임 동작이 아니라 시나리오 타이밍 문제다.
+- 건축 도구를 든 채 편집하면 같은 벽 자리의 빨간 "이미 있음" 미리보기 유령이 창 구멍 너머로 보인다. 기존 미리보기 규칙대로이고 다듬기 항목이다.
+- Critical·High 문제는 없다.
 
 ## Adding New Actions
 
