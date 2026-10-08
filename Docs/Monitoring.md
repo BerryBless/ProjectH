@@ -28,6 +28,19 @@ Game Server (ProjectH.Server)                        Monitoring Server (ProjectH
 
 ## How to Start
 
+**Windows bat(권장):** 저장소 루트에서 두 파일을 쓴다.
+
+- `run-server.bat`
+  1. MySQL을 띄운다.
+  2. 게임 서버와 Monitoring Server를 Release로 빌드한다.
+  3. **Monitoring Server를 별도 창**(`ProjectH Monitoring`, 127.0.0.1:5080)으로 띄운다. 이미 떠 있으면 다시 띄우지 않는다.
+  4. `/health`가 응답하면 게임 서버를 `--Monitoring:Enabled=true`로 시작한다.
+- 게임 서버 창에서 Ctrl+C를 누르면 게임 서버만 멈춘다. Monitoring Server는 계속 떠 있으므로 대시보드에 그 서버가 OFFLINE으로 남는다.
+- 게임 서버만 보고하지 않게 하려면 `run-server.bat --Monitoring:Enabled=false`로 실행한다.
+- `stop-server.bat`은 게임 서버, Monitoring Server, MySQL을 모두 멈춘다. `--keep-db`를 주면 MySQL은 남긴다.
+
+직접 실행할 때:
+
 ```bash
 dotnet run --project Server/src/ProjectH.Monitoring                        # http://127.0.0.1:5080
 dotnet run --project Server/src/ProjectH.Server -- --Monitoring:Enabled=true
