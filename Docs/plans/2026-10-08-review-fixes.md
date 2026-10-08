@@ -116,7 +116,27 @@
 
 ## 측정
 
-(묶음 D Commit 뒤 QA 실행 결과를 적는다.)
+묶음 D Commit(39ff83e) 뒤 QA 도구로 돌렸다. QA 도구는 서버를 `DOTNET_ENVIRONMENT=Development`로 띄우므로 개발 키·쿠키·HMAC 경로를 그대로 지난다.
+
+| Suite | 결과 | Baseline 비교 |
+|---|---|---|
+| `smoke` | 3/3 PASS | 2026-10-08 실행 대비 50 % 넘게 나빠진 지표 없음 |
+| `pre-push` | 6/6 PASS | 같음 |
+| `weapons` | 7/7 PASS | 같음 |
+| `building` | 9/9 PASS | 같음 |
+| `squad`(Resume 포함) | 8/8 PASS | 같음 |
+| `vehicle` | 8/8 PASS | 같음 |
+
+- 접속·재접속 시나리오가 통과했으므로 쿠키 1회 왕복, RSA 세션 키, 데이터그램 HMAC, Resume 증명이 정상 흐름에서 동작한다(한 QA Actor는 서버 테스트의 HeadlessClient와 같은 구현이다).
+- 무기 Suite는 교체 지연(0.4 s)을 포함해 통과했다(QA Actor가 칸 변경 뒤 `2 + EquipTicks`를 기다린다).
+
+`stress-quick`(봇 50명, baseline·movement·combat·building·mixed, steady 30 s): 5/5 PASS.
+
+- 정상 흐름 카운터는 다섯 실행 모두 0이다: `authDrops`, `authDropsRetired`, `inputSeqDrops`, `rejects cookie`, `perIp`, `penalized`, `badRequest`, `malformed`, `penalties`. 연결 50(mixed는 56)이 모두 쿠키 요청 1회(`cookieChallenges` = 연결 수)를 거쳐 들어왔다.
+- Baseline Warning(실패 아님): `server.tickP50Ms` 0.010–0.011 → 0.016–0.019 ms(+51–85 %, 다섯 실행 중 넷), movement `stress.tickP99Ms`(steady) 0.171 → 0.284 ms(+66 %), combat `stress.managedMB`(steady) 7.4 → 11.3 MB(+53 %). 기준선은 2026-10-08 Phase 19 실행이다.
+- 같은 Suite를 한 번 더 돌렸다(5/5 PASS, 카운터 모두 0). 도구는 직전 실행과 비교하므로 Warning이 없었지만, 2026-10-08 기준선과 직접 비교하면 결과가 반복된다. steady 구간: movement p50 0.108 → 0.134 / 0.137 ms(+24–27 %), p99 0.171 → 0.284 / 0.289 ms(+66–69 %); combat p50 0.114 → 0.140 / 0.146 ms, p99 0.604 → 0.648 / 0.690 ms(+7–14 %). **잡음이 아니라 재현되는 비용이다.**
+- 해석: 수신 HMAC은 수신 스레드에서 돌지만, Snapshot·이벤트 송신의 봉인(데이터그램마다 HMAC-SHA256, 1.2 KB 기준 수 µs)은 Game Loop 스레드에서 돈다. 50명 × 15 Hz Snapshot ≈ Tick당 25회 봉인이면 Tick당 약 0.1 ms가 더해지고, Snapshot을 보내는 Tick에 몰리므로 p99에 더 크게 나타난다. Tick마다 RTT 갱신·카운터·ClampToMap은 그보다 훨씬 작다. 관리 메모리 +4 MB는 세션 키 표(연결당 키 2개와 은퇴 항목)·쿠키·RSA 버퍼다.
+- 판정: Spec 검증 계획의 "Tick p99 기준선 대비 50 % 넘게 나빠지지 않음"을 movement에서 넘었다(비율 기준). 절대값은 p99 0.29 ms로 Tick 예산 33 ms의 1 % 아래이고, 데이터그램마다 서명하기로 한 설계(B3)의 직접 비용이다. 그대로 두고 여기 적는다. 줄이려면 봉인을 송신 스레드로 옮기거나(LiteNetLib PacketLayer 구조상 호출 스레드에서 돌아 어렵다) 100명 기준으로 다시 재서 설계를 다시 본다. 100명 `stress`(bots_50·load_bots_50)는 이번에 돌리지 않았다.
 
 ## 간헐 실패
 
