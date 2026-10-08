@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["area", "files_read", "files_not_read", "summary", "findings"],
+  "properties": {
+    "area": { "type": "string" },
+    "files_read": { "type": "array", "items": { "type": "string" } },
+    "files_not_read": { "type": "array", "items": { "type": "string" } },
+    "summary": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "title", "file", "line", "problem", "scenario", "impact", "suggested_fix", "confidence"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["Critical", "High", "Medium", "Low"] },
+          "title": { "type": "string" },
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "problem": { "type": "string" },
+          "scenario": { "type": "string" },
+          "impact": { "type": "string" },
+          "suggested_fix": { "type": "string" },
+          "confidence": { "type": "string", "enum": ["확실", "확실하지 않음"] }
+        }
+      }
+    }
+  }
+}

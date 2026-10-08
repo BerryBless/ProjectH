@@ -102,15 +102,7 @@ Shared에 게임 로직을 넣지 않는다.
 
 예외 3(Phase 12): 이동 모드(웅크리기·슬라이드·Vault·자유 낙하·글라이드·수송기 탑승)와 그 판정(`CanStand`, Mantle·Hurdle 후보 검사, 지면 거리), 수송기 경로에서 위치를 구하는 순수 계산(`DropRoute`·`Ride`), 문 상자(`GameMap.Doors`)는 이동 계산의 일부라 `Shared/Runtime/Simulation`에 둔다. 예측과 서버가 같은 결과를 내야 하기 때문이다. 경로를 시드로 고르는 난수(`DropPlanner`)와 문 상호작용 규칙(`DoorRules`, Client는 같은 규칙의 복사본과 일치 테스트)은 서버·Client 쪽에 두고 Shared에 넣지 않는다. 문 상호작용 거리·각도 상수는 두 규칙 복사본이 같이 읽으므로 Shared 상수로 둔다(`MovementTuning.DoorInteractRange`·`DoorInteractHalfAngle`). 낙하 피해처럼 서버만 쓰는 규칙의 상수는 Shared에 두지 않는다(`CombatRules.FallDamage*`).
 
-예외 4(Phase 13): 건설 격자와 조각 모양(`BuildGrid`: 좌표·슬롯 키·벽과 바닥 상자·Ramp와 Roof 경사면 `Slope`), 경사면 이동, 충돌 후보 수집(`CollisionWorld`: 정적 상자·문·채집 대상·주변 조각을 정한 순서로), 조각 저장소의 충돌용 부분(`PieceGrid`), 채집 대상 상자(`GameMap.Harvestables`)는 이동 충돌의 일부라 `Shared/Runtime/Simulation`에 둔다. 예측과 서버가 같은 조각·같은 순서로 같은 충돌 결과를 내야 하기 때문이다. 배치 검증, 지지·붕괴(이웃 표 포함), 건설·채집 수치(`building.json`), 관심 영역·복제 규칙, 약점 위치 계산은 서버 쪽에 두고 Shared에 넣지 않는다. Client는 서버가 확정한 조각만 `PieceGrid`에 넣고, 예측 배치 조각은 충돌에 넣지 않는다(확정 조각의 편집 예측은 예외 5).
-
-예외 5(Phase 13.5): 건설 편집 상태(`BuildPieceShape.Edit` 12비트)와 그 모양 계산(`BuildEdit`: 유효한 편집 판정, 칸 선택 → 편집 값 변환, 칸 기하. `BuildGrid.PartsOf`: 편집된 조각의 충돌 상자, 한쪽 경사 지붕 `SlopeKind.RoofSlope`)은 `Shared/Runtime/Simulation`에 둔다. 편집된 모양으로 이동·예측 충돌과 미리보기가 서버와 같아야 하고, Client 선택과 서버 검증이 같은 유효성 규칙을 써야 하기 때문이다. 편집 권한(`BuildRules.CanEdit`)·사거리·시선·끼임 검사·지지 재계산은 서버에만 둔다. Client는 확정 조각의 편집을 예측해 `PieceGrid`에 반영할 수 있다(`PieceGrid.SetShape`, 거절이면 되돌림). 예측 배치 조각은 여전히 충돌에 넣지 않는다.
-
-예외 6(Phase 14): 기절 이동(`MovementMode.Downed`, 기어가기 속도·충돌 높이 `MovementTuning`)은 이동 계산의 일부라 `Shared/Runtime/Simulation`에 둔다. 기절에 들어가고 나오는 판정, 출혈, 소생·재투입, 팀 묶기, 분대 전멸·팀 배치 규칙과 `squad.json` 수치는 서버에만 둔다. Reboot Station 좌표(`RebootStations`)는 예외 2와 같은 맵 배치 상수다(사용 검증·대기 시간은 서버). Client 안내가 쓰는 소생·재투입 범위 같은 표시 상수는 Client 복사본(`SquadPrompt`)에 두고 서버 테스트가 `squad.json` 기본값과 같은지 비교한다.
-
-예외 7(Phase 16): Loot Container 배치(`LootContainers`: 위치·방향·종류·크기)는 예외 2와 같은 맵 배치 상수라 `Shared/Runtime/Simulation`에 둔다. Client는 상자 표시와 열기 안내에 같은 좌표를 쓴다. Supply Drop 낙하 높이 계산(`SupplyDropFall.HeightAt`)은 서버가 보낸 시작·착지 Tick으로 양쪽이 같은 낙하 위치를 내야 해서 Shared에 둔다. Loot Table·굴림·Supply Drop 일정과 착지 자리 고르기·열기 판정(`ContainerRules`, Client는 같은 규칙의 복사본과 일치 테스트)과 `loot.json` 수치는 서버에만 둔다.
-
-예외 8(Phase 19): 차량 운동 계산(`VehicleSimulation`: 가속·제동·조향·지형 높이·발자국 충돌, `VehicleMove`)과 그 상수(`VehicleSettings`: 운동 수치·좌석 위치·탑승 거리·최대 대수)는 운전자 예측과 서버가 같은 차량 결과를 내야 해서 `Shared/Runtime/Simulation`에 둔다. 차량 생성 위치(`VehicleSpawns`)는 예외 2와 같은 맵 배치 상수다(서버만 읽는다). 탑승·하차 검증과 하차 자리, 피해·충격·치기·파괴 규칙, 관심 영역, 위치 기록, `vehicles.json` 수치는 서버에만 둔다. Client 안내가 쓰는 탑승 대상 고르기와 최대 체력은 Client 복사본(`VehiclePrompt`)에 두고 서버 테스트가 서버 규칙·`vehicles.json` 기본값과 같은지 비교한다.
+예외 4(Phase 13): 건설 격자와 조각 모양(`BuildGrid`: 좌표·슬롯 키·벽과 바닥 상자·Ramp와 Roof 경사면 `Slope`), 경사면 이동, 충돌 후보 수집(`CollisionWorld`: 정적 상자·문·채집 대상·주변 조각을 정한 순서로), 조각 저장소의 충돌용 부분(`PieceGrid`), 채집 대상 상자(`GameMap.Harvestables`)는 이동 충돌의 일부라 `Shared/Runtime/Simulation`에 둔다. 예측과 서버가 같은 조각·같은 순서로 같은 충돌 결과를 내야 하기 때문이다. 배치 검증, 지지·붕괴(이웃 표 포함), 건설·채집 수치(`building.json`), 관심 영역·복제 규칙, 약점 위치 계산은 서버 쪽에 두고 Shared에 넣지 않는다. Client는 서버가 확정한 조각만 `PieceGrid`에 넣고, 예측 배치 조각은 충돌에 넣지 않는다.
 
 ## 5. 기존 구조를 먼저 확인한다
 
@@ -284,8 +276,6 @@ var player = GetPlayer();
 ```
 
 주석은 다음을 설명할 때 사용한다: 왜 이렇게 구현했는가, Thread Safety 이유, Lock Ordering, Performance 이유, Lifetime 제약, Protocol 제약.
-
-함수 위의 기능 / 입력 / 출력 주석은 `code-comments` 스킬을 따른다. 이번 작업에서 추가·수정한 함수에만 적용하고, 코드 동작이 바뀌면 그 주석도 같이 고친다.
 
 ## 20. TODO는 구체적으로 작성한다
 
