@@ -101,6 +101,9 @@ public sealed class PlayerEntity
     public PlayerEntity? DownedBy;
     public DeathCause DownedCause;
     public uint BleedCarry;
+    // Review fix: knocked down in Freefall or Glide. The Downed body falls under ground gravity, so the landing that
+    // follows does no fall damage (it would end almost every such knock-down). Used up by that landing.
+    public bool DownedInAir;
     // Phase 14 D8, D10: the revive or reboot this player is doing (ChannelActive), its kind, the downed teammate or the
     // station index, and the tick it completes. RevivedBy: the reviver of this downed player (its bleed pauses).
     public bool ChannelActive;

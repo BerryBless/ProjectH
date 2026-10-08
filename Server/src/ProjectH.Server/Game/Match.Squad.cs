@@ -105,11 +105,12 @@ public sealed partial class Match
     }
 
     // 기능: 플레이어를 기절시킨다(D4, D5): Downed 모드, 체력 = downedHealth, 실드 0, 출혈 시작, 진행 중인 재장전·회복·소생 취소,
-    //   PlayerDowned 방송.
+    //   PlayerDowned 방송. 자유낙하·글라이드 중이었으면 이어지는 착지의 낙하 피해를 한 번 면한다(DownedInAir).
     // 입력: victim - 서 있던 플레이어, attacker - 기절시킨 사람(null = 없음), cause - 공격자가 없을 때의 원인.
     // 출력: 반환값 없음.
     private void Down(PlayerEntity victim, PlayerEntity? attacker, DeathCause cause)
     {
+        victim.DownedInAir = victim.State.Mode == MovementMode.Freefall || victim.State.Mode == MovementMode.Glide;
         victim.State.Mode = MovementMode.Downed;
         victim.State.ModeTicks = 0;
         victim.State.HorizontalVelocity = Vector2.Zero;
@@ -314,6 +315,7 @@ public sealed partial class Match
     {
         p.DownedBy = null;
         p.BleedCarry = 0;
+        p.DownedInAir = false;
         p.ChannelActive = false;
         p.ReviveTarget = null;
         p.RevivedBy = null;

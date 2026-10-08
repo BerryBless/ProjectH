@@ -337,6 +337,37 @@ public class SquadMatchTests
         Assert.Null(a1.DownedBy);
     }
 
+    [Theory]
+    [InlineData(MovementMode.Glide)]
+    [InlineData(MovementMode.Freefall)]
+    public void KnockedDown_InTheAir_SurvivesTheLanding_StillDowned(MovementMode airMode)
+    {
+        var h = Duo(out var a1, out _, out _, out _);
+        a1.State.Position = a1.State.Position + new Vector3(0f, 30f, 0f);
+        a1.State.Mode = airMode;
+        Assert.True(h.Match.DamagePlayer(a1, 500, out bool killed));
+        Assert.False(killed);
+        Assert.True(a1.IsDowned);
+        for (int i = 0; i < 300 && a1.State.Position.Y > SandboxHarness.Ground(0f, 0f).Y + 0.5f; i++) h.Match.Tick();
+        h.Ticks(5);
+        Assert.True(a1.Alive, "a knock-down in the air must not end in a fall elimination");
+        Assert.True(a1.IsDowned);
+        Assert.InRange(a1.Health, 80, 100);   // only bleed, no fall damage
+        Assert.False(a1.DownedInAir);         // used up by the landing
+    }
+
+    [Fact]
+    public void Downed_CrawlingOffALedge_StillTakesFallDamage()
+    {
+        var h = Duo(out var a1, out _, out _, out _);
+        Assert.True(h.Match.DamagePlayer(a1, 500, out _));
+        Assert.True(a1.IsDowned);
+        // Downed on the ground, then moved up as if it had crawled off a ledge: the landing still hurts (D6).
+        a1.State.Position = a1.State.Position + new Vector3(0f, 30f, 0f);
+        for (int i = 0; i < 120 && a1.Alive; i++) h.Match.Tick();
+        Assert.False(a1.Alive);
+    }
+
     // ---- D6 squad wipe and placements ----
 
     [Fact]

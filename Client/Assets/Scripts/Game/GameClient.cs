@@ -320,7 +320,7 @@ namespace ProjectH.Client.Game
         {
             if (open == _mapOpen) return;
             _mapOpen = open;
-            if (open) _edit.Cancel();
+            if (open) CancelEdit();
             _map.SetFullOpen(open);
         }
 
@@ -703,6 +703,16 @@ namespace ProjectH.Client.Game
             _map.Draw(frame, _mainCamera, alive ? _predictor.RenderPosition : followFeet, _loot);
         }
 
+        // 기능: 편집 모드를 취소한다(무기·도구 키, 전체 지도). 왼쪽 버튼을 누른 채 취소하면 뗄 때까지 사격·배치를 막는다
+        //   (Phase 13.5 D10: 편집이 끝나면 버튼을 다시 눌러야 사격). UpdateEdit 안의 종료는 그 함수가 같은 처리를 한다.
+        // 입력: 없음(InputReader의 FireHeld).
+        // 출력: 반환값 없음. 편집 모드가 끝나고 _fireBlockedUntilRelease가 켜질 수 있다.
+        private void CancelEdit()
+        {
+            if (_edit.Active && _input.FireHeld) _fireBlockedUntilRelease = true;
+            _edit.Cancel();
+        }
+
         // 기능: 건설 키를 처리한다(Update, 입력이 막히지 않았을 때). 조각 키는 고르고 건설 모드로 들어가며, T는 재료를 바꾸고,
         //   건설 모드의 R은 재장전 대신 회전한다(Reload 누름을 입력에 들어가기 전에 되돌린다).
         //   Phase 13.5 D10: 무기 키·Q·F(또는 건설 모드로 들어가는 조각 키)가 대기 중이면 편집 모드를 취소한다. 그 키는 그대로 서버로 가서 도구를 바꾼다.
@@ -717,7 +727,7 @@ namespace ProjectH.Client.Game
                 if (_tools.Current != ToolKind.Build) _input.QueuedButtons |= InputButtons.ToolBuild;
             }
             const InputButtons cancelsEdit = InputButtons.Slot1 | InputButtons.Slot2 | InputButtons.Slot3 | InputButtons.ToolBuild | InputButtons.ToolHarvest;
-            if ((_input.QueuedButtons & cancelsEdit) != 0) _edit.Cancel();
+            if ((_input.QueuedButtons & cancelsEdit) != 0) CancelEdit();
             if (_tools.Current != ToolKind.Build) return;
             if (_input.MaterialPressed) _build.Selection.NextMaterial();
             if ((_input.QueuedButtons & InputButtons.Reload) != 0)

@@ -613,7 +613,7 @@ public sealed partial class Match
         _failedPlayers.Clear();
     }
 
-    // 기능: 한 번의 Step과 그 결과의 Phase 12 검사(이동 자체 검사 D12, 낙하 피해 D10).
+    // 기능: 한 번의 Step과 그 결과의 Phase 12 검사(이동 자체 검사 D12, 낙하 피해 D10). 공중에서 기절한 뒤 첫 착지는 낙하 피해가 없다.
     // 입력: player - 플레이어, input - 이 Tick 입력.
     // 출력: 착지로 탈락했으면 false(Phase 14: 기절은 true, 이어지는 행동은 모드가 막는다).
     private bool Move(PlayerEntity player, in InputCommand input)
@@ -643,7 +643,13 @@ public sealed partial class Match
         }
 
         // D10: like shots, a fall hurts only when damage is allowed (the dev sandbox, or during the match).
-        if (step.LandingSpeed > 0f && _flow.DamageAllowed) ApplyFallDamage(player, step.LandingSpeed);
+        // Review fix: the first landing after a knock-down in the air does no fall damage (PlayerEntity.DownedInAir).
+        if (step.LandingSpeed > 0f)
+        {
+            bool spared = player.DownedInAir && player.IsDowned;
+            player.DownedInAir = false;
+            if (!spared && _flow.DamageAllowed) ApplyFallDamage(player, step.LandingSpeed);
+        }
         return player.Alive;
     }
 
