@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Monitoring D1: the DTO only. Never ProjectH.Server or ProjectH.Shared. -->
+    <ProjectReference Include="..\ProjectH.Monitoring.Contracts\ProjectH.Monitoring.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The content root is the build output (MonitoringApp.Create), as in ProjectH.Server: run from anywhere. -->
+    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ProjectH.Monitoring.Tests" />
+  </ItemGroup>
+
+</Project>
