@@ -161,6 +161,17 @@ public class MonitoringAppTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TheDashboard_IsServedAtTheRoot()
+    {
+        HttpResponseMessage page = await _client.GetAsync("/");
+        Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+        string html = await page.Content.ReadAsStringAsync();
+        Assert.Contains("ProjectH Monitoring", html);
+        Assert.Equal(HttpStatusCode.OK, (await _client.GetAsync("/app.js")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await _client.GetAsync("/lib/uPlot.iife.min.js")).StatusCode);
+    }
+
+    [Fact]
     public void InvalidOptions_StopTheAppAtCreate()
     {
         Assert.Throws<InvalidOperationException>(() => MonitoringApp.Create(["--Urls=http://127.0.0.1:0", "--MonitoringServer:HistoryMinutes=0"]));
