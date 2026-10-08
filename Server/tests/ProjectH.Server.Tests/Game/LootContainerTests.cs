@@ -292,12 +292,12 @@ public class LootContainerMatchTests
           "phases": [ { "waitSeconds": 100, "shrinkSeconds": 10, "targetRadius": 0, "damagePerSecond": 1 } ] }
         """;
 
-    // 기능: 반지름 0 원의 경기를 만들고(supplyDrops 일정 1초) 두 플레이어를 원 중심에서 offset만큼 옮긴다.
-    // 입력: offset - 중심에서의 수평 거리, center - 결과 중심, a·b - 플레이어.
+    // 기능: 반지름 0 원의 경기를 만들고(supplyDrops 일정 = times, 기본 1초) 두 플레이어를 원 중심에서 offset만큼 옮긴다.
+    // 입력: offset - 중심에서의 수평 거리, center - 결과 중심, a·b - 플레이어, times - loot.json supplyDrops.times 배열 내용.
     // 출력: 경기 중인 하네스.
-    private static RoyaleHarness PointZoneMatch(float offset, out Vector2 center, out PlayerEntity a, out PlayerEntity b)
+    private static RoyaleHarness PointZoneMatch(float offset, out Vector2 center, out PlayerEntity a, out PlayerEntity b, string times = "1")
     {
-        string loot = TestGameData.LootJson.Replace("\"times\": [ 60, 150 ]", "\"times\": [ 1 ]");
+        string loot = TestGameData.LootJson.Replace("\"times\": [ 60, 150 ]", "\"times\": [ " + times + " ]");
         Assert.NotEqual(TestGameData.LootJson, loot);
         var h = new RoyaleHarness(zonesJson: PointZoneJson, lootJson: loot);
         a = h.Join(1);
@@ -343,6 +343,46 @@ public class LootContainerMatchTests
         // The schedule held only one drop: no second one follows.
         h.Ticks(30);
         Assert.Equal(1, h.Match.SupplyDropCount);
+    }
+
+    // Review fix: a drop that finds no clear spot for SupplyDropRetrySeconds (10 s) is skipped, so the next one on the
+    // schedule still comes once a spot is clear.
+    [Fact]
+    public void SpotRule_NoClearSpotFor10s_SkipsThatDrop_TheNextOneStillComes()
+    {
+        var h = PointZoneMatch(1f, out Vector2 center, out var a, out var b, times: "1, 14");
+        h.Ticks(30 * 12);   // past 1 s + 10 s, before 14 s
+        Assert.Equal(0, h.Match.SupplyDropCount);
+        Assert.Equal(1, h.Match.SupplyDropsSkipped);
+        h.Place(a, new Vector3(center.X + 6f, GameMap.Terrain.Height(center.X + 6f, center.Y), center.Y));
+        h.Place(b, new Vector3(center.X - 6f, GameMap.Terrain.Height(center.X - 6f, center.Y), center.Y));
+        h.TickUntil(() => h.Match.SupplyDropCount == 1, 30 * 4);
+        Assert.Equal(1, h.Match.SupplyDropCount);
+        Assert.Equal(1, h.Match.SupplyDropsSkipped);
+    }
+
+    // Review fix: a supply drop lands through building pieces (D6), so a piece between the player and a landed drop does
+    // not stop it opening (a container behind a piece stays blocked).
+    [Fact]
+    public void SupplyDrop_OpensThroughABuildingPiece()
+    {
+        var h = Started(out var a, out _);
+        // A wall on the grid line z = 10 (cells are 5 m from -80), the drop 0.6 m north of it, the player south of it.
+        var at = new Vector2(12.5f, 10.6f);
+        Assert.Equal(0, h.Match.QaSpawnSupplyDrop(at));
+        h.TickUntil(() => h.Match.SupplyDropAt(0).State == SupplyDropState.Landed, 460);
+        int cellX = (int)MathF.Floor((at.X + GameMap.HalfSize) / BuildGrid.CellSize);
+        int cellZ = (int)MathF.Floor((at.Y + GameMap.HalfSize) / BuildGrid.CellSize);
+        Assert.True(BuildGrid.TryNormalize(BuildPieceType.Wall, cellX, 0, cellZ, 0, out BuildPieceShape wall));
+        Assert.Equal(BuildResultCode.Ok, h.Match.PlacePiece(wall, BuildMaterialType.Wood, out _));
+        Box bounds = BuildGrid.BoundsOf(wall);
+        Assert.True(bounds.Min.Z < at.Y && bounds.Max.Z <= at.Y, $"wall {bounds.Min.Z}..{bounds.Max.Z}, drop z {at.Y}");
+        float z = bounds.Min.Z - 0.5f;
+        h.Place(a, new Vector3(at.X, GameMap.Terrain.Height(at.X, z), z));
+        Press(h, a);
+        h.Ticks(2);
+        Assert.Equal(SupplyDropState.Opened, h.Match.SupplyDropAt(0).State);
+        Assert.Equal(0, h.Match.ContainerOpensBlocked);
     }
 
     // D4: only during the match (or in the dev sandbox): not on the result screen.

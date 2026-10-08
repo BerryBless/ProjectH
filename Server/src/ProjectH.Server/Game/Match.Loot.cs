@@ -28,6 +28,9 @@ public sealed partial class Match
     private const float SupplyDropPlayerClear = 15f;
     // Phase 16 review: the second pass drops the 15 m rule but still never lands right next to a living player.
     private const float SupplyDropPlayerMinClear = 3f;
+    // Review fix: a scheduled drop that finds no clear spot for this long is skipped, so a blocked spot (a radius 0 last
+    // circle next to a map box, players gathered at the centre) cannot hold it, and every drop after it, until the match ends.
+    private const int SupplyDropRetrySeconds = 10;
     // The point a supply drop's line of sight check aims at (above its landing height); the client draws a box about 1 m high.
     private const float SupplyDropCenterHeight = 0.5f;
     // D5: container loot lies on a circle this far around the container (like a death drop).
@@ -67,6 +70,8 @@ public sealed partial class Match
     // Phase 16 counters since this match object was made (GameLoop copies them to the Health line every tick).
     public long ContainersOpened { get; private set; }
     public long SupplyDropsSpawned { get; private set; }
+    // Review fix: scheduled drops given up after SupplyDropRetrySeconds without a clear spot.
+    public long SupplyDropsSkipped { get; private set; }
     public long SupplyDropsLanded { get; private set; }
     public long SupplyDropsOpened { get; private set; }
     public long ContainerLootItems { get; private set; }
@@ -164,8 +169,9 @@ public sealed partial class Match
         _dropsDirty = true;
     }
 
-    // 기능: 경기 중 매 Tick(D6): 일정이 된 Supply Drop을 만들고(놓을 자리가 없으면 일정을 지키고 다음 Tick에 다시 시도, Phase 16 리뷰),
-    //   착지 Tick이 된 것을 Landed로 바꾼다. 결과 화면·대기실에서는 부르지 않는다.
+    // 기능: 경기 중 매 Tick(D6): 일정이 된 Supply Drop을 만들고(놓을 자리가 없으면 일정을 지키고 다음 Tick에 다시 시도, Phase 16 리뷰;
+    //   SupplyDropRetrySeconds 동안 자리가 없으면 그 Drop은 건너뛰고 다음 일정으로 간다), 착지 Tick이 된 것을 Landed로 바꾼다.
+    //   결과 화면·대기실에서는 부르지 않는다.
     // 입력: now - 마지막 Tick(시뮬레이션 중인 Tick은 now + 1).
     // 출력: 반환값 없음. 바뀌면 Tick 끝에 SupplyDrops가 간다. 할당 없음.
     private void UpdateSupplyDrops(uint now)
@@ -173,8 +179,15 @@ public sealed partial class Match
         uint tick = now + 1;
         if (_dropsScheduled < _dropScheduleTicks.Length && tick >= _zoneClockStart + _dropScheduleTicks[_dropsScheduled])
         {
-            // A pick that finds no clear spot is tried again next tick (only during this match; at most 2 x 16 + 1 checks a tick).
+            // A pick that finds no clear spot is tried again next tick (only during this match; at most 2 x 16 + 1 checks a tick),
+            // for SupplyDropRetrySeconds at most; then this drop is skipped.
+            uint due = _zoneClockStart + _dropScheduleTicks[_dropsScheduled];
             if (SpawnSupplyDrop(tick, null) >= 0 || _dropCount >= SupplyDropsPacket.MaxSupplyDrops) _dropsScheduled++;
+            else if (tick - due >= (uint)(SupplyDropRetrySeconds * _simHz))
+            {
+                _dropsScheduled++;
+                SupplyDropsSkipped++;
+            }
         }
         for (int i = 0; i < _dropCount; i++)
         {
@@ -350,7 +363,7 @@ public sealed partial class Match
         return ContainerRules.FindTarget(player.State.Position, player.State.Yaw, LootContainers.All, closed, _dropPositions, drops, out distanceSq);
     }
 
-    // 기능: 고른 대상을 연다(D4): 시선(눈 → 대상 가운데가 맵 상자·닫힌 문·지형·건설 조각에 막히지 않음)을 보고 열린 상태로 바꾼 뒤
+    // 기능: 고른 대상을 연다(D4): 시선(눈 → 대상 가운데가 맵 상자·닫힌 문·지형에 막히지 않음, Container는 건설 조각도)을 보고 열린 상태로 바꾼 뒤
     //   미리 굴린 Loot를 둘레 1 m 원에 월드 아이템으로 놓는다(D5).
     // 입력: player - 행위자, target - FindContainerTarget 결과.
     // 출력: 열었으면 true, 시선이 막혔으면 false(아무것도 바뀌지 않는다).
@@ -361,7 +374,9 @@ public sealed partial class Match
         {
             int slot = target - ContainerRules.SupplyDropTargetBase;
             Vector3 at = _dropPositions[slot];
-            if (!ClearSight(eye, at + new Vector3(0f, SupplyDropCenterHeight, 0f)))
+            // Review fix: a drop lands through building pieces (D6), so pieces do not block opening it (a floor over it would
+            // otherwise lock it and swallow every E nearby until the piece breaks).
+            if (!ClearSight(eye, at + new Vector3(0f, SupplyDropCenterHeight, 0f), pieces: false))
             {
                 ContainerOpensBlocked++;
                 return false;
@@ -373,7 +388,7 @@ public sealed partial class Match
             return true;
         }
         LootContainer container = LootContainers.All[target];
-        if (!ClearSight(eye, container.Center))
+        if (!ClearSight(eye, container.Center, pieces: true))
         {
             ContainerOpensBlocked++;
             return false;
@@ -384,17 +399,17 @@ public sealed partial class Match
         return true;
     }
 
-    // 기능: 눈에서 점까지 맵 상자·닫힌 문·지형·건설 조각이 막지 않는지 본다(채집 대상은 보지 않는다).
-    // 입력: eye - 눈 위치, target - 목표점.
+    // 기능: 눈에서 점까지 맵 상자·닫힌 문·지형(pieces면 건설 조각도)이 막지 않는지 본다(채집 대상은 보지 않는다).
+    // 입력: eye - 눈 위치, target - 목표점, pieces - 건설 조각도 볼지(Supply Drop은 false).
     // 출력: 보이면 true.
-    private bool ClearSight(Vector3 eye, Vector3 target)
+    private bool ClearSight(Vector3 eye, Vector3 target, bool pieces)
     {
         Vector3 delta = target - eye;
         float distance = delta.Length();
         if (distance < 1e-3f) return true;
         Vector3 direction = delta / distance;
         if (HitScan.TraceWorld(eye, direction, distance, _doors.World, GameMap.Terrain) < distance - 1e-3f) return false;
-        return !PieceTrace.Trace(eye, direction, distance, _build, out _, out _, out _);
+        return !pieces || !PieceTrace.Trace(eye, direction, distance, _build, out _, out _, out _);
     }
 
     // 기능: Loot를 기준점 둘레 1 m 원 위에 월드 아이템(떨어진 아이템 규칙: spawnPoint -1, 가득 차면 오래된 것부터 밀림)으로 놓는다.
