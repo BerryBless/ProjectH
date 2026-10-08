@@ -148,7 +148,7 @@ public sealed class LootTable
 
     // 기능: 표가 고르는 무기 id 목록을 돌려준다(테스트·QA 확인용).
     // 입력: table - 표 index.
-    // 출력: id 목록, 없으면(카탈로그 전체) null.
+    // 출력: id 목록. 목록이 없는 표(카탈로그 전체에서 고름)는 빈 Span.
     public ReadOnlySpan<byte> WeaponIds(int table) => _weaponIds[table];
 
     // 기능: 표가 고르는 탄 종류 목록을 돌려준다(테스트·QA 확인용).

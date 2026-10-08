@@ -24,7 +24,17 @@ public sealed partial class Match
     // QA (D17): the last explosions, oldest overwritten first. Fixed size; read only by QA observation.
     public const int ExplosionLogSize = 16;
 
+    // Phase 17–19 review: how far below a resting grenade its support is looked for. A rest is SurfaceOffset along a normal
+    // with Y >= RestNormalY above the face (at most 0.05 / 0.7 = 0.072 m straight up), so this always reaches a face still there.
+    private const float RestSupportReach = 0.15f;
+
     private readonly ProjectileSet _projectiles = new();
+    // What the resting grenades' support was last checked against: pieces destroyed or edited (BuildReplication.StructureVersion,
+    // which only grows; a placement or damage does not move it), doors and harvestables. Only a change of one of them can take
+    // a support away (the terrain and map boxes never change).
+    private uint _restCheckBuildVersion;
+    private byte _restCheckDoors;
+    private ulong _restCheckHarvest;
     private readonly uint[] _explosionPieces = new uint[MaxExplosionPieces];
     private readonly ExplosionRecord[] _explosionLog = new ExplosionRecord[ExplosionLogSize];
     private int _explosionLogNext;
@@ -34,6 +44,8 @@ public sealed partial class Match
     public long ProjectilesRefused { get; private set; }
     public long Explosions { get; private set; }
     public long GrenadesThrown { get; private set; }
+    // Phase 17–19 review: resting grenades' support traces done (test seam: they run only after a structural change).
+    internal long RestSupportChecks { get; private set; }
 
     // Test and QA seams: the live projectiles and the explosion log (Match is the only writer).
     internal ProjectileSet Projectiles => _projectiles;
@@ -42,8 +54,8 @@ public sealed partial class Match
     internal long ExplosionLogCount => Explosions;
 
     // 기능: 지금 경기 상태에서 투사체를 새로 만들 수 있는지 본다(D6: 결과 화면 Finished·Closing에서는 만들지 않는다). 시작 카운트다운
-    //   Starting에서도 만들지 않는다: Client는 MatchState가 Starting이 될 때 투사체를 비우고, StartMatch가 서버의 것을 지우므로 그 사이에 생긴
-    //   것은 Client에 남을 수 있다. 대기실(WaitingForPlayers)·경기 중·개발 모드는 만든다.
+    //   Starting에서도 만들지 않는다: 서버와 Client가 모두 Starting에 들어가는 Tick에 투사체를 비우므로(Tick, Client는 MatchState로), 그 뒤에 생긴
+    //   것은 StartMatch가 서버에서만 말없이 지워 Client에 남을 수 있다. 대기실(WaitingForPlayers)·경기 중·개발 모드는 만든다.
     // 입력: 없음.
     // 출력: 만들 수 있으면 true.
     private bool ProjectilesAllowed =>
@@ -166,7 +178,8 @@ public sealed partial class Match
         }
     }
 
-    // 기능: 모든 투사체를 아무것도 보내지 않고 지운다(D6: 경기 시작·라운드 리셋·경기 끝. Client는 MatchState가 바뀌면 비운다).
+    // 기능: 모든 투사체를 아무것도 보내지 않고 지운다(D6: 시작 카운트다운 진입·경기 시작·라운드 리셋·경기 끝. Client는 MatchState가
+    //   Waiting·Starting·Finished로 바뀌면 비운다).
     // 입력: 없음.
     // 출력: 반환값 없음.
     private void ClearProjectiles() => _projectiles.Clear();
@@ -174,12 +187,20 @@ public sealed partial class Match
     // 기능: 한 Tick의 투사체 갱신(D6): 퓨즈·수명이 끝난 것은 폭발, 나머지는 정확한 등가속 적분 후 이번 이동 선분을 맵 상자·닫힌 문·
     //   서 있는 채집 대상·지형(+바닥면), 건설 조각, (로켓만) 플레이어 현재 위치(Phase 19: 탄 사람 제외)와 Active 차량 발자국과 판정한다. 로켓은 맞으면 폭발, 수류탄은 맞은 면 법선으로
     //   튕기고(위를 향한 면(법선 Y ≥ RestNormalY)에서 속도 < RestSpeed면 정지) ProjectileState를 보낸다. 이번 Tick에 생긴 투사체는 다음 Tick부터 움직인다(Tick 앞에서 부른다).
+    //   Phase 17–19 리뷰: 지난 호출 뒤 조각이 부서지거나 편집됐거나(StructureVersion, 설치·피해만으로는 오르지 않는다) 문이 열리고 닫혔거나
+    //   채집 대상 상태가 바뀌었을 때만 멈춘 수류탄 아래 받침을 다시 보고, 받침이 사라졌으면 멈춤을 풀어 이번 Tick부터 다시 떨어뜨린다
+    //   (ProjectileState로 알린다). 이 함수 뒤에 생긴 변화(폭발·사격·붕괴로 인한 파괴)는 다음 Tick에 본다.
     // 입력: now - 마지막으로 끝난 Tick(이번에 now + 1을 시뮬레이션한다).
     // 출력: 반환값 없음. 투사체가 움직이거나 폭발하고 사건이 방송된다.
     private void UpdateProjectiles(uint now)
     {
         if (_projectiles.Count == 0) return;
         uint tick = now + 1;
+        bool supportChanged = _restCheckBuildVersion != _replication.StructureVersion || _restCheckDoors != _doors.OpenMask ||
+                              _restCheckHarvest != _harvest.DestroyedMask;
+        _restCheckBuildVersion = _replication.StructureVersion;
+        _restCheckDoors = _doors.OpenMask;
+        _restCheckHarvest = _harvest.DestroyedMask;
         for (int i = 0; i < ProjectileSet.Capacity; i++)
         {
             ref Projectile p = ref _projectiles[i];
@@ -189,14 +210,43 @@ public sealed partial class Match
                 Explode(i, p.Position, tick);
                 continue;
             }
-            if (!p.Resting) StepProjectile(i, tick);
+            if (p.Resting)
+            {
+                if (!supportChanged || RestSupported(p.Position)) continue;
+                p.Resting = false;   // its support is gone: it falls from rest (Velocity is zero)
+                if (!StepProjectile(i, tick)) SendProjectileState(i, tick);
+                continue;
+            }
+            StepProjectile(i, tick);
         }
+    }
+
+    // 기능: 멈춘 수류탄 바로 아래(RestSupportReach)에 받침(맵 상자·닫힌 문·서 있는 채집 대상·지형·바닥면·건설 조각)이 있는지 본다.
+    // 입력: position - 멈춘 위치.
+    // 출력: 받침이 있으면 true. RestSupportChecks가 하나 는다.
+    private bool RestSupported(Vector3 position)
+    {
+        RestSupportChecks++;
+        var down = new Vector3(0f, -1f, 0f);
+        if (HitScan.TraceWorld(position, down, RestSupportReach, Blockers, GameMap.Terrain) < RestSupportReach) return true;
+        return PieceTrace.Trace(position, down, RestSupportReach, _build, out _, out _, out _);
+    }
+
+    // 기능: 투사체의 지금 위치·속도를 ProjectileState로 모두에게 보낸다(Velocity 0 = 멈춤으로 Client가 외삽하지 않는다).
+    // 입력: slot - 투사체 칸, tick - 위치·속도가 맞는 Tick.
+    // 출력: 반환값 없음. ProjectileState가 방송된다.
+    private void SendProjectileState(int slot, uint tick)
+    {
+        ref Projectile p = ref _projectiles[slot];
+        var writer = new PacketWriter(_sendBuffer);
+        ProjectileState.Write(ref writer, new ProjectileState { Id = p.Id, Position = p.Position, Velocity = p.Velocity, Tick = tick });
+        Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
     // 기능: 투사체 하나를 한 Tick 움직이고 이동 선분의 첫 충돌을 처리한다.
     // 입력: slot - 투사체 칸, tick - 시뮬레이션 중인 Tick.
-    // 출력: 반환값 없음.
-    private void StepProjectile(int slot, uint tick)
+    // 출력: 충돌로 폭발했거나 튕겨 ProjectileState를 보냈으면 true, 막힘 없이 움직였으면 false.
+    private bool StepProjectile(int slot, uint tick)
     {
         ref Projectile p = ref _projectiles[slot];
         ProjectileDefinition definition = p.Definition;
@@ -211,7 +261,7 @@ public sealed partial class Match
         {
             p.Position = to;
             p.Velocity = endVelocity;
-            return;
+            return false;
         }
         Vector3 direction = segment / length;
 
@@ -252,14 +302,14 @@ public sealed partial class Match
         {
             p.Position = to;
             p.Velocity = endVelocity;
-            return;
+            return false;
         }
 
         Vector3 impact = from + direction * nearest + normal * ProjectileRules.SurfaceOffset;
         if (definition.ExplodesOnImpact)
         {
             Explode(slot, impact, tick);
-            return;
+            return true;
         }
 
         // A grenade bounces off the face it met: its speed there (linear in time over the tick), reflected and damped.
@@ -277,9 +327,8 @@ public sealed partial class Match
         {
             p.Velocity = bounced;
         }
-        var writer = new PacketWriter(_sendBuffer);
-        ProjectileState.Write(ref writer, new ProjectileState { Id = p.Id, Position = p.Position, Velocity = p.Velocity, Tick = tick });
-        Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+        SendProjectileState(slot, tick);
+        return true;
     }
 
     // 기능: 대상이 투사체의 주인이거나 생성 때 주인의 팀원인지 본다(D8: 자폭·아군 피해 없음, 로켓은 그들을 지나간다).

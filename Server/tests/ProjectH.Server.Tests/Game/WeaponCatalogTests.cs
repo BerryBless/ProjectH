@@ -110,6 +110,22 @@ public class WeaponCatalogTests
         Parse(One(ValidFields + ", " + overrideField));
     }
 
+    // Phase 17–19 review: a rocket explodes on its first hit, so a bounce above 0 is a data error (it would turn it into a grenade).
+    [Theory]
+    [InlineData(0.0, true)]
+    [InlineData(0.3, false)]
+    public void ARocketThatBounces_IsRejected(double bounce, bool valid)
+    {
+        string json = "{ \"weapons\": [ { " + ValidFields + " } ], \"projectiles\": { " +
+                      "\"Grenade\": { \"speed\": 18, \"gravity\": 9.81, \"lifetimeSeconds\": 3.0, \"explosionRadius\": 5, \"explosionDamage\": 80, " +
+                      "\"structureDamage\": 120, \"bounce\": 0.4, \"throwIntervalSeconds\": 1.0, \"throwUpDegrees\": 8 }, " +
+                      "\"Rocket\": { \"speed\": 40, \"gravity\": 0, \"lifetimeSeconds\": 4.0, \"explosionRadius\": 4, \"explosionDamage\": 75, " +
+                      "\"structureDamage\": 300, \"bounce\": " + bounce.ToString(System.Globalization.CultureInfo.InvariantCulture) + " } } }";
+        bool parsed = WeaponCatalog.TryParse(json, 30, out _, out string? error);
+        Assert.True(parsed == valid, error);
+        if (!valid) Assert.Contains("rocket must not bounce", error);
+    }
+
     [Fact]
     public void MissingField_IsRejected()
     {

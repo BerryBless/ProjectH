@@ -496,7 +496,7 @@ public sealed partial class Match
     // 출력: 반환값 없음.
     public void EnqueueEdit(int peerId, in BuildEditRequest request) => EnqueueBuild(peerId, new BuildQueueItem(request));
 
-    // 기능: 경기 한 Tick: 유예 만료, 경기 흐름, 자기장, (Phase 16) Supply Drop 일정·착지, 건설 요청, (Phase 17) 투사체 이동·폭발, 플레이어 Tick,
+    // 기능: 경기 한 Tick: 유예 만료, 경기 흐름(시작 카운트다운에 들어가면 투사체를 지운다), 자기장, (Phase 16) Supply Drop 일정·착지, 건설 요청, (Phase 17) 투사체 이동·폭발, 플레이어 Tick,
     //   (Phase 19) 차량 Step·좌석·치기, 붕괴, 경기 끝 판정, 그리고 Tick 끝 전송(Phase 19: Snapshot과 같은 Tick에 VehicleStates)
     //   (인벤토리·경기·문·채집·Container·Supply Drop·자원·팀·스테이션,
     //   Phase 15 지도 표시 만료와 TeamMarkers, 건설 사건, Snapshot).
@@ -513,6 +513,7 @@ public sealed partial class Match
 
         // Phase 5 step 1: state transitions (D1). The start and the round reset each happen within this one
         // tick, so no client ever sees a half-reset match (D3, D13).
+        MatchFlowState flowBefore = _flow.State;
         switch (_flow.Update(now, _players.Count))
         {
             case FlowEvent.MatchStarted:
@@ -522,6 +523,10 @@ public sealed partial class Match
                 CloseRound(now);
                 break;
         }
+        // Phase 17–19 review: the countdown starts with no lobby projectile, at the same moment the clients clear theirs (their
+        // MatchState turns Starting at the end of this tick). None is made during Starting (ProjectilesAllowed). A QA skip
+        // straight to Starting is cleared by StartMatch on the next tick.
+        if (_flow.State == MatchFlowState.Starting && flowBefore != MatchFlowState.Starting) ClearProjectiles();
 
         // Step 2: the zone's phase and its damage (D8).
         if (_flow.InMatch) UpdateZone(now);
@@ -603,6 +608,7 @@ public sealed partial class Match
 
     // 기능: 한 플레이어의 Tick 부분(server review M7: Tick이 격리한다): 입력, (Phase 14 기절이면 출혈), 이동, 재장전, 행동,
     //   (Phase 14 소생·재투입 진행), 회복 완료. Phase 19 D5: 차량에 탄 사람은 이동·행동·회복 완료 대신 TickSeated(차량 입력, E로 내리기)만 한다.
+    //   Phase 17–19 리뷰: 차에서 내린 뒤 Jump를 뗄 때까지는 걷는 입력의 Jump 비트를 지운다(MaskJumpAfterExit).
     // 입력: player - 플레이어, now - 마지막으로 끝난 Tick.
     // 출력: 반환값 없음. 플레이어 상태가 갱신된다.
     private void TickPlayer(PlayerEntity player, uint now)
@@ -623,6 +629,9 @@ public sealed partial class Match
             TickSeated(player, input, sent, previous, now);
             return;
         }
+        // Phase 17–19 review (S8): after leaving a seat, a still-held Jump (the brake) does not jump; every use below (the ride,
+        // the move, the actions) gets the input without it.
+        if (player.JumpLatchedFromVehicle) MaskJumpAfterExit(player, ref input, sent);
 
         // Phase 12 D5: a rider is placed on the route at the tick being simulated (now + 1, the tick its snapshot
         // reports) and may jump. Everyone else steps with the same boxes and terrain as client prediction
@@ -640,6 +649,16 @@ public sealed partial class Match
         // Phase 14 D7, D8: a held E revives or reboots (after the actions, so a shot or a key of this input cancels it).
         if (player.Alive) UpdateChannel(player, input, sent, previous, now);
         ConsumableRules.Complete(player, _items, now);   // step 9: every tick, input or not
+    }
+
+    // 기능: 차에서 내린 뒤의 Jump 래치(PlayerEntity.JumpLatchedFromVehicle)를 적용한다: Jump 비트가 있으면 지우고, Jump 없는 실제 입력이면
+    //   래치를 끈다(서버가 만든 누락 반복 입력은 래치를 끄지 않는다: Client가 그 입력을 모른다).
+    // 입력: player - 걷는 플레이어(래치 켜짐), input - 이 Tick 입력(고쳐 쓴다), sent - 실제 입력인지.
+    // 출력: 반환값 없음. input의 Jump 비트가 지워지거나 래치가 꺼진다.
+    private static void MaskJumpAfterExit(PlayerEntity player, ref InputCommand input, bool sent)
+    {
+        if ((input.Buttons & InputButtons.Jump) != 0) input.Buttons &= ~InputButtons.Jump;
+        else if (sent) player.JumpLatchedFromVehicle = false;
     }
 
     // Server review M7: the failed players leave (a connected one through Leave, a graced one directly), then GameLoop
@@ -1266,14 +1285,15 @@ public sealed partial class Match
         SendWorldSound(player, hit.Destroyed ? WorldSoundKind.HarvestDestroyed : WorldSoundKind.HarvestHit, hitPoint);
     }
 
-    // Phase 18 D7: how far (m) a WorldSound reaches; only players this close to the sound get the packet. Server only: the
-    // client's own audio table decides how loud it plays.
+    // Phase 18 D7: how far (m) a WorldSound reaches; only living players this close to the sound get the packet (the dead and
+    // spectators get every one). Server only: the client's own audio table decides how loud it plays.
     internal const float WorldSoundRange = 30f;
 
-    // 기능: 소리를 낸 플레이어를 뺀, 소리 위치에서 WorldSoundRange 안의 플레이어에게 WorldSound를 Unreliable로 보낸다(Phase 18 D7).
-    //   연결이 끊긴 유예 플레이어는 뺀다. 죽은 플레이어·관전자도 자기 몸 위치로 거리를 잰다. 패킷은 한 번만 쓰고 할당하지 않는다(휘두르기 때만, 플레이어 수만큼 거리 비교).
+    // 기능: 소리를 낸 플레이어를 뺀, 소리 위치에서 WorldSoundRange 안의 살아 있는 플레이어와 모든 죽은 플레이어·관전자에게 WorldSound를
+    //   Unreliable로 보낸다(Phase 18 D7). 연결이 끊긴 유예 플레이어는 뺀다. 죽은 사람·관전자는 몸이 아니라 관전 카메라로 듣기 때문에 거리를 재지
+    //   않는다(Client 믹서가 카메라 기준 거리로 거른다, Phase 17–19 리뷰). 패킷은 한 번만 쓰고 할당하지 않는다(휘두르기 때만, 플레이어 수만큼 거리 비교).
     // 입력: source - 소리를 낸 플레이어(받지 않는다), kind - 소리 종류, position - 소리 위치.
-    // 출력: 반환값 없음. 범위 안의 다른 Client에게 WorldSound가 전송된다.
+    // 출력: 반환값 없음. 범위 안의 살아 있는 다른 Client와 모든 죽은 사람·관전자(유예 제외)에게 WorldSound가 전송된다.
     private void SendWorldSound(PlayerEntity source, WorldSoundKind kind, Vector3 position)
     {
         var writer = new PacketWriter(_sendBuffer);
@@ -1281,7 +1301,7 @@ public sealed partial class Match
         const float rangeSquared = WorldSoundRange * WorldSoundRange;
         foreach (var p in _players)
         {
-            if (p == source || p.IsGraced || Vector3.DistanceSquared(p.State.Position, position) > rangeSquared) continue;
+            if (p == source || p.IsGraced || (p.Alive && Vector3.DistanceSquared(p.State.Position, position) > rangeSquared)) continue;
             _send(p.PeerId, writer.WrittenSpan, DeliveryMethod.Unreliable);
         }
     }
@@ -2122,12 +2142,13 @@ public sealed partial class Match
     private void Respawn(PlayerEntity player) => Respawn(player, SpawnPosition(player.EntityId));
 
     // Phase 12: mode is the movement mode the player starts in (Transport aboard the drop transport).
-    // 기능: 플레이어를 주어진 위치·모드로 새로 시작시킨다(Phase 19: 탄 사람은 먼저 내린다). 모두에게 PlayerRespawned.
+    // 기능: 플레이어를 주어진 위치·모드로 새로 시작시킨다(Phase 19: 탄 사람은 먼저 내린다, 하차 Jump 래치는 끈다). 모두에게 PlayerRespawned.
     // 입력: player - 플레이어, position - 위치, mode - 시작 모드.
     // 출력: 반환값 없음.
     private void Respawn(PlayerEntity player, Vector3 position, MovementMode mode = MovementMode.Ground)
     {
         ForceExit(player);
+        player.JumpLatchedFromVehicle = false;   // a new life starts with no exit to finish (the client resets its prediction too)
         // Keep the yaw so the camera does not snap; everything else starts over at the given position (rested).
         player.State = new MoveState { Position = position, Yaw = player.State.Yaw, Mode = mode };
         player.Sprinting = false;
@@ -2530,7 +2551,7 @@ public sealed partial class Match
     }
 
     // 기능: 유예 중인 캐릭터를 새 연결로 넘기고 입장 패킷 묶음을 다시 보낸다(Phase 16: Container·Supply Drop 상태, Phase 17: 살아 있는 투사체 포함). Phase 14 D13: 끝에
-    //   팀 상태·스테이션·진행 중인 팀 채널도. Phase 15 D10: 그리고 팀 지도 표시.
+    //   팀 상태·스테이션·진행 중인 팀 채널도. Phase 15 D10: 그리고 팀 지도 표시. 입력 상태와 하차 Jump 래치는 새로 시작한다.
     // 입력: peerId - 새 연결 id, player - 유예 중인 플레이어.
     // 출력: 반환값 없음.
     // D2: the character goes to the new connection with everything it has (position, health, inventory, placement
@@ -2546,6 +2567,7 @@ public sealed partial class Match
         player.LastInput = new InputCommand { Yaw = player.State.Yaw };
         player.MissedTicks = 0;
         player.FireHeld = false;
+        player.JumpLatchedFromVehicle = false;   // S8: the new client knows of no exit (the drop unseated it)
         // Phase 13 D8: the new client numbers its build requests from 1.
         player.BuildQueue.Clear();
         player.HasBuildSequence = false;

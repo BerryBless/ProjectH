@@ -44,10 +44,10 @@
 - **저장하는 주인:** Entity id(패킷용), `JoinOrder`(처치 기록·자기 판정. Entity id는 다시 쓰이고 JoinOrder는 다시 쓰이지 않는다), 생성 때의 `TeamId`(아군 판정. 팀은 경기 시작에 다시 정해지고 그때 투사체도 지워진다), 피해 배율(무기 등급).
 - **이동:** Tick 시작 쪽에서(건설 요청 다음, 플레이어 행동 앞) 정확한 등가속 적분 `p += v·dt + ½·a·dt²; v += a·dt`(a = (0, −gravity, 0)). 이번 Tick에 생긴 투사체는 다음 Tick부터 움직인다(StartTick = 생긴 Tick). Client 외삽 공식과 같은 궤적이다.
 - **충돌:** 이번 Tick 이동 선분을 맵 상자·닫힌 문·서 있는 채집 대상·지형·y = 0 바닥(`ProjectileRules.TraceWorld`, 법선 포함), 건설 조각(`PieceTrace`, 같은 거리면 조각), (로켓만) 플레이어의 **현재** 위치(지연 보상 없음, 주인과 주인 팀원·죽은 사람·수송기 탑승자는 지나간다)와 판정한다.
-- **로켓:** 맞는 순간 그 자리(면 법선으로 0.05 m 밖)에서 폭발. 수명 4 s가 끝나도 폭발.
+- **로켓:** 맞는 순간 그 자리(면 법선으로 0.05 m 밖)에서 폭발. 수명 4 s가 끝나도 폭발. 데이터 검증: 로켓은 `bounce` 0이어야 하고 수류탄은 0보다 커야 한다(`WeaponCatalog`).
 - **수류탄:** 맞은 면의 법선으로 반사하고 속도 전체에 튕김 계수(0.4)를 곱한다. 법선은 상자면 들어간 면, 지형이면 `HeightField.Gradient`의 (−gx, 1, −gz), 바닥면이면 위, Ramp·한쪽 경사 지붕이면 경사 평면, 사각뿔 지붕이면 맞은 쪽 면이다. 위를 향한 면(법선 Y ≥ 0.7: 바닥·지형·Ramp·지붕 경사)에서 튕긴 속도가 1 m/s 아래면 정지한다(그 뒤 중력·이동 없음). 벽·천장에서는 느려도 계속 튕기며 떨어진다. 튕김·정지마다 `ProjectileState`. 퓨즈 3 s(90 Tick)가 끝난 Tick에 폭발한다(던진 Tick + 90).
-- **정지한 수류탄의 한계:** 밑의 조각이 부서지거나 문이 열려도 떨어지지 않는다(퓨즈가 짧아 단순하게 둔다).
-- **수명 규칙:** 주인이 나갔거나 죽었어도 폭발은 일어나고 처치 기록은 없다. `StartMatch`·`CloseRound`·`FinishMatch`가 모두 지우고 아무것도 보내지 않는다(`ProjectileExploded` 없음). 시작 카운트다운(Starting)과 결과 화면(Finished·Closing)에서는 새로 만들지 않는다. 대기실(Waiting)·경기 중·개발 모드는 만든다. Join·Resume에는 살아 있는 투사체를 지금 상태로 `ProjectileSpawned`(StartTick = 마지막 Tick) 보낸다.
+- **정지한 수류탄의 받침:** 조각이 부서지거나 편집됐을 때(`BuildReplication.StructureVersion`, 설치·피해만으로는 오르지 않는다)나 문 마스크·채집 마스크가 달라졌을 때만, 그 뒤 첫 투사체 갱신에서 정지한 수류탄 아래 0.15 m를 다시 본다(편집은 같은 Tick, 폭발·사격·붕괴로 인한 파괴는 다음 Tick)(맵 상자·닫힌 문·서 있는 채집 대상·지형·바닥면·조각). 받침이 없으면 정지를 풀고 그 Tick부터 다시 떨어지며, 움직인 뒤의 위치·속도를 `ProjectileState`로 보낸다(속도 0은 Client가 정지로 읽으므로). Phase 17–19 리뷰.
+- **수명 규칙:** 주인이 나갔거나 죽었어도 폭발은 일어나고 처치 기록은 없다. 시작 카운트다운(Starting)에 들어가는 Tick(Client가 `MatchState` Starting으로 비우는 시점과 같다)과 `StartMatch`·`CloseRound`·`FinishMatch`가 모두 지우고 아무것도 보내지 않는다(`ProjectileExploded` 없음). 시작 카운트다운(Starting)과 결과 화면(Finished·Closing)에서는 새로 만들지 않는다. 대기실(Waiting)·경기 중·개발 모드는 만든다. Join·Resume에는 살아 있는 투사체를 지금 상태로 `ProjectileSpawned`(StartTick = 마지막 Tick) 보낸다.
 
 ## 폭발 (D8)
 

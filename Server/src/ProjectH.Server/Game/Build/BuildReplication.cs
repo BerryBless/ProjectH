@@ -71,6 +71,10 @@ public sealed class BuildReplication
 
     // D14: how many building events the match has had (BuildEvents.Version).
     public uint Version { get; private set; }
+    // Phase 17–19 review: how many times a piece left the world or changed its shape (Destroyed, Edited), counted at once.
+    // Only these can take away what a resting grenade lies on (a placement or damage cannot), so Match re-checks the resting
+    // grenades' support only when this moves. Only grows (Clear and Reset leave it), so a change is never missed.
+    public uint StructureVersion { get; private set; }
     public int PlacedCount => _placedCount;
     public int HealthCount => _healthCount;
     public int EditedCount => _editedCount;
@@ -222,10 +226,12 @@ public sealed class BuildReplication
     }
 
     // 기능: 조각이 이번 Tick에 편집되었음을 기록한다(Phase 13.5 D8). Edited 기록은 Tick 끝에 조각마다 한 번, 그때 상태로 간다.
+    //   모양이 바뀌었으므로 StructureVersion을 바로 올린다(Phase 17–19 리뷰: 멈춘 수류탄 받침 재확인).
     // 입력: slot - 편집된 조각의 slot.
     // 출력: 반환값 없음.
     public void Edited(int slot)
     {
+        StructureVersion++;
         if (slot >= _editedFlag.Length) Array.Resize(ref _editedFlag, Grown(_editedFlag.Length, slot + 1));
         if (_editedFlag[slot]) return;
         _editedFlag[slot] = true;
@@ -240,9 +246,10 @@ public sealed class BuildReplication
     //   (같은 Tick에 slot이 새 조각에 다시 쓰여도 옛 조각의 기록이 새 조각에 붙지 않게).
     // 입력: slot - 조각의 slot, id - 조각 id, shape - 관심 칸을 정할 모양, reason - 피해로 부서졌는지(Destroyed)
     //   지지를 잃고 무너졌는지(Collapsed, Phase 18 D6).
-    // 출력: 반환값 없음. Destroyed 기록이 하나 는다.
+    // 출력: 반환값 없음. Destroyed 기록이 하나 늘고 StructureVersion이 오른다.
     public void Destroyed(int slot, uint id, in BuildPieceShape shape, BuildDestroyReason reason)
     {
+        StructureVersion++;
         Unflag(_damagedFlag, _damagedSlots, ref _damagedCount, slot);
         Unflag(_editedFlag, _editedSlots, ref _editedSlotCount, slot);
         if (_destroyedCount == _destroyed.Length)

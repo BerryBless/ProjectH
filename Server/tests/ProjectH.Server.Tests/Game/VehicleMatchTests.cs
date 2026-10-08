@@ -655,6 +655,142 @@ public class VehicleMatchTests
         Assert.Equal(v.Move.Position + new Vector3(0f, 2f, 0f), a.State.Position);
     }
 
+    // ---- Phase 17–19 review: no exit or entry through a wall (S1) ----
+
+    [Fact]
+    public void Exit_DoesNotGoThroughAMapWall_ItTakesTheOtherSide()
+    {
+        // The open-ground wall at x 26 (25.75..26.25, 3 m high). A car at x 27.36: the driver's spot (x 25.36) is free of the
+        // wall but behind it.
+        var h = new SandboxHarness();
+        Vehicle v = Spawn(h.Match, 27.36f, 0f);
+        PlayerEntity a = h.Join(1, SandboxHarness.Ground(29.36f, 0f));
+        h.Press(a, InputButtons.Interact);
+        Assert.Same(a, v.Driver);
+        h.Press(a, InputButtons.None);
+        h.Press(a, InputButtons.Interact);
+        Assert.False(a.InVehicle);
+        Assert.Equal(29.36f, a.State.Position.X, 3);   // the passenger's side
+    }
+
+    [Fact]
+    public void ForcedExit_DoesNotGoThroughAMapWall_Either()
+    {
+        var h = new SandboxHarness();
+        Vehicle v = Spawn(h.Match, 27.36f, 0f);
+        PlayerEntity a = h.Join(1, SandboxHarness.Ground(29.36f, 0f));
+        h.Press(a, InputButtons.Interact);
+        Assert.Same(a, v.Driver);
+        h.Match.QaDamageVehicle(v, 1000);
+        Assert.False(a.InVehicle);
+        Assert.Equal(29.36f, a.State.Position.X, 3);
+    }
+
+    [Fact]
+    public void Exit_DoesNotGoThroughABuiltWall_ItTakesTheOtherSide()
+    {
+        // A wall on z 0 (x 0..5, 0.25 m thick). A car heading +X at z -1.36: the driver's side is +Z, its spot (z 0.64) is clear
+        // of the wall but behind it.
+        var h = new SandboxHarness();
+        h.AddPiece(new BuildPieceShape(BuildPieceType.Wall, 16, 0, 16, 0));
+        Vehicle v = Spawn(h.Match, 2.5f, -1.36f, 90f);
+        PlayerEntity a = h.Join(1, new Vector3(2.5f, 0f, -3.5f));
+        h.Press(a, InputButtons.Interact);
+        Assert.Same(a, v.Driver);
+        h.Press(a, InputButtons.None);
+        h.Press(a, InputButtons.Interact);
+        Assert.False(a.InVehicle);
+        Assert.Equal(-3.36f, a.State.Position.Z, 3);   // the passenger's side, south
+    }
+
+    [Fact]
+    public void Enter_FromInsideAClosedBuilding_ToACarOutside_IsRefused_FromOutsideItWorks()
+    {
+        // Gearworks' east wall (x 53.5..54, 3 m high, no door). A car outside it at x 55.2 (body from x 54.1); a player inside at
+        // x 53 is 1.1 m from the body, within EnterRange.
+        var h = new SandboxHarness();
+        Vehicle v = Spawn(h.Match, 55.2f, 50f);
+        PlayerEntity inside = h.Join(1, SandboxHarness.Ground(53f, 50f));
+        Assert.True(VehicleSimulation.DistanceToBody(inside.State.Position, v.Move.Position, v.Move.Heading) <= VehicleSettings.EnterRange);
+        h.Clear();
+        h.Press(inside, InputButtons.Interact);
+        Assert.False(inside.InVehicle);
+        Assert.Null(v.Driver);
+        // Like a blocked container: the client showed "[E] enter" and hid the pickup prompt, so nothing else happens.
+        Assert.Empty(h.To(1, PacketId.PickupResult));
+        Assert.Equal(1, h.Match.VehicleEntersBlocked);
+
+        PlayerEntity outside = h.Join(2, SandboxHarness.Ground(57.4f, 50f));
+        h.Press(outside, InputButtons.Interact);
+        Assert.Same(outside, v.Driver);
+    }
+
+    // ---- Phase 17–19 review: a held brake does not jump after the exit (S8) ----
+
+    [Fact]
+    public void AfterAnExit_AHeldJump_DoesNotJump_UntilReleased()
+    {
+        var h = new SandboxHarness();
+        Vehicle v = Spawn(h.Match, 0f, 0f);
+        PlayerEntity a = h.Join(1, new Vector3(-2f, 0f, 0f));
+        h.Press(a, InputButtons.Interact);
+        Assert.Same(a, v.Driver);
+        Drive(h, a, 0f, 0f, InputButtons.Jump);                 // braking
+        h.Press(a, InputButtons.Interact | InputButtons.Jump);   // E out with the brake still held
+        Assert.False(a.InVehicle);
+        Assert.True(a.JumpLatchedFromVehicle);
+        float ground = a.State.Position.Y;
+        for (int i = 0; i < 5; i++) h.Press(a, InputButtons.Jump);
+        Assert.Equal(ground, a.State.Position.Y, 4);           // still held: no jump
+        Assert.Equal(MovementMode.Ground, a.State.Mode);
+        h.Match.Tick();                                          // no input: the server's repeat does not release it
+        Assert.True(a.JumpLatchedFromVehicle);
+        h.Press(a, InputButtons.Jump);
+        Assert.Equal(ground, a.State.Position.Y, 4);
+
+        h.Press(a, InputButtons.None);                           // released
+        Assert.False(a.JumpLatchedFromVehicle);
+        h.Press(a, InputButtons.Jump);
+        h.Press(a, InputButtons.Jump);
+        Assert.True(a.State.Position.Y > ground + 0.05f, $"{a.State.Position.Y}");   // a new press jumps
+    }
+
+    [Fact]
+    public void AfterAForcedExit_AHeldJump_DoesNotJump()
+    {
+        var h = new SandboxHarness();
+        Vehicle v = Spawn(h.Match, 0f, 0f);
+        PlayerEntity a = h.Join(1, new Vector3(-2f, 0f, 0f));
+        h.Press(a, InputButtons.Interact);
+        Drive(h, a, 0f, 0f, InputButtons.Jump);
+        h.Match.QaDamageVehicle(v, 1000);
+        Assert.False(a.InVehicle);
+        float ground = a.State.Position.Y;
+        for (int i = 0; i < 5; i++) h.Press(a, InputButtons.Jump);
+        Assert.Equal(ground, a.State.Position.Y, 4);
+        Assert.True(a.JumpLatchedFromVehicle);
+    }
+
+    [Fact]
+    public void EnteringAgain_ClearsTheLatch_TheBrakeStillWorks()
+    {
+        var h = new SandboxHarness();
+        Vehicle v = Spawn(h.Match, 0f, -6f);
+        PlayerEntity a = h.Join(1, new Vector3(-2f, 0f, -6f));
+        h.Press(a, InputButtons.Interact);
+        h.Press(a, InputButtons.Jump);
+        h.Press(a, InputButtons.Interact | InputButtons.Jump);
+        Assert.True(a.JumpLatchedFromVehicle);
+        h.Press(a, InputButtons.Jump);
+        h.Press(a, InputButtons.Interact | InputButtons.Jump);
+        Assert.Same(a, v.Driver);
+        Assert.False(a.JumpLatchedFromVehicle);
+        for (int i = 0; i < 20; i++) Drive(h, a, 1f);
+        Assert.True(v.Move.Speed > 0f);
+        for (int i = 0; i < 15 && v.Move.Speed > 0f; i++) Drive(h, a, 0f, 0f, InputButtons.Jump);
+        Assert.Equal(0f, v.Move.Speed);
+    }
+
     // ---- the client's copy ----
 
     [Fact]

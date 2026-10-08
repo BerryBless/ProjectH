@@ -248,6 +248,49 @@ public class ProjectilePhase17Tests
         Assert.True(h.Match.Projectiles[slot].Position.Z < -0.1f);   // still south of the wall
     }
 
+    // Phase 17–19 review: a grenade resting on a floor falls again when the floor is destroyed (it does not hang in the air),
+    // and the clients are told with a ProjectileState that moves (velocity 0 would read as resting).
+    [Fact]
+    public void ARestingGrenade_FallsAgain_WhenItsFloorIsDestroyed()
+    {
+        SandboxHarness h = Harness();
+        var floorShape = new BuildPieceShape(BuildPieceType.Floor, 16, 1, 16, 0);   // x 0..5, z 0..5, top at 3 m
+        uint floor = h.AddPiece(floorShape);
+        float top = BuildGrid.BoundsOf(floorShape).Max.Y;
+        PlayerEntity thrower = h.Join(1, new Vector3(2.5f, 0f, -14f));
+        ProjectileDefinition grenade = Data().Weapons.Projectile(ProjectileKind.Grenade)!;
+        Assert.True(h.Match.Projectiles.TryAdd(new Projectile
+        {
+            Definition = grenade, Position = new Vector3(2.5f, top + ProjectileRules.SurfaceOffset, 2.5f), Resting = true,
+            ExplodeTick = h.Match.ServerTick + 300, OwnerEntityId = thrower.EntityId, OwnerJoinOrder = thrower.JoinOrder, DamageMultiplier = 1f,
+        }, out int slot));
+        h.Ticks(3);
+        Assert.True(h.Match.Projectiles[slot].Resting);   // the floor holds it
+
+        // Review round 2: damage and a placement cannot take a support away: no support trace for them.
+        long checks = h.Match.RestSupportChecks;
+        Assert.True(h.Match.DamagePieceById(floor, 1f, out bool broke));
+        Assert.False(broke);
+        h.Ticks(2);
+        Assert.Equal(BuildResultCode.Ok, h.Match.PlacePiece(new BuildPieceShape(BuildPieceType.Wall, 16, 0, 16, 0), BuildMaterialType.Wood, out _));
+        h.Ticks(2);
+        Assert.Equal(checks, h.Match.RestSupportChecks);
+        Assert.True(h.Match.Projectiles[slot].Resting);
+
+        h.Clear();
+        h.Match.DestroyPieces(new[] { floor });
+        h.Ticks(1);
+        Assert.False(h.Match.Projectiles[slot].Resting);
+        ProjectileState fall = State(h.To(1, PacketId.ProjectileState).Single());
+        Assert.True(fall.Velocity.Y < 0f, fall.Velocity.ToString());
+        Assert.True(fall.Position.Y < top + ProjectileRules.SurfaceOffset);
+
+        h.Ticks(150);
+        Assert.True(h.Match.Projectiles[slot].Resting);
+        Assert.InRange(h.Match.Projectiles[slot].Position.Y, 0f, 0.2f);   // on the plaza floor
+        Assert.Equal(0, h.Match.Explosions);
+    }
+
     // Review fix: a resend names no owner who left (its entity id may belong to someone else by then).
     [Fact]
     public void AResend_AfterTheOwnerLeft_HasOwnerZero()
@@ -409,6 +452,25 @@ public class ProjectilePhase17Tests
         h.RunToMatch();
         Assert.Equal(0, h.Match.Projectiles.Count);
         Assert.DoesNotContain(h.Packets, s => s.Id == PacketId.ProjectileExploded);
+    }
+
+    // Phase 17–19 review: the server clears the lobby's projectiles in the tick the countdown starts, like the clients (their
+    // MatchState turns Starting then): nothing the clients dropped explodes during the countdown.
+    [Fact]
+    public void EnteringStarting_ClearsTheLobbysProjectiles_InThatTick()
+    {
+        var h = new RoyaleHarness(TestGameData.CombatLoadout);
+        PlayerEntity a = h.Join(1);
+        a.Inventory.Grenades = 2;
+        ThrowAhead(h, a);
+        Assert.Equal(1, h.Match.Projectiles.Count);
+        h.Join(2);
+        h.Packets.Clear();
+        h.Match.Tick();
+        Assert.Equal(MatchFlowState.Starting, h.Match.Flow.State);
+        Assert.Equal(0, h.Match.Projectiles.Count);
+        h.Ticks(RoyaleHarness.CountdownTicks / 2);
+        Assert.DoesNotContain(h.Packets, s => s.Id == PacketId.ProjectileExploded || s.Id == PacketId.ProjectileState);
     }
 
     [Fact]

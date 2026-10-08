@@ -547,7 +547,8 @@ namespace ProjectH.Client.Game
         //   Phase 14 D7: E가 눌려 있으면 이번 프레임의 모든 입력에 InteractHeld를 켠다.
         //   Phase 17 D9: 행동할 수 없는 모드(기절·탑승·낙하 등)이거나 수류탄이 없으면 6(ThrowGrenade) 누름을 버린다(서버도 막는다).
         //   Phase 19: 차량을 숨김 규칙으로 정리하고 렌더 Tick 표본을 뽑는다. 앉아 있으면 누르고 있는 Space를 제동으로 모든 입력에 넣고, 조수석이면
-        //   그리는 차량의 좌석에 둔다. 원격 플레이어는 예측 뒤에 그린다(내가 운전하는 차량의 조수석 사람이 예측 좌석에 앉도록).
+        //   그리는 차량의 좌석에 둔다(탄 직후 렌더 표본이 아직 나를 적지 않았으면 최신 패킷의 차량). 운전 예측이 막 끝났으면 그 차량을 예측 위치에서
+        //   표본으로 이어 그린다(Phase 19 리뷰). 원격 플레이어는 예측 뒤에 그린다(내가 운전하는 차량의 조수석 사람이 예측 좌석에 앉도록).
         // 입력: 없음(Unity가 매 프레임 부른다).
         // 출력: 반환값 없음. 예측 상태와 보낼 입력 Step 수(_pendingSteps)가 갱신된다. 커서 잠금은 CursorLocked(QA 가정 포함)로 본다.
         private void Update()
@@ -609,10 +610,17 @@ namespace ProjectH.Client.Game
                 _vehicles.OverrideDrawn(driven.VehicleId, move);
                 viewYaw = driven.RenderHeading;
             }
-            else if (_predictor.Seated && _vehicles.TrySeatAt(MyEntityId, out VehicleRecord seatedIn, out int seat))
+            else
             {
-                _predictor.SetSeatPosition(VehicleSimulation.SeatPosition(seatedIn.Position, seatedIn.Heading, seat).ToUnity());
-                viewYaw = seatedIn.Heading;
+                // Phase 19 review: a prediction that just ended (we got out while moving) eases from where it was drawn to the
+                // sample instead of jumping back. Only after this frame's Render: _drawn would otherwise keep last frame's offset.
+                if (clockReady) _vehicles.DrawHandoff(Time.deltaTime);
+                // Right after boarding the render-tick sample does not name us yet: the newest packet's vehicle is used then.
+                if (_predictor.Seated && _vehicles.TryGetOwnSeat(MyEntityId, out VehicleRecord seatedIn, out int seat))
+                {
+                    _predictor.SetSeatPosition(VehicleSimulation.SeatPosition(seatedIn.Position, seatedIn.Heading, seat).ToUnity());
+                    viewYaw = seatedIn.Heading;
+                }
             }
             if (clockReady) _remotePlayers.Render(_renderTick, _vehicles);
 
@@ -790,7 +798,8 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 내가 앉은 차량의 그리는 중심과 최신 기록을 찾는다(Phase 19: 카메라·HUD).
-        // 입력: center - 결과(운전 중이면 예측 위치, 조수석이면 렌더 Tick 표본), record - 결과(최신 패킷의 기록).
+        // 입력: center - 결과(운전 중이면 예측 위치, 아니면 최신 패킷이 적은 그 차량의 이번 프레임 표본: Phase 19 리뷰, 탄 직후 렌더 Tick 표본이
+        //   아직 나를 적지 않아도 카메라가 차량을 따른다), record - 결과(최신 패킷의 기록).
         // 출력: 앉아 있고 그 차량이 보이면 true.
         private bool TryGetMyVehicle(out Vector3 center, out VehicleRecord record)
         {
@@ -803,7 +812,7 @@ namespace ProjectH.Client.Game
                 center = _predictor.Vehicle.RenderPosition.ToUnity();
                 return true;
             }
-            if (!_vehicles.TrySeatAt(MyEntityId, out VehicleRecord drawn, out _)) return false;
+            if (!_vehicles.TryGetDrawnById(record.Id, out VehicleRecord drawn)) return false;
             center = drawn.Position.ToUnity();
             return true;
         }
@@ -1834,7 +1843,8 @@ namespace ProjectH.Client.Game
 
         // 기능: 경기 상태를 저장한다. 새 라운드 카운트다운(대기·시작)이면 결과·수송기 경로와 Phase 14 팀·채널, Phase 15 팀 Ping·Waypoint를 지운다.
         //   Phase 16: Container 열기 가능 조건(경기 중)을 맞춘다. Loot 상태 자체는 서버가 보내는 빈 패킷으로 비운다.
-        //   Phase 17 D6: 상태가 Waiting·Starting·Finished로 바뀔 때만 투사체를 비운다(서버가 말없이 지운다; 입장 뒤 첫 MatchState는 바뀜이 아니다).
+        //   Phase 17 D6: 상태가 Waiting·Starting·Finished로 바뀔 때만 투사체를 비운다(서버도 Starting에 들어가는 Tick, 경기 시작, 경기 끝, 라운드
+        //   리셋에서 폭발 없이 지우므로 같은 시점이다; 입장 뒤 첫 MatchState는 바뀜이 아니다).
         //   Phase 18 D9: Starting → Playing·FinalPhase(경기 시작, 서버가 문을 모두 닫는다)이면 다음 문 상태를 잠깐 기준으로 삼는다.
         // 입력: state - 받은 MatchState.
         // 출력: 반환값 없음. 처음 받으면 경기 HUD를 보인다.

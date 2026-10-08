@@ -243,6 +243,97 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual(0u, predictor.ExitSeq);
         }
 
+        // Phase 19 review (S8): after any exit the server ignores Jump on the inputs it walks until one comes without Jump.
+        // 기능: 내린 뒤의 첫 Snapshot(차 옆 2 m 지면에 선 서버 상태)으로 예측을 맞춘다.
+        // 입력: predictor - 내린 예측기, start - 차량 시작 상태, ack - Snapshot의 ack, tick - Snapshot Tick, exitSpot - 결과(내린 자리).
+        // 출력: 반환값 없음. 예측기가 ack 뒤 입력을 재실행한다.
+        private static void SnapAfterExit(LocalPlayerPredictor predictor, VehicleMove start, uint ack, uint tick, out Num.Vector3 exitSpot)
+        {
+            float x = start.Position.X + 2f, z = start.Position.Z;
+            exitSpot = new Num.Vector3(x, GameMap.Terrain.Height(x, z), z);
+            var entity = new SnapshotEntity { Position = exitSpot, Flags = SnapshotEntity.AliveFlag };
+            var self = new SnapshotSelf { Energy = MoveState.MaxEnergyHundredths };
+            predictor.Reconcile(entity, self, ack, tick);
+        }
+
+        [Test]
+        public void AForcedExit_WithSpaceHeld_IsNoJump_UntilAnInputWithoutJump()
+        {
+            LocalPlayerPredictor predictor = Driving(out VehicleMove start);
+            AdvanceSteps(predictor, 3, Vector2.zero, InputButtons.Jump);   // braking
+            predictor.ExitRefused(3);                                        // a VehicleStates still names us seated through input 3
+            AdvanceSteps(predictor, 4, Vector2.zero, InputButtons.Jump);   // the car is wrecked: the server walks 4..7, Space held
+            Assert.AreNotEqual(InputButtons.None, predictor.InputAt(7).Buttons & InputButtons.Jump);   // sent as made
+            predictor.EndSeated(110);
+            SnapAfterExit(predictor, start, 5, 110, out Num.Vector3 exitSpot);   // replays 6 and 7 with their Jump ignored
+            Assert.AreEqual(MovementMode.Ground, predictor.Mode);
+            Assert.LessOrEqual(predictor.VerticalSpeed, 0f);
+            Assert.AreEqual(exitSpot.Y, predictor.PredictedPosition.y, 0.01f);
+
+            // Still latched: a press on the first input on foot is ignored, like on the server.
+            AdvanceSteps(predictor, 1, Vector2.zero, InputButtons.None, InputButtons.Jump);
+            Assert.LessOrEqual(predictor.VerticalSpeed, 0f);
+            // One input without Jump ends it: the next press jumps.
+            AdvanceSteps(predictor, 1, Vector2.zero);
+            AdvanceSteps(predictor, 1, Vector2.zero, InputButtons.None, InputButtons.Jump);
+            Assert.Greater(predictor.VerticalSpeed, 0f);
+        }
+
+        [Test]
+        public void AForcedExit_LatchStartsAfterTheLastSeatedAck()
+        {
+            // Space released on input 3 (after the last seated ack 2) and held again: the server's latch ended on input 3, so
+            // input 4 is a jump on both sides.
+            LocalPlayerPredictor predictor = Driving(out VehicleMove start);
+            AdvanceSteps(predictor, 2, Vector2.zero);
+            predictor.ExitRefused(2);
+            AdvanceSteps(predictor, 1, Vector2.zero);
+            AdvanceSteps(predictor, 3, Vector2.zero, InputButtons.Jump);
+            predictor.EndSeated(110);
+            SnapAfterExit(predictor, start, 3, 110, out _);
+            Assert.Greater(predictor.VerticalSpeed, 0f);
+
+            // Released before the last seated ack (input 1) does not count: those inputs were seated.
+            LocalPlayerPredictor held = Driving(out VehicleMove start2);
+            AdvanceSteps(held, 1, Vector2.zero);
+            AdvanceSteps(held, 3, Vector2.zero, InputButtons.Jump);
+            held.ExitRefused(2);
+            AdvanceSteps(held, 3, Vector2.zero, InputButtons.Jump);
+            held.EndSeated(110);
+            SnapAfterExit(held, start2, 3, 110, out _);
+            Assert.LessOrEqual(held.VerticalSpeed, 0f);
+        }
+
+        [Test]
+        public void AForcedExit_BeforeAnEPress_KeepsTheLatchFromTheLastSeatedAck()
+        {
+            // The car is wrecked after the seated ack 2 while Space is held, and E comes (Space still held) before the client
+            // knows: the server walked 3..6 with the latch on, so the E input's seq is not where the latch starts.
+            LocalPlayerPredictor predictor = Driving(out VehicleMove start);
+            AdvanceSteps(predictor, 2, Vector2.zero);
+            predictor.ExitRefused(2);
+            AdvanceSteps(predictor, 3, Vector2.zero, InputButtons.Jump);
+            AdvanceSteps(predictor, 1, Vector2.zero, InputButtons.Jump, InputButtons.Interact);
+            Assert.AreEqual(predictor.LastSeq, predictor.ExitSeq);
+            predictor.EndSeated(110);
+            SnapAfterExit(predictor, start, 3, 110, out _);   // replays 4..6, Space held on all
+            Assert.LessOrEqual(predictor.VerticalSpeed, 0f);
+        }
+
+        [Test]
+        public void AnExitWithE_EndsTheLatchOnTheNextInput()
+        {
+            // The seated inputs after the exit press drop the held brake, so the server's latch ends on the first one.
+            LocalPlayerPredictor predictor = Driving(out VehicleMove start);
+            AdvanceSteps(predictor, 2, Vector2.zero, InputButtons.Jump, InputButtons.Interact);
+            AdvanceSteps(predictor, 2, Vector2.zero, InputButtons.Jump);
+            predictor.EndSeated(110);
+            SnapAfterExit(predictor, start, 3, 110, out _);
+            Assert.LessOrEqual(predictor.VerticalSpeed, 0f);
+            AdvanceSteps(predictor, 1, Vector2.zero, InputButtons.None, InputButtons.Jump);
+            Assert.Greater(predictor.VerticalSpeed, 0f);
+        }
+
         private static VehicleMove RecordToMove(in VehicleRecord r) =>
             new VehicleMove { Position = r.Position, Heading = r.Heading, Speed = r.Speed, Steer = r.Steer };
     }

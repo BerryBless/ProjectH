@@ -217,7 +217,7 @@ public sealed class WeaponCatalog
         return null;
     }
 
-    // 기능: 투사체 정의 하나를 검증한다(Phase 17 D2, D6, D9).
+    // 기능: 투사체 정의 하나를 검증한다(Phase 17 D2, D6, D9). 수류탄은 bounce > 0, 로켓은 bounce = 0이어야 한다.
     // 입력: kind - 종류, p - JSON 항목, simHz - Tick 속도, definition - 결과.
     // 출력: 맞으면 null과 정의, 틀리면 이유.
     private static string? ValidateProjectile(ProjectileKind kind, ProjectileJson? p, int simHz, out ProjectileDefinition? definition)
@@ -248,6 +248,8 @@ public sealed class WeaponCatalog
                 return $"throwUpDegrees must be {-MaxThrowUpDegrees}-{MaxThrowUpDegrees}.";
             if (bounce <= 0f) return "a grenade must bounce (bounce above 0): it explodes by its fuse.";
         }
+        // Phase 17 review: a rocket explodes on its first hit (ExplodesOnImpact = bounce 0); any bounce would make it a grenade.
+        else if (kind == ProjectileKind.Rocket && bounce != 0f) return "a rocket must not bounce (bounce 0): it explodes on impact.";
         definition = new ProjectileDefinition(kind, speed, gravity, lifetime, radius, (ushort)p.ExplosionDamage, (ushort)p.StructureDamage,
             bounce, throwTicks, throwUp);
         return null;

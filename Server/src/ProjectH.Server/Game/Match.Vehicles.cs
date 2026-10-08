@@ -21,6 +21,9 @@ public sealed partial class Match
     private const float ExitEndDistance = 3.2f;
     // D6: a forced exit with every spot blocked puts the player this high above the car's height (it falls from there).
     private const float ForcedExitHeight = 2f;
+    // Phase 17–19 review: the way out is checked from the seat to the exit spot at this height above both feet (the body's
+    // middle), so a wall between them refuses the spot while a low kerb or step does not.
+    private const float ExitPathHeight = MoveSettings.Height * 0.5f;
 
     private readonly VehicleCatalog _vehicleData;
     private readonly Vehicle[] _vehicles = CreateVehicleSlots();
@@ -46,6 +49,8 @@ public sealed partial class Match
     public long VehiclesSpawned { get; private set; }
     public long VehiclesWrecked { get; private set; }
     public long VehicleEnters { get; private set; }
+    // Phase 17–19 review: E presses whose target car was behind a wall (nothing happened).
+    public long VehicleEntersBlocked { get; private set; }
     public long VehicleExits { get; private set; }
     public long VehicleImpacts { get; private set; }
     public long VehicleRunOvers { get; private set; }
@@ -322,9 +327,11 @@ public sealed partial class Match
     }
 
     // 기능: E 누름으로 차량에 탄다(D6 검증: 서 있음(기절 아님), Ground·Crouch, 진행 중인 소생·재투입 없음, 타지 않음, 대상 있음).
+    //   Phase 17–19 리뷰: 대상(Client 안내 VehiclePrompt와 같은 거리 규칙으로 고른 차)까지 눈에서 벽(맵 상자·닫힌 문·지형·건설 조각)이 막으면
+    //   그 E는 아무것도 하지 않는다(시선 막힌 Container와 같은 정책: Client는 시선을 모르고 "[E] 타기"를 띄우며 줍기 안내를 끄므로 줍기가 일어나면 안 된다).
     //   운전석이 비었으면 운전석, 아니면 조수석. 회복과 채널을 끊고 이동 상태를 좌석의 쉬는 Ground로 바꾼다(위치 기록 재설정).
     // 입력: player - E를 누른 플레이어.
-    // 출력: 탔으면 true(호출자는 줍기를 하지 않는다).
+    // 출력: 탔거나 대상이 시선에 막혀 E를 소비했으면 true(호출자는 줍기를 하지 않는다). 대상이 없으면 false(호출자는 줍기로 넘어간다).
     private bool TryEnterVehicle(PlayerEntity player)
     {
         if (_vehicleCount == 0 || !player.IsUp || player.InVehicle || player.ChannelActive) return false;
@@ -339,12 +346,31 @@ public sealed partial class Match
         int target = FindEnterTarget(player.State.Position, candidates);
         if (target < 0) return false;
         Vehicle vehicle = _vehicles[target];
+        if (!CanReachVehicle(player, vehicle))
+        {
+            VehicleEntersBlocked++;
+            return true;   // blocked: nothing else happens (like a blocked container, Match.Interact)
+        }
         int seat = vehicle.Seats[VehicleSettings.DriverSeat] == null ? VehicleSettings.DriverSeat : VehicleSettings.PassengerSeat;
         EnterVehicle(player, vehicle, seat);
         return true;
     }
 
+    // 기능: 플레이어 눈에서 차체(눈에 가까운 발자국 상자의 가장 가까운 점)까지 맵 상자·닫힌 문·지형·건설 조각이 막지 않는지 본다
+    //   (Phase 17–19 리뷰: 닫힌 건물 안에서 벽 너머 차에 타지 않게).
+    // 입력: player - 타려는 플레이어, v - Active 차량.
+    // 출력: 막히지 않았으면 true.
+    private bool CanReachVehicle(PlayerEntity player, Vehicle v)
+    {
+        Vector3 eye = player.State.Position + new Vector3(0f, CombatRules.EyeHeightOf(player.State.Mode), 0f);
+        Box front = VehicleSimulation.FootprintBox(v.Move.Position, v.Move.Heading, 0);
+        Box rear = VehicleSimulation.FootprintBox(v.Move.Position, v.Move.Heading, 1);
+        Box nearest = VehicleSimulation.DistanceToBox(eye, front) <= VehicleSimulation.DistanceToBox(eye, rear) ? front : rear;
+        return ClearSight(eye, Vector3.Clamp(eye, nearest.Min, nearest.Max), pieces: true);
+    }
+
     // 기능: 플레이어를 좌석에 앉힌다(검증은 호출자). 회복·채널을 끊고 좌석 위치에서 위치 기록을 다시 시작한다(D15: 좌석은 순간이동).
+    //   하차 Jump 래치는 끈다(좌석에서 Jump는 제동이다).
     // 입력: player - 플레이어, vehicle - 차량, seat - 빈 좌석.
     // 출력: 반환값 없음.
     private void EnterVehicle(PlayerEntity player, Vehicle vehicle, int seat)
@@ -353,6 +379,7 @@ public sealed partial class Match
         player.Vehicle = vehicle;
         player.Seat = seat;
         player.VehicleInput = default;
+        player.JumpLatchedFromVehicle = false;
         player.FireHeld = false;
         ConsumableRules.Cancel(player.Inventory);
         CancelChannel(player);
@@ -367,7 +394,8 @@ public sealed partial class Match
         VehicleEnters++;
     }
 
-    // 기능: 탄 사람의 E 누름으로 내린다(D6): 서 있을 수 있는 첫 내릴 자리(운전석 쪽 옆 → 반대쪽 → 뒤 → 앞). 자리가 없으면 내리지 않는다.
+    // 기능: 탄 사람의 E 누름으로 내린다(D6): 서 있을 수 있고 좌석에서 벽에 막히지 않은 첫 내릴 자리(운전석 쪽 옆 → 반대쪽 → 뒤 → 앞, FindExitSpot).
+    //   자리가 없으면 내리지 않는다.
     // 입력: player - 탄 플레이어.
     // 출력: 내렸으면 true.
     private bool TryExitVehicle(PlayerEntity player)
@@ -379,7 +407,8 @@ public sealed partial class Match
         return true;
     }
 
-    // 기능: 강제로 내린다(D6: 파괴, 연결 끊김, 기절·탈락, 경기 끝·리셋, 떠남). 자리가 모두 막혔으면 차량 위 ForcedExitHeight에 둔다.
+    // 기능: 강제로 내린다(D6: 파괴, 연결 끊김, 기절·탈락, 경기 끝·리셋, 떠남). 자리가 모두 막혔으면(겹침 또는 좌석에서 가는 길이 벽에 막힘,
+    //   FindExitSpot) 차량 위 ForcedExitHeight에 둔다.
     // 입력: player - 플레이어(타지 않았으면 아무것도 하지 않는다).
     // 출력: 실제로 내렸으면 true, 타고 있지 않았으면 false.
     private bool ForceExit(PlayerEntity player)
@@ -391,7 +420,8 @@ public sealed partial class Match
         return true;
     }
 
-    // 기능: 내릴 자리를 찾는다(D6 순서, 맵 안, 서 있는 상자가 맵 상자·문·채집 대상·조각·경사면에 박히지 않음).
+    // 기능: 내릴 자리를 찾는다(D6 순서, 맵 안, 서 있는 상자가 맵 상자·문·채집 대상·조각·경사면에 박히지 않음). Phase 17–19 리뷰: 좌석의 몸 중심
+    //   높이에서 그 자리의 몸 중심 높이까지 맵 상자·닫힌 문·지형·건설 조각이 막으면 그 자리는 건너뛴다(벽 너머로 내리지 않는다).
     // 입력: v - 차량, seat - 좌석(운전석은 왼쪽, 조수석은 오른쪽이 먼저), spot - 결과(발 위치, 지형 높이).
     // 출력: 찾았으면 true.
     private bool FindExitSpot(Vehicle v, int seat, out Vector3 spot)
@@ -406,6 +436,8 @@ public sealed partial class Match
         offsets[2] = forward * -ExitEndDistance;
         offsets[3] = forward * ExitEndDistance;
         const float bound = GameMap.HalfSize - MoveSettings.HalfWidth - 0.01f;
+        var bodyUp = new Vector3(0f, ExitPathHeight, 0f);
+        Vector3 seatBody = VehicleSimulation.SeatPosition(v.Move.Position, v.Move.Heading, seat) + bodyUp;
         for (int i = 0; i < offsets.Length; i++)
         {
             float x = v.Move.Position.X + offsets[i].X;
@@ -413,6 +445,9 @@ public sealed partial class Match
             if (x < -bound || x > bound || z < -bound || z > bound) continue;
             var feet = new Vector3(x, GameMap.Terrain.Height(x, z), z);
             if (MovementSimulation.Penetrates(feet, MoveSettings.Height, GatherAround(feet))) continue;
+            // Phase 17–19 review: a free spot on the far side of a wall (a map wall, a closed door, a building piece, the terrain)
+            // is not an exit: the way from the seat to it must be open.
+            if (!ClearSight(seatBody, feet + bodyUp, pieces: true)) continue;
             spot = feet;
             return true;
         }
@@ -420,7 +455,8 @@ public sealed partial class Match
         return false;
     }
 
-    // 기능: 좌석을 비우고 플레이어를 자리에 쉬는 Ground 상태로 둔다(위치 기록 재설정: 내리기는 순간이동이다, D15).
+    // 기능: 좌석을 비우고 플레이어를 자리에 쉬는 Ground 상태로 둔다(위치 기록 재설정: 내리기는 순간이동이다, D15). 하차 Jump 래치를 켠다
+    //   (E·강제 하차 모두: 제동으로 누르던 Jump가 내린 직후 점프가 되지 않게, PlayerEntity.JumpLatchedFromVehicle).
     // 입력: player - 탄 플레이어, spot - 발 위치.
     // 출력: 반환값 없음.
     private void Unseat(PlayerEntity player, Vector3 spot)
@@ -430,6 +466,7 @@ public sealed partial class Match
         player.Vehicle = null;
         player.Seat = 0;
         player.VehicleInput = default;
+        player.JumpLatchedFromVehicle = true;
         player.State = new MoveState
         {
             Position = spot, Yaw = player.State.Yaw, Mode = MovementMode.Ground, EnergySpent = player.State.EnergySpent,

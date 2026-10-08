@@ -136,6 +136,11 @@ public sealed class PlayerEntity
     public InputCommand VehicleInput;
     // Phase 19 D3: the tick before which no vehicle runs this player over again (one run-over hit per cooldown).
     public uint RunOverReadyTick;
+    // Phase 17–19 review (S8): set when the player leaves a seat (E or forced, Match.Unseat). While set, the Jump bit of every
+    // input walked on foot is removed (Space brakes in the car: still held after the exit, it must not jump); the first real
+    // input without Jump clears it. A server-made input (the missed-input repeat) never clears it. Cleared by a respawn, a
+    // resume and entering a vehicle. The client's predictor applies the same rule from the input after the exit.
+    public bool JumpLatchedFromVehicle;
 
     // Phase 10 D2: the tick the reconnect grace ends at (only meaningful while PeerId is NoPeer).
     public uint GraceEndTick;

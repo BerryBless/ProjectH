@@ -28,6 +28,14 @@ namespace ProjectH.Client.Game
     {
         public const float HideSeconds = 1f;
         public const int SampleCapacity = 8;
+        // Phase 19 review: the handoff offset after the driver's prediction ends shrinks by e every 1/3 s (about 1 s to 5 %),
+        // ends under 1 cm, and is not kept when larger than 10 m (a teleport or a different car, not a prediction lead).
+        // Not faster: the sample keeps moving at the car's speed v while the offset (about v * lead, lead = how far the
+        // prediction ran ahead of the render tick: the interpolation delay plus the round trip) shrinks at decay * v * lead,
+        // so the drawn car would go backward once decay * lead > 1. 3/s keeps it moving forward for a lead up to 0.33 s.
+        public const float HandoffDecayPerSecond = 3f;
+        public const float HandoffEndOffset = 0.01f;
+        public const float MaxHandoffOffset = 10f;
 
         private sealed class Slot
         {
@@ -48,6 +56,12 @@ namespace ProjectH.Client.Game
         // This frame's sample of every slot at the render tick (Render), read by the views and the seated checks.
         private readonly VehicleRecord[] _drawn = new VehicleRecord[VehicleSettings.MaxVehicles];
         private readonly bool[] _drawnValid = new bool[VehicleSettings.MaxVehicles];
+        // Phase 19 review: the vehicle the driver's prediction drew last (-1 = none since the last DrawHandoff) and where, and the
+        // vehicle drawn with a shrinking offset after the prediction ended (-1 = none). Ids are bytes; -1 means none.
+        private int _overrideId = -1;
+        private Vector3 _overridePosition;
+        private int _handoffId = -1;
+        private Vector3 _handoffOffset;
         private int _latestCount;
         private float _latestAt;
         private bool _hasTick;
@@ -155,11 +169,13 @@ namespace ProjectH.Client.Game
             if (_latestCount > 0 && now - _latestAt > HideSeconds) _latestCount = 0;
         }
 
-        // 기능: 모두 잊는다(끊김, 입장·재개: 다음 기록은 모두 기준이고 Tick 비교도 처음부터).
+        // 기능: 모두 잊는다(끊김, 입장·재개: 다음 기록은 모두 기준이고 Tick 비교도 처음부터. Phase 19 리뷰: 이어 그리기도 끝난다).
         // 입력: 없음.
         // 출력: 반환값 없음.
         public void Reset()
         {
+            _overrideId = -1;
+            _handoffId = -1;
             for (int i = 0; i < _slots.Length; i++)
             {
                 Free(_slots[i]);
@@ -181,20 +197,91 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 이번 프레임 표본 중 한 차량의 운동 값을 운전자 예측으로 바꾼다(D9: 내가 운전하는 차량은 예측 위치에 그리고, 그 조수석
-        //   사람도 예측 좌석에 앉힌다). 상태·좌석·체력은 표본 그대로다.
+        //   사람도 예측 좌석에 앉힌다). 상태·좌석·체력은 표본 그대로다. Phase 19 리뷰: 그린 예측 위치를 기억한다(예측이 끝나는 프레임의
+        //   이어 그리기, DrawHandoff).
         // 입력: id - 차량 id, move - 그리는 예측 상태(위치·방향·속도·조향).
         // 출력: 반환값 없음. 그 차량이 이번 프레임에 보이지 않으면 아무것도 하지 않는다.
         public void OverrideDrawn(byte id, in VehicleMove move)
         {
-            for (int i = 0; i < _slots.Length; i++)
+            int i = FindDrawn(id);
+            if (i < 0) return;
+            _drawn[i].Position = move.Position;
+            _drawn[i].Heading = move.Heading;
+            _drawn[i].Speed = move.Speed;
+            _drawn[i].Steer = move.Steer;
+            _overrideId = id;
+            _overridePosition = move.Position;
+            _handoffId = -1;
+        }
+
+        // 기능: 운전 예측이 끝난 뒤 그 차량을 이어 그린다(Phase 19 리뷰: 달리다 내리면 예측 위치에서 렌더 Tick 표본으로 뒤로 튀었다). 예측이
+        //   끝난 첫 프레임에 마지막으로 그린 예측 위치와 이번 표본의 차이를 오프셋으로 남기고, 이후 프레임마다 줄여 0이 되면 끝낸다
+        //   (LocalPlayerPredictor의 교정 오프셋과 같은 방식). 위치만 잇고 방향은 표본 그대로다. 운전 중이 아닌 프레임마다 Render 뒤, 좌석·원격
+        //   플레이어·차량 뷰가 표본을 읽기 전에 부른다.
+        // 입력: deltaTime - 프레임 시간(초).
+        // 출력: 반환값 없음. 오프셋이 남아 있으면 그 차량의 이번 프레임 표본 위치가 바뀐다. 할당 없음.
+        public void DrawHandoff(float deltaTime)
+        {
+            if (_overrideId >= 0)
             {
-                if (!_drawnValid[i] || _slots[i].Id != id) continue;
-                _drawn[i].Position = move.Position;
-                _drawn[i].Heading = move.Heading;
-                _drawn[i].Speed = move.Speed;
-                _drawn[i].Steer = move.Steer;
+                int first = FindDrawn((byte)_overrideId);
+                Vector3 offset = first >= 0 ? _overridePosition - _drawn[first].Position : Vector3.Zero;
+                _handoffId = first >= 0 && offset.LengthSquared() <= MaxHandoffOffset * MaxHandoffOffset ? _overrideId : -1;
+                _handoffOffset = offset;
+                _overrideId = -1;
+            }
+            else if (_handoffId >= 0)
+            {
+                _handoffOffset *= (float)Math.Exp(-HandoffDecayPerSecond * deltaTime);
+            }
+            if (_handoffId < 0) return;
+            int i = FindDrawn((byte)_handoffId);
+            if (i < 0 || _handoffOffset.LengthSquared() < HandoffEndOffset * HandoffEndOffset)
+            {
+                _handoffId = -1;
                 return;
             }
+            _drawn[i].Position += _handoffOffset;
+        }
+
+        // 기능: 지금 이어 그리는 오프셋을 돌려준다(테스트·디버그).
+        // 입력: 없음.
+        // 출력: 이어 그리는 중이면 남은 오프셋, 아니면 0.
+        public Vector3 HandoffOffset => _handoffId >= 0 ? _handoffOffset : Vector3.Zero;
+
+        // 기능: 이번 프레임에 그려지는 차량 id의 슬롯을 찾는다.
+        // 입력: id - 차량 id.
+        // 출력: 슬롯 번호, 이번 프레임에 그 차량 표본이 없으면 -1.
+        private int FindDrawn(byte id)
+        {
+            for (int i = 0; i < _slots.Length; i++)
+            {
+                if (_drawnValid[i] && _slots[i].Id == id) return i;
+            }
+            return -1;
+        }
+
+        // 기능: id 차량의 이번 프레임 표본을 돌려준다.
+        // 입력: id - 차량 id, record - 결과.
+        // 출력: 이번 프레임에 그려지면 true와 그 표본.
+        public bool TryGetDrawnById(byte id, out VehicleRecord record)
+        {
+            int i = FindDrawn(id);
+            record = i >= 0 ? _drawn[i] : default;
+            return i >= 0;
+        }
+
+        // 기능: 내가 앉은 차량의 이번 프레임 표본과 좌석을 찾는다(내 좌석 위치·카메라). 렌더 Tick 표본이 나를 적었으면 그것을 쓰고, 아직
+        //   적지 않았으면(Phase 19 리뷰: 탄 직후 약 렌더 지연 동안) 최신 패킷의 차량 id·좌석으로 그 차량의 이번 프레임 표본을 쓴다.
+        //   원격 플레이어는 렌더 Tick부터 앉히므로(TrySeatAt) 이 함수를 쓰지 않는다.
+        // 입력: entityId - 내 Entity id, vehicle - 결과(그 차량의 이번 프레임 표본), seat - 결과(좌석 번호).
+        // 출력: 앉아 있고 그 차량이 이번 프레임에 그려지면 true.
+        public bool TryGetOwnSeat(ushort entityId, out VehicleRecord vehicle, out int seat)
+        {
+            if (TrySeatAt(entityId, out vehicle, out seat)) return true;
+            if (TryFindSeat(entityId, out int index, out seat) && TryGetDrawnById(_latest[index].Id, out vehicle)) return true;
+            seat = -1;
+            return false;
         }
 
         // 기능: 이번 프레임에 그릴 슬롯의 표본을 돌려준다(Render가 뽑은 것).

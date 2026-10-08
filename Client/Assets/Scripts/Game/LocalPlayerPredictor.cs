@@ -61,6 +61,15 @@ namespace ProjectH.Client.Game
         // and walks the next ones, so later seated inputs drop the held brake (Jump would be a jump on foot) until the exit is
         // known (EndSeated) or refused (ExitRefused).
         private uint _exitSeq;
+        // Phase 19 review (S8): the server ignores Jump on the inputs it walks after any exit (E or forced) until one comes
+        // without Jump (a held brake must not become a jump). Per input slot: was its Jump ignored that way. Written on every
+        // step like _seatedAt and recomputed from the exit on EndSeated; the movement (new steps and every replay) reads it.
+        private readonly bool[] _jumpIgnoredAt = new bool[HistorySize];
+        // The latch after the newest input: the next input's Jump is ignored, and one without Jump ends it.
+        private bool _jumpLatched;
+        // The AckInputSeq of the newest VehicleStates that still named us seated: every input up to it was a seated one. A
+        // latch of any exit (E or forced) starts after it (the client does not know the exact input the server unseated us at).
+        private uint _seatedAck;
 
         // 기능: 이동 예측기를 만든다(Phase 19: 운전 예측기를 같이 만든다).
         // 입력: simHz - 서버 Tick률, spawnState - 시작 상태, doors - 예측 문(null이면 새로 만든다).
@@ -151,6 +160,7 @@ namespace ProjectH.Client.Game
         // 기능: 프레임 시간만큼 고정 Tick 시뮬레이션을 돌리고 Step마다 입력 하나를 만든다(죽어 있으면 빈 입력).
         //   Phase 19: 앉아 있으면 이동·문 예측 없이 입력만 만들고(누르고 있는 Jump = 제동도 모든 Step에), 운전 중이면 차량을 예측하며
         //   위치를 좌석으로 둔다. 내리기 누름(Interact)을 실은 입력 뒤의 앉은 입력에서는 Jump를 뺀다(서버가 걸어서 처리해 점프가 된다).
+        //   Phase 19 리뷰: 내린 뒤 걷는 입력은 서버처럼 Jump 없는 입력이 하나 올 때까지 Jump를 무시하고 이동한다(보내는 입력은 그대로).
         // 입력: deltaTime - 프레임 시간, move - 이동 입력, yaw - 카메라 방향, held - 누르고 있는 버튼(Sprint·Fire·Crouch·
         //   Phase 14 InteractHeld, 모든 Step에 들어간다. Phase 19: 앉아 있으면 Jump도), queued - 누른 순간 버튼(마지막 Step에만, 쓴 비트는
         //   지운다. Phase 17: ThrowGrenade 포함).
@@ -172,6 +182,7 @@ namespace ProjectH.Client.Game
                 bool lastStep = _accumulator < _stepSeconds;
 
                 InputCommand command;
+                bool jumpIgnored = false;
                 _previous = _state;
                 if (IsDead)
                 {
@@ -209,7 +220,8 @@ namespace ProjectH.Client.Game
                         queued = InputButtons.None;
                     }
                     command = new InputCommand { Seq = ++LastSeq, MoveX = move.x, MoveY = move.y, Yaw = yaw, Buttons = buttons };
-                    Simulate(ref _state, command, out StepResult result);
+                    jumpIgnored = NextJumpIgnored(buttons);
+                    Simulate(ref _state, WithoutIgnoredJump(command, jumpIgnored), out StepResult result);
                     Sprinting = result.Sprinting;
                     // D9: E on a door, as Match.ToggleDoor does after the move (the doorway check sees only ourselves).
                     if ((buttons & InputButtons.Interact) != 0 && ActionsAllowed(_state.Mode)) PredictDoorToggle();
@@ -219,6 +231,7 @@ namespace ProjectH.Client.Game
                 _inputs[slot] = command;
                 _results[slot] = _state;
                 _seatedAt[slot] = Seated && !IsDead;
+                _jumpIgnoredAt[slot] = jumpIgnored;
                 steps++;
             }
 
@@ -242,7 +255,7 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 차량에 앉았음을 알린다(Phase 19 D15: VehicleStates가 나를 Driver·Passenger로 적었다). 이동 예측이 멈추고 모드는 서버처럼
-        //   Ground, 속도는 0이 된다. 운전석이 아니면 운전 예측을 멈춘다.
+        //   Ground, 속도는 0이 된다. 운전석이 아니면 운전 예측을 멈춘다. 지난 하차의 Jump 무시(Phase 19 리뷰)는 끝난다.
         // 입력: seat - 좌석 번호(0 운전석, 1 조수석).
         // 출력: 반환값 없음.
         public void SetSeated(int seat)
@@ -259,6 +272,7 @@ namespace ProjectH.Client.Game
             Seated = true;
             Seat = seat;
             _snapPending = false;
+            _jumpLatched = false;
             if (seat != VehicleSettings.DriverSeat) Vehicle.Stop();
         }
 
@@ -273,28 +287,74 @@ namespace ProjectH.Client.Game
             RenderPosition = feet;
         }
 
-        // 기능: 내리기 요청이 거절되었는지 본다(Phase 19 리뷰: 내릴 자리가 없으면 서버는 내리지 않는다). 그 입력까지 처리한 VehicleStates가
-        //   여전히 나를 앉은 사람으로 적었으면 대기 중인 내리기를 지워 제동(Jump)이 다시 나가게 한다.
+        // 기능: 나를 앉은 사람으로 적은 VehicleStates의 ack를 적용한다. 그 ack까지는 앉은 입력이었다고 기억하고(강제 하차 Jump 무시의 시작점,
+        //   Phase 19 리뷰), 내리기 요청이 거절되었는지 본다(내릴 자리가 없으면 서버는 내리지 않는다). 그 입력까지 처리했는데도 앉아 있으면 대기 중인
+        //   내리기를 지워 제동(Jump)이 다시 나가게 한다.
         // 입력: ackInputSeq - 나를 앉은 사람으로 적은 VehicleStates의 AckInputSeq.
         // 출력: 반환값 없음.
         public void ExitRefused(uint ackInputSeq)
         {
+            if (ackInputSeq > _seatedAck) _seatedAck = ackInputSeq;
             if (_exitSeq != 0 && ackInputSeq >= _exitSeq) _exitSeq = 0;
         }
 
         // 기능: 차량에서 내렸음을 알린다(Phase 19 D15). 대기 중인 내리기를 지우고 운전 예측을 멈추고, fromTick 이후의 다음 Snapshot이 비교 없이 상태를 바꾸게 한다
-        //   (내리기는 순간이동이고 앉은 동안의 이동 기록은 낡았다).
+        //   (내리기는 순간이동이고 앉은 동안의 이동 기록은 낡았다). Phase 19 리뷰: 나를 앉은 사람으로 적은 마지막 ack 다음 입력부터(E 하차·강제
+        //   하차 모두) 서버와 같은 Jump 무시를 다시 계산한다(내림 Snap 재실행과 이후 Step이 쓴다).
         // 입력: fromTick - 내림을 알린 VehicleStates의 ServerTick.
         // 출력: 반환값 없음.
         public void EndSeated(uint fromTick)
         {
             if (!Seated) return;
+            // Not _exitSeq + 1 even with an E pending: the server may have unseated us (a wreck) before that input and walked the
+            // ones up to it with the latch on. For a plain E exit the result is the same: the seated inputs after the press drop
+            // the held brake, so the latch ends by _exitSeq + 1, and the inputs up to _exitSeq are never replayed (the exit
+            // snapshot acks at least _exitSeq). _seatedAck < _exitSeq here: ExitRefused clears _exitSeq once an ack reaches it.
+            uint latchFrom = _seatedAck + 1;
             Seated = false;
             Seat = -1;
             _exitSeq = 0;
+            _seatedAck = 0;
             Vehicle.Stop();
             _snapPending = true;
             _snapFromTick = fromTick;
+            LatchJumpFrom(latchFrom);
+        }
+
+        // 기능: latchFrom부터 가장 새 입력까지 서버의 하차 Jump 무시 규칙(래치가 켜져 있으면 Jump 무시, Jump 없는 입력이 하나 오면 끝)을 다시 적용한다.
+        // 입력: latchFrom - 서버가 하차 뒤 처음 걸었을 입력 seq(기록에 남은 가장 오래된 입력보다 앞이면 그 입력부터).
+        // 출력: 반환값 없음. 그 입력들의 무시 표시와 다음 입력의 래치 상태가 정해진다. 할당 없음.
+        private void LatchJumpFrom(uint latchFrom)
+        {
+            uint oldest = LastSeq >= HistorySize ? LastSeq - HistorySize + 1 : 1;
+            if (latchFrom < oldest) latchFrom = oldest;
+            _jumpLatched = true;
+            for (uint seq = latchFrom; seq <= LastSeq; seq++)
+            {
+                int slot = (int)(seq % HistorySize);
+                _jumpIgnoredAt[slot] = NextJumpIgnored(_inputs[slot].Buttons);
+            }
+        }
+
+        // 기능: 다음 걷는 입력 하나에 하차 Jump 무시 래치를 적용한다(서버 규칙: 래치가 켜져 있으면 Jump는 무시, Jump 없는 입력이면 래치를 끈다).
+        // 입력: buttons - 그 입력이 보낸 버튼.
+        // 출력: 그 입력의 Jump를 무시하면 true. Jump 없는 입력이면 래치가 꺼진다.
+        private bool NextJumpIgnored(InputButtons buttons)
+        {
+            if (!_jumpLatched) return false;
+            if ((buttons & InputButtons.Jump) != 0) return true;
+            _jumpLatched = false;
+            return false;
+        }
+
+        // 기능: 이동 계산에 넣을 입력을 만든다. 보내는 입력과 기록은 바꾸지 않는다(서버가 보낸 버튼 그대로 같은 규칙을 돌린다).
+        // 입력: command - 기록된 입력, jumpIgnored - 그 입력의 Jump를 무시하는지.
+        // 출력: 무시할 Jump를 뺀 입력 사본(무시하지 않으면 그대로).
+        private static InputCommand WithoutIgnoredJump(in InputCommand command, bool jumpIgnored)
+        {
+            InputCommand walked = command;
+            if (jumpIgnored) walked.Buttons &= ~InputButtons.Jump;
+            return walked;
         }
 
         // One input, exactly as Match.Tick runs it: ride the route aboard, otherwise one Step against the predicted world;
@@ -378,20 +438,22 @@ namespace ProjectH.Client.Game
         }
 
         // PlayerDied for us (Reliable): stop predicting until the respawn.
-        // 기능: 내 사망을 적용한다(예측 정지, Phase 19: 운전 예측도 멈춘다. 대기 중인 내리기도 지운다. 탄 상태는 서버가 먼저 내리므로 VehicleStates가 지운다).
+        // 기능: 내 사망을 적용한다(예측 정지, Phase 19: 운전 예측도 멈춘다. 대기 중인 내리기와 하차 Jump 무시도 지운다. 탄 상태는 서버가 먼저
+        //   내리므로 VehicleStates가 지운다).
         // 입력: 없음.
         // 출력: 반환값 없음.
         public void SetDead()
         {
             IsDead = true;
             _exitSeq = 0;
+            _jumpLatched = false;
             Vehicle.Stop();
         }
 
         // PlayerRespawned for us: a teleport. State restarts at the spawn point (Phase 12: in the mode the server says),
         // but Seq continues: the server drops any seq it has already taken, so restarting at 1 would make every later
         // input ignored.
-        // 기능: 부활 순간이동을 적용한다(Phase 19: 탄 상태, 대기 중인 Snap과 내리기도 지운다).
+        // 기능: 부활 순간이동을 적용한다(Phase 19: 탄 상태, 대기 중인 Snap과 내리기, 하차 Jump 무시도 지운다).
         // 입력: spawn - 부활 상태.
         // 출력: 반환값 없음.
         public void Respawn(MoveState spawn)
@@ -401,6 +463,8 @@ namespace ProjectH.Client.Game
             Seat = -1;
             _snapPending = false;
             _exitSeq = 0;
+            _seatedAck = 0;
+            _jumpLatched = false;
             Vehicle.Stop();
             _state = spawn;
             _previous = spawn;
@@ -414,7 +478,7 @@ namespace ProjectH.Client.Game
         // snapshot's self block (horizontal velocity, energy, tick counters). serverTick: the snapshot's tick; with ackSeq
         // it gives the tick every later input is simulated at (D5).
         // 기능: 내 Snapshot으로 이동 예측을 맞춘다. Phase 19 D15: 앉아 있으면 건너뛰고, 내린 뒤에는 내린 Tick 이후의 첫 Snapshot으로 비교 없이
-        //   상태를 바꾸고 ack 뒤 입력을 재실행한다(교정 오프셋 없이 바로 옮김).
+        //   상태를 바꾸고 ack 뒤 입력을 재실행한다(교정 오프셋 없이 바로 옮김). 재실행은 입력마다 기록된 하차 Jump 무시를 따른다(Phase 19 리뷰).
         // 입력: server - 내 엔티티 기록, self - Self 블록, ackSeq - 처리된 마지막 입력, serverTick - Snapshot Tick.
         // 출력: 반환값 없음. 예측 상태가 바뀔 수 있다.
         public void Reconcile(in SnapshotEntity server, in SnapshotSelf self, uint ackSeq, uint serverTick)
@@ -498,7 +562,7 @@ namespace ProjectH.Client.Game
             {
                 int slot = (int)(seq % HistorySize);
                 _previous = _state;
-                Simulate(ref _state, _inputs[slot], out _);
+                Simulate(ref _state, WithoutIgnoredJump(_inputs[slot], _jumpIgnoredAt[slot]), out _);
                 _results[slot] = _state;
             }
 

@@ -125,6 +125,105 @@ namespace ProjectH.Client.Tests
         }
 
         [Test]
+        public void MyOwnSeat_UsesTheNewestPacketsVehicle_BeforeTheRenderTickShowsMe()
+        {
+            // Phase 19 review: right after boarding the sample at the render tick does not name us yet.
+            var store = new VehicleStore();
+            Apply(store, 10, 0f, Car(1, 0f), Car(2, 20f));
+            Apply(store, 12, 0.07f, Car(1, 2f, passenger: 5), Car(2, 20f));
+            store.Render(11);
+            Assert.IsFalse(store.TrySeatAt(5, out _, out _));   // remote players still sit from the render tick on
+            Assert.IsTrue(store.TryGetOwnSeat(5, out VehicleRecord drawn, out int seat));
+            Assert.AreEqual(1, drawn.Id);
+            Assert.AreEqual(1f, drawn.Position.X, 1e-4f);       // this frame's sample of that vehicle, not the newest record
+            Assert.AreEqual(VehicleSettings.PassengerSeat, seat);
+            Assert.IsFalse(store.TryGetOwnSeat(6, out _, out _));
+            store.Render(12);
+            Assert.IsTrue(store.TryGetOwnSeat(5, out drawn, out seat));
+            Assert.AreEqual(2f, drawn.Position.X, 1e-4f);
+        }
+
+        [Test]
+        public void AnEndedPrediction_EasesFromWhereItWasDrawn_ToTheSample()
+        {
+            // Phase 19 review: getting out while moving, the car was drawn at its predicted place, ahead of the sample.
+            const float Frame = 1f / 60f;
+            var store = new VehicleStore();
+            Apply(store, 10, 0f, Car(1, 0f, driver: 5));
+            Apply(store, 12, 0.07f, Car(1, 2f, driver: 5));
+            store.Render(11);                                   // sample at x = 1
+            store.OverrideDrawn(1, new VehicleMove { Position = new Num.Vector3(4f, 0f, 0f) });
+            store.Render(11);                                   // the next frame: the prediction has ended
+            store.DrawHandoff(Frame);
+            Assert.IsTrue(store.TryGetDrawn(0, out VehicleRecord first));
+            Assert.AreEqual(4f, first.Position.X, 1e-4f);       // no jump back on the first frame
+            Assert.AreEqual(3f, store.HandoffOffset.X, 1e-4f);
+            float last = first.Position.X;
+            for (int i = 0; i < 10; i++)
+            {
+                store.Render(11);
+                store.DrawHandoff(Frame);
+                store.TryGetDrawn(0, out VehicleRecord r);
+                Assert.Less(r.Position.X, last);
+                Assert.Greater(r.Position.X, 1f);
+                last = r.Position.X;
+            }
+            for (int i = 0; i < 120; i++)
+            {
+                store.Render(11);
+                store.DrawHandoff(Frame);
+            }
+            store.TryGetDrawn(0, out VehicleRecord settled);
+            Assert.AreEqual(1f, settled.Position.X, 1e-4f);     // ended: the sample as it is
+            Assert.AreEqual(0f, store.HandoffOffset.X);
+
+            // Farther than MaxHandoffOffset is no prediction lead: not smoothed.
+            store.Render(11);
+            store.OverrideDrawn(1, new VehicleMove { Position = new Num.Vector3(50f, 0f, 0f) });
+            store.Render(11);
+            store.DrawHandoff(Frame);
+            store.TryGetDrawn(0, out VehicleRecord far);
+            Assert.AreEqual(1f, far.Position.X, 1e-4f);
+
+            // A reset forgets a pending handoff.
+            store.Render(11);
+            store.OverrideDrawn(1, new VehicleMove { Position = new Num.Vector3(4f, 0f, 0f) });
+            store.Reset();
+            Apply(store, 10, 1f, Car(1, 0f));
+            store.Render(10);
+            store.DrawHandoff(Frame);
+            store.TryGetDrawn(0, out VehicleRecord after);
+            Assert.AreEqual(0f, after.Position.X, 1e-4f);
+            Assert.AreEqual(0f, store.HandoffOffset.X);
+        }
+
+        [Test]
+        public void AnEndedPrediction_OfAMovingCar_NeverGoesBackward()
+        {
+            // Got out at 15 m/s: the car keeps rolling in the samples while the prediction was 0.25 s ahead of the render tick.
+            const float Speed = 15f;
+            const float Lead = 0.25f;
+            const double FrameTicks = SimHz / 60.0;
+            var store = new VehicleStore();
+            for (uint tick = 10; tick <= 24; tick += 2)   // SampleCapacity (8) records
+                Apply(store, tick, (tick - 10) / (float)SimHz, Car(1, Speed * (tick - 10) / SimHz, speed: Speed, driver: 5));
+            double renderTick = 12;
+            store.Render(renderTick);
+            Assert.IsTrue(store.TryGetDrawn(0, out VehicleRecord sample));
+            store.OverrideDrawn(1, new VehicleMove { Position = new Num.Vector3(sample.Position.X + Speed * Lead, 0f, 0f) });
+            float last = sample.Position.X + Speed * Lead;
+            for (int i = 0; i < 20; i++)   // up to render tick 22, inside the samples
+            {
+                renderTick += FrameTicks;
+                store.Render(renderTick);
+                store.DrawHandoff(1f / 60f);
+                store.TryGetDrawn(0, out VehicleRecord r);
+                Assert.GreaterOrEqual(r.Position.X, last - 1e-4f, "frame " + i);
+                last = r.Position.X;
+            }
+        }
+
+        [Test]
         public void TheDrivenVehicle_IsDrawnWhereItIsPredicted()
         {
             var store = new VehicleStore();

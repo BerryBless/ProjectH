@@ -288,6 +288,26 @@ public class AudioPhase18Tests
         }
     }
 
+    // Phase 17–19 review: the dead and spectators hear through their spectator camera, not their body: they get every
+    // WorldSound (the client's mixer drops one too far from the camera).
+    [Fact]
+    public void AHarvestSwing_IsSentToADeadPlayer_HowEverFarItsBodyIs()
+    {
+        var h = new SandboxHarness();
+        PlayerEntity swinger = h.Join(1, SouthOfTree);
+        h.Press(swinger, InputButtons.ToolHarvest);
+        PlayerEntity dead = h.Join(2, SandboxHarness.Ground(TrunkFace.X, TrunkFace.Z - 60f));   // 60 m away
+        dead.Alive = false;
+        dead.RespawnAtTick = uint.MaxValue;
+        h.Join(3, SandboxHarness.Ground(TrunkFace.X + 2f, TrunkFace.Z - 60f));                 // alive, as far
+        h.Clear();
+        h.Ticks(h.Match.Building.HarvestCooldownTicks);
+        h.Act(swinger, InputButtons.Fire, TrunkFace);
+        Assert.True(h.Match.HarvestHits > 0);
+        Assert.Single(Sounds(h, 2));
+        Assert.Empty(h.To(3, PacketId.WorldSound));
+    }
+
     [Fact]
     public void ASwingThatMisses_OrHitsAPiece_SendsNoWorldSound()
     {
