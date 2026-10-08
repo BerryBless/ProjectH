@@ -21,6 +21,8 @@ namespace ProjectH.Client.UI
         private int _rtt = -1;
         private ushort _entity;
         private long _authDrops = -1;
+        private int _tickRejects = -1;
+        private int _spawnRejects = -1;
         // Phase 12 D14: the shown movement digits; the line is rebuilt when one changes, at most 10 times a second. Two
         // values outside MovementMode stand for "nothing shown yet" (rebuild on the next tick) and "dead" (the line empty).
         private const MovementMode ModeUnknown = (MovementMode)255;
@@ -76,18 +78,22 @@ namespace ProjectH.Client.UI
             _rateFrom = -1f;
         }
 
-        // 기능: 연결 상태 줄을 갱신한다. 보이는 값(상태·RTT·Entity·인증 버림 수)이 바뀐 때만 문자열을 다시 만든다.
-        // 입력: state - 연결 상태, roundTripMs - RTT, entityId - 내 Entity, authDrops - 인증 계층이 버린 데이터그램 수(리뷰 B3).
+        // 기능: 연결 상태 줄을 갱신한다. 보이는 값(상태·RTT·Entity·인증 버림·Tick 거절·Spawn 거절 수)이 바뀐 때만 문자열을 다시 만든다.
+        // 입력: state - 연결 상태, roundTripMs - RTT, entityId - 내 Entity, authDrops - 인증 계층이 버린 데이터그램 수(리뷰 B3),
+        //   tickRejects·spawnRejects - 너무 앞선 Tick·상한을 넘은 원격 Spawn을 버린 수(리뷰 D3).
         // 출력: 반환값 없음. 숨겨져 있으면 아무것도 하지 않는다.
-        public void Tick(ClientState state, int roundTripMs, ushort entityId, long authDrops)
+        public void Tick(ClientState state, int roundTripMs, ushort entityId, long authDrops, int tickRejects, int spawnRejects)
         {
             if (_root == null || !_visible) return;
-            if (state == _state && roundTripMs == _rtt && entityId == _entity && authDrops == _authDrops) return;
+            if (state == _state && roundTripMs == _rtt && entityId == _entity && authDrops == _authDrops && tickRejects == _tickRejects &&
+                spawnRejects == _spawnRejects) return;
             _state = state;
             _rtt = roundTripMs;
             _entity = entityId;
             _authDrops = authDrops;
-            _text.text = UiText.DebugLine(state.ToString(), roundTripMs, entityId, authDrops);
+            _tickRejects = tickRejects;
+            _spawnRejects = spawnRejects;
+            _text.text = UiText.DebugLine(state.ToString(), roundTripMs, entityId, authDrops, tickRejects, spawnRejects);
         }
 
         // Phase 12 D14: the local player's mode, speeds, energy and the last prediction correction, and the transport route.

@@ -61,7 +61,7 @@ public class RewindAllowanceTests
     // 기능: aimTick의 대상 위치를 겨눠 한 번 쏘고 viewTick을 보았다고 주장한다.
     // 입력: viewTick - 주장하는 Tick, aimTick - 겨눈 대상 위치의 Tick.
     // 출력: 맞혔으면 true.
-    private bool Shoot(float viewTick, uint aimTick)
+    private bool Shoot(uint viewTick, uint aimTick)
     {
         TestAim.YawPitch(_shooter.State.Position, _targetAt[aimTick] + Chest, out float yaw, out float pitch);
         var packet = new PlayerInputPacket { Count = 1 };

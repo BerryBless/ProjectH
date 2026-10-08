@@ -23,6 +23,10 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte(r.SnapshotHz);
         }
 
+        // 기능: JoinMatchResponse 본문을 읽는다. 리뷰 수정 D3(SEC-25): 결과가 Resumed보다 크거나, Ok·Resumed인데 내 Entity id가 0이면 거절한다
+        //   (서버는 MatchFull에만 id 0을 보낸다).
+        // 입력: reader - 본문(PacketId 뒤).
+        // 출력: 맞으면 true와 응답, 아니면 false.
         public static bool TryRead(ref PacketReader reader, out JoinMatchResponse r)
         {
             r = default;
@@ -33,6 +37,8 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadUInt32(out r.ServerTick);
             reader.TryReadByte(out r.SimHz);
             reader.TryReadByte(out r.SnapshotHz);
+            if (r.Result > JoinResult.Resumed) return false;
+            if ((r.Result == JoinResult.Ok || r.Result == JoinResult.Resumed) && r.MyEntityId == 0) return false;
             return r.SimHz > 0 && r.SnapshotHz > 0;
         }
     }
@@ -56,6 +62,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteString(s.Name, ProtocolConstants.MaxDevPlayerIdBytes);
         }
 
+        // 기능: PlayerSpawned 본문을 읽는다. 리뷰 수정 D3(SEC-24): 위치·Yaw가 유한하고, 이름이 서버의 접속 이름 규칙(IsValidPlayerName)을 지켜야 한다.
+        // 입력: reader - 본문(PacketId 뒤).
+        // 출력: 맞으면 true와 Spawn, 아니면 false. 이름 문자열을 할당한다(입장 때만).
         public static bool TryRead(ref PacketReader reader, out PlayerSpawned s)
         {
             s = default;
@@ -64,7 +73,7 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadVector3(out s.Position);
             reader.TryReadSingle(out s.Yaw);
             if (!reader.TryReadString(ProtocolConstants.MaxDevPlayerIdBytes, out s.Name) || s.Name.Length == 0) return false;
-            return true;
+            return Finite.Check(s.Position) && Finite.Check(s.Yaw) && ProtocolConstants.IsValidPlayerName(s.Name);
         }
     }
 

@@ -127,6 +127,29 @@ public class WeaponCatalogTests
         Assert.Equal(ticks, catalog.WireInfos[0].EquipTicks);
     }
 
+    // Review fix D3: a projectile kind's numbers stay within the limits the clients' parser accepts (ProtocolLimits), and the
+    // speed it can reach before it explodes (launch speed + gravity x lifetime) stays within the speed limit too, so no
+    // ProjectileState the server sends is refused.
+    [Theory]
+    [InlineData(40.0, 0.0, 4.0, true)]
+    [InlineData(18.0, 9.81, 3.0, true)]        // the shipped grenade: 18 + 29.4
+    [InlineData(150.0, 20.0, 3.0, false)]      // 150 + 60 > 200
+    [InlineData(201.0, 0.0, 1.0, false)]
+    [InlineData(150.0, 0.0, 4.0, false)]       // review D round 1: 600 m of flight leaves the +-512 m the clients accept
+    [InlineData(100.0, 0.0, 4.0, true)]        // 80 + 400 = 480 m across, and up from the highest eye within 512 m
+    [InlineData(20.0, 10.0, 8.0, false)]       // review D round 1: 160 m of launch speed, but falling adds 320 m a bounce can turn sideways: 80 + 480 > 512
+    public void AProjectileKind_StaysWithinTheClientLimits(double speed, double gravity, double lifetime, bool valid)
+    {
+        string number(double v) => v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string json = "{ \"weapons\": [ { " + ValidFields + " } ], \"projectiles\": { " +
+                      "\"Grenade\": { \"speed\": 18, \"gravity\": 9.81, \"lifetimeSeconds\": 3.0, \"explosionRadius\": 5, \"explosionDamage\": 80, " +
+                      "\"structureDamage\": 120, \"bounce\": 0.4, \"throwIntervalSeconds\": 1.0, \"throwUpDegrees\": 8 }, " +
+                      "\"Rocket\": { \"speed\": " + number(speed) + ", \"gravity\": " + number(gravity) + ", \"lifetimeSeconds\": " + number(lifetime) +
+                      ", \"explosionRadius\": 4, \"explosionDamage\": 75, \"structureDamage\": 300, \"bounce\": 0 } } }";
+        bool parsed = WeaponCatalog.TryParse(json, 30, out _, out string? error);
+        Assert.True(parsed == valid, error);
+    }
+
     // Phase 17–19 review: a rocket explodes on its first hit, so a bounce above 0 is a data error (it would turn it into a grenade).
     [Theory]
     [InlineData(0.0, true)]

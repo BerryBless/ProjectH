@@ -56,6 +56,9 @@
     <!-- Review fix C2: the client's copy of the weapon rules (equip wait), compared with the server's WeaponRules
          (ClientWeaponStateParityTests). -->
     <Compile Include="..\..\..\Client\Assets\Scripts\Game\WeaponState.cs" Link="ClientCopies\Game\WeaponState.cs" />
+    <!-- Review fix D3: the client's server clock (tick window), pure C#, compiled here so the slnx build checks it. Its EditMode
+         tests (ServerClockTests.cs) are NUnit, which this xUnit project does not reference, so they run in Unity only. -->
+    <Compile Include="..\..\..\Client\Assets\Scripts\Game\ServerClock.cs" Link="ClientCopies\Game\ServerClock.cs" />
   </ItemGroup>
 
 </Project>

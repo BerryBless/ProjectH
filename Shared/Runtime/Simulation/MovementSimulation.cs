@@ -134,7 +134,8 @@ namespace ProjectH.Shared.Simulation
             StepGround(ref state, input.Buttons, move, moveY > 0f ? forward : Vector2.Zero, deltaTime, scene, ref result);
         }
 
-        // 기능: Ground·Crouch·Slide(D7)와 Phase 14 Downed의 걷기·질주·점프·낙하(D3 공중 관성)를 계산한다.
+        // 기능: Ground·Crouch·Slide(D7)와 Phase 14 Downed의 걷기·질주·점프·낙하(D3 공중 관성)를 계산한다. 리뷰 수정 D1: 수평 이동 직후와
+        //   끝에서 위치를 바깥벽 안쪽으로 자른다(바닥 따라가기는 자른 위치에서 한다).
         // 입력: state - 상태, buttons - 이 Tick의 버튼(Downed는 점프·질주·웅크리기를 뺀 값), move - 월드 X/Z 입력 방향(길이 0..1),
         //   vaultDirection - 앞으로 움직일 때 바라보는 방향(Vault 시작 가능), 아니면 0, deltaTime - Tick 길이, scene - 충돌 대상,
         //   result - 결과.
@@ -241,6 +242,9 @@ namespace ProjectH.Shared.Simulation
             }
             // D7: a slide that runs into something ends in a crouch.
             if (blocked && state.Mode == MovementMode.Slide) state.Mode = MovementMode.Crouch;
+            // Review fix D1, review D round 1: back inside the outer walls before the floor is followed (step 8), as StepAir does,
+            // so the floor and the drop are taken at the clamped X/Z and not from a lower surface outside.
+            ClampToMap(ref position, ref state);
 
             // 8) Phase 6 D4: uphill the terrain lifts the feet; downhill a walking character follows the slope instead
             //    of leaving the ground for a tick. MaxSlope bounds the drop over the distance moved, and the Y sweep
@@ -297,6 +301,8 @@ namespace ProjectH.Shared.Simulation
             }
             position.Y += movedY;
 
+            // Review fix D1: a safety net (TryOneAxis in step 8 can still pick a position from before the first clamp).
+            ClampToMap(ref position, ref state);
             state.Position = position;
         }
 
@@ -573,17 +579,7 @@ namespace ProjectH.Shared.Simulation
             if (MoveAxis(ref position, MoveSettings.Height, AxisX, state.HorizontalVelocity.X * deltaTime, false, scene, out _)) state.HorizontalVelocity.X = 0f;
             if (MoveAxis(ref position, MoveSettings.Height, AxisZ, state.HorizontalVelocity.Y * deltaTime, false, scene, out _)) state.HorizontalVelocity.Y = 0f;
 
-            const float bound = GameMap.HalfSize - MoveSettings.HalfWidth - MoveSettings.Skin;
-            if (position.X > bound || position.X < -bound)
-            {
-                position.X = position.X > 0f ? bound : -bound;
-                state.HorizontalVelocity.X = 0f;
-            }
-            if (position.Z > bound || position.Z < -bound)
-            {
-                position.Z = position.Z > 0f ? bound : -bound;
-                state.HorizontalVelocity.Y = 0f;
-            }
+            ClampToMap(ref position, ref state);
 
             bool landed = false;
             float dx = position.X - startX;
@@ -606,6 +602,28 @@ namespace ProjectH.Shared.Simulation
                 state.HorizontalVelocity = Vector2.Zero;
             }
             state.Position = position;
+        }
+
+        // Review fix D1 (STB-0): the feet never leave the inside of the outer walls (the walls are only 4 m high, so a raised
+        // floor, a ramp, a jump or a vault could otherwise carry a player over them).
+        private const float MapBound = GameMap.HalfSize - MoveSettings.HalfWidth - MoveSettings.Skin;
+
+        // 기능: 발 위치를 바깥벽 안쪽으로 자르고, 잘린 축의 수평 속도를 0으로 한다(리뷰 수정 D1: 원래 StepAir에만 있던 본문을 지상·Vault도 쓴다).
+        //   서버와 Client 예측이 같은 Shared 코드를 써서 같은 결과를 낸다.
+        // 입력: position - 고칠 발 위치, state - 수평 속도를 고칠 이동 상태.
+        // 출력: 반환값 없음. 바깥이면 position의 X·Z가 경계로, 그 축의 HorizontalVelocity가 0으로 바뀐다.
+        private static void ClampToMap(ref Vector3 position, ref MoveState state)
+        {
+            if (position.X > MapBound || position.X < -MapBound)
+            {
+                position.X = position.X > 0f ? MapBound : -MapBound;
+                state.HorizontalVelocity.X = 0f;
+            }
+            if (position.Z > MapBound || position.Z < -MapBound)
+            {
+                position.Z = position.Z > 0f ? MapBound : -MapBound;
+                state.HorizontalVelocity.Y = 0f;
+            }
         }
 
         // D6: height of the feet above the ground under them: the terrain or the highest box top below the feet under
@@ -637,9 +655,9 @@ namespace ProjectH.Shared.Simulation
             return feet.Y - ground;
         }
 
-        // D8: a vault starts only when all four checks pass: (1) an obstacle within VaultReach ahead, standing on the
+        // D8: a vault starts only when all five checks pass: (1) an obstacle within VaultReach ahead, standing on the
         // feet's level, (2) its top in hurdle or mantle range, (3) room to stand at the destination, (4) the destination
-        // inside no box and above the terrain. A low obstacle is hurdled only at sprint speed (else this is a normal jump);
+        // inside no box and above the terrain, (5) review fix D1: the destination inside the outer walls (|x|, |z| <= MapBound). A low obstacle is hurdled only at sprint speed (else this is a normal jump);
         // a hurdle lands HurdleLandingGap past the far side, or on the top when the obstacle is deeper than HurdleMaxDepth
         // or there is no room behind it. A mantle stands MantleInset inside the top's edge. The vault then moves at one
         // constant velocity for its ticks, so the snapshot's velocities and ModeTicks are all a replay needs.
@@ -693,6 +711,8 @@ namespace ProjectH.Shared.Simulation
                 found = IsFreeStand(destination, scene);
             }
             if (!found || !IsPathClear(feet, destination, obstacle, world)) return false;
+            // Review fix D1: never onto or over the outer wall (a vault does not collide, so it would leave the map).
+            if (MathF.Abs(destination.X) > MapBound || MathF.Abs(destination.Z) > MapBound) return false;
             // Skin above the surface: the constant-velocity sum may land a hair low, and the next ground check snaps the
             // feet onto it anyway.
             destination.Y += MoveSettings.Skin;
@@ -774,13 +794,19 @@ namespace ProjectH.Shared.Simulation
             return enter <= leave;
         }
 
+        // 기능: Vault 한 Tick을 진행한다(D8): 시작 때 정한 일정한 속도로 움직이고 충돌은 보지 않는다(경로는 시작 때 확인). 마지막 Tick에 Ground로 선다.
+        //   리뷰 수정 D1: 움직인 뒤 바깥벽 안쪽으로 자른다(시작 때 착지점도 막지만, Snapshot에서 받은 Vault 상태도 맵을 벗어나지 않게).
+        // 입력: state - 이동 상태, deltaTime - Tick 길이.
+        // 출력: 반환값 없음. 위치와 남은 Tick이 바뀌고, 끝나면 Ground가 된다.
         // D8: one tick of a vault: the constant velocity set at its start, no collision (the path was checked then). The
         // last tick ends it standing in Ground mode.
         private static void StepVault(ref MoveState state, float deltaTime)
         {
             if (state.ModeTicks > 0)
             {
-                state.Position += new Vector3(state.HorizontalVelocity.X, state.VelocityY, state.HorizontalVelocity.Y) * deltaTime;
+                Vector3 position = state.Position + new Vector3(state.HorizontalVelocity.X, state.VelocityY, state.HorizontalVelocity.Y) * deltaTime;
+                ClampToMap(ref position, ref state);
+                state.Position = position;
                 state.ModeTicks--;
             }
             if (state.ModeTicks > 0) return;

@@ -175,6 +175,9 @@ public class GameMapTests
                 foreach (float side in new[] { -1f, 1f })
                 {
                     float start = side < 0f ? runMin - 1f : runMax + 1f;
+                    // Review fix D1: a start outside the outer walls is clamped back inside by the first step (ClampToMap), so the
+                    // outer corner slits are walked at from the inside only; nothing can stand outside to walk in.
+                    if (MathF.Abs(start) > GameMap.HalfSize - MoveSettings.HalfWidth || MathF.Abs(across) > GameMap.HalfSize - MoveSettings.HalfWidth) continue;
                     var s = new MoveState { Position = widthOnZ ? new Vector3(start, floor, across) : new Vector3(across, floor, start) };
                     // Walk towards the far side: yaw 90 = +X, 270 = -X, 0 = +Z, 180 = -Z.
                     float yaw = widthOnZ ? (side < 0f ? 90f : 270f) : (side < 0f ? 0f : 180f);

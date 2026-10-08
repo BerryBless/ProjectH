@@ -147,6 +147,9 @@ namespace ProjectH.Shared.Protocol
             }
         }
 
+        // 기능: 입력 패킷을 쓴다(입력 1–3개, 명령마다 CommandSize B. 리뷰 수정 D2: ViewTick은 uint 4 B).
+        // 입력: writer - 대상, packet - 입력들.
+        // 출력: 반환값 없음. writer에 패킷이 쓰인다.
         public static void Write(ref PacketWriter writer, in PlayerInputPacket packet)
         {
             int count = packet.Count > ProtocolConstants.MaxInputsPerPacket ? ProtocolConstants.MaxInputsPerPacket : packet.Count;
@@ -162,12 +165,12 @@ namespace ProjectH.Shared.Protocol
                 writer.WriteUInt16((ushort)c.Buttons);
                 writer.WriteSingle(c.AimYaw);
                 writer.WriteSingle(c.AimPitch);
-                writer.WriteSingle(c.ViewTick);
+                writer.WriteUInt32(c.ViewTick);   // review fix D2: a uint tick, the same 4 bytes
             }
         }
 
         // 기능: PacketId 뒤의 입력 본문을 읽는다. 배치만 검사한다. 값(NaN 조준, 큰 ViewTick 등)은 쓰는 곳이 검사한다:
-        //   이동은 MovementSimulation, 조준과 ViewTick은 서버 전투 코드(D14).
+        //   이동은 MovementSimulation, 조준과 ViewTick(리뷰 수정 D2: uint, uint.MaxValue = 지금)은 서버 전투 코드(D14).
         // 입력: reader - PacketId 다음 위치의 읽기 도구.
         // 출력: 개수가 1–MaxInputsPerPacket이고 본문이 정확히 count × CommandSize면 true와 입력들, 아니면 false.
         //   리뷰 수정 A1(SEC-1): 마지막 명령 뒤에 남는 바이트가 있어도 false(앞 92 B만 맞는 큰 패킷을 처리하지 않는다).
@@ -190,7 +193,7 @@ namespace ProjectH.Shared.Protocol
                 c.Buttons = (InputButtons)(buttons & KnownButtons);
                 reader.TryReadSingle(out c.AimYaw);
                 reader.TryReadSingle(out c.AimPitch);
-                reader.TryReadSingle(out c.ViewTick);
+                reader.TryReadUInt32(out c.ViewTick);   // review fix D2
                 packet.Set(i, c);
             }
             return true;

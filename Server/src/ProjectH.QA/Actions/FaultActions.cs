@@ -266,7 +266,7 @@ public static class FaultActions
                 var buffer = new byte[ProtocolConstants.MaxPacketSize];
                 var writer = new PacketWriter(buffer);
                 var packet = new PlayerInputPacket { Count = 1 };
-                packet.Set(0, new InputCommand { Seq = 0, ViewTick = float.NaN });
+                packet.Set(0, new InputCommand { Seq = 0, ViewTick = uint.MaxValue });   // review fix D2: "now"
                 PlayerInputPacket.Write(ref writer, packet);
                 return writer.WrittenSpan.ToArray();
             }

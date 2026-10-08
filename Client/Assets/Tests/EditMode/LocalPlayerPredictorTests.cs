@@ -214,17 +214,17 @@ namespace ProjectH.Client.Tests
             var predictor = NewPredictor();
             AdvanceSteps(predictor, 2, Vector2.zero);
             // Standing at the origin: the eye is (0, 1.6, 0), so this point is straight ahead along +X.
-            predictor.SetAim(2, new Vector3(10f, AimSolver.EyeHeight, 0f), 0f, 0f, 300f);
+            predictor.SetAim(2, new Vector3(10f, AimSolver.EyeHeight, 0f), 0f, 0f, 300u);
             AdvanceSteps(predictor, 3, Vector2.zero);
-            predictor.SetAim(3, new Vector3(0f, AimSolver.EyeHeight, 10f), 0f, 0f, 303.5f);
+            predictor.SetAim(3, new Vector3(0f, AimSolver.EyeHeight, 10f), 0f, 0f, 303u);   // review fix D2: whole ticks (uint)
 
             Assert.AreEqual(90f, predictor.InputAt(2).AimYaw, 1e-3f);
-            Assert.AreEqual(300f, predictor.InputAt(2).ViewTick);
+            Assert.AreEqual(300u, predictor.InputAt(2).ViewTick);
             Assert.AreEqual(0f, predictor.InputAt(3).AimYaw, 1e-3f);
             Assert.AreEqual(0f, predictor.InputAt(5).AimPitch, 1e-3f);
-            Assert.AreEqual(303.5f, predictor.InputAt(5).ViewTick);
+            Assert.AreEqual(303u, predictor.InputAt(5).ViewTick);
             Assert.IsTrue(predictor.TryBuildInputPacket(out PlayerInputPacket packet));
-            Assert.AreEqual(303.5f, packet.Get(2).ViewTick);
+            Assert.AreEqual(303u, packet.Get(2).ViewTick);
         }
 
         // An aim point too close to the eye has no direction: the caller's fallback (camera) angles are sent.
@@ -233,7 +233,7 @@ namespace ProjectH.Client.Tests
         {
             var predictor = NewPredictor();
             AdvanceSteps(predictor, 1, Vector2.zero);
-            predictor.SetAim(1, new Vector3(0f, AimSolver.EyeHeight, 0f), 33f, -7f, 1f);
+            predictor.SetAim(1, new Vector3(0f, AimSolver.EyeHeight, 0f), 33f, -7f, 1u);
 
             Assert.AreEqual(33f, predictor.InputAt(1).AimYaw);
             Assert.AreEqual(-7f, predictor.InputAt(1).AimPitch);
@@ -249,7 +249,7 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual(3, predictor.Advance(3 * Step + 0.0005f, Vector2.up, 0f, InputButtons.Sprint, ref queued));
             // Close and to the side of a sprint along +Z, so the three eyes see it at clearly different yaws.
             var aimPoint = new Vector3(1f, AimSolver.EyeHeight, 1f);
-            predictor.SetAim(3, aimPoint, 0f, 0f, 50f);
+            predictor.SetAim(3, aimPoint, 0f, 0f, 50u);
 
             var server = new MoveState();
             float firstYaw = 0f, lastYaw = 0f;

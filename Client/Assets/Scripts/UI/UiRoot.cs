@@ -109,7 +109,7 @@ namespace ProjectH.Client.UI
                     break;
             }
             if (_flow.StatsOpen) _stats.Tick(Time.unscaledTime, _statsSentAt, _client.StatsAnsweredAt, _client.LastStats, _utcOffset);
-            _debug.Tick(_client.State, _client.RoundTripMs, _client.MyEntityId, _client.AuthDrops);
+            _debug.Tick(_client.State, _client.RoundTripMs, _client.MyEntityId, _client.AuthDrops, _client.TickRejects, _client.SpawnRejects);
             _client.TickMovementDebug(_debug, Time.unscaledTime);
             _client.TickBuildDebug(_debug, Time.unscaledTime);
         }

@@ -27,13 +27,44 @@ namespace ProjectH.Shared.Protocol
         public const int SessionKeyBytes = 32;
         public const int RsaBlobBytes = 256;           // RSA-2048
         public const int ResumeProofBytes = 16;
-        // D3: ranges a client accepts from the server.
+        // D3: ranges a client accepts from the server. The server's data checks use the same constants (WeaponCatalog for the
+        // projectile kinds, BuildingCatalog for the interest cell), so a correct server never sends what a client refuses: the
+        // zone stays in the map, and WeaponCatalog.ValidateProjectile bounds a projectile's speed, its speed after falling and
+        // its flight distance (speed x lifetime + 1/2 x gravity x lifetime^2 from a launch inside the walls: a bounce can turn
+        // the fallen speed sideways but never adds speed) against these limits.
         public const float ZoneCoordLimit = Simulation.GameMap.HalfSize + 10000f;
         public const float ZoneRadiusLimit = 10000f;
+        // A projectile is launched at an eye inside the map; 512 m leaves room for a flight out over the walls before it
+        // explodes, and WeaponCatalog.ValidateProjectile refuses a kind whose flight could reach further.
         public const float ProjectilePositionLimit = 512f;
+        // The launch speed, and the speed a projectile can reach before it explodes (WeaponCatalog checks speed + gravity x
+        // lifetime against it).
         public const float ProjectileSpeedLimit = 200f;
         public const float ProjectileGravityLimit = 50f;
         public const float ProjectileRadiusLimit = 10f;
+        // The interest cell sizes that split the 160 m map into whole build cells, at most 8 x 8 (BuildingCatalog).
         public static readonly int[] InterestCellSizes = { 20, 40, 80, 160 };
+
+        // 기능: 관심 영역 칸 크기가 서버가 쓸 수 있는 값(InterestCellSizes)인지 본다(리뷰 수정 D3).
+        // 입력: size - 칸 크기(m).
+        // 출력: 20·40·80·160 중 하나면 true(NaN은 false).
+        public static bool IsInterestCellSize(float size)
+        {
+            for (int i = 0; i < InterestCellSizes.Length; i++)
+            {
+                if (size == InterestCellSizes[i]) return true;
+            }
+            return false;
+        }
+
+        // 기능: 값이 유한하고 절댓값이 limit 이하인지 본다(리뷰 수정 D3, 받은 좌표·속도 검사).
+        // 입력: value - 값, limit - 한계(양수).
+        // 출력: 범위 안이면 true(NaN·Infinity는 false).
+        public static bool Within(float value, float limit) => value >= -limit && value <= limit;
+
+        // 기능: 벡터의 세 성분이 모두 유한하고 절댓값이 limit 이하인지 본다(리뷰 수정 D3).
+        // 입력: v - 벡터, limit - 한계.
+        // 출력: 범위 안이면 true.
+        public static bool Within(System.Numerics.Vector3 v, float limit) => Within(v.X, limit) && Within(v.Y, limit) && Within(v.Z, limit);
     }
 }

@@ -183,7 +183,10 @@ public class MatchDeploymentTests
         a.State.Mode = MovementMode.Ground;
         Vector3 at = h.Match.Route.PositionAt(h.Match.ServerTick);
         b.History.Reset(h.Match.ServerTick, at, recorded);
-        h.Place(a, new Vector3(at.X + 20f, 0f, at.Z));
+        // Review fix D1: 30 m towards the middle of the map. The route starts outside the walls (x about 100 here), and a placed
+        // outside them would be clamped in by its first step, off the aimed line.
+        h.Place(a, new Vector3(at.X + (at.X > 0f ? -30f : 30f), 0f, at.Z));
+        Assert.True(MathF.Abs(a.State.Position.X) < GameMap.HalfSize - 1f, $"a inside the walls: {a.State.Position}");
         TestAim.YawPitch(a.State.Position, at + RoyaleHarness.Chest, out float yaw, out float pitch);
         Assert.True(CombatRules.TryAimDirection(yaw, pitch, out Vector3 dir));
         Assert.True(HitScan.TracePlayer(a.State.Position + new Vector3(0f, CombatRules.EyeHeight, 0f), dir, 100f, at, out _),

@@ -418,14 +418,21 @@ namespace ProjectH.Client.UI
         public static string DebugLine(string state, int roundTripMs, ushort entityId) =>
             "상태 " + state + "   RTT " + Int(roundTripMs) + " ms   Entity " + Int(entityId) + "   (F1)";
 
-        // 기능: F1 줄에 인증 계층이 버린 데이터그램 수를 더한다(리뷰 B3). 0이면 3인자 줄과 같다.
-        // 입력: state·roundTripMs·entityId - 3인자 줄과 같다, authDrops - 서명이 맞지 않아 버린 데이터그램 수.
+        // 기능: F1 줄에 받기 검증 수를 더한다(리뷰 B3: 인증 계층이 버린 데이터그램, 리뷰 D3: 너무 앞선 Tick 거절·원격 Spawn 상한 거절).
+        //   0인 수는 쓰지 않으므로 모두 0이면 3인자 줄과 같다.
+        // 입력: state·roundTripMs·entityId - 3인자 줄과 같다, authDrops - 서명이 맞지 않아 버린 데이터그램 수, tickRejects - 버린 Tick 수
+        //   (Snapshot과 차량), spawnRejects - 원격 표가 가득 차 버린 Spawn 수.
         // 출력: 한 줄 문자열.
-        public static string DebugLine(string state, int roundTripMs, ushort entityId, long authDrops) =>
-            authDrops <= 0
-                ? DebugLine(state, roundTripMs, entityId)
-                : "상태 " + state + "   RTT " + Int(roundTripMs) + " ms   Entity " + Int(entityId) + "   인증 버림 " +
-                  Int(authDrops) + "   (F1)";
+        public static string DebugLine(string state, int roundTripMs, ushort entityId, long authDrops, int tickRejects, int spawnRejects)
+        {
+            if (authDrops <= 0 && tickRejects <= 0 && spawnRejects <= 0) return DebugLine(state, roundTripMs, entityId);
+            var line = new StringBuilder(96);
+            line.Append("상태 ").Append(state).Append("   RTT ").Append(Int(roundTripMs)).Append(" ms   Entity ").Append(Int(entityId));
+            if (authDrops > 0) line.Append("   인증 버림 ").Append(Int(authDrops));
+            if (tickRejects > 0) line.Append("   Tick 거절 ").Append(Int(tickRejects));
+            if (spawnRejects > 0) line.Append("   Spawn 거절 ").Append(Int(spawnRejects));
+            return line.Append("   (F1)").ToString();
+        }
 
         // Phase 12 D14: the movement line. Speeds and the correction in tenths and hundredths, so the caller can rebuild it
         // only when a shown digit changes (DebugOverlay).

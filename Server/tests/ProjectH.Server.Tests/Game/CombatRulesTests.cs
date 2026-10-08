@@ -74,19 +74,29 @@ public class CombatRulesTests
         Assert.Equal(1f, d.Length(), 4);
     }
 
+    // Review fix D2 (STB-1): ViewTick is a uint tick (a float lost whole ticks after about 6 days at 30 Hz). The old float cases
+    // map to: NaN and +Infinity -> uint.MaxValue ("now"), a huge future -> 1e9, -Infinity and negatives -> 0 (the oldest).
     [Theory]
-    [InlineData(100f, 100.0)]
-    [InlineData(97.5f, 97.5)]
-    [InlineData(94f, 94.0)]              // a 6-tick limit (passed in) itself
-    [InlineData(10f, 94.0)]              // too old
-    [InlineData(-5f, 94.0)]
-    [InlineData(1e9f, 100.0)]            // future
-    [InlineData(float.PositiveInfinity, 100.0)]
-    [InlineData(float.NegativeInfinity, 94.0)]
-    [InlineData(float.NaN, 100.0)]       // no usable claim: no rewind
-    public void ClampViewTick_KeepsTheRewindWithinSixTicks(float viewTick, double expected)
+    [InlineData(100u, 100.0)]
+    [InlineData(97u, 97.0)]
+    [InlineData(94u, 94.0)]              // a 6-tick limit (passed in) itself
+    [InlineData(10u, 94.0)]              // too old
+    [InlineData(0u, 94.0)]
+    [InlineData(1_000_000_000u, 100.0)]  // future
+    [InlineData(uint.MaxValue, 100.0)]   // "now": no rewind
+    public void ClampViewTick_KeepsTheRewindWithinSixTicks(uint viewTick, double expected)
     {
         Assert.Equal(expected, CombatRules.ClampViewTick(viewTick, 100u, 6));
+    }
+
+    // Review fix D2: the client says "now" (nothing drawn yet, or no rewind wanted) with uint.MaxValue, which is never a clamp.
+    [Fact]
+    public void ClampViewTick_UintMax_MeansNow()
+    {
+        Assert.Equal(100.0, CombatRules.ClampViewTick(uint.MaxValue, 100u, 6, out bool clamped));
+        Assert.False(clamped);
+        Assert.Equal((double)(uint.MaxValue - 1), CombatRules.ClampViewTick(uint.MaxValue, uint.MaxValue - 1, 6, out clamped));
+        Assert.False(clamped);
     }
 
     // Review fix C3 (SEC-5): the rewind a shooter gets follows its own RTT. ViewTick lags the server by the interpolation
@@ -110,12 +120,12 @@ public class CombatRulesTests
     // A ViewTick older than the allowance is cut to it and reported (the shooter's RewindClamped counter); a future or NaN one is
     // "now", not a clamp.
     [Theory]
-    [InlineData(94f, 94.0, false)]
-    [InlineData(93.5f, 94.0, true)]
-    [InlineData(float.NegativeInfinity, 94.0, true)]
-    [InlineData(1e9f, 100.0, false)]
-    [InlineData(float.NaN, 100.0, false)]
-    public void ClampViewTick_ReportsAClampBelowTheAllowance(float viewTick, double expected, bool clamped)
+    [InlineData(94u, 94.0, false)]
+    [InlineData(93u, 94.0, true)]
+    [InlineData(0u, 94.0, true)]
+    [InlineData(1_000_000_000u, 100.0, false)]
+    [InlineData(uint.MaxValue, 100.0, false)]
+    public void ClampViewTick_ReportsAClampBelowTheAllowance(uint viewTick, double expected, bool clamped)
     {
         Assert.Equal(expected, CombatRules.ClampViewTick(viewTick, 100u, 6, out bool wasClamped));
         Assert.Equal(clamped, wasClamped);
@@ -124,7 +134,7 @@ public class CombatRulesTests
     [Fact]
     public void ClampViewTick_NearMatchStart_NeverGoesBelowZero()
     {
-        Assert.Equal(0.0, CombatRules.ClampViewTick(-3f, 2u, 6));
+        Assert.Equal(0.0, CombatRules.ClampViewTick(0u, 2u, 6));
     }
 
     // D6 budget. The client draws remote players InterpolationSnapshots snapshot intervals in the past

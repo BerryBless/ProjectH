@@ -114,4 +114,138 @@ public class MovementSimulationTests
         var s = Run(new InputCommand { Yaw = -90f }, 1);
         Assert.Equal(270f, s.Yaw, 3);
     }
+
+    // ---- Review fix D1 (STB-0): the outer walls are 4 m high, so a raised floor, a ramp or a vault can carry a player over
+    // them. Every mode now clamps the feet inside the walls (the same bound the air modes used), on the server and in the
+    // prediction alike. East outer wall: x = 80; build cell 31 is x 75..80, cell 16 is z 0..5. ----
+
+    private const float Bound = GameMap.HalfSize - MoveSettings.HalfWidth - MoveSettings.Skin;
+
+    // 기능: 건설 조각 하나를 정규화한다(실패하면 테스트 실패).
+    // 입력: type·x·y·z·rotation - 조각 좌표.
+    // 출력: 조각 모양.
+    private static BuildPieceShape Piece(BuildPieceType type, int x, int y, int z, int rotation = 0)
+    {
+        Assert.True(BuildGrid.TryNormalize(type, x, y, z, rotation, out BuildPieceShape shape));
+        return shape;
+    }
+
+    // 기능: 조각들로 PieceGrid를 만든다.
+    // 입력: shapes - 조각들.
+    // 출력: 조각이 든 PieceGrid.
+    private static PieceGrid Grid(params BuildPieceShape[] shapes)
+    {
+        var grid = new PieceGrid(256);
+        for (int i = 0; i < shapes.Length; i++) Assert.True(grid.TryAdd((uint)(i + 1), shapes[i], out _));
+        return grid;
+    }
+
+    // 기능: Match.Move처럼 주변 세계(맵 상자 + 조각)를 모은 뒤 한 Step을 돈다.
+    // 입력: s - 상태, input - 입력, grid - 조각, world - 재사용할 충돌 세계.
+    // 출력: Step 결과.
+    private static StepResult StepIn(ref MoveState s, InputCommand input, PieceGrid grid, CollisionWorld world)
+    {
+        world.Gather(s.Position, 0, 0UL, grid);
+        MovementSimulation.Step(ref s, input, Dt, world, GameMap.Terrain, out StepResult result);
+        return result;
+    }
+
+    // 기능: 아무 입력 없이 몇 Tick 돌려 발을 바닥에 내려놓는다.
+    // 입력: s - 상태, grid - 조각, world - 충돌 세계.
+    // 출력: 반환값 없음.
+    private static void Settle(ref MoveState s, PieceGrid grid, CollisionWorld world)
+    {
+        var idle = new InputCommand { Yaw = s.Yaw };
+        for (int i = 0; i < 30; i++) StepIn(ref s, idle, grid, world);
+    }
+
+    [Fact]
+    public void ARampAtTheOuterWall_DoesNotLetARunningJumpLeaveTheMap()
+    {
+        PieceGrid grid = Grid(Piece(BuildPieceType.Ramp, 31, 0, 16, 1));   // rises +X from 0 at x 75 to 3 m at the wall
+        var world = new CollisionWorld();
+        var s = new MoveState { Position = new Vector3(BuildGrid.CellMinX(31) - 3f, GameMap.Terrain.Height(72f, 2.5f), 2.5f), Yaw = 90f };
+        Settle(ref s, grid, world);
+        var run = new InputCommand { MoveY = 1f, Yaw = 90f, Buttons = InputButtons.Sprint | InputButtons.Jump };
+        for (int i = 0; i < 60; i++)
+        {
+            StepIn(ref s, run, grid, world);
+            Assert.True(MathF.Abs(s.Position.X) <= GameMap.HalfSize - MoveSettings.HalfWidth, $"tick {i}: {s.Position} ({s.Mode})");
+        }
+    }
+
+    [Fact]
+    public void WalkingOnALevelTwoFloor_AtTheOuterWall_StaysInside()
+    {
+        PieceGrid grid = Grid(Piece(BuildPieceType.Floor, 31, 2, 16));   // 6 m up, over the 4 m wall
+        var world = new CollisionWorld();
+        var s = new MoveState { Position = new Vector3(77f, BuildGrid.LevelHeight * 2f + 0.5f, 2.5f), Yaw = 90f };
+        Settle(ref s, grid, world);
+        Assert.True(s.Position.Y > 5f, $"on the floor: {s.Position}");
+        var walk = new InputCommand { MoveY = 1f, Yaw = 90f };
+        for (int i = 0; i < 90; i++)
+        {
+            StepIn(ref s, walk, grid, world);
+            Assert.True(MathF.Abs(s.Position.X) <= Bound, $"tick {i}: {s.Position} ({s.Mode})");
+        }
+    }
+
+    // Review D round 1: on a level-two ramp in the edge cell that falls towards the wall (feet above the 4 m wall), pushing out
+    // must not record the lower surface outside at the clamped X: the clamp comes right after the horizontal sweep, so the
+    // floor is followed at the clamped position and the feet never sink into the ramp's plate.
+    [Fact]
+    public void PushingOutDownALevelTwoRampAtTheOuterWall_NeverSinksIntoIt()
+    {
+        BuildPieceShape ramp = Piece(BuildPieceType.Ramp, 31, 2, 16, 3);   // falls +X: 9 m at x 75, 6 m at the wall
+        PieceGrid grid = Grid(ramp);
+        Slope slope = BuildGrid.SlopeOf(ramp);
+        var world = new CollisionWorld();
+        var s = new MoveState { Position = new Vector3(77f, 8.5f, 2.5f), Yaw = 90f };
+        Settle(ref s, grid, world);
+        var push = new InputCommand { MoveY = 1f, Yaw = 90f, Buttons = InputButtons.Sprint };
+        for (int i = 0; i < 40; i++)
+        {
+            StepIn(ref s, push, grid, world);
+            Vector3 p = s.Position;
+            Assert.True(MathF.Abs(p.X) <= Bound, $"tick {i}: {p}");
+            if (slope.Range(p.X - MoveSettings.HalfWidth, p.Z - MoveSettings.HalfWidth, p.X + MoveSettings.HalfWidth, p.Z + MoveSettings.HalfWidth,
+                    out _, out float high, out _))
+                Assert.True(p.Y >= high - 0.01f, $"tick {i}: feet {p.Y} under the ramp surface {high} at {p}");
+        }
+    }
+
+    // On the ground the clamp also zeroes the velocity across the wall, as StepAir does, so the next tick does not push on.
+    [Fact]
+    public void ClampToMap_ZeroesHorizontalVelocity_LikeStepAir()
+    {
+        PieceGrid grid = Grid(Piece(BuildPieceType.Floor, 31, 2, 16));
+        var world = new CollisionWorld();
+        var s = new MoveState { Position = new Vector3(Bound - 0.05f, BuildGrid.LevelHeight * 2f + 0.5f, 2.5f), Yaw = 90f };
+        Settle(ref s, grid, world);
+        var walk = new InputCommand { MoveY = 1f, Yaw = 90f };
+        StepIn(ref s, walk, grid, world);
+        Assert.Equal(Bound, s.Position.X, 4);
+        Assert.Equal(0f, s.HorizontalVelocity.X);
+        Assert.Equal(MovementMode.Ground, s.Mode);
+    }
+
+    // A level-one floor puts the feet 1 m under the top of the outer wall: a sprint jump there would hurdle or mantle onto
+    // (or over) the wall. The vault does not start when its landing is outside the walls.
+    [Fact]
+    public void TryStartVault_RefusesALandingOutsideTheMap()
+    {
+        PieceGrid grid = Grid(Piece(BuildPieceType.Floor, 31, 1, 16), Piece(BuildPieceType.Floor, 30, 1, 16));
+        var world = new CollisionWorld();
+        var s = new MoveState { Position = new Vector3(78.5f, BuildGrid.LevelHeight + 0.5f, 2.5f), Yaw = 90f };
+        Settle(ref s, grid, world);
+        Assert.True(s.Position.Y > 2.5f, $"on the floor: {s.Position}");
+        StepIn(ref s, new InputCommand { MoveY = 1f, Yaw = 90f, Buttons = InputButtons.Sprint }, grid, world);
+        StepIn(ref s, new InputCommand { MoveY = 1f, Yaw = 90f, Buttons = InputButtons.Sprint | InputButtons.Jump }, grid, world);
+        Assert.NotEqual(MovementMode.Vault, s.Mode);
+        for (int i = 0; i < 30; i++)
+        {
+            StepIn(ref s, new InputCommand { MoveY = 1f, Yaw = 90f, Buttons = InputButtons.Sprint }, grid, world);
+            Assert.True(MathF.Abs(s.Position.X) <= Bound, $"tick {i}: {s.Position} ({s.Mode})");
+        }
+    }
 }

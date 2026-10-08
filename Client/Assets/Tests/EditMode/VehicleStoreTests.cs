@@ -37,6 +37,32 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual(5f, store.Latest[0].Position.X);
         }
 
+        // Review fix D3 (SEC-26): a tick far ahead of the last applied one is dropped and counted, and does not become the
+        // newest tick (which would drop every later packet as old).
+        [Test]
+        public void AHugeTick_IsRejected()
+        {
+            var store = new VehicleStore();
+            Assert.IsTrue(Apply(store, 10, 0f, Car(1, 0f)));
+            Assert.IsFalse(Apply(store, 10 + SimHz * 10 + 1, 0f, Car(1, 5f)));   // same moment: the window is 10 s
+            Assert.IsFalse(Apply(store, 0xFFFFFF00u, 0.1f, Car(1, 5f)));
+            Assert.AreEqual(2, store.TickRejects);
+            Assert.AreEqual(0, store.DroppedOld);
+            Assert.AreEqual(0f, store.Latest[0].Position.X);
+            Assert.IsTrue(Apply(store, 12, 0.2f, Car(1, 2f)));            // not poisoned: the next normal tick applies
+            Assert.AreEqual(2f, store.Latest[0].Position.X);
+        }
+
+        // The server sends nothing while no vehicle is near, so a long quiet time is real: the window grows with it.
+        [Test]
+        public void ALongQuietTime_WidensTheWindow()
+        {
+            var store = new VehicleStore();
+            Assert.IsTrue(Apply(store, 10, 0f, Car(1, 0f)));
+            Assert.IsTrue(Apply(store, 10 + SimHz * 20, 20f, Car(1, 5f)));
+            Assert.AreEqual(0, store.TickRejects);
+        }
+
         [Test]
         public void Interpolates_AtTheRenderTick_WithoutExtrapolating()
         {

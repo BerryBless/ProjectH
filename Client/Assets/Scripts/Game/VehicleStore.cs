@@ -81,6 +81,11 @@ namespace ProjectH.Client.Game
         // Packets dropped as older than the last applied one, and records dropped for want of a slot (debug, tests).
         public int DroppedOld { get; private set; }
         public int DroppedRecords { get; private set; }
+        // Review fix D3 (SEC-26): packets refused as too far ahead of the last applied tick (F1 line).
+        public int TickRejects { get; private set; }
+        // How far past the last applied tick a packet may be, in seconds of server time, on top of the local time since it
+        // (the server sends nothing while no vehicle is near, so a long quiet time is real). Same window as ServerClock.
+        public const float MaxAheadSeconds = 10f;
         // The changes the last Apply found (valid until the next Apply).
         public int ChangeCount { get; private set; }
         public VehicleChange Change(int i) => _changes[i];
@@ -110,14 +115,21 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: VehicleStates 하나를 적용한다: 오래된 Tick이면 버리고, 아니면 최신 기록을 바꾸고 차량마다 표본을 더하며 소리 낼 변화를 모은다.
+        //   리뷰 수정 D3: 마지막 적용 Tick보다 SimHz × (10초 + 그 뒤 지난 로컬 시간)을 넘게 앞선 Tick도 버린다(TickRejects).
         // 입력: serverTick·ackInputSeq - 패킷 헤더, records·count - 읽은 기록(NetClient의 재사용 배열), now - 받은 시각(초), simHz - 서버 Tick률.
-        // 출력: 적용했으면 true(ChangeCount·Change가 이번 변화), 오래된 패킷이면 false(아무것도 바뀌지 않는다). 할당 없음.
+        // 출력: 적용했으면 true(ChangeCount·Change가 이번 변화), 오래되었거나 너무 앞선 패킷이면 false(아무것도 바뀌지 않는다). 할당 없음.
         public bool Apply(uint serverTick, uint ackInputSeq, ReadOnlySpan<VehicleRecord> records, int count, float now, int simHz)
         {
             ChangeCount = 0;
             if (_hasTick && serverTick <= _lastTick)
             {
                 DroppedOld++;
+                return false;
+            }
+            float hz = simHz > 0 ? simHz : 30f;
+            if (_hasTick && serverTick > _lastTick + (double)hz * (MaxAheadSeconds + Math.Max(0f, now - _latestAt)))
+            {
+                TickRejects++;
                 return false;
             }
             _hasTick = true;
@@ -127,7 +139,6 @@ namespace ProjectH.Client.Game
             for (int i = 0; i < n; i++) _latest[i] = records[i];
             _latestCount = n;
             _latestAt = now;
-            float hz = simHz > 0 ? simHz : 30f;
             for (int i = 0; i < n; i++)
             {
                 VehicleRecord r = records[i];

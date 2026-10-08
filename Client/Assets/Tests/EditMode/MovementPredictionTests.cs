@@ -303,7 +303,7 @@ namespace ProjectH.Client.Tests
 
             // Aiming level at a point 10 m ahead at 1 m height: from the crouched eye (1.0 m) the pitch is 0.
             Vector3 feet = predictor.PredictedPosition;
-            predictor.SetAim(1, feet + new Vector3(0f, AimSolver.CrouchEyeHeight, 10f), 0f, 0f, 0f);
+            predictor.SetAim(1, feet + new Vector3(0f, AimSolver.CrouchEyeHeight, 10f), 0f, 0f, 0u);
             Assert.AreEqual(0f, predictor.InputAt(2).AimPitch, 1e-3f);
         }
 

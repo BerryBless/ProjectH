@@ -1398,14 +1398,14 @@ public sealed partial class Match
     //   ShotFired는 발사 하나에 하나(Phase 18 D4: 무기 id 포함): 한 발 무기는 퍼진 광선의 실제 끝점, 산탄총은 가운데 조준 광선의 끝점.
     //   Phase 14 D3: 같은 팀은 관통. Phase 19 D7: 되감은 차량도 맞고(피해 × 1, 맞힘 확인 없음), 탄 사람은 맞지 않는다.
     //   리뷰 수정 C3: 되감기는 사수 RTT로 정한 폭까지(넘으면 자르고 RewindClamped). 리뷰 수정 C1: 퍼짐에 경기 비밀. 리뷰 수정 C7: 사격·광선·명중·거리·되감기를 센다.
-    // 입력: shooter - 사수, direction - 조준 방향(단위 벡터), viewTick - 사수가 본 Tick.
+    // 입력: shooter - 사수, direction - 조준 방향(단위 벡터), viewTick - 사수가 본 Tick(리뷰 수정 D2: uint, uint.MaxValue = 지금).
     // 출력: 반환값 없음. ShotFired(또는 ProjectileSpawned)가 방송되고 맞은 대상이 피해를 받는다.
     // D7: from the eye along the aim, the nearest map surface (box, terrain or floor plane) or living player stops the shot. The
     // client only sent a direction; which player is hit is decided here (D12, request §17).
     // D6: other players are tested where the shooter saw them, at ViewTick (review fix C3: clamped to the ticks the shooter's
     // own RTT explains, RewindAllowance). The shooter itself and the arena are not rewound.
     // Review fix C7: counts the shot, the rays, the rays that hit a player, the farthest such hit, the rewind and its clamp.
-    private void FireShot(PlayerEntity shooter, Vector3 direction, float viewTick)
+    private void FireShot(PlayerEntity shooter, Vector3 direction, uint viewTick)
     {
         shooter.ShotsFired++;
         ref HeldWeapon held = ref shooter.Inventory.Current;

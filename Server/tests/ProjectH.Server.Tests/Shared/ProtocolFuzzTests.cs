@@ -19,6 +19,128 @@ public class ProtocolFuzzTests
     // Phase 19: VehicleStates reads into the caller's fixed array too.
     private static readonly VehicleRecord[] Vehicles = new VehicleRecord[VehicleSettings.MaxVehicles];
 
+    // ---- Review fix D3 (SEC-24, 25, 26): values a correct server never sends are refused by the client's parsers. ----
+
+    private readonly byte[] _buffer = new byte[ProtocolConstants.MaxPacketSize];
+
+    // 기능: 쓴 패킷의 PacketId를 건너뛴 읽기 도구를 만든다.
+    // 입력: writer - 쓴 패킷.
+    // 출력: 본문 앞의 PacketReader.
+    private PacketReader Body(PacketWriter writer)
+    {
+        var reader = new PacketReader(new ReadOnlySpan<byte>(_buffer, 0, writer.Length).ToArray());
+        Assert.True(reader.TryReadPacketId(out _));
+        return reader;
+    }
+
+    [Theory]
+    [InlineData(float.NaN, 0f, "Alice", false)]
+    [InlineData(0f, float.PositiveInfinity, "Alice", false)]
+    [InlineData(1f, 2f, "Al\u0001ce", false)]   // a control character, which the server never lets join
+    [InlineData(1f, 2f, "Alice", true)]
+    public void PlayerSpawned_RefusesNonFiniteValues_AndInvalidNames(float x, float yaw, string name, bool valid)
+    {
+        var writer = new PacketWriter(_buffer);
+        PlayerSpawned.Write(ref writer, new PlayerSpawned { EntityId = 3, Position = new System.Numerics.Vector3(x, 0f, 1f), Yaw = yaw, Name = name });
+        PacketReader reader = Body(writer);
+        Assert.Equal(valid, PlayerSpawned.TryRead(ref reader, out _));
+    }
+
+    // Ok and Resumed name the client's entity, which is never 0; MatchFull carries 0 (no entity) and must still arrive.
+    [Theory]
+    [InlineData(JoinResult.Ok, (ushort)0, false)]
+    [InlineData(JoinResult.Resumed, (ushort)0, false)]
+    [InlineData(JoinResult.Ok, (ushort)7, true)]
+    [InlineData(JoinResult.MatchFull, (ushort)0, true)]
+    [InlineData((JoinResult)4, (ushort)7, false)]
+    public void JoinMatchResponse_RefusesEntityZeroForAJoin_AndUnknownResults(JoinResult result, ushort entity, bool valid)
+    {
+        var writer = new PacketWriter(_buffer);
+        JoinMatchResponse.Write(ref writer, new JoinMatchResponse { Result = result, MyEntityId = entity, ServerTick = 5, SimHz = 30, SnapshotHz = 15 });
+        PacketReader reader = Body(writer);
+        Assert.Equal(valid, JoinMatchResponse.TryRead(ref reader, out _));
+    }
+
+    [Theory]
+    [InlineData(5f, false)]
+    [InlineData(30f, false)]
+    [InlineData(20f, true)]
+    [InlineData(40f, true)]
+    [InlineData(80f, true)]
+    [InlineData(160f, true)]
+    public void BuildCatalog_TakesOnlyTheServersInterestCellSizes(float cellSize, bool valid)
+    {
+        var c = new BuildCatalogData
+        {
+            MaxResource = 500, BuildRange = 7f, ViewAngleDegrees = 75f, HarvestRange = 2.5f, HarvestCooldownTicks = 12, MinBuildIntervalTicks = 3,
+            InterestCellSize = cellSize, InterestRadius = 2, InterestKeepMargin = 1,
+        };
+        for (int m = 0; m < 3; m++)
+        {
+            c.ResourceCost[m] = 10;
+            c.MaxHealth[m] = (ushort)(150 + 100 * m);
+            c.InitialHealth[m] = 45;
+            c.ConstructionTicks[m] = (ushort)(45 * (m + 1));
+        }
+        var writer = new PacketWriter(_buffer);
+        BuildCatalogPacket.Write(ref writer, c);
+        PacketReader reader = Body(writer);
+        Assert.Equal(valid, BuildCatalogPacket.TryRead(ref reader, out _));
+    }
+
+    [Theory]
+    [InlineData(3e38f, 10f, false)]
+    [InlineData(0f, 3e38f, false)]
+    [InlineData(ProtocolLimits.ZoneCoordLimit + 1f, 10f, false)]
+    [InlineData(0f, ProtocolLimits.ZoneRadiusLimit + 1f, false)]
+    [InlineData(-60f, 150f, true)]
+    public void ZoneState_RefusesHugeCoordinatesAndRadii(float x, float radius, bool valid)
+    {
+        var writer = new PacketWriter(_buffer);
+        ZoneState.Write(ref writer, new ZoneState { Phase = 1, FromX = x, FromZ = 0f, FromRadius = radius, ToX = 0f, ToZ = 0f, ToRadius = 10f, ShrinkStartTick = 1, ShrinkEndTick = 2 });
+        PacketReader reader = Body(writer);
+        Assert.Equal(valid, ZoneState.TryRead(ref reader, out _));
+    }
+
+    [Theory]
+    [InlineData(0f, 1e6f, false)]
+    [InlineData(600f, 10f, false)]
+    [InlineData(0f, ProtocolLimits.ProjectileSpeedLimit + 1f, false)]
+    [InlineData(70f, 40f, true)]
+    public void Projectiles_RefuseFarPositionsAndHugeSpeeds(float x, float speed, bool valid)
+    {
+        var position = new System.Numerics.Vector3(x, 2f, 0f);
+        var velocity = new System.Numerics.Vector3(speed, 0f, 0f);
+        var writer = new PacketWriter(_buffer);
+        ProjectileSpawned.Write(ref writer, new ProjectileSpawned { Id = 1, Kind = ProjectileKind.Rocket, OwnerId = 2, Position = position, Velocity = velocity, StartTick = 9 });
+        PacketReader reader = Body(writer);
+        Assert.Equal(valid, ProjectileSpawned.TryRead(ref reader, out _));
+
+        writer = new PacketWriter(_buffer);
+        ProjectileState.Write(ref writer, new ProjectileState { Id = 1, Position = position, Velocity = velocity, Tick = 9 });
+        reader = Body(writer);
+        Assert.Equal(valid, ProjectileState.TryRead(ref reader, out _));
+    }
+
+    [Theory]
+    [InlineData(40f, 0f, 4f, true)]
+    [InlineData(ProtocolLimits.ProjectileSpeedLimit + 1f, 0f, 4f, false)]
+    [InlineData(40f, ProtocolLimits.ProjectileGravityLimit + 1f, 4f, false)]
+    [InlineData(40f, 0f, ProtocolLimits.ProjectileRadiusLimit + 1f, false)]
+    public void WeaponCatalog_RefusesProjectileKindsBeyondTheLimits(float speed, float gravity, float radius, bool valid)
+    {
+        var weapon = new WeaponInfo
+        {
+            WeaponId = 6, Name = "Thunder RL", Damage = 75, FireIntervalTicks = 30, MagazineSize = 1, ReloadTicks = 90, Range = 160f,
+            AmmoType = AmmoType.Rockets, Pellets = 1, Projectile = ProjectileKind.Rocket,
+        };
+        var rocket = new ProjectileInfo { Kind = ProjectileKind.Rocket, Speed = speed, Gravity = gravity, ExplosionRadius = radius, LifetimeTicks = 120 };
+        var writer = new PacketWriter(_buffer);
+        WeaponCatalogPacket.Write(ref writer, new[] { weapon }, new[] { rocket });
+        PacketReader reader = Body(writer);
+        Assert.Equal(valid, WeaponCatalogPacket.TryRead(ref reader, out _, out _));
+    }
+
     [Fact]
     public void RandomBytes_NeverThrow_InAnyParser()
     {

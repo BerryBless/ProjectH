@@ -44,7 +44,9 @@ namespace ProjectH.Shared.Simulation
         public float AimYaw;
         public float AimPitch;
 
-        // Server tick the client was rendering remote players at when this input was made (D6).
-        public float ViewTick;
+        // Server tick the client was rendering remote players at when this input was made (D6). Review fix D2 (STB-1): a whole
+        // uint tick (a float lost whole ticks after about 6 days at 30 Hz); uint.MaxValue means "now" (no rewind), which the
+        // server clamps to its latest tick like any future tick.
+        public uint ViewTick;
     }
 }

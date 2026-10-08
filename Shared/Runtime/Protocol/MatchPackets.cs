@@ -93,6 +93,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt16(z.DamagePerSecond);
         }
 
+        // 기능: ZoneState 본문을 읽는다. 리뷰 수정 D3(SEC-26): 중심 좌표는 ±ZoneCoordLimit, 반지름은 0–ZoneRadiusLimit만 받는다(NaN·Infinity 거절).
+        // 입력: reader - 본문(PacketId 뒤).
+        // 출력: 맞으면 true와 상태, 아니면 false.
         public static bool TryRead(ref PacketReader reader, out ZoneState z)
         {
             z = default;
@@ -107,8 +110,12 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadUInt32(out z.ShrinkStartTick);
             reader.TryReadUInt32(out z.ShrinkEndTick);
             reader.TryReadUInt16(out z.DamagePerSecond);
-            return Finite.Check(z.FromX) && Finite.Check(z.FromZ) && Finite.Check(z.FromRadius) && z.FromRadius >= 0f &&
-                   Finite.Check(z.ToX) && Finite.Check(z.ToZ) && Finite.Check(z.ToRadius) && z.ToRadius >= 0f &&
+            const float coord = ProtocolLimits.ZoneCoordLimit;
+            const float radius = ProtocolLimits.ZoneRadiusLimit;
+            return ProtocolLimits.Within(z.FromX, coord) && ProtocolLimits.Within(z.FromZ, coord) &&
+                   z.FromRadius >= 0f && z.FromRadius <= radius &&
+                   ProtocolLimits.Within(z.ToX, coord) && ProtocolLimits.Within(z.ToZ, coord) &&
+                   z.ToRadius >= 0f && z.ToRadius <= radius &&
                    z.ShrinkEndTick >= z.ShrinkStartTick;
         }
 

@@ -132,22 +132,21 @@ public static class CombatRules
         return true;
     }
 
-    // D14: the tick a shot rewinds targets to. The client's ViewTick is untrusted: NaN means "now", and
-    // anything outside [latestTick - maxRewindTicks, latestTick] is clamped into it (never below tick 0).
-    public static double ClampViewTick(float viewTick, uint latestTick, int maxRewindTicks) =>
+    // D14: the tick a shot rewinds targets to. The client's ViewTick is untrusted: anything outside
+    // [latestTick - maxRewindTicks, latestTick] is clamped into it (never below tick 0); uint.MaxValue ("now") is latestTick.
+    public static double ClampViewTick(uint viewTick, uint latestTick, int maxRewindTicks) =>
         ClampViewTick(viewTick, latestTick, maxRewindTicks, out _);
 
-    // 기능: 사격이 대상을 되감을 Tick을 정한다(D14). Client의 ViewTick은 믿지 않는다: NaN이면 지금, [latestTick - allowedTicks, latestTick]
-    //   밖이면 그 안으로 자른다(Tick 0 아래로는 가지 않는다). 리뷰 수정 C3: 허용 폭은 사수의 RTT로 정한 값(AllowedRewindTicks)이다.
+    // 기능: 사격이 대상을 되감을 Tick을 정한다(D14). Client의 ViewTick은 믿지 않는다: [latestTick - allowedTicks, latestTick] 밖이면 그 안으로
+    //   자른다(Tick 0 아래로는 가지 않는다). 리뷰 수정 C3: 허용 폭은 사수의 RTT로 정한 값(AllowedRewindTicks)이다. 리뷰 수정 D2(STB-1): ViewTick은
+    //   uint Tick이고 uint.MaxValue("지금", Client가 아직 그린 것이 없을 때)는 다른 미래 값처럼 latestTick이 된다.
     // 입력: viewTick - Client가 본 Tick, latestTick - 마지막으로 끝난 Tick, allowedTicks - 되감을 수 있는 최대 Tick, clamped - 잘렸는지 받을 곳.
-    // 출력: 되감을 Tick. clamped는 허용보다 오래된 주장을 잘랐을 때만 true(미래·NaN은 "지금"이고 잘림이 아니다).
-    public static double ClampViewTick(float viewTick, uint latestTick, int allowedTicks, out bool clamped)
+    // 출력: 되감을 Tick. clamped는 허용보다 오래된 주장을 잘랐을 때만 true(미래·"지금"은 잘림이 아니다).
+    public static double ClampViewTick(uint viewTick, uint latestTick, int allowedTicks, out bool clamped)
     {
         clamped = false;
-        double latest = latestTick;
-        if (float.IsNaN(viewTick)) return latest;
-        double oldest = latestTick > (uint)allowedTicks ? latestTick - (uint)allowedTicks : 0u;
-        if (viewTick > latest) return latest;
+        if (viewTick >= latestTick) return latestTick;
+        uint oldest = latestTick > (uint)allowedTicks ? latestTick - (uint)allowedTicks : 0u;
         if (viewTick < oldest)
         {
             clamped = true;

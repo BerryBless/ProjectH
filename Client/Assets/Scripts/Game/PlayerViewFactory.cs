@@ -104,9 +104,12 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 뷰의 GameObject(몸·글라이더 포함)를 파괴한다(UnityObjects.Destroy: Play 밖의 EditMode 테스트에서도 지워진다).
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void Destroy()
         {
-            if (Root != null) Object.Destroy(Root.gameObject);
+            if (Root != null) UnityObjects.Destroy(Root.gameObject);
         }
     }
 
@@ -176,11 +179,11 @@ namespace ProjectH.Client.Game
         // 출력: 반환값 없음. 다음 Create가 다시 만든다.
         public static void ReleaseMaterials()
         {
-            if (_localMaterial != null) Object.Destroy(_localMaterial);
-            if (_remoteMaterial != null) Object.Destroy(_remoteMaterial);
-            if (_teamMaterial != null) Object.Destroy(_teamMaterial);
-            if (_deadMaterial != null) Object.Destroy(_deadMaterial);
-            if (_wingMaterial != null) Object.Destroy(_wingMaterial);
+            UnityObjects.Destroy(_localMaterial);
+            UnityObjects.Destroy(_remoteMaterial);
+            UnityObjects.Destroy(_teamMaterial);
+            UnityObjects.Destroy(_deadMaterial);
+            UnityObjects.Destroy(_wingMaterial);
             _localMaterial = null;
             _remoteMaterial = null;
             _teamMaterial = null;

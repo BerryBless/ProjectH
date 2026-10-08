@@ -128,11 +128,8 @@ namespace ProjectH.Client.Game
         // 출력: 반환값 없음. 활성·짓는 중·루트 표가 빈다.
         public void Dispose()
         {
-            if (_root != null) Object.Destroy(_root);
-            for (int i = 0; i < _materials.Length; i++)
-            {
-                if (_materials[i] != null) Object.Destroy(_materials[i]);
-            }
+            UnityObjects.Destroy(_root);
+            for (int i = 0; i < _materials.Length; i++) UnityObjects.Destroy(_materials[i]);
             _active.Clear();
             _building.Clear();
             _byRoot.Clear();
@@ -307,7 +304,7 @@ namespace ProjectH.Client.Game
             if (pool.Count >= MaxPooled)
             {
                 _byRoot.Remove(view.Root);
-                Object.Destroy(view.Root);
+                UnityObjects.Destroy(view.Root);
                 return;
             }
             view.Root.SetActive(false);

@@ -164,7 +164,7 @@ stateDiagram-v2
 - Kill Feed: 오른쪽 위, 최근 5줄, 6초. "가해자 ▸ 피해자", Zone이면 "자기장 ▸ 피해자". 경기 중 합류 알림(킬러·순위가 없는 `PlayerDied`)은 넣지 않는다.
 - 이름 표: `PlayerSpawned.Name`. Despawn과 끊김 때 지운다. 모르는 이름은 "플레이어 <id>".
 - 모든 UI Text(화면, HUD, Kill Feed, POI, F1 줄, 입력칸)는 Rich Text를 끈다(`supportRichText = false`). 이름에 `<color=red>`가 있어도 글자 그대로 보인다. 태그를 쓰는 문구는 없다.
-- F1: `DebugOverlay`(상태, RTT, Entity). 처음에는 숨겨져 있고, 숨겨진 동안은 문자열을 만들지 않는다.
+- F1: `DebugOverlay`(상태, RTT, Entity, 그리고 0이 아닐 때만 "인증 버림 n"·"Tick 거절 n"·"Spawn 거절 n": 리뷰 수정 B3·D3, "받기 검증" 절). 처음에는 숨겨져 있고, 숨겨진 동안은 문자열을 만들지 않는다. 보이는 값이 바뀔 때만 다시 만든다.
 - 성능(D11): 숨긴 화면은 `SetActive(false)`라 다시 그리지 않는다. 글자는 값이 바뀔 때만 바꾸고(남은 초는 정수 초가 바뀔 때만) 매 프레임 할당이 없다. Kill Feed·F1은 자기 Canvas를 써서 줄이 바뀌어도 다른 UI를 다시 그리지 않는다. 모든 문구 생성은 `UiText`(순수 함수)다.
 
 ## 글꼴 (Phase 11 D2)
@@ -232,6 +232,27 @@ stateDiagram-v2
 - **Lifetime:** `NetClient.Dispose`가 `NetManager.Stop` 뒤에 키를 해제한다(`AuthPacketLayer.DisposeKeys`). LiteNetLib 스레드가 더는 키를 쓰지 않을 때다. RSA 객체와 난수 생성기도 이때 해제한다.
   - 접속마다 밀려난 키는 한 번 더 교체될 때 해제한다. 수신 스레드가 교체 직후에도 잠금 없이 `TryOpen`을 쓰고 있을 수 있기 때문이다.
   - 할당은 접속 시점에만 생긴다(blob, 키, peer). 데이터그램마다 할당하지 않는다.
+
+## 받기 검증 (리뷰 수정 D2–D4)
+
+설계 근거: `Docs/specs/2026-10-08-review-fixes-design.md` D2–D4(원 지적 SEC-24·25·26, STB-1·2). 정상 서버는 이 검사에 걸리는 값을 보내지 않는다. 데이터그램 인증(묶음 B)을 지나온 뒤의 방어선이고, 값의 범위는 Shared 파서(`ProtocolLimits`)가 먼저 거른다.
+
+- **너무 앞선 Tick:** `ServerClock.OnSnapshot`은 준비된 뒤 `LatestTick`보다 `SimHz × (10초 + 마지막 Tick 뒤 지난 로컬 시간)`을 넘게 앞선 Tick을 버리고 `TickRejects`를 센다.
+  - 버린 Snapshot은 통째로 무시한다(체력·무기·예측 교정·원격 보간에 넣지 않는다). 큰 Tick 하나로 렌더 Tick이 다음 입장까지 고정되던 문제(SEC-26)를 막는다.
+  - 지난 로컬 시간을 더하는 이유: 메인 스레드가 멈췄다 돌아온 Client는 그동안 서버가 앞서 있으므로 그 시간만큼 창이 넓어진다.
+  - 시계는 입장마다 새로 만들므로 이 수도 입장마다 0부터다.
+- **차량 Tick:** `VehicleStore.Apply`도 마지막 적용 Tick 기준으로 같은 창을 쓴다(`TickRejects`). 버린 패킷은 마지막 Tick을 바꾸지 않아 다음 정상 패킷이 그대로 적용된다.
+  - 서버는 근처에 차량이 없으면 VehicleStates를 보내지 않으므로, 오래 조용했던 만큼 창이 넓어지는 것이 여기서 꼭 필요하다(차량에서 10초 넘게 떨어졌다 돌아와도 받는다).
+  - 남은 한계: `Reset`(끊김·입장) 바로 뒤 첫 패킷은 기준이 없어 그대로 받는다.
+- **내 Spawn 조건:** `GameClient.IsMySpawn(state, myId, spawnedId)` = `Joined`이고 내 id가 0이 아니며 같은 id일 때만 내 캐릭터로 본다(SEC-25).
+  - Join 응답 전에 온 Spawn이 SimHz 0으로 예측기를 만들어 입력이 나가지 않던 경로를 막는다.
+  - id 0이나 참가 전의 내 id인 Spawn은 원격 플레이어로도 만들지 않는다.
+- **원격 플레이어 상한:** `RemotePlayers.Spawn`은 이미 `ProtocolConstants.MaxSnapshotEntities`(100)명이면 뷰를 만들지 않고 `SpawnRejects`를 센다.
+  - 이름 표(`_names`)는 내 id이거나 원격 표에 들어간 플레이어만 넣는다. 그래서 이름 표도 같은 상한을 따른다(SEC-24).
+- **ViewTick:** 입력의 ViewTick은 uint다(`ServerClock.ToViewTick`: 렌더 Tick의 소수점을 버린다). NaN·음수·범위 밖은 `uint.MaxValue`("지금", 서버가 최신 Tick으로 자른다)다. float는 2^24 Tick(약 6.5일 가동)부터 정수를 잃었다(STB-1).
+- **조각 뷰:** 내 Spawn 전에도 `LateUpdateGame`이 확정 조각의 뷰를 만든다(`UpdateBuildPresentationWithoutPredictor` → `ApplyPieceChanges`). 전에는 예측기가 없으면 변경 목록만 지워서, 내 Spawn보다 먼저 온 조각이 보이지 않는데 예측 이동은 막았다(STB-2).
+- **F1 줄:** 0이 아닐 때만 "인증 버림 n"(묶음 B), "Tick 거절 n"(Snapshot과 차량의 합), "Spawn 거절 n"을 붙인다.
+- **EditMode 정리:** 뷰를 실제로 만드는 EditMode 테스트(`RemotePlayersTests`, `BuildPieceViewsTests`)가 Play 밖에서도 정리되도록 뷰·Mesh·Material 파괴는 `UnityObjects.Destroy`를 쓴다. Play 중에는 `Object.Destroy`와 같다.
 
 ## 실행과 두 Client 확인
 

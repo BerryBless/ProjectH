@@ -27,7 +27,7 @@ public class PacketTests
         Buttons = InputButtons.Jump | InputButtons.Fire | InputButtons.Slot2 | InputButtons.Interact | InputButtons.UseShieldCell,
         AimYaw = 12.5f + seq,
         AimPitch = -30f,
-        ViewTick = 1000.25f + seq,
+        ViewTick = 1000u + seq,   // review fix D2: a uint tick
     };
 
     // Review fix B2: every request carries the session key blob (RsaBlobBytes).

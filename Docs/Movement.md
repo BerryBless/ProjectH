@@ -146,6 +146,7 @@ Jump 비트가 켜진 입력(Client는 누른 Step에만 싣는다)이고, 땅 �
 ### 바깥벽 경계
 
 - 외곽벽은 높이 4 m뿐이라 공중에서는 그 위로 넘을 수 있다. 그래서 `StepAir`가 자유 낙하·글라이드의 위치를 ±(80 − 0.35 − `Skin`)으로 자르고 그 축의 속도를 0으로 한다(맵 안에 머문다).
+- **지상·Vault도 같다(리뷰 수정 D1, STB-0).** 2층 이상 바닥, 외곽벽에 붙은 경사로, 그 위에서의 점프는 벽 위로 나갈 수 있었다. 이제 같은 자르기(`MovementSimulation.ClampToMap`)를 `StepGround` 끝(위치를 쓰기 직전), `StepVault`의 한 Tick 이동 뒤, `StepAir`에서 부른다. `TryStartVault`는 착지점의 X·Z가 그 경계 밖이면 Vault를 시작하지 않는다(벽 위로 올라서거나 넘는 Vault, Vault는 충돌을 보지 않는다). Shared 코드라 서버와 Client 예측이 같은 결과를 낸다. 경계에 붙은 플레이어는 예측이 서버와 같으므로 보정이 생기지 않는다(오래된 Client와 섞이면 한 번 보정된다). 테스트: `MovementSimulationTests`의 `ARampAtTheOuterWall_DoesNotLetARunningJumpLeaveTheMap`, `WalkingOnALevelTwoFloor_AtTheOuterWall_StaysInside`, `ClampToMap_ZeroesHorizontalVelocity_LikeStepAir`, `TryStartVault_RefusesALandingOutsideTheMap`.
 
 ### 낙하 피해 (`CombatRules.FallDamage`)
 

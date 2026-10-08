@@ -399,7 +399,11 @@ namespace ProjectH.Client.Game
         // from its own predicted result, not from the newest one (older steps of a multi-step frame are behind).
         // When aimPoint is too close to that eye to give a direction, the fallback (camera) angles are sent.
         // Phase 12 D13: the eye height follows that step's mode (lower crouched or sliding), like the server's.
-        public void SetAim(int steps, Vector3 aimPoint, float fallbackYaw, float fallbackPitch, float viewTick)
+        // 기능: 가장 새 steps개 입력에 조준(각 Step의 예측 눈에서 aimPoint로)과 ViewTick을 넣는다.
+        // 입력: steps - 이번 프레임 입력 수, aimPoint - 조준점, fallbackYaw·fallbackPitch - 방향을 낼 수 없을 때의 카메라 각,
+        //   viewTick - 이번 프레임 원격 플레이어를 그린 서버 Tick(리뷰 수정 D2: uint, ServerClock.ToViewTick. uint.MaxValue = 지금).
+        // 출력: 반환값 없음. 해당 입력의 AimYaw·AimPitch·ViewTick이 채워진다.
+        public void SetAim(int steps, Vector3 aimPoint, float fallbackYaw, float fallbackPitch, uint viewTick)
         {
             if (steps > HistorySize) steps = HistorySize;
             if (steps > LastSeq) steps = (int)LastSeq;

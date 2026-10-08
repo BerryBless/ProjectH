@@ -133,14 +133,11 @@ namespace ProjectH.Client.Game
         // 출력: 반환값 없음. 캐시가 빈다.
         public void Dispose()
         {
-            Object.Destroy(Box);
-            Object.Destroy(Ramp);
-            Object.Destroy(Roof);
-            Object.Destroy(RoofSlope);
-            foreach (KeyValuePair<int, Mesh> kv in _edited)
-            {
-                if (kv.Value != null) Object.Destroy(kv.Value);
-            }
+            UnityObjects.Destroy(Box);
+            UnityObjects.Destroy(Ramp);
+            UnityObjects.Destroy(Roof);
+            UnityObjects.Destroy(RoofSlope);
+            foreach (KeyValuePair<int, Mesh> kv in _edited) UnityObjects.Destroy(kv.Value);
             _edited.Clear();
         }
 

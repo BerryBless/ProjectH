@@ -329,7 +329,8 @@ public class MovementModesTests
     {
         // A long 0.6 slope.
         var hill = new HeightField(-100f, -10f, 100f, 3, 2, new[] { 120f, 60f, 0f, 120f, 60f, 0f });
-        var s = new MoveState { Position = new Vector3(-90f, hill.Height(-90f, 0f), 0f), Yaw = 90f };
+        // Review fix D1: starts inside the map (the ground step now clamps to the outer walls at +-80 m).
+        var s = new MoveState { Position = new Vector3(-75f, hill.Height(-75f, 0f), 0f), Yaw = 90f };
         Run(ref s, new InputCommand { MoveY = 1f, Yaw = 90f, Buttons = InputButtons.Sprint }, 3, default, hill);
         StepOnce(ref s, new InputCommand { MoveY = 1f, Yaw = 90f, Buttons = InputButtons.Sprint | InputButtons.Crouch }, default, hill);
         Run(ref s, new InputCommand { Yaw = 90f, Buttons = InputButtons.Crouch }, 150, default, hill);

@@ -107,7 +107,8 @@ namespace ProjectH.Shared.Protocol
         // 출력: 성공하면 true와 무기 배열, 아니면 false. 할당한다(입장 때 한 번).
         public static bool TryRead(ref PacketReader reader, out WeaponInfo[] weapons) => TryRead(ref reader, out weapons, out _);
 
-        // 기능: WeaponCatalog 본문을 읽는다(Phase 17: 투사체 목록 포함, 리뷰 수정 C2: EquipTicks 0..MaxEquipTicks). 서버가 보내지 않는 값은 거절한다.
+        // 기능: WeaponCatalog 본문을 읽는다(Phase 17: 투사체 목록 포함, 리뷰 수정 C2: EquipTicks 0..MaxEquipTicks, 리뷰 수정 D3: 투사체 속력·중력·
+        //   폭발 반경은 ProtocolLimits 이하). 서버가 보내지 않는 값은 거절한다.
         // 입력: reader - 본문(PacketId 뒤).
         // 출력: 성공하면 true와 무기·투사체 배열. 범위 밖 값, 같은 투사체 종류 둘, 목록에 없는 투사체를 쏘는 무기가 있으면 false.
         //   할당한다(입장 때 한 번, Tick 경로가 아니다).
@@ -149,9 +150,11 @@ namespace ProjectH.Shared.Protocol
                 if (!reader.TryReadByte(out byte kind) || kind == 0 || kind > (byte)ProjectileKind.Rocket) return false;
                 p.Kind = (ProjectileKind)kind;
                 if (Find(kinds, i, p.Kind) >= 0) return false;
-                if (!reader.TryReadSingle(out p.Speed) || !Finite.Check(p.Speed) || p.Speed <= 0f) return false;
-                if (!reader.TryReadSingle(out p.Gravity) || !Finite.Check(p.Gravity) || p.Gravity < 0f) return false;
-                if (!reader.TryReadSingle(out p.ExplosionRadius) || !Finite.Check(p.ExplosionRadius) || p.ExplosionRadius <= 0f) return false;
+                // Review fix D3: the same limits the server's weapons.json check uses (ProtocolLimits).
+                if (!reader.TryReadSingle(out p.Speed) || !(p.Speed > 0f && p.Speed <= ProtocolLimits.ProjectileSpeedLimit)) return false;
+                if (!reader.TryReadSingle(out p.Gravity) || !(p.Gravity >= 0f && p.Gravity <= ProtocolLimits.ProjectileGravityLimit)) return false;
+                if (!reader.TryReadSingle(out p.ExplosionRadius) || !(p.ExplosionRadius > 0f && p.ExplosionRadius <= ProtocolLimits.ProjectileRadiusLimit))
+                    return false;
                 if (!reader.TryReadUInt16(out p.LifetimeTicks) || p.LifetimeTicks == 0) return false;
                 kinds[i] = p;
             }

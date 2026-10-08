@@ -37,10 +37,27 @@ namespace ProjectH.Client.Game
         private readonly Dictionary<ushort, Entry> _entries = new Dictionary<ushort, Entry>();
 
         public int Count => _entries.Count;
+        // Review fix D3 (SEC-24): spawns ignored because the table already held ProtocolConstants.MaxSnapshotEntities players
+        // (an honest server never sends more than MaxPlayers - 1). F1 line.
+        public int SpawnRejects { get; private set; }
 
+        // 기능: 그 id의 원격 플레이어가 있는지 본다.
+        // 입력: entityId - 플레이어 id.
+        // 출력: 있으면 true.
+        public bool Contains(ushort entityId) => _entries.ContainsKey(entityId);
+
+        // 기능: 원격 플레이어 하나를 만든다(PlayerSpawned). 이미 있으면 아무것도 하지 않는다. 리뷰 수정 D3: 이미
+        //   ProtocolConstants.MaxSnapshotEntities명이면 뷰를 만들지 않고 SpawnRejects를 센다.
+        // 입력: spawned - 등장 정보, tick - 첫 보간 표본의 Tick.
+        // 출력: 반환값 없음. 받아들였으면 뷰와 보간기가 생긴다.
         public void Spawn(in PlayerSpawned spawned, uint tick)
         {
             if (_entries.ContainsKey(spawned.EntityId)) return;
+            if (_entries.Count >= ProtocolConstants.MaxSnapshotEntities)
+            {
+                SpawnRejects++;
+                return;
+            }
             PlayerView view = PlayerViewFactory.Create($"Player {spawned.EntityId}", false);
             var entry = new Entry
             {

@@ -20,6 +20,15 @@ public class InputFuzzTests
     private static float Value(Random random) =>
         random.Next(3) == 0 ? (float)(random.NextDouble() * 4 - 2) : Hostile[random.Next(Hostile.Length)];
 
+    // Review fix D2: ViewTick is a uint; the hostile ones are "now" (uint.MaxValue), 0 (the oldest), huge and near-max ticks.
+    private static readonly uint[] HostileTicks = { uint.MaxValue, 0u, 1u, 1_000_000_000u, uint.MaxValue - 1, int.MaxValue };
+
+    // 기능: 퍼징용 ViewTick 하나를 고른다(정상 범위의 작은 값 또는 적대적인 값).
+    // 입력: random - 시드 고정 난수.
+    // 출력: ViewTick.
+    private static uint TickValue(Random random) =>
+        random.Next(3) == 0 ? (uint)random.Next(0, 10_000) : HostileTicks[random.Next(HostileTicks.Length)];
+
     // Through PlayerInputPacket.Write and TryRead, as NetworkListener sees it (unknown buttons are masked there).
     // Seq: mostly the next one (so most inputs are taken and acted on), sometimes old or repeated ones; near the end
     // also the top of the uint range ("negative" Seq), after which this player's normal inputs are refused.
@@ -39,7 +48,7 @@ public class InputFuzzTests
                 Buttons = (InputButtons)random.Next(ushort.MaxValue + 1),
                 AimYaw = Value(random),
                 AimPitch = Value(random),
-                ViewTick = Value(random),
+                ViewTick = TickValue(random),
             });
         }
         var writer = new PacketWriter(buffer);

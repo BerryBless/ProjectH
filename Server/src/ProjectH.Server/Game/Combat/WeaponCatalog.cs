@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using ProjectH.Server.Game.Items;
 using ProjectH.Shared.Protocol;
+using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Server.Game.Combat;
 
@@ -17,14 +18,19 @@ namespace ProjectH.Server.Game.Combat;
 public sealed class WeaponCatalog
 {
     // Phase 17: limits of the projectile numbers. The explosion radius bounds the build columns one explosion visits
-    // (Match.ExplodePieces' fixed buffer).
-    public const float MaxProjectileSpeed = 200f;
-    public const float MaxProjectileGravity = 50f;
+    // (Match.ExplodePieces' fixed buffer). Review fix D3: the same constants the clients' parser checks (ProtocolLimits).
+    public const float MaxProjectileSpeed = ProtocolLimits.ProjectileSpeedLimit;
+    public const float MaxProjectileGravity = ProtocolLimits.ProjectileGravityLimit;
     public const double MaxProjectileLifetimeSeconds = 30;
     // Review fix C2: the wait after a weapon comes into the hand. 0.4 s is a third of the Kestrel's 1.25 s interval.
     public const double DefaultEquipSeconds = 0.4;
     public const double MaxEquipSeconds = 2;
-    public const float MaxExplosionRadius = 10f;
+    public const float MaxExplosionRadius = ProtocolLimits.ProjectileRadiusLimit;
+    // Review D round 1: the highest eye a projectile can leave from: on the top of the highest building level (a roof's rise on
+    // it) over the highest terrain, plus the eye. Conservative (pieces stand on the absolute grid, not on the terrain); riders,
+    // freefall and the glider cannot act at all.
+    private static readonly float MaxLaunchHeight =
+        GameMap.Terrain.MaxHeight + BuildGrid.LevelBase(BuildGrid.Levels) + BuildGrid.RoofRise + CombatRules.EyeHeight;
     public const float MaxBounce = 0.95f;
     public const float MaxThrowUpDegrees = 45f;
 
@@ -225,7 +231,9 @@ public sealed class WeaponCatalog
         return null;
     }
 
-    // 기능: 투사체 정의 하나를 검증한다(Phase 17 D2, D6, D9). 수류탄은 bounce > 0, 로켓은 bounce = 0이어야 한다.
+    // 기능: 투사체 정의 하나를 검증한다(Phase 17 D2, D6, D9). 수류탄은 bounce > 0, 로켓은 bounce = 0이어야 한다. 리뷰 수정 D3: 한계는 Client 파서와
+    //   같은 ProtocolLimits이고, speed + gravity × lifetime도 속력 한계 이하여야 한다. 리뷰 D 1차: 비행 거리 상한(speed × lifetime +
+    //   ½ × gravity × lifetime²)을 맵 반폭·최고 발사 높이에 더해도 위치 한계(±ProjectilePositionLimit) 안이어야 한다.
     // 입력: kind - 종류, p - JSON 항목, simHz - Tick 속도, definition - 결과.
     // 출력: 맞으면 null과 정의, 틀리면 이유.
     private static string? ValidateProjectile(ProjectileKind kind, ProjectileJson? p, int simHz, out ProjectileDefinition? definition)
@@ -238,6 +246,18 @@ public sealed class WeaponCatalog
         if (!float.IsFinite(gravity) || gravity < 0f || gravity > MaxProjectileGravity) return $"gravity must be 0-{MaxProjectileGravity}.";
         if (!(p.LifetimeSeconds <= MaxProjectileLifetimeSeconds) || !DataJson.TryTicks(p.LifetimeSeconds, simHz, out ushort lifetime))
             return $"lifetimeSeconds must be above 0 and at most {MaxProjectileLifetimeSeconds}.";
+        // Review fix D3: the fastest it can fly before it explodes (falling the whole lifetime) is what a ProjectileState can carry.
+        if (speed + gravity * (float)p.LifetimeSeconds > MaxProjectileSpeed)
+            return $"speed + gravity x lifetimeSeconds must be at most {MaxProjectileSpeed} (the fastest a projectile may fly).";
+        // Review D round 1: nor may it fly out of the +-ProjectilePositionLimit the clients accept (a ProjectileSpawned resent to
+        // a late joiner, or a ProjectileState of a bounce, would be refused and the projectile not drawn). Gravity adds at most
+        // gravity x t to its speed, and a bounce (bounce <= MaxBounce < 1) never adds speed but can turn the fallen speed
+        // sideways, so its farthest reach from the launch is speed x lifetime + 1/2 x gravity x lifetime^2, and it is launched
+        // inside the walls at most MaxLaunchHeight up.
+        float seconds = (float)p.LifetimeSeconds;
+        float flight = speed * seconds + 0.5f * gravity * seconds * seconds;
+        if (GameMap.HalfSize + flight > ProtocolLimits.ProjectilePositionLimit || MaxLaunchHeight + flight > ProtocolLimits.ProjectilePositionLimit)
+            return $"speed x lifetimeSeconds + gravity x lifetimeSeconds^2 / 2 ({flight} m) must keep the projectile within {ProtocolLimits.ProjectilePositionLimit} m of the map's centre.";
         float radius = (float)p.ExplosionRadius;
         if (!float.IsFinite(radius) || radius <= 0f || radius > MaxExplosionRadius) return $"explosionRadius must be above 0 and at most {MaxExplosionRadius}.";
         if (p.ExplosionDamage < 0 || p.ExplosionDamage > ushort.MaxValue) return "explosionDamage must be 0-65535.";

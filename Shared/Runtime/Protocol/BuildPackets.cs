@@ -434,6 +434,10 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte(c.InterestKeepMargin);
         }
 
+        // 기능: BuildCatalog 본문을 읽는다(조인 때 한 번, 카탈로그를 할당한다). 리뷰 수정 D3(SEC-26): 관심 영역 칸 크기는 서버가 쓸 수 있는
+        //   20·40·80·160 m(ProtocolLimits.InterestCellSizes)만 받는다.
+        // 입력: reader - 본문(PacketId 뒤).
+        // 출력: 맞으면 true와 카탈로그, 아니면 false.
         // Allocates the catalog: read once per join.
         public static bool TryRead(ref PacketReader reader, out BuildCatalogData c)
         {
@@ -458,7 +462,8 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadSingle(out data.InterestCellSize);
             reader.TryReadByte(out data.InterestRadius);
             reader.TryReadByte(out data.InterestKeepMargin);
-            if (!Positive(data.BuildRange) || !Positive(data.ViewAngleDegrees) || !Positive(data.HarvestRange) || !Positive(data.InterestCellSize))
+            if (!Positive(data.BuildRange) || !Positive(data.ViewAngleDegrees) || !Positive(data.HarvestRange) ||
+                !ProtocolLimits.IsInterestCellSize(data.InterestCellSize))
                 return false;
             if (data.MaxResource == 0 || data.HarvestCooldownTicks == 0 || data.MinBuildIntervalTicks == 0) return false;
             c = data;

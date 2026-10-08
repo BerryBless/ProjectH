@@ -130,6 +130,9 @@ public sealed class BuildingCatalog
         return catalog!;
     }
 
+    // 기능: building.json을 읽고 검증한다(리뷰 수정 D3: 관심 영역 칸 크기는 Client 파서와 같은 ProtocolLimits.InterestCellSizes만).
+    // 입력: json - 파일 내용, simHz - Tick 속도, catalog·error - 결과.
+    // 출력: 맞으면 true와 카탈로그, 아니면 false와 이유.
     public static bool TryParse(string json, int simHz, out BuildingCatalog? catalog, out string? error)
     {
         catalog = null;
@@ -207,8 +210,9 @@ public sealed class BuildingCatalog
         InterestJson? interest = root.Interest;
         if (interest == null) return Fail("\"interest\" is required.", out error);
         // The window is a 64-bit mask over the interest cells: at most 8 x 8 cells, and each a whole number of build cells.
-        double cellsPerSide = 2 * GameMap.HalfSize / interest.CellSize;
-        if (!(interest.CellSize >= 20) || cellsPerSide != Math.Floor(cellsPerSide) || interest.CellSize % BuildGrid.CellSize != 0)
+        // Review fix D3: the sizes the clients' parser accepts (ProtocolLimits.InterestCellSizes: whole build cells, at most
+        // 8 x 8 interest cells over the map).
+        if (!ProtocolLimits.IsInterestCellSize((float)interest.CellSize) || interest.CellSize != (float)interest.CellSize)
             return Fail("interest.cellSize must be 20, 40, 80 or 160 (whole build cells, at most 8 x 8 interest cells).", out error);
         if (interest.Radius < 0 || interest.Radius > 7 || interest.KeepMargin < 0 || interest.KeepMargin > 7)
             return Fail("interest.radius and interest.keepMargin must be 0-7.", out error);

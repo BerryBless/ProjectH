@@ -54,7 +54,7 @@ public class LagCompensationTests
     }
 
     // Fires once, aimed at where the target was at aimTick, claiming the shooter saw tick viewTick.
-    private bool Shoot(float viewTick, uint aimTick)
+    private bool Shoot(uint viewTick, uint aimTick)
     {
         Vector3 aimPoint = _targetAt[aimTick] + Chest;
         TestAim.YawPitch(_shooter.State.Position, aimPoint, out float yaw, out float pitch);
@@ -82,21 +82,20 @@ public class LagCompensationTests
     [InlineData(-16, -12, true)]
     public void Shot_RewindsTargetToViewTick(int viewOffset, int aimOffset, bool expectedHit)
     {
-        Assert.Equal(expectedHit, Shoot(_latest + viewOffset, (uint)(_latest + aimOffset)));
+        Assert.Equal(expectedHit, Shoot((uint)(_latest + viewOffset), (uint)(_latest + aimOffset)));
     }
 
-    // Review Focus: ViewTick comes from the client. NaN, a far future tick or a huge past must not rewind
-    // further than 12 ticks, and must not crash or reach outside the history ring.
+    // Review Focus: ViewTick comes from the client. "Now" (uint.MaxValue), a far future tick or the oldest tick must not
+    // rewind further than 12 ticks, and must not crash or reach outside the history ring. Review fix D2: a uint (the old
+    // NaN and +Infinity cases are uint.MaxValue, the huge past is 0).
     [Theory]
-    [InlineData(float.NaN, 0, true)]
-    [InlineData(float.NaN, -4, false)]
-    [InlineData(float.PositiveInfinity, 0, true)]
-    [InlineData(1e9f, 0, true)]
-    [InlineData(1e9f, -4, false)]
-    [InlineData(-1e9f, -12, true)]
-    [InlineData(float.NegativeInfinity, -12, true)]
-    [InlineData(float.NegativeInfinity, -16, false)]
-    public void UntrustedViewTick_IsClampedToTheLastTwelveTicks(float viewTick, int aimOffset, bool expectedHit)
+    [InlineData(uint.MaxValue, 0, true)]
+    [InlineData(uint.MaxValue, -4, false)]
+    [InlineData(1_000_000_000u, 0, true)]
+    [InlineData(1_000_000_000u, -4, false)]
+    [InlineData(0u, -12, true)]
+    [InlineData(0u, -16, false)]
+    public void UntrustedViewTick_IsClampedToTheLastTwelveTicks(uint viewTick, int aimOffset, bool expectedHit)
     {
         Assert.Equal(expectedHit, Shoot(viewTick, (uint)(_latest + aimOffset)));
     }
@@ -116,7 +115,7 @@ public class LagCompensationTests
         match.TryGetPlayer(1, out var a);
         a.State.Position = new Vector3(1f, 0f, 1f);
         var packet = new PlayerInputPacket { Count = 1 };
-        packet.Set(0, new InputCommand { Seq = 1, Buttons = InputButtons.Fire, ViewTick = -1e9f });
+        packet.Set(0, new InputCommand { Seq = 1, Buttons = InputButtons.Fire, ViewTick = 0 });   // review fix D2: the oldest claim
         match.EnqueueInput(1, packet);
         match.Tick();
 

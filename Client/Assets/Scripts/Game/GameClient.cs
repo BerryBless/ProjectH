@@ -437,6 +437,10 @@ namespace ProjectH.Client.Game
 
         // Review fix B3: datagrams dropped by the authentication layer on this client (F1 line).
         public long AuthDrops => _net.AuthDrops;
+        // Review fix D3 (F1 line): server ticks refused as too far ahead (this join's clock plus the vehicle store) and remote
+        // spawns refused at the table's cap.
+        public int TickRejects => (_clock != null ? _clock.TickRejects : 0) + _vehicles.TickRejects;
+        public int SpawnRejects => _remotePlayers.SpawnRejects;
 
         // 기능: Resources/ServerPublicKey.txt(서버 RSA 공개키 XML)를 읽는다. 배포할 때 이 파일을 운영 서버의 공개키로 바꾼다.
         // 입력: 없음.
@@ -691,8 +695,13 @@ namespace ProjectH.Client.Game
             }
             _projectileViews.Tick(Time.time);
             DrawVehicles();
-            if (_predictor == null) _buildStore.ClearChanged();   // nothing reads the changes before the spawn: do not let them pile up
-            if (_predictor == null) return;
+            if (_predictor == null)
+            {
+                // Review fix D4 (STB-2): pieces synced before our own spawn still get their views (they already block the
+                // predicted movement), instead of their changes being thrown away.
+                UpdateBuildPresentationWithoutPredictor();
+                return;
+            }
             float now = Time.time;
             bool alive = !_predictor.IsDead;
 
@@ -725,14 +734,15 @@ namespace ProjectH.Client.Game
                 // too close to the eye to give a direction.
                 // Invariant (D6): ViewTick is exactly the _renderTick passed to _remotePlayers.Render in this
                 // frame's Update, so the server rewinds targets to where this frame drew them (and where the
-                // crosshair ray above hit them). Float only because that is the wire type.
+                // crosshair ray above hit them), truncated to the uint wire type (review fix D2: a float lost whole ticks
+                // past 2^24, about 6.5 days of server uptime).
                 // Same tick basis on both sides: the interpolator is fed header.ServerTick, and the server
                 // records History[N] after all of tick N's moves and sends that N in the snapshot, so tick N
                 // is one moment on both sides. ServerClock.RenderTick is stateful (it never goes backwards):
                 // call it once per frame in Update and never recompute it here, or the two values diverge.
-                // Never stale while _pendingSteps > 0: _predictor exists only after join, join makes the
-                // clock ready, and ClearMatchState nulls both together.
-                _predictor.SetAim(_pendingSteps, aimPoint, _camera.Yaw, _camera.AimPitch, (float)_renderTick);   // Phase 17: recoil included
+                // Never stale while _pendingSteps > 0: _predictor exists only after join (IsMySpawn: Joined and our
+                // non-zero id), join makes the clock ready, and ClearMatchState nulls both together.
+                _predictor.SetAim(_pendingSteps, aimPoint, _camera.Yaw, _camera.AimPitch, ServerClock.ToViewTick(_renderTick));   // Phase 17: recoil included
                 shots = StepWeapons(_pendingSteps);
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                 // QA-5 D29: the steps exactly as sent (aim filled in by SetAim above).
@@ -1071,8 +1081,7 @@ namespace ProjectH.Client.Game
         // 출력: 반환값 없음. 화면 Object와 HUD가 갱신된다.
         private void UpdateBuildPresentation(bool alive, float now)
         {
-            _pieceViews.Apply(_buildStore, _build.Catalog, EstimatedServerTick());
-            _buildStore.ClearChanged();
+            ApplyPieceChanges(_pieceViews, _buildStore, _build.Catalog, EstimatedServerTick());
             _buildPreview.Update(_build);
             _editOverlay.Update(_edit);
             bool onFoot = _predictor.CanAct;   // Phase 19: no swing while seated
@@ -1089,6 +1098,21 @@ namespace ProjectH.Client.Game
                 _build.ShownResource(BuildMaterialType.Metal));
             _buildHud.SetMode(alive && _tools.Current == ToolKind.Build, _build.Selection.Piece, _build.Selection.Material, _edit.Active, _edit.Target.Type);
             _buildHud.Tick(now);
+        }
+
+        // 기능: 예측기(내 Spawn)가 없을 때 확정 조각의 뷰만 갱신한다(리뷰 수정 D4, STB-2). LateUpdateGame이 매 프레임 부른다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 바뀐 조각의 뷰가 만들어지거나 갱신되고 변경 목록이 비워진다. 할당 없음(뷰는 풀에서).
+        private void UpdateBuildPresentationWithoutPredictor() =>
+            ApplyPieceChanges(_pieceViews, _buildStore, _build.Catalog, EstimatedServerTick());
+
+        // 기능: 저장소의 바뀐 조각을 뷰에 반영하고 변경 목록을 비운다(예측기가 있든 없든 같은 경로).
+        // 입력: views - 조각 뷰, store - 확정 조각 저장소, catalog - 건설 수치(아직 없으면 null), serverTick - 추정 서버 Tick(시계 전이면 0).
+        // 출력: 반환값 없음. store.Changed가 비워진다.
+        public static void ApplyPieceChanges(BuildPieceViews views, BuildStore store, BuildCatalogData catalog, double serverTick)
+        {
+            views.Apply(store, catalog, serverTick);
+            store.ClearChanged();
         }
 
         // The server tick now, estimated as the match HUD does (render tick plus the interpolation delay); 0 before a clock.
@@ -1685,14 +1709,15 @@ namespace ProjectH.Client.Game
             }
         }
 
-        // 기능: 플레이어 등장을 처리한다. 나면 예측(Phase 16: Loot 상태 연결)과 내 뷰를 만들고, 남이면 원격 뷰를 만든다(Phase 14: 팀원이면 초록).
+        // 기능: 플레이어 등장을 처리한다. 나면(IsMySpawn: 참가 뒤 내 id) 예측(Phase 16: Loot 상태 연결)과 내 뷰를 만들고, 남이면 원격 뷰를
+        //   만든다(Phase 14: 팀원이면 초록). 리뷰 수정 D3: id 0이나 참가 전의 내 id는 무시하고, 원격 표가 가득 차 받지 않은 플레이어는 이름도 넣지 않는다.
         // 입력: spawned - 등장 이벤트(이름 포함).
-        // 출력: 반환값 없음. 이름 표에 등록된다.
+        // 출력: 반환값 없음. 받아들인 등장은 이름 표에 등록된다.
         private void OnSpawned(PlayerSpawned spawned)
         {
-            _names[spawned.EntityId] = spawned.Name;
-            if (spawned.EntityId == MyEntityId)
+            if (IsMySpawn(_net.State, MyEntityId, spawned.EntityId))
             {
+                _names[spawned.EntityId] = spawned.Name;
                 if (_predictor != null) return;
                 // Phase 12: the spawn carries no mode; a resumed player in the air gets it from the next snapshot.
                 _predictor = new LocalPlayerPredictor(_simHz, new MoveState { Position = spawned.Position, Yaw = spawned.Yaw }, _doors);
@@ -1710,9 +1735,21 @@ namespace ProjectH.Client.Game
                 _inventoryHud.SetVisible(true);
                 return;
             }
+            // Review fix D3 (SEC-25): our own id before the join answer, or id 0, is nobody: no remote view for it either.
+            if (spawned.EntityId == 0 || spawned.EntityId == MyEntityId) return;
             _remotePlayers.Spawn(spawned, _clock != null ? _clock.LatestTick : 0);
+            // SEC-24: a name only for a player the table took (the table is capped), so _names stays bounded with it.
+            if (!_remotePlayers.Contains(spawned.EntityId)) return;
+            _names[spawned.EntityId] = spawned.Name;
             _remotePlayers.SetTeammate(spawned.EntityId, _squad.Contains(spawned.EntityId));   // Phase 14 D14
         }
+
+        // 기능: PlayerSpawned가 내 캐릭터의 등장인지 가른다(리뷰 수정 D3, SEC-25). 참가 응답 전이나 id 0의 Spawn은 내 것이 아니다
+        //   (예측기를 만들지 않는다: Join 전 Spawn은 SimHz 0으로 예측기를 망가뜨렸다).
+        // 입력: state - 연결 상태, myId - 참가 응답의 내 Entity id(없으면 0), spawnedId - 등장한 Entity id.
+        // 출력: Joined이고 myId가 0이 아니며 spawnedId가 myId면 true.
+        public static bool IsMySpawn(ClientState state, ushort myId, ushort spawnedId) =>
+            state == ClientState.Joined && myId != 0 && spawnedId == myId;
 
         // 기능: 플레이어 퇴장: 원격 뷰·이름·발소리 상태(Phase 18)를 지운다.
         // 입력: entityId - 퇴장한 플레이어.
@@ -1725,13 +1762,13 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: Snapshot을 적용한다: 내 체력·실드·무기·도구, 내 엔티티로 이동 예측 교정(Phase 19: 내린 순간 Snap을 위해 마지막 내 기록을 기억),
-        //   원격 플레이어 표본.
+        //   원격 플레이어 표본. 리뷰 수정 D3: 시계가 너무 앞선 Tick으로 거절한 Snapshot은 통째로 버린다(보간기·예측 교정에 넣지 않는다).
         // 입력: header - 헤더, entities·count - NetClient의 재사용 배열.
         // 출력: 반환값 없음.
         private void OnSnapshot(in WorldSnapshotHeader header, SnapshotEntity[] entities, int count)
         {
             if (_clock == null) return;
-            _clock.OnSnapshot(header.ServerTick, Time.unscaledTimeAsDouble);
+            if (!_clock.OnSnapshot(header.ServerTick, Time.unscaledTimeAsDouble)) return;
 
             // D10: our own health, shield and weapon come with every snapshot. Phase 13 D5: and our tool.
             _health = header.Self.Health;

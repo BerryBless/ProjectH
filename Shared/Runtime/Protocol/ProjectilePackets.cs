@@ -39,7 +39,8 @@ namespace ProjectH.Shared.Protocol
 
         // 기능: ProjectileSpawned 본문(PacketId 뒤)을 읽는다.
         // 입력: reader - 본문.
-        // 출력: 성공하면 true와 사건. 짧거나 id 0이거나 모르는 종류이거나 위치·속도가 유한하지 않으면 false.
+        // 출력: 성공하면 true와 사건. 짧거나 id 0이거나 모르는 종류이거나 위치·속도가 유한하지 않으면 false. 리뷰 수정 D3: 위치 성분이
+        //   ±ProjectilePositionLimit 밖이거나 속력이 ProjectileSpeedLimit를 넘어도 false.
         public static bool TryRead(ref PacketReader reader, out ProjectileSpawned p)
         {
             p = default;
@@ -52,8 +53,16 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadUInt32(out p.StartTick);
             if (p.Id == 0 || kind == 0 || kind > (byte)ProjectileKind.Rocket) return false;
             p.Kind = (ProjectileKind)kind;
-            return Finite.Check(p.Position) && Finite.Check(p.Velocity);
+            return InRange(p.Position, p.Velocity);
         }
+
+        // 기능: 투사체 위치·속도가 서버가 보낼 수 있는 범위인지 본다(리뷰 수정 D3, Spawned·State 공용).
+        // 입력: position - 위치, velocity - 속도.
+        // 출력: 위치 성분이 ±ProjectilePositionLimit 안이고 속력이 ProjectileSpeedLimit 이하면(모두 유한) true.
+        internal static bool InRange(Vector3 position, Vector3 velocity) =>
+            ProtocolLimits.Within(position, ProtocolLimits.ProjectilePositionLimit) &&
+            ProtocolLimits.Within(velocity, ProtocolLimits.ProjectileSpeedLimit) &&
+            velocity.LengthSquared() <= ProtocolLimits.ProjectileSpeedLimit * ProtocolLimits.ProjectileSpeedLimit;
     }
 
     // S->C: a projectile's flight changed other than by gravity (a grenade bounced or came to rest). Position and Velocity
@@ -81,7 +90,7 @@ namespace ProjectH.Shared.Protocol
 
         // 기능: ProjectileState 본문(PacketId 뒤)을 읽는다.
         // 입력: reader - 본문.
-        // 출력: 성공하면 true와 사건. 짧거나 id 0이거나 위치·속도가 유한하지 않으면 false.
+        // 출력: 성공하면 true와 사건. 짧거나 id 0이거나 위치·속도가 유한하지 않으면 false. 리뷰 수정 D3: ProjectileSpawned와 같은 범위 밖이어도 false.
         public static bool TryRead(ref PacketReader reader, out ProjectileState s)
         {
             s = default;
@@ -90,7 +99,7 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadVector3(out s.Position);
             reader.TryReadVector3(out s.Velocity);
             reader.TryReadUInt32(out s.Tick);
-            return s.Id != 0 && Finite.Check(s.Position) && Finite.Check(s.Velocity);
+            return s.Id != 0 && ProjectileSpawned.InRange(s.Position, s.Velocity);
         }
     }
 
