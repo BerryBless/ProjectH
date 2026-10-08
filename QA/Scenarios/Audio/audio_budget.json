@@ -1,0 +1,162 @@
+{
+  "schemaVersion": 1,
+  "name": "Audio: Voice Budget Under Gunfire",
+  "description": "Phase 18 D2, D12 (request §84, §85): fourteen players spraying full SMG bursts within 20 m of the Unity player: the player plays many SMG shots, hits the 24-voice budget (droppedBudget > 0) and never plays more than 24 voices at once (fixed AudioSource pool). Logic only. Needs --unity-exe; SKIPPED without it.",
+  "tags": [
+    "audio",
+    "unity"
+  ],
+  "seed": 18004,
+  "timeoutSeconds": 180,
+  "server": {
+    "mode": "launch",
+    "options": {
+      "Server:MinPlayers": "2"
+    }
+  },
+  "actors": [
+    {
+      "id": "viewer",
+      "type": "UnityClient",
+      "unity": {
+        "width": 1280,
+        "height": 720
+      }
+    }
+  ],
+  "steps": [
+    {
+      "id": "viewer_launch",
+      "phase": "arrange",
+      "action": "connect",
+      "actor": "viewer"
+    },
+    {
+      "id": "viewer_joined",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "joined",
+      "equals": true,
+      "timeoutMilliseconds": 30000
+    },
+    {
+      "id": "spawn",
+      "action": "spawnActors",
+      "count": 14,
+      "prefix": "gun"
+    },
+    {
+      "id": "connect_all",
+      "action": "connectAll",
+      "prefix": "gun"
+    },
+    {
+      "id": "match_playing",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 20000
+    },
+    {
+      "id": "in_game",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "screen",
+      "equals": "InGame",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "viewer_place",
+      "action": "setPosition",
+      "actor": "viewer",
+      "position": {
+        "x": -45,
+        "z": -45,
+        "yaw": 45
+      }
+    },
+    {
+      "id": "groups",
+      "action": "actorGroup",
+      "prefix": "gun",
+      "groups": [
+        {
+          "name": "fighters",
+          "rest": true
+        }
+      ]
+    },
+    {
+      "id": "fight",
+      "phase": "act",
+      "action": "groupCombat",
+      "group": "fighters",
+      "pairing": "pairs",
+      "weapon": "Wisp SMG",
+      "center": {
+        "x": -45,
+        "z": -45
+      },
+      "radius": 20,
+      "spacing": 8,
+      "pairDistance": 6,
+      "hitPercent": 0,
+      "shield": 100,
+      "burst": 30,
+      "pauseMs": 100,
+      "ammo": 900,
+      "description": "Seven pairs spraying full SMG bursts within 20 m of the Unity player"
+    },
+    {
+      "id": "spray",
+      "action": "wait",
+      "milliseconds": 3000
+    },
+    {
+      "id": "heard_smg",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.GunSMG",
+      "greaterThan": 24,
+      "timeoutMilliseconds": 8000
+    },
+    {
+      "id": "within_budget",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.active",
+      "lessThan": 25,
+      "timeoutMilliseconds": 1000
+    },
+    {
+      "id": "budget_hit",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.droppedBudget",
+      "greaterThan": 0,
+      "timeoutMilliseconds": 5000,
+      "description": "The pool really was full: requests were refused or cut by the budget"
+    },
+    {
+      "id": "spray_more",
+      "phase": "act",
+      "action": "wait",
+      "milliseconds": 2000
+    },
+    {
+      "id": "still_within",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.active",
+      "lessThan": 25,
+      "timeoutMilliseconds": 1000
+    },
+    {
+      "id": "stop",
+      "action": "stopGroup",
+      "group": "fighters"
+    }
+  ]
+}

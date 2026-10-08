@@ -1,3 +1,4 @@
+using ProjectH.Client.Game.Audio;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.EventSystems;
@@ -110,6 +111,9 @@ namespace ProjectH.Client.UI
         }
 
         // A button centred at position in its parent. onClick runs on the main thread from the EventSystem's update.
+        // 기능: 부모 가운데 기준 위치에 글자 버튼을 만든다. Phase 18 D9: 모든 버튼이 클릭음(UiSound.Click)을 낸다(클릭음은 여기 한 곳).
+        // 입력: name - GameObject 이름, parent - 부모, label - 글자, position·size - 위치·크기, onClick - 클릭 처리.
+        // 출력: 만든 Button. 리스너는 버튼 GameObject와 함께 사라진다.
         public static Button CreateButton(string name, Transform parent, string label, Vector2 position, Vector2 size, UnityAction onClick)
         {
             RectTransform rect = CreateRect(name, parent, new Vector2(0.5f, 0.5f), position, size);
@@ -117,6 +121,7 @@ namespace ProjectH.Client.UI
             image.color = ButtonColor;
             var button = rect.gameObject.AddComponent<Button>();
             button.targetGraphic = image;
+            button.onClick.AddListener(UiSound.Click);
             button.onClick.AddListener(onClick);
             Text text = CreateText("Label", rect, label, 24, TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f), Vector2.zero, size);
             text.horizontalOverflow = HorizontalWrapMode.Overflow;

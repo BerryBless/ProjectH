@@ -6,6 +6,16 @@ using UnityEngine;
 
 namespace ProjectH.Client.Game
 {
+    // Phase 18 D5: one remote player as drawn this frame (RemotePlayers.CollectPoses), for the footsteps.
+    public struct RemotePose
+    {
+        public ushort EntityId;
+        public Vector3 Feet;
+        public MovementMode Mode;
+        public bool Sprinting;
+        public bool Alive;
+    }
+
     // Views of other players. An entry is added on PlayerSpawned and removed on PlayerDespawned or
     // Clear() (disconnect / destroy), so the dictionary cannot outlive the match.
     // Alive or dead comes from each snapshot's flag, not from the PlayerDied/PlayerRespawned events: a
@@ -71,6 +81,27 @@ namespace ProjectH.Client.Game
             alive = entry.Alive;
             return true;
         }
+
+        // 기능: 모든 원격 플레이어가 renderTick에 그려지는 발·모드·질주·생존을 버퍼에 쓴다(Phase 18 D5: 발소리).
+        // 입력: renderTick - 렌더 Tick, buffer - 결과를 쓸 고정 배열(가득 차면 나머지는 쓰지 않는다).
+        // 출력: 쓴 수. 샘플이 없는 플레이어는 빠진다. 할당 없음(구조체 열거자).
+        public int CollectPoses(double renderTick, RemotePose[] buffer)
+        {
+            int count = 0;
+            foreach (var pair in _entries)
+            {
+                if (count == buffer.Length) break;
+                Entry entry = pair.Value;
+                if (!entry.Interpolator.TrySample(renderTick, out Vector3 feet, out _, out MovementMode mode, out bool sprinting, out _)) continue;
+                buffer[count++] = new RemotePose { EntityId = pair.Key, Feet = feet, Mode = mode, Sprinting = sprinting, Alive = entry.Alive };
+            }
+            return count;
+        }
+
+        // 기능: 원격 플레이어가 Snapshot 기준으로 살아 있는지 본다(Phase 18 D9: 재투입 판단).
+        // 입력: entityId - 플레이어 id.
+        // 출력: 알고 있고 살아 있으면 true.
+        public bool IsAlive(ushort entityId) => _entries.TryGetValue(entityId, out Entry entry) && entry.Alive;
 
         // 기능: 조준 Raycast가 맞힌 Collider가 어느 원격 플레이어의 피격 상자인지 찾는다(Phase 15 D6: Enemy Ping).
         // 입력: hit - 맞은 Collider(null 가능).

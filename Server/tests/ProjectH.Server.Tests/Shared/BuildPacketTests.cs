@@ -212,7 +212,7 @@ public class BuildPacketTests
     }
 
     [Fact]
-    public void Destroyed_Is4Bytes_Edited6_Health6_AndTheHeader9()
+    public void Destroyed_Is5Bytes_Edited6_Health6_AndTheHeader9()
     {
         var writer = new PacketWriter(_buffer);
         BuildEventsPacket.WriteHeader(ref writer, 99);
@@ -225,8 +225,9 @@ public class BuildPacketTests
         BuildEventsPacket.WriteHealth(ref writer, 7, 120);
         Assert.Equal(6, writer.Length - before);
         before = writer.Length;
-        BuildEventsPacket.WriteDestroyed(ref writer, 8);
-        Assert.Equal(4, writer.Length - before);
+        BuildEventsPacket.WriteDestroyed(ref writer, 8, BuildDestroyReason.Collapsed);
+        Assert.Equal(5, writer.Length - before);   // Phase 18 D6: id + reason
+        Assert.Equal(5, BuildEventsPacket.DestroyedSize);
         BuildEventsPacket.Patch(_buffer, 0, 1, 1, 1);
         var r = After(writer.Length, PacketId.BuildEvents);
         Assert.True(BuildEventsPacket.TryReadHeader(ref r, out uint version, out int placed, out int edited, out int health, out int destroyed));
@@ -235,13 +236,34 @@ public class BuildPacketTests
         Assert.Equal((5u, BuildEdit.PackState(16, 1)), (eid, state));
         Assert.True(BuildEventsPacket.TryReadHealth(ref r, out uint hid, out ushort damage));
         Assert.Equal((7u, (ushort)120), (hid, damage));
-        Assert.True(BuildEventsPacket.TryReadDestroyed(ref r, out uint did));
-        Assert.Equal(8u, did);
+        Assert.True(BuildEventsPacket.TryReadDestroyed(ref r, out uint did, out BuildDestroyReason reason));
+        Assert.Equal((8u, BuildDestroyReason.Collapsed), (did, reason));
+        Assert.Equal(0, r.Remaining);
 
         // Counts that do not match the bytes are refused.
         BuildEventsPacket.Patch(_buffer, 1, 1, 1, 1);
         r = After(writer.Length, PacketId.BuildEvents);
         Assert.False(BuildEventsPacket.TryReadHeader(ref r, out _, out _, out _, out _, out _));
+    }
+
+    // Phase 18 D6: a Destroyed record's reason is 0 (destroyed) or 1 (collapsed); anything else, or id 0, is refused. The
+    // reason-less reader still consumes the whole 5-byte record.
+    [Fact]
+    public void Destroyed_Reason_RoundTrips_AndUnknownIsRefused()
+    {
+        foreach ((uint id, byte reason, bool ok) in new[] { (8u, (byte)0, true), (8u, (byte)1, true), (8u, (byte)2, false), (8u, (byte)255, false), (0u, (byte)1, false) })
+        {
+            var writer = new PacketWriter(_buffer);
+            BuildEventsPacket.WriteDestroyed(ref writer, id, (BuildDestroyReason)reason);
+            var r = new PacketReader(new ReadOnlySpan<byte>(_buffer, 0, writer.Length));
+            Assert.Equal(ok, BuildEventsPacket.TryReadDestroyed(ref r, out _, out BuildDestroyReason read));
+            if (ok) Assert.Equal((BuildDestroyReason)reason, read);
+        }
+        var w = new PacketWriter(_buffer);
+        BuildEventsPacket.WriteDestroyed(ref w, 9, BuildDestroyReason.Collapsed);
+        var all = new PacketReader(new ReadOnlySpan<byte>(_buffer, 0, w.Length));
+        Assert.True(BuildEventsPacket.TryReadDestroyed(ref all, out uint did));
+        Assert.Equal((9u, 0), (did, all.Remaining));
     }
 
     [Fact]
@@ -302,6 +324,7 @@ public class BuildPacketTests
     [Fact]
     public void ATicksEvents_SplitIntoPackets_InOrder_AndFilterByCell()
     {
+        static BuildDestroyReason ReasonOf(uint id) => id % 2 == 0 ? BuildDestroyReason.Collapsed : BuildDestroyReason.Destroyed;
         BuildingCatalog catalog = BuildingCatalog.Default(30);
         var world = new BuildWorld(catalog);
         var replication = new BuildReplication(world, catalog, 100);
@@ -320,7 +343,7 @@ public class BuildPacketTests
         for (int i = 300; i < 1024; i++)
         {
             world.TryGetSlot(ids[i], out int slot);
-            replication.Destroyed(slot, ids[i], shapes[i]);
+            replication.Destroyed(slot, ids[i], shapes[i], ReasonOf(ids[i]));
         }
         replication.Collect();
 
@@ -346,7 +369,8 @@ public class BuildPacketTests
                 for (int i = 0; i < h; i++) Assert.True(BuildEventsPacket.TryReadHealth(ref r, out _, out _));
                 for (int i = 0; i < d; i++)
                 {
-                    Assert.True(BuildEventsPacket.TryReadDestroyed(ref r, out uint id));
+                    Assert.True(BuildEventsPacket.TryReadDestroyed(ref r, out uint id, out BuildDestroyReason reason));
+                    Assert.Equal(ReasonOf(id), reason);   // Phase 18 D6: each record keeps its own reason across the split
                     Assert.True(id > lastDestroyed);
                     lastDestroyed = id;
                 }

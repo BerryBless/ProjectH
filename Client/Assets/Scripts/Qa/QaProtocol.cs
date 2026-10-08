@@ -115,6 +115,12 @@ namespace ProjectH.Client.Qa
     //                           client's copy of the server rule; the server also checks the line of sight).
     //   Phase 17 (written only when Projectiles has a value, after lootPrompt):
     //   projectiles           - grenades and rockets drawn this frame (the client's projectile views, D7).
+    //   Phase 18 (written only when Audio has a value, after projectiles; QaAudioStatus):
+    //   audio                 - {"plays":{<kind>:<count>, ...every kind...},"active":n,"droppedBudget":n,"droppedDuplicate":n,
+    //                           "droppedDistance":n,"queueOverflow":n}: sounds started per kind since the client started, voices
+    //                           playing now, and the requests the mixer dropped (budget: no voice or the per-frame cap, plus voices
+    //                           cut off; duplicate: same kind and source within its interval; distance: beyond the kind's audible
+    //                           distance; queueOverflow: the 64-request queue was full). Counters only grow.
     public struct QaMapStatus
     {
         public bool MapOpen;
@@ -134,6 +140,20 @@ namespace ProjectH.Client.Qa
         public int SupplyDrops;
         public string LootPrompt;          // null = not written
         public int? Projectiles;           // Phase 17: null = not written
+        public QaAudioStatus? Audio;       // Phase 18: null = not written
+    }
+
+    // Phase 18 D12: the audio counters /qa/status reports (QaMapStatus.Audio). KindNames and Plays are parallel arrays (index =
+    // the client's sound kind), passed by reference without a copy; the writer reads min(length) entries.
+    public struct QaAudioStatus
+    {
+        public string[] KindNames;
+        public int[] Plays;
+        public int Active;
+        public int DroppedBudget;
+        public int DroppedDuplicate;
+        public int DroppedDistance;
+        public int QueueOverflow;
     }
 
     public enum QaJsonResult : byte
@@ -961,6 +981,7 @@ namespace ProjectH.Client.Qa
 
         // 기능: 지도 필드를 쓴다(앞에 쉼표를 붙인다). 정규 값은 소수 넷째 자리까지, 월드 값은 둘째 자리까지(없으면 null).
         //   Phase 16: LootPrompt가 있으면 mapSupplyDrops와 lootPrompt를 끝에 더한다. Phase 17: 그 뒤 Projectiles가 있으면 projectiles를 더한다.
+        //   Phase 18: 그 뒤 Audio가 있으면 audio 객체를 더한다.
         // 입력: sb - 이어 쓸 StringBuilder, map - 지도 필드.
         // 출력: 반환값 없음.
         private static void AppendMap(StringBuilder sb, in QaMapStatus map)
@@ -1001,6 +1022,37 @@ namespace ProjectH.Client.Qa
             if (!map.Projectiles.HasValue) return;
             sb.Append(",\"projectiles\":");
             QaJsonWriter.AppendLong(sb, map.Projectiles.Value);
+            if (map.Audio.HasValue) AppendAudio(sb, map.Audio.Value);
+        }
+
+        // 기능: audio 객체를 쓴다(앞에 쉼표를 붙인다, Phase 18 D12). 종류 이름이 null인 칸은 건너뛴다.
+        // 입력: sb - 이어 쓸 StringBuilder, audio - 오디오 카운터.
+        // 출력: 반환값 없음. 할당 없음.
+        private static void AppendAudio(StringBuilder sb, in QaAudioStatus audio)
+        {
+            sb.Append(",\"audio\":{\"plays\":{");
+            int n = audio.KindNames == null || audio.Plays == null ? 0 : Math.Min(audio.KindNames.Length, audio.Plays.Length);
+            bool first = true;
+            for (int i = 0; i < n; i++)
+            {
+                if (audio.KindNames[i] == null) continue;
+                if (!first) sb.Append(',');
+                first = false;
+                QaJsonWriter.AppendString(sb, audio.KindNames[i]);
+                sb.Append(':');
+                QaJsonWriter.AppendLong(sb, audio.Plays[i]);
+            }
+            sb.Append("},\"active\":");
+            QaJsonWriter.AppendLong(sb, audio.Active);
+            sb.Append(",\"droppedBudget\":");
+            QaJsonWriter.AppendLong(sb, audio.DroppedBudget);
+            sb.Append(",\"droppedDuplicate\":");
+            QaJsonWriter.AppendLong(sb, audio.DroppedDuplicate);
+            sb.Append(",\"droppedDistance\":");
+            QaJsonWriter.AppendLong(sb, audio.DroppedDistance);
+            sb.Append(",\"queueOverflow\":");
+            QaJsonWriter.AppendLong(sb, audio.QueueOverflow);
+            sb.Append('}');
         }
 
         // 기능: 월드 좌표 값을 소수 둘째 자리(1 cm)까지 쓰고, NaN이면 JSON null을 쓴다.

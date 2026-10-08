@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using ProjectH.Client.Bootstrap;
 using ProjectH.Client.CameraControl;
+using ProjectH.Client.Game.Audio;
 using ProjectH.Client.Game.Map;
 using ProjectH.Client.Input;
 using ProjectH.Client.Net;
@@ -62,7 +63,12 @@ namespace ProjectH.Client.Game
         private BuildPreview _buildPreview;
         private HarvestEffects _harvestEffects;
         private BuildHud _buildHud;
-        private readonly BuildAudio _buildAudio = new BuildAudio();
+        // Phase 18: the sound system (created in Awake, disposed in OnDestroy) and the building sound hook that feeds it.
+        private GameAudio _audio;
+        private BuildAudio _buildAudio;
+        // Phase 18 D9: the ServerTick of this connection's join or resume answer. The server resends live projectiles with
+        // StartTick = that tick; a real launch carries a later one. 0 before a join (cleared with the match state).
+        private uint _projectileJoinTick;
         private Material _buildSource;
         private float _nextSwingAt;
         // Phase 14 D2, D8, D10, D14: our team and its channels (cleared with the match state and at a new round's countdown),
@@ -282,6 +288,7 @@ namespace ProjectH.Client.Game
             SupplyDrops = _map.QaSupplyDrops,
             LootPrompt = Qa.QaHttp.LootPromptName((byte)_lootPrompt),
             Projectiles = _projectileViews.Drawn,   // Phase 17
+            Audio = _audio.QaStatus,                // Phase 18 D12
         };
 #endif
 
@@ -320,13 +327,14 @@ namespace ProjectH.Client.Game
         public bool MapTogglePressed => _input.MapPressed;
 
         // 기능: UiFlow의 전체 지도 상태를 받는다(UiRoot가 매 프레임 부른다, Phase 15 D4). 열릴 때 편집 모드를 취소한다(지도가 열려 있으면
-        //   Esc가 편집에 가지 않으므로 편집이 끝나지 않는다).
+        //   Esc가 편집에 가지 않으므로 편집이 끝나지 않는다). Phase 18 D9: 열기·닫기 소리.
         // 입력: open - 전체 지도가 열려 있는지.
         // 출력: 반환값 없음. 전체 지도가 열리거나 닫힌다.
         public void SetMapOpen(bool open)
         {
             if (open == _mapOpen) return;
             _mapOpen = open;
+            _audio.Play2D(open ? SoundKind.MapOpen : SoundKind.MapClose);
             if (open) CancelEdit();
             _map.SetFullOpen(open);
         }
@@ -393,13 +401,17 @@ namespace ProjectH.Client.Game
             _reconnectPending = false;
         }
 
-        // 기능: 월드·입력·카메라·HUD·건설 표시(Phase 13.5: 편집 오버레이)·분대 표시(Phase 14: 분대 HUD, 팀원 표지, 스테이션 기둥)·
-        //   지도(Phase 15: 미니맵, 전체 지도, 월드 표지)·Loot 표시(Phase 16: Container, Supply Drop)·투사체 표시(Phase 17)·네트워크를 만들고
-        //   네트워크 이벤트(Phase 17: 투사체 패킷 3종 포함)를 구독한다.
+        // 기능: 소리 시스템(Phase 18: 클립 합성, 목소리 풀, UI 클릭음 연결)·월드·입력·카메라·HUD·건설 표시(Phase 13.5: 편집 오버레이)·
+        //   분대 표시(Phase 14: 분대 HUD, 팀원 표지, 스테이션 기둥)·지도(Phase 15: 미니맵, 전체 지도, 월드 표지)·Loot 표시(Phase 16: Container,
+        //   Supply Drop)·투사체 표시(Phase 17)·네트워크를 만들고 네트워크 이벤트(Phase 17: 투사체 패킷 3종, Phase 18: 사건 Placed·WorldSound 포함)를
+        //   구독한다.
         // 입력: 없음(Unity가 한 번 부른다).
         // 출력: 반환값 없음. 만든 것은 모두 OnDestroy가 해제한다. 배치와 편집은 순번 카운터 하나를 같이 쓴다.
         private void Awake()
         {
+            _audio = new GameAudio();
+            _buildAudio = new BuildAudio(_audio);
+            UiSound.Sink = _audio;
             _world = MapWorld.Build(out _worldMaterials, out _terrainMesh);
             _input = new InputReader();
 
@@ -492,6 +504,8 @@ namespace ProjectH.Client.Game
             _net.ProjectileSpawnedReceived += OnProjectileSpawned;
             _net.ProjectileStateReceived += OnProjectileState;
             _net.ProjectileExplodedReceived += OnProjectileExploded;
+            _net.BuildPlacedEventReceived += OnBuildPlacedEvent;
+            _net.WorldSoundReceived += OnWorldSound;
         }
 
         // 기능: 한 프레임의 Client 처리: 네트워크 Poll, 재접속, 입력·커서, 원격 플레이어 렌더, 시점과 이동 예측, 로컬 뷰 배치.
@@ -544,9 +558,10 @@ namespace ProjectH.Client.Game
         //   Phase 16: Container·Supply Drop 표시(등장 전에도), "[E] 열기" 안내(소생·재투입 다음, 문과는 더 가까운 쪽, 줍기보다 먼저, D4).
         //   Phase 17: 투사체·폭발 표시(등장 전에도, 지금 서버 Tick 추정으로 외삽), 내 예광탄의 퍼짐·산탄(로켓은 예광탄 없음)과 반동 킥, 무기 줄의
         //   탄 종류 이름.
-        // 입력: 없음(Unity가 매 프레임 부른다).
+        //   Phase 18: 내 예측 사격의 총성(로켓은 발사음)을 낸다.
+        // 입력: 없음(LateUpdate가 매 프레임 부른다).
         // 출력: 반환값 없음. 예측 입력이 전송되고 화면이 갱신된다.
-        private void LateUpdate()
+        private void LateUpdateGame()
         {
             // Before the early return: items spin (and are visible) before the local player has spawned. No allocation.
             _worldItems.Tick(Time.time);
@@ -622,6 +637,8 @@ namespace ProjectH.Client.Game
             {
                 // Phase 17 D3: tracers in the weapon's cone (a rocket has none: its ProjectileSpawned draws it), and the kick.
                 WeaponInfo fired = _weapons.Current;
+                // Phase 18 D9: our shot sounds when predicted (the server's ShotFired and our rocket's ProjectileSpawned do not).
+                _audio.Play2D(AudioCatalog.GunshotFor(fired), MyEntityId);
                 if (fired.Projectile == ProjectileKind.None)
                     _fireEffects.FireLocal(shots, fired.Pellets, fired.SpreadDegrees, fired.Range, aimPoint, _predictor.RenderPosition, _camera.Yaw, now);
                 _camera.Kick(fired.RecoilDegrees * shots);
@@ -663,6 +680,53 @@ namespace ProjectH.Client.Game
             UpdateInventoryHud(alive, onFoot && door < 0 && loot < 0 && !squadTarget, now);
             UpdateMatchHud(alive);
             UpdateMap(alive, watching, followFeet);
+        }
+
+        // 기능: 프레임 끝 처리: 게임 화면(LateUpdateGame) 뒤에 소리(Phase 18)를 처리한다. 소리는 이번 프레임의 모든 이벤트 뒤에 섞는다.
+        // 입력: 없음(Unity가 매 프레임 부른다).
+        // 출력: 반환값 없음.
+        private void LateUpdate()
+        {
+            LateUpdateGame();
+            TickAudio();
+        }
+
+        // 기능: 소리 한 프레임(Phase 18): 문 변화(D9: 예측 마스크와 마지막으로 들은 마스크 비교), 발소리(D5), 내 재장전 시작, 자기장 축소 시작
+        //   (Tick이 지나는 것을 직접 본 경우만)과 밖 피해 틱, 그리고 믹서·목소리 풀.
+        // 입력: 없음(카메라 위치가 듣는 위치다: AudioListener가 카메라에 있다).
+        // 출력: 반환값 없음. 고른 소리가 재생된다. 할당 없음.
+        private void TickAudio()
+        {
+            float now = Time.unscaledTime;
+            Vector3 listener = _mainCamera != null ? _mainCamera.transform.position : Vector3.zero;
+            if (_audio.Doors.Poll(_doors.OpenMask, now, out int opened, out int closed)) PlayDoorSounds(opened, closed);
+            if (_predictor != null)
+            {
+                _audio.TickFootsteps(_remotePlayers, _renderTick, MyEntityId, _predictor, _buildStore, listener, now, Time.unscaledDeltaTime);
+                bool alive = !_predictor.IsDead;
+                if (_audio.Reload.Update(alive && _weapons != null && _weapons.HasWeapon && _weapons.Reloading)) _audio.Play2D(SoundKind.Reload);
+                double tick = EstimatedServerTick();
+                bool inMatch = _hasMatch && (_match.State == MatchFlowState.Playing || _match.State == MatchFlowState.FinalPhase);
+                if (_audio.ZoneShrink.Update(tick, inMatch)) _audio.Play2D(SoundKind.ZoneWarning);
+                Vector3 feet = _predictor.PredictedPosition;
+                bool outside = inMatch && alive && _zone.Phase != 0 && tick > 0 && ZoneMath.IsOutside(_zone, feet.x, feet.z, tick);
+                if (_audio.ZoneDamage.Update(outside, now)) _audio.Play2D(SoundKind.ZoneDamage);
+            }
+            _audio.Tick(listener, now);
+        }
+
+        // 기능: 바뀐 문마다 열림·닫힘 소리를 그 문 자리에서 낸다(Phase 18 D9).
+        // 입력: opened - 열린 문 비트, closed - 닫힌 문 비트(GameMap.Doors 순서).
+        // 출력: 반환값 없음. 소리 요청이 큐에 들어간다.
+        private void PlayDoorSounds(int opened, int closed)
+        {
+            ReadOnlySpan<Box> doorBoxes = GameMap.Doors;
+            for (int i = 0; i < doorBoxes.Length; i++)
+            {
+                int bit = 1 << i;
+                if ((opened & bit) != 0) _audio.Play3D(SoundKind.DoorOpen, doorBoxes[i].Center.ToUnity(), (uint)i);
+                else if ((closed & bit) != 0) _audio.Play3D(SoundKind.DoorClose, doorBoxes[i].Center.ToUnity(), (uint)i);
+            }
         }
 
         // 기능: 지도 한 프레임(Phase 15): 가운데 버튼 Ping(D6, 기절해도 보낸다: canAct·ActionsAllowed를 지나지 않는다), 열린 전체 지도의
@@ -774,7 +838,7 @@ namespace ProjectH.Client.Game
 
         // 기능: 편집 모드 한 프레임(Phase 13.5 D10, D11): H로 조준한 내 조각의 편집을 시작하거나 확정하고, Esc로 취소, 오른쪽 클릭으로
         //   Reset을 보내며, 왼쪽 버튼으로 칸을 고른다. 편집이 끝날 때 왼쪽 버튼이 눌려 있으면 떼기 전까지 쏘지 않게 막는다.
-        //   보낸 지 오래된 편집 예측도 여기서 지운다.
+        //   보낸 지 오래된 편집 예측도 여기서 지운다. Phase 18 D9: 편집을 보내면(확정·Reset) 그때 편집 소리를 낸다(내 Edited 기록은 소리 없음).
         // 입력: alive - 살아 있음, onFoot - 행동 가능 모드, now - 현재 시각, aimCollider - 이번 프레임 조준 Raycast가 맞힌 Collider(null 가능).
         // 출력: 반환값 없음. 편집 모드·선택·예측이 바뀌고, 요청이 나갈 수 있다. 할당 없음(안내 문구는 상수).
         private void UpdateEdit(bool alive, bool onFoot, float now, Collider aimCollider)
@@ -787,8 +851,10 @@ namespace ProjectH.Client.Game
             {
                 if (_edit.Active)
                 {
+                    uint editTarget = _edit.TargetId;
                     EditSendResult sent = _edit.Confirm(now, _buildStore);
-                    if (sent == EditSendResult.Invalid) _buildHud.ShowNotice(UiText.EditInvalid, now);
+                    if (sent == EditSendResult.Sent) _audio.Play2D(SoundKind.BuildEdit, editTarget);
+                    else if (sent == EditSendResult.Invalid) _buildHud.ShowNotice(UiText.EditInvalid, now);
                     else if (sent == EditSendResult.Busy) _buildHud.ShowNotice(UiText.BuildRefusal(BuildResultCode.RateLimited), now);
                 }
                 else if (_pieceViews.TryGetPieceId(aimCollider, out uint pieceId))
@@ -806,8 +872,10 @@ namespace ProjectH.Client.Game
                 }
                 else if (canAct && _input.AimPressed)
                 {
-                    if (_edit.ResetPiece(now, _buildStore) == EditSendResult.Busy)
-                        _buildHud.ShowNotice(UiText.BuildRefusal(BuildResultCode.RateLimited), now);
+                    uint editTarget = _edit.TargetId;
+                    EditSendResult reset = _edit.ResetPiece(now, _buildStore);
+                    if (reset == EditSendResult.Sent) _audio.Play2D(SoundKind.BuildEdit, editTarget);
+                    else if (reset == EditSendResult.Busy) _buildHud.ShowNotice(UiText.BuildRefusal(BuildResultCode.RateLimited), now);
                 }
                 Ray ray = _camera.AimRay;
                 _edit.Update(canAct, _buildStore, eye, range, ray.origin.ToNumerics(), ray.direction.ToNumerics(),
@@ -846,7 +914,7 @@ namespace ProjectH.Client.Game
                 float interval = _build.Catalog != null && _simHz > 0 ? _build.Catalog.HarvestCooldownTicks / (float)_simHz : 0.5f;
                 _nextSwingAt = now + Mathf.Max(0.1f, interval);
                 _harvestEffects.Swing(_predictor.RenderPosition, _camera.Yaw, now);
-                _buildAudio.Play(BuildSound.Swing, _predictor.RenderPosition);
+                _buildAudio.Play(BuildSound.Swing, _predictor.RenderPosition, MyEntityId);
             }
             _harvestEffects.Tick(now);
             _buildHud.SetVisible(alive);
@@ -859,6 +927,12 @@ namespace ProjectH.Client.Game
         // The server tick now, estimated as the match HUD does (render tick plus the interpolation delay); 0 before a clock.
         private double EstimatedServerTick() =>
             _clock != null && _clock.IsReady && _simHz > 0 ? _renderTick + _interpolationDelaySeconds * _simHz : 0;
+
+        // 기능: 이벤트 처리기(Poll 안)에서 쓸 지금 서버 Tick을 낸다(Phase 18 D9). 입장 직후의 Poll에서는 _renderTick이 아직 0이라
+        //   EstimatedServerTick이 틀리므로, 받은 가장 새 Tick(입장 응답의 ServerTick 포함)과 큰 쪽을 쓴다.
+        // 입력: 없음.
+        // 출력: 추정 서버 Tick, 시계가 없으면 0.
+        private double EventServerTick() => _clock != null ? Math.Max(EstimatedServerTick(), _clock.LatestTick) : 0;
 
         // Phase 13 D16: the F1 build line (UiRoot owns the overlay). Request §190: Development Builds (and the Editor) only.
         // 기능: F1 건설 줄을 갱신한다(Development Build·Editor만).
@@ -1073,7 +1147,7 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 구독을 풀고 만든 것을 만든 역순으로 해제한다(편집 오버레이는 공유 Mesh보다 먼저, Phase 14 분대 표시, Phase 15 지도,
-        //   Phase 16 Loot 표시, Phase 17 투사체 표시 포함).
+        //   Phase 16 Loot 표시, Phase 17 투사체 표시, Phase 18 소리 시스템 포함).
         // 입력: 없음(Unity가 부른다, 종료 때도).
         // 출력: 반환값 없음.
         private void OnDestroy()
@@ -1122,8 +1196,13 @@ namespace ProjectH.Client.Game
             _net.ProjectileSpawnedReceived -= OnProjectileSpawned;
             _net.ProjectileStateReceived -= OnProjectileState;
             _net.ProjectileExplodedReceived -= OnProjectileExploded;
+            _net.BuildPlacedEventReceived -= OnBuildPlacedEvent;
+            _net.WorldSoundReceived -= OnWorldSound;
             _net.Dispose();
             ClearMatchState();
+            // Phase 18: the clips and voices go with the client; buttons that outlive it no longer reach the audio.
+            if (UiSound.Sink == _audio) UiSound.Sink = null;
+            _audio.Dispose();
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             _qaRecorder?.Dispose();
             _qaRecorder = null;
@@ -1305,6 +1384,8 @@ namespace ProjectH.Client.Game
 
         // 기능: 참가 응답을 처리한다. 성공(또는 재개)이면 Entity·Tick 정보와 시계를 정하고 건설·편집·도구 상태를 처음으로 되돌린다.
         //   Phase 17 D7: 투사체를 비운다(서버가 살아 있는 것을 ProjectileSpawned로 다시 보낸다).
+        //   Phase 18 D9: 소리의 상태 비교를 처음으로 되돌린다(이어서 오는 문·Container·Supply Drop 상태는 기준일 뿐 변화가 아니다). 응답의
+        //   ServerTick을 투사체 재전송 기준으로 기억한다.
         // 입력: response - 서버의 참가 응답.
         // 출력: 반환값 없음. 거절이면 자동 재접속을 멈춘다.
         private void OnJoined(JoinMatchResponse response)
@@ -1328,6 +1409,9 @@ namespace ProjectH.Client.Game
             _build.SimHz = response.SimHz;
             _tools.Reset();
             ClearProjectiles();
+            _audio.ResetMatch();
+            _audio.Doors.ArmBaseline(Time.unscaledTime, false);
+            _projectileJoinTick = response.ServerTick;
             _interpolationDelaySeconds = InterpolationSnapshots / response.SnapshotHz;
             _clock = new ServerClock(response.SimHz);
             _clock.OnSnapshot(response.ServerTick, Time.unscaledTimeAsDouble);
@@ -1345,6 +1429,7 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 투사체 생성(또는 입장·재개 때의 재전송)을 상태에 넣는다(Phase 17 D7). 종류의 중력·수명은 카탈로그에서 찾는다.
+        //   Phase 18 D4, D9: 발사·던지기 소리(주인 0·StartTick이 입장 Tick 이하인 재전송·내 로켓은 소리 없음, 내 수류탄은 2D).
         // 입력: spawned - 받은 생성 사건.
         // 출력: 반환값 없음. 다음 LateUpdate가 그린다.
         private void OnProjectileSpawned(ProjectileSpawned spawned)
@@ -1354,6 +1439,11 @@ namespace ProjectH.Client.Game
             float gravity = kind >= 0 ? _projectileCatalog[kind].Gravity : 0f;
             uint lifetime = kind >= 0 ? _projectileCatalog[kind].LifetimeTicks : (uint)Math.Max(1, _simHz) * 10u;
             _projectiles.Spawn(spawned, gravity, lifetime);
+            if (AudioEventRules.LaunchSound(spawned, MyEntityId, _projectileJoinTick, out SoundKind launch, out bool own))
+            {
+                if (own) _audio.Play2D(launch, spawned.Id);
+                else _audio.Play3D(launch, spawned.Position.ToUnity(), spawned.OwnerId);
+            }
         }
 
         // 기능: 투사체 튕김·멈춤(Phase 17 D7)으로 외삽 기준을 고친다. 모르는 id는 무시한다.
@@ -1362,6 +1452,7 @@ namespace ProjectH.Client.Game
         private void OnProjectileState(ProjectileState state) => _projectiles.ApplyState(state);
 
         // 기능: 투사체 폭발(Phase 17 D7, D8): 투사체를 지우고 그 자리에 종류의 반지름만큼 커지는 폭발 효과를 보인다(모르는 id여도 효과는 보인다).
+        //   Phase 18 D4: 폭발 소리(3D, 150 m).
         // 입력: exploded - 받은 폭발 사건.
         // 출력: 반환값 없음.
         private void OnProjectileExploded(ProjectileExploded exploded)
@@ -1370,6 +1461,7 @@ namespace ProjectH.Client.Game
             int kind = WeaponCatalogPacket.Find(_projectileCatalog, _projectileCatalog != null ? _projectileCatalog.Length : 0, exploded.Kind);
             float radius = kind >= 0 ? _projectileCatalog[kind].ExplosionRadius : 4f;
             _projectileViews.Explode(exploded.Position.ToUnity(), radius, Time.time);
+            _audio.Play3D(SoundKind.Explosion, exploded.Position.ToUnity(), exploded.Id);
         }
 
         // 기능: 모든 투사체를 지우고 그 뷰와 폭발을 숨긴다(Phase 17 D7: 끊김, 입장·재개, 경기 상태가 Waiting·Starting·Finished로 바뀔 때).
@@ -1397,9 +1489,13 @@ namespace ProjectH.Client.Game
         }
 
         // Feedback only (the inventory changes through InventoryState). Constant strings: no allocation.
+        // 기능: 줍기 결과를 알린다(Phase 18 D9: 성공이면 줍기 소리, 실패면 안내 문구).
+        // 입력: result - 서버의 줍기 결과.
+        // 출력: 반환값 없음.
         private void OnPickupResult(PickupResult result)
         {
-            if (result.Result == PickupResultCode.Full) _inventoryHud.ShowNotice("가방이 가득 찼습니다", Time.time);
+            if (result.Result == PickupResultCode.Ok) _audio.Play2D(SoundKind.Pickup);
+            else if (result.Result == PickupResultCode.Full) _inventoryHud.ShowNotice("가방이 가득 찼습니다", Time.time);
             else if (result.Result == PickupResultCode.NothingInRange) _inventoryHud.ShowNotice("주울 수 있는 물건이 없습니다", Time.time);
         }
 
@@ -1446,9 +1542,13 @@ namespace ProjectH.Client.Game
             _remotePlayers.SetTeammate(spawned.EntityId, _squad.Contains(spawned.EntityId));   // Phase 14 D14
         }
 
+        // 기능: 플레이어 퇴장: 원격 뷰·이름·발소리 상태(Phase 18)를 지운다.
+        // 입력: entityId - 퇴장한 플레이어.
+        // 출력: 반환값 없음.
         private void OnDespawned(ushort entityId)
         {
             _remotePlayers.Despawn(entityId);
+            _audio.Footsteps.Forget(entityId);
             _names.Remove(entityId);
         }
 
@@ -1477,24 +1577,36 @@ namespace ProjectH.Client.Game
         }
 
         // D12: our own shots were already drawn when predicted.
+        // 기능: 다른 사람의 사격을 보이고(예광선) 그 무기의 총성(Phase 18 D4, 3D)을 낸다. 내 사격은 예측 때 이미 그렸고 소리도 냈다.
+        // 입력: shot - 받은 ShotFired(무기 id 포함).
+        // 출력: 반환값 없음.
         private void OnShot(ShotFired shot)
         {
-            if (shot.ShooterId == MyEntityId) return;
+            if (!AudioEventRules.RemoteShotSounds(shot.ShooterId, MyEntityId)) return;
             _fireEffects.ShowRemoteShot(shot.Start.ToUnity(), shot.End.ToUnity(), Time.time);
+            _audio.Play3D(AudioCatalog.GunshotForId(_weaponCatalog, shot.WeaponId), shot.Start.ToUnity(), shot.ShooterId);
         }
 
+        // 기능: 내 명중 표시와 맞힘 확인음(처치면 처치음, Phase 18 D8).
+        // 입력: hit - 받은 HitConfirmed.
+        // 출력: 반환값 없음.
         private void OnHitConfirmed(HitConfirmed hit)
         {
             _hud.ShowHit(hit.Killed, Time.time);
+            _audio.Play2D(hit.Killed ? SoundKind.KillConfirm : SoundKind.HitMarker);
         }
 
+        // 기능: 받은 피해의 방향 표시와 피해음(Phase 18 D8: 플래그로 실드 맞음·실드 깨짐·체력 맞음).
+        // 입력: damage - 받은 DamageTaken.
+        // 출력: 반환값 없음.
         private void OnDamageTaken(DamageTaken damage)
         {
             _hud.ShowDamage(damage.FromDirection.ToUnity(), Time.time);
+            _audio.Play2D(AudioEventRules.DamageSound(damage));
         }
 
         // 기능: 사망(탈락) 사건을 처리한다: Kill Feed 줄(Phase 17: 폭발 표시), 내 사망이면 예측 정지·반동 해제·관전 시작(경기 중) 또는
-        //   부활 카운트다운(개발 모드).
+        //   부활 카운트다운(개발 모드). Phase 18 D8: 내 사망 소리(입장 알림은 소리 없음).
         // 입력: died - 사망 사건.
         // 출력: 반환값 없음. 팀이 살아 있는 중의 Placement는 잠정 값이라 쓰지 않는다(최종 순위는 MatchResult, Phase 14 D6).
         private void OnPlayerDied(PlayerDied died)
@@ -1512,6 +1624,7 @@ namespace ProjectH.Client.Game
             if (died.VictimId != MyEntityId || _predictor == null) return;
             if (!notice)
             {
+                _audio.Play2D(SoundKind.SelfDied);
                 _died = true;
                 _killedByZone = died.KillerId == 0;
                 _deathCause = died.Cause;
@@ -1534,19 +1647,26 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 부활(경기 시작·라운드 초기화 포함)을 처리한다. 남이면 순간이동만, 나면 예측·입력·도구·편집 모드·관전·반동(Phase 17)을 새 생명으로
-        //   되돌린다.
+        //   되돌린다. Phase 18: 발소리 상태를 잊고(첫 표본 건너뜀), 재투입이면 재투입 소리(D9), 수송기 탑승 부활(경기 시작: 서버가 문을 모두
+        //   닫는다)이면 다음 문 상태를 잠깐 기준으로 삼는다. 라운드 리셋과 개발 모드 부활은 문을 건드리지 않아 기준을 걸지 않는다.
         // 입력: respawned - 부활 이벤트.
         // 출력: 반환값 없음.
         private void OnPlayerRespawned(PlayerRespawned respawned)
         {
             // Other players' alive state follows their snapshot flags (RemotePlayers.Push). Their teleport is told
             // here too, because the match start and the round reset do not flip the flag (alive -> alive).
+            bool nearStation = AudioEventRules.NearRebootStation(respawned.Position);
+            _audio.Footsteps.Forget(respawned.EntityId);
             if (respawned.EntityId != MyEntityId)
             {
+                if (AudioEventRules.IsReboot(!_remotePlayers.IsAlive(respawned.EntityId), nearStation, respawned.Mode, _hasMatch, _match.State))
+                    _audio.Play3D(SoundKind.Reboot, respawned.Position.ToUnity(), respawned.EntityId);
                 _remotePlayers.Teleport(respawned.EntityId, respawned.Position.ToUnity());
                 return;
             }
             if (_predictor == null) return;
+            if (AudioEventRules.IsReboot(_predictor.IsDead, nearStation, respawned.Mode, _hasMatch, _match.State)) _audio.Play2D(SoundKind.Reboot);
+            else if (respawned.Mode == MovementMode.Transport) _audio.Doors.ArmBaseline(Time.unscaledTime, true);   // the air-drop match start
             // Also the match start and the round reset (Phase 5 D3, D13): the same teleport, Seq continues. Phase 12: aboard
             // the drop transport at a match start.
             _predictor.Respawn(new MoveState { Position = respawned.Position, Yaw = respawned.Yaw, Mode = respawned.Mode });
@@ -1569,11 +1689,17 @@ namespace ProjectH.Client.Game
         // 기능: 경기 상태를 저장한다. 새 라운드 카운트다운(대기·시작)이면 결과·수송기 경로와 Phase 14 팀·채널, Phase 15 팀 Ping·Waypoint를 지운다.
         //   Phase 16: Container 열기 가능 조건(경기 중)을 맞춘다. Loot 상태 자체는 서버가 보내는 빈 패킷으로 비운다.
         //   Phase 17 D6: 상태가 Waiting·Starting·Finished로 바뀔 때만 투사체를 비운다(서버가 말없이 지운다; 입장 뒤 첫 MatchState는 바뀜이 아니다).
+        //   Phase 18 D9: Starting → Playing·FinalPhase(경기 시작, 서버가 문을 모두 닫는다)이면 다음 문 상태를 잠깐 기준으로 삼는다.
         // 입력: state - 받은 MatchState.
         // 출력: 반환값 없음. 처음 받으면 경기 HUD를 보인다.
         private void OnMatchState(MatchState state)
         {
             if (ProjectileTracks.ClearsOnMatchState(_hasMatch, _match.State, state.State)) ClearProjectiles();
+            // Phase 18 D9: a match start (also without the air drop) closes every door on the server: that DoorStates is a baseline.
+            // A one-phase zone enters FinalPhase in the start tick, so the client sees Starting -> FinalPhase.
+            if (_hasMatch && _match.State == MatchFlowState.Starting
+                && (state.State == MatchFlowState.Playing || state.State == MatchFlowState.FinalPhase))
+                _audio.Doors.ArmBaseline(Time.unscaledTime, true);
             _match = state;
             _loot.SetMatch(true, state.State);
             if (!_hasMatch)
@@ -1608,11 +1734,12 @@ namespace ProjectH.Client.Game
             _remotePlayers.ApplyTeam(_squad);
         }
 
-        // 기능: 기절 사건(Phase 14 D5)을 Kill Feed에 "A ▸ B 기절"로 더한다(사건마다 한 번 문자열을 만든다).
+        // 기능: 기절 사건(Phase 14 D5)을 Kill Feed에 "A ▸ B 기절"로 더한다(사건마다 한 번 문자열을 만든다). Phase 18 D8: 내 기절이면 기절 소리.
         // 입력: downed - 기절 사건(AttackerId 0이면 원인 이름).
         // 출력: 반환값 없음.
         private void OnPlayerDowned(PlayerDowned downed)
         {
+            if (downed.VictimId == MyEntityId) _audio.Play2D(SoundKind.SelfDowned);
             string attacker = downed.AttackerId == 0 ? null : UiText.NameOr(NameOf(downed.AttackerId), downed.AttackerId);
             _killFeed.Add(UiText.DownedLine(attacker, UiText.NameOr(NameOf(downed.VictimId), downed.VictimId), downed.Cause), Time.unscaledTime);
         }
@@ -1635,9 +1762,13 @@ namespace ProjectH.Client.Game
             _stationViews.Apply(stations);
         }
 
+        // 기능: 자기장 상태를 저장하고 표시와 축소 시작 경고(Phase 18 D9: 받은 순간 시작 Tick이 아직 앞일 때만 준비)에 넘긴다.
+        // 입력: zone - 받은 ZoneState.
+        // 출력: 반환값 없음.
         private void OnZoneState(ZoneState zone)
         {
             _zone = zone;
+            _audio.ZoneShrink.OnZoneState(zone, EventServerTick());
             _zoneView.SetZone(zone);
         }
 
@@ -1680,18 +1811,43 @@ namespace ProjectH.Client.Game
             _map.ApplyMarkers(pings, pingCount, waypoints, waypointCount);
 
         // 기능: Container 생성·열림 마스크(Phase 16 D3)를 적용한다. 뷰는 다음 LateUpdate가 바뀐 것만 고친다.
+        //   Phase 18 D9: 이미 생성되어 있던 Container가 새로 열렸으면 그 자리에서 열림 소리(입장·재개 뒤 첫 상태는 기준).
         // 입력: spawned - 생성된 Container 비트, opened - 열린 Container 비트.
         // 출력: 반환값 없음.
-        private void OnContainerStates(ulong spawned, ulong opened) => _loot.ApplyContainers(spawned, opened);
+        private void OnContainerStates(ulong spawned, ulong opened)
+        {
+            ulong fresh = _audio.Containers.Apply(spawned, opened);
+            ReadOnlySpan<LootContainer> containers = LootContainers.All;
+            for (int i = 0; fresh != 0 && i < containers.Length && i < 64; i++)
+            {
+                if ((fresh & (1UL << i)) != 0) _audio.Play3D(SoundKind.ContainerOpen, containers[i].Position.ToUnity(), (uint)i);
+            }
+            _loot.ApplyContainers(spawned, opened);
+        }
 
         // 기능: Supply Drop 목록(Phase 16 D7)으로 상태를 통째로 바꾼다. 뷰·지도는 다음 LateUpdate가 그린다.
+        //   Phase 18 D9: 이전 목록에서 낙하 중이던 것이 착지했으면 착지 소리(3D, 150 m).
         // 입력: drops·count - NetClient의 재사용 배열(호출 동안만 유효, 복사한다).
         // 출력: 반환값 없음.
-        private void OnSupplyDrops(SupplyDropInfo[] drops, int count) => _loot.ApplyDrops(drops, count);
+        private void OnSupplyDrops(SupplyDropInfo[] drops, int count)
+        {
+            int landed = _audio.SupplyDrops.Apply(drops, count);
+            for (int i = 0; landed != 0 && i < count && i < drops.Length; i++)
+            {
+                SupplyDropInfo d = drops[i];
+                if (d.Id < 32 && (landed & (1 << d.Id)) != 0) _audio.Play3D(SoundKind.SupplyDropLand, new Vector3(d.X, d.LandY, d.Z), d.Id);
+            }
+            _loot.ApplyDrops(drops, count);
+        }
 
+        // 기능: 서버 문 상태를 예측에 적용한다. Phase 18 D9: 기준을 기다리는 중(입장·재개, 경기 시작 직후)이면 그 상태를 소리 없이 들은 것으로
+        //   한다. 아니면 서버가 바꾼 문의 소리를 낸다(내 예측과 같거나, PredictionSeconds 안의 내 예측과 반대인 문은 소리 없음: 키 한 번 = 소리 하나).
+        // 입력: openMask - 열린 문 비트.
+        // 출력: 반환값 없음.
         private void OnDoorStates(byte openMask)
         {
             _doors.ApplyServer(openMask);
+            if (_audio.Doors.OnServerState(_doors.OpenMask, Time.unscaledTime, out int opened, out int closed)) PlayDoorSounds(opened, closed);
         }
 
         // Phase 13 D4: what the client needs of the building numbers.
@@ -1705,15 +1861,16 @@ namespace ProjectH.Client.Game
 
         // 기능: 건설·편집 요청의 BuildResult를 순번으로 주인에게 보낸다(Phase 13.5 D9: 편집이면 편집 예측, 아니면 배치 대기).
         // 입력: result - 서버 결과.
-        // 출력: 반환값 없음. 거절이면 롤백·안내 문구·소리, Ok면 소리.
+        // 출력: 반환값 없음. 거절이면 롤백·안내 문구·소리, 배치의 Ok면 설치 소리. Phase 18 D9: 편집의 Ok는 소리 없음(보낼 때 이미 냈다).
         private void OnBuildResult(BuildResult result)
         {
             // An edit's result never reaches BuildController, so it cannot take an edit's Ok as a placement.
-            if (!_edit.OnResult(result, _buildStore, Time.time)) _build.OnResult(result);
+            bool edit = _edit.OnResult(result, _buildStore, Time.time);
+            if (!edit) _build.OnResult(result);
             Vector3 at = _predictor != null ? _predictor.RenderPosition : Vector3.zero;
             if (result.Code == BuildResultCode.Ok)
             {
-                _buildAudio.Play(BuildSound.Placed, at);
+                if (!edit) _buildAudio.Play(BuildSound.Placed, at, result.Sequence);
                 return;
             }
             _lastBuildRefusal = result.Code;
@@ -1722,30 +1879,75 @@ namespace ProjectH.Client.Game
         }
 
         // Phase 13 D7: our own harvest hit: the weak point marker, a fall's puff, the sounds.
+        // 기능: 내 채집 타격: 약점 표시·쓰러짐 효과와 소리(Phase 18: 소스 = 나).
+        // 입력: hit - 받은 HarvestHit.
+        // 출력: 반환값 없음.
         private void OnHarvestHit(HarvestHit hit)
         {
             _harvestEffects.OnHit(hit, Time.time);
             Vector3 at = hit.WeakPoint.ToUnity();
-            _buildAudio.Play(hit.Destroyed ? BuildSound.HarvestDestroyed : hit.WeakPointHit ? BuildSound.WeakPointHit : BuildSound.HarvestHit, at);
+            _buildAudio.Play(hit.Destroyed ? BuildSound.HarvestDestroyed : hit.WeakPointHit ? BuildSound.WeakPointHit : BuildSound.HarvestHit, at, MyEntityId);
+        }
+
+        // 기능: 다른 플레이어의 채집 소리(Phase 18 D7 WorldSound, 3D)를 낸다.
+        // 입력: sound - 받은 WorldSound(종류, 휘두른 사람, 맞은 점).
+        // 출력: 반환값 없음.
+        private void OnWorldSound(WorldSound sound)
+        {
+            SoundKind kind = sound.Kind == WorldSoundKind.HarvestDestroyed ? SoundKind.HarvestDestroyed : SoundKind.HarvestHit;
+            _audio.Play3D(kind, sound.Position.ToUnity(), sound.SourceId);
+        }
+
+        // 기능: 사건 Placed 기록(Sync 아님)의 설치 소리를 낸다(Phase 18 D6: 내 조각은 BuildResult Ok 때 이미 냈으므로 주인이 내가 아닐 때만).
+        // 입력: piece - 받은 조각 기록.
+        // 출력: 반환값 없음.
+        private void OnBuildPlacedEvent(BuildPieceRecord piece)
+        {
+            if (!AudioEventRules.OthersBuildSounds(piece.Owner, MyEntityId)) return;
+            _audio.Play3D(SoundKind.BuildPlace, BuildGrid.CenterOf(piece.Shape).ToUnity(), piece.Id);
         }
 
         // Phase 13 D13, D14: the building stream, applied by id (BuildStore).
         private void OnBuildPiece(BuildPieceRecord piece, uint version) => _buildStore.ApplyPiece(piece, version);
 
-        private void OnBuildHealth(uint id, ushort damage, uint version) => _buildStore.ApplyHealth(id, damage, version);
+        // 기능: Health 기록을 저장소에 적용한다. Phase 18 D6: 적용 전 피해보다 늘었으면 피해 소리(조각마다 0.15초 간격은 믹서의 중복 규칙).
+        // 입력: id - 조각 id, damage - 누적 피해, version - 건설 스트림 버전.
+        // 출력: 반환값 없음.
+        private void OnBuildHealth(uint id, ushort damage, uint version)
+        {
+            if (_buildStore.TryGetConfirmed(id, out BuildPieceRecord piece) && AudioEventRules.HealthDropped(piece.Damage, damage))
+                _audio.Play3D(SoundKind.BuildDamage, BuildGrid.CenterOf(piece.Shape).ToUnity(), id);
+            _buildStore.ApplyHealth(id, damage, version);
+        }
 
-        // 기능: Edited 기록(Phase 13.5 D8)을 저장소에 적용한다.
+        // 기능: Edited 기록(Phase 13.5 D8)을 저장소에 적용한다. Phase 18 D6: 주인이 내가 아니면 편집 소리(내 편집은 확정 예측 때 냈다).
         // 입력: id - 조각 id, state - 편집 뒤 상태, version - 건설 스트림 버전.
         // 출력: 반환값 없음. 그 조각에 맞지 않는 상태는 저장소가 무시하고 Ignored로 센다(F1).
-        private void OnBuildEdited(uint id, ushort state, uint version) => _buildStore.ApplyEdited(id, state, version);
+        private void OnBuildEdited(uint id, ushort state, uint version)
+        {
+            if (_buildStore.TryGetConfirmed(id, out BuildPieceRecord piece) && AudioEventRules.OthersBuildSounds(piece.Owner, MyEntityId))
+                _audio.Play3D(SoundKind.BuildEdit, BuildGrid.CenterOf(piece.Shape).ToUnity(), id);
+            _buildStore.ApplyEdited(id, state, version);
+        }
 
-        private void OnBuildDestroyed(uint id, uint version)
+        // 기능: Destroyed 기록을 처리한다: 그려진 자리(없으면 기록의 중심)에 먼지 효과와 소리, 그리고 저장소에서 지운다.
+        //   Phase 18 D6: 파괴는 파괴 소리, 붕괴는 이번 프레임의 붕괴 중 가장 가까운 하나만 붕괴 소리.
+        // 입력: id - 조각 id, reason - 부서짐(Destroyed) 또는 무너짐(Collapsed), version - 건설 스트림 버전.
+        // 출력: 반환값 없음. 모르는 조각이면 효과·소리 없이 무시된다(저장소가 Ignored로 센다).
+        private void OnBuildDestroyed(uint id, BuildDestroyReason reason, uint version)
         {
             // Destroyed (not just out of the window): a puff where it was drawn.
-            if (_pieceViews.TryGetCenter(id, out Vector3 center))
+            bool known = _pieceViews.TryGetCenter(id, out Vector3 center);
+            if (!known && _buildStore.TryGetConfirmed(id, out BuildPieceRecord piece))
+            {
+                center = BuildGrid.CenterOf(piece.Shape).ToUnity();
+                known = true;
+            }
+            if (known)
             {
                 _harvestEffects.Puff(center, BuildGrid.CellSize * 0.6f, Time.time);
-                _buildAudio.Play(BuildSound.PieceDestroyed, center);
+                if (reason == BuildDestroyReason.Collapsed) _audio.AddCollapse(center);
+                else _buildAudio.Play(BuildSound.PieceDestroyed, center, id);
             }
             _buildStore.ApplyDestroyed(id, version);
         }
@@ -1805,7 +2007,7 @@ namespace ProjectH.Client.Game
 
         // 기능: 경기 상태 전체를 비운다(끊김, 종료). 조각·편집 예측·편집 모드와 오버레이, Phase 14 팀·채널·스테이션·분대 표시,
         //   Phase 15 팀 Ping·Waypoint·경로 선·지도 아이콘·월드 표지, Phase 16 Container·Supply Drop 상태와 표시, Phase 17 투사체·폭발·투사체
-        //   카탈로그·카메라 반동도 비운다.
+        //   카탈로그·카메라 반동, Phase 18 소리 대기 요청·발소리·변화 추적 상태도 비운다.
         // 입력: 없음.
         // 출력: 반환값 없음. 화면 Object는 숨기거나 풀로 돌아간다.
         private void ClearMatchState()
@@ -1886,6 +2088,8 @@ namespace ProjectH.Client.Game
             _projectileCatalog = null;
             ClearProjectiles();
             _camera.ResetRecoil();
+            _audio.ResetMatch();
+            _projectileJoinTick = 0;
         }
     }
 }

@@ -103,7 +103,11 @@ namespace ProjectH.Client.Net
         public event Action<uint, ushort, uint> BuildHealthReceived;
         // Phase 13.5 D8: a piece's state after its last edit of a tick (id, BuildEdit state, version). Applied by id.
         public event Action<uint, ushort, uint> BuildEditedReceived;
-        public event Action<uint, uint> BuildDestroyedReceived;
+        // Phase 18 D6: a Placed record of the event stream (not a Sync), raised right after its BuildPieceReceived: a piece placed
+        // now (sounds), not one this client is only told about.
+        public event Action<BuildPieceRecord> BuildPlacedEventReceived;
+        // Phase 18 D6, D11: a destroyed record with why it went (Destroyed by damage or Collapsed).
+        public event Action<uint, BuildDestroyReason, uint> BuildDestroyedReceived;
         public event Action<uint> BuildResetReceived;
         public event Action<ulong> BuildInterestReceived;
         // Phase 14 D2, D5, D8, D10: our team, a knock-down (to everyone), a revive or reboot channel of our team, and the
@@ -121,6 +125,8 @@ namespace ProjectH.Client.Net
         public event Action<ProjectileSpawned> ProjectileSpawnedReceived;
         public event Action<ProjectileState> ProjectileStateReceived;
         public event Action<ProjectileExploded> ProjectileExplodedReceived;
+        // Phase 18 D7: a harvest hit near us by another player (Unreliable). Struct.
+        public event Action<WorldSound> WorldSoundReceived;
 
         public ClientState State { get; private set; } = ClientState.Disconnected;
         public string LastError { get; private set; }
@@ -322,7 +328,8 @@ namespace ProjectH.Client.Net
         }
 
         // 기능: 받은 패킷 하나를 읽어 해당 이벤트를 올린다(Phase 13.5: BuildEvents의 Edited 기록 포함, Phase 14: 분대 패킷 4종,
-        //   Phase 15: TeamMarkers, Phase 16: ContainerStates·SupplyDrops, Phase 17: 투사체 카탈로그와 투사체 패킷 3종).
+        //   Phase 15: TeamMarkers, Phase 16: ContainerStates·SupplyDrops, Phase 17: 투사체 카탈로그와 투사체 패킷 3종,
+        //   Phase 18: 사건 Placed 기록은 BuildPlacedEventReceived도 올리고(Sync는 아님), Destroyed 기록은 이유와 함께, WorldSound).
         //   메인 스레드에서 Poll이 부른다.
         // 입력: peer - 보낸 쪽(지금 연결이 아니면 무시), reader - 패킷, channelNumber·deliveryMethod - 쓰지 않는다.
         // 출력: 반환값 없음. 읽기에 실패한 기록이 있으면 그 패킷의 나머지는 버린다.
@@ -467,6 +474,7 @@ namespace ProjectH.Client.Net
                     {
                         if (!BuildPieceRecord.TryReadPlaced(ref packet, out var piece)) return;
                         BuildPieceReceived?.Invoke(piece, version);
+                        BuildPlacedEventReceived?.Invoke(piece);
                     }
                     for (int i = 0; i < edited; i++)
                     {
@@ -480,8 +488,8 @@ namespace ProjectH.Client.Net
                     }
                     for (int i = 0; i < gone; i++)
                     {
-                        if (!BuildEventsPacket.TryReadDestroyed(ref packet, out uint goneId)) return;
-                        BuildDestroyedReceived?.Invoke(goneId, version);
+                        if (!BuildEventsPacket.TryReadDestroyed(ref packet, out uint goneId, out BuildDestroyReason goneReason)) return;
+                        BuildDestroyedReceived?.Invoke(goneId, goneReason, version);
                     }
                     break;
 
@@ -539,6 +547,10 @@ namespace ProjectH.Client.Net
 
                 case PacketId.ProjectileExploded:
                     if (ProjectileExploded.TryRead(ref packet, out var projectileExploded)) ProjectileExplodedReceived?.Invoke(projectileExploded);
+                    break;
+
+                case PacketId.WorldSound:
+                    if (WorldSound.TryRead(ref packet, out var worldSound)) WorldSoundReceived?.Invoke(worldSound);
                     break;
             }
         }

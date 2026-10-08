@@ -19,6 +19,32 @@ public class HarvestPacketTests
         return reader;
     }
 
+    // Phase 18 D7: WorldSound is 16 bytes (id 47) and round-trips; an unknown kind, a short body or a non-finite position is refused.
+    [Fact]
+    public void WorldSound_Is16Bytes_RoundTrips_AndRefusesBadValues()
+    {
+        Assert.Equal(47, (byte)PacketId.WorldSound);
+        var sound = new WorldSound { Kind = WorldSoundKind.HarvestDestroyed, SourceId = 12, Position = new Vector3(3f, 1.2f, -40f) };
+        var writer = new PacketWriter(_buffer);
+        WorldSound.Write(ref writer, sound);
+        Assert.Equal(WorldSound.Size, writer.Length);
+        Assert.Equal(16, writer.Length);
+        var r = After(writer.Length, PacketId.WorldSound);
+        Assert.True(WorldSound.TryRead(ref r, out WorldSound read));
+        Assert.Equal((sound.Kind, sound.SourceId, sound.Position), (read.Kind, read.SourceId, read.Position));
+
+        r = After(writer.Length - 1, PacketId.WorldSound);
+        Assert.False(WorldSound.TryRead(ref r, out _));
+
+        foreach (WorldSound bad in new[] { sound with { Kind = (WorldSoundKind)2 }, sound with { Position = new Vector3(float.NaN, 0f, 0f) } })
+        {
+            writer = new PacketWriter(_buffer);
+            WorldSound.Write(ref writer, bad);
+            r = After(writer.Length, PacketId.WorldSound);
+            Assert.False(WorldSound.TryRead(ref r, out _));
+        }
+    }
+
     [Fact]
     public void ResourcesState_Is7Bytes_AndRoundTrips()
     {

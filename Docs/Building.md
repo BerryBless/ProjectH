@@ -169,7 +169,7 @@ flowchart LR
 | `BuildCatalog` (26) | S→C | 49 B | 재료 3개(비용·최대·처음 체력·건설 Tick), 최대 자원, 사거리, 시야각, 채집 사거리·간격, 최소 간격 Tick, 관심 칸 크기·반지름·여유. Join·Resume 때 채널 1의 첫 패킷(reset Sync 바로 앞) |
 | `BuildRequest` (27) | C→S | 9 B | 번호 u16, 조각, 재료, x, y, z, 회전 |
 | `BuildResult` (28) | S→C 본인 | 8 B | 번호, 코드, 조각 id |
-| `BuildEvents` (29) | S→C | 헤더 9 B + Placed 14 B / Edited 6 B / Health 6 B / Destroyed 4 B | Tick 끝, 받는 사람의 관심 칸에 든 것만, 이 순서로. 1200 B로 나눈다 |
+| `BuildEvents` (29) | S→C | 헤더 9 B + Placed 14 B / Edited 6 B / Health 6 B / Destroyed 5 B(id + 이유, Phase 18) | Tick 끝, 받는 사람의 관심 칸에 든 것만, 이 순서로. 1200 B로 나눈다 |
 | `BuildSync` (30) | S→C | 헤더 7 B + 조각 16 B × 최대 74 = 1191 B | 새로 들어온 관심 칸의 조각(체력 포함). reset 플래그는 모두 버리라는 뜻 |
 | `BuildInterest` (31) | S→C | 9 B | 관심 칸 64비트 마스크 |
 | `ResourcesState` (32) | S→C 본인 | 7 B | 나무·돌·금속 |

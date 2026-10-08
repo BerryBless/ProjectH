@@ -25,7 +25,9 @@ namespace ProjectH.Shared.Protocol
         // 16: Phase 17 weapons and throwables (the WeaponInfo pellets, spread, recoil and projectile fields and the projectile
         //     list of WeaponCatalog, the Shells and Rockets ammo types, the Grenade consumable, a 27-byte InventoryState, the
         //     ThrowGrenade button, ProjectileSpawned/ProjectileState/ProjectileExploded, DeathCause.Explosion).
-        public const ushort ProtocolVersion = 16;
+        // 17: Phase 18 gameplay audio (the weapon id in ShotFired, the reason byte of a BuildEvents Destroyed record (5 bytes),
+        //     the shield flags in DamageTaken, WorldSound).
+        public const ushort ProtocolVersion = 17;
 
         public const int MaxDevPlayerIdBytes = 32;
 

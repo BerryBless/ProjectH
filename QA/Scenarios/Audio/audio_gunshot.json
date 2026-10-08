@@ -1,0 +1,196 @@
+{
+  "schemaVersion": 1,
+  "name": "Audio: Gunshots By Distance",
+  "description": "Phase 18 D3, D4, D12 (request §81, §82, §85): a remote AR firing 10 m away plays the AR gunshot on the Unity player (3D, chosen by the weapon id in ShotFired); the same shots from about 198 m (past the 120 m range) play nothing and count as dropped by distance. Logic only, not sound quality. Needs --unity-exe; SKIPPED without it.",
+  "tags": [
+    "audio",
+    "unity"
+  ],
+  "seed": 18001,
+  "timeoutSeconds": 180,
+  "server": {
+    "mode": "launch",
+    "options": {
+      "Server:MinPlayers": "2"
+    }
+  },
+  "actors": [
+    {
+      "id": "viewer",
+      "type": "UnityClient",
+      "unity": {
+        "width": 1280,
+        "height": 720
+      }
+    },
+    {
+      "id": "shooter"
+    }
+  ],
+  "steps": [
+    {
+      "id": "viewer_launch",
+      "phase": "arrange",
+      "action": "connect",
+      "actor": "viewer"
+    },
+    {
+      "id": "viewer_joined",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "joined",
+      "equals": true,
+      "timeoutMilliseconds": 30000
+    },
+    {
+      "id": "shooter_connect",
+      "action": "connect",
+      "actor": "shooter"
+    },
+    {
+      "id": "match_playing",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 20000
+    },
+    {
+      "id": "in_game",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "screen",
+      "equals": "InGame",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "viewer_place",
+      "action": "setPosition",
+      "actor": "viewer",
+      "position": {
+        "x": -70,
+        "z": -70,
+        "yaw": 45
+      }
+    },
+    {
+      "id": "shooter_near",
+      "action": "setPosition",
+      "actor": "shooter",
+      "position": {
+        "x": -60,
+        "z": -70,
+        "yaw": 90
+      }
+    },
+    {
+      "id": "shooter_ar",
+      "action": "giveWeapon",
+      "actor": "shooter",
+      "weapon": "Vesper AR",
+      "rarity": 0,
+      "select": true
+    },
+    {
+      "id": "settle",
+      "action": "wait",
+      "milliseconds": 800
+    },
+    {
+      "id": "none_yet",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.GunAR",
+      "equals": 0,
+      "timeoutMilliseconds": 2000
+    },
+    {
+      "id": "near_fire",
+      "phase": "act",
+      "action": "fire",
+      "actor": "shooter",
+      "count": 3
+    },
+    {
+      "id": "heard_near",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.GunAR",
+      "greaterThan": 0,
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "near_settle",
+      "phase": "act",
+      "action": "wait",
+      "milliseconds": 1000
+    },
+    {
+      "id": "near_refresh",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.GunAR",
+      "greaterThan": -1,
+      "timeoutMilliseconds": 2000
+    },
+    {
+      "id": "save_near",
+      "action": "save",
+      "actor": "viewer",
+      "path": "actor.unity.audio.plays.GunAR",
+      "saveAs": "near"
+    },
+    {
+      "id": "save_far_drops",
+      "action": "save",
+      "actor": "viewer",
+      "path": "actor.unity.audio.droppedDistance",
+      "saveAs": "farBefore"
+    },
+    {
+      "id": "shooter_far",
+      "action": "setPosition",
+      "actor": "shooter",
+      "position": {
+        "x": 70,
+        "z": 70,
+        "yaw": 225
+      },
+      "description": "About 198 m away: past the gunshot hearing range (120 m)"
+    },
+    {
+      "id": "far_settle",
+      "action": "wait",
+      "milliseconds": 800
+    },
+    {
+      "id": "far_fire",
+      "action": "fire",
+      "actor": "shooter",
+      "count": 3
+    },
+    {
+      "id": "far_settle2",
+      "action": "wait",
+      "milliseconds": 1500
+    },
+    {
+      "id": "not_heard_far",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.GunAR",
+      "equals": "${near}",
+      "timeoutMilliseconds": 1000
+    },
+    {
+      "id": "dropped_far",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.droppedDistance",
+      "greaterThan": "${farBefore}",
+      "timeoutMilliseconds": 2000
+    }
+  ]
+}

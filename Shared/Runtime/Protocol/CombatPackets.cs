@@ -175,22 +175,32 @@ namespace ProjectH.Shared.Protocol
     }
 
     // S->C, Unreliable, to everyone: one processed shot, from the shooter's eye to where it stopped (D11).
+    // Phase 18 D4: plus the weapon that fired (WeaponInfo.WeaponId of WeaponCatalog), so a client can play that weapon's
+    // gunshot. One per trigger pull (a shotgun's pellets share one). Layout: [PacketId 1][ShooterId 2][Start 12][End 12][WeaponId 1].
     public struct ShotFired
     {
-        public const int PayloadSize = 26;
+        public const int PayloadSize = 27;
 
         public ushort ShooterId;
         public Vector3 Start;
         public Vector3 End;
+        public byte WeaponId;
 
+        // 기능: ShotFired 패킷을 쓴다(Phase 18: 무기 id 포함).
+        // 입력: writer - 대상, s - 사격 사건.
+        // 출력: 반환값 없음. writer에 28바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in ShotFired s)
         {
             writer.WriteByte((byte)PacketId.ShotFired);
             writer.WriteUInt16(s.ShooterId);
             writer.WriteVector3(s.Start);
             writer.WriteVector3(s.End);
+            writer.WriteByte(s.WeaponId);
         }
 
+        // 기능: ShotFired 본문을 읽는다. 무기 id는 범위를 알 수 없어 그대로 둔다(받는 쪽이 카탈로그에서 찾고, 없으면 기본 소리).
+        // 입력: reader - 본문(PacketId 뒤).
+        // 출력: 성공하면 true와 사건. 짧거나 시작·끝이 유한하지 않으면 false.
         public static bool TryRead(ref PacketReader reader, out ShotFired s)
         {
             s = default;
@@ -198,6 +208,7 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadUInt16(out s.ShooterId);
             reader.TryReadVector3(out s.Start);
             reader.TryReadVector3(out s.End);
+            reader.TryReadByte(out s.WeaponId);
             return Finite.Check(s.Start) && Finite.Check(s.End);
         }
     }
@@ -231,27 +242,57 @@ namespace ProjectH.Shared.Protocol
 
     // S->C, ReliableOrdered, to the player who was hit. FromDirection points from the victim towards
     // the attacker (unit length, or zero when they overlap).
+    // Phase 18 D8: plus Flags: ShieldHitFlag = the shield was above 0 before this damage, ShieldBrokenFlag = this damage took
+    // it to 0 (only with ShieldHitFlag). Neither = only health was hit (a fall never touches the shield).
+    // Layout: [PacketId 1][AttackerId 2][Damage 2][FromDirection 12][Flags 1] = 18 bytes.
     public struct DamageTaken
     {
+        public const int PayloadSize = 17;
+        public const byte ShieldHitFlag = 1;
+        public const byte ShieldBrokenFlag = 2;
+
         public ushort AttackerId;
         public ushort Damage;
         public Vector3 FromDirection;
+        public byte Flags;
 
+        public bool ShieldHit => (Flags & ShieldHitFlag) != 0;
+        public bool ShieldBroken => (Flags & ShieldBrokenFlag) != 0;
+
+        // 기능: 맞기 전·후 실드로 플래그를 정한다(서버의 모든 피해 경로가 같은 규칙을 쓴다).
+        // 입력: shieldBefore - 피해 전 실드, shieldAfter - 피해 뒤 실드.
+        // 출력: 실드가 있었고 줄었으면 ShieldHitFlag, 거기에 0이 되었으면 ShieldBrokenFlag를 더한 값. 실드가 없었거나 줄지 않았으면 0.
+        public static byte FlagsFor(int shieldBefore, int shieldAfter)
+        {
+            if (shieldBefore <= 0 || shieldAfter >= shieldBefore) return 0;
+            return shieldAfter <= 0 ? (byte)(ShieldHitFlag | ShieldBrokenFlag) : ShieldHitFlag;
+        }
+
+        // 기능: DamageTaken 패킷을 쓴다(Phase 18: 플래그 포함).
+        // 입력: writer - 대상, d - 피해 사건.
+        // 출력: 반환값 없음. writer에 18바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in DamageTaken d)
         {
             writer.WriteByte((byte)PacketId.DamageTaken);
             writer.WriteUInt16(d.AttackerId);
             writer.WriteUInt16(d.Damage);
             writer.WriteVector3(d.FromDirection);
+            writer.WriteByte(d.Flags);
         }
 
+        // 기능: DamageTaken 본문을 읽는다.
+        // 입력: reader - 본문(PacketId 뒤).
+        // 출력: 성공하면 true와 사건. 짧거나, 방향이 유한하지 않거나, 모르는 플래그 비트가 있거나, 실드 맞음 없이 실드 깨짐이면 false.
         public static bool TryRead(ref PacketReader reader, out DamageTaken d)
         {
             d = default;
-            if (reader.Remaining < 16) return false;
+            if (reader.Remaining < PayloadSize) return false;
             reader.TryReadUInt16(out d.AttackerId);
             reader.TryReadUInt16(out d.Damage);
             reader.TryReadVector3(out d.FromDirection);
+            reader.TryReadByte(out d.Flags);
+            if ((d.Flags & ~(ShieldHitFlag | ShieldBrokenFlag)) != 0) return false;
+            if ((d.Flags & ShieldBrokenFlag) != 0 && (d.Flags & ShieldHitFlag) == 0) return false;
             return Finite.Check(d.FromDirection);
         }
     }

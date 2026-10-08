@@ -122,10 +122,15 @@ public sealed class BotView
         BuildResultCount++;
     }
 
+    // 기능: 받은 DamageTaken을 센다(Phase 18 D8: 실드 맞음·깨짐도 따로 센다).
+    // 입력: damage - 받은 피해 사건.
+    // 출력: 반환값 없음. 피해 수, 마지막 방향, 실드 맞음·깨짐 수가 바뀐다.
     public void ApplyDamage(in DamageTaken damage)
     {
         DamageTakenCount++;
         LastDamageDirection = damage.FromDirection;
+        if (damage.ShieldHit) ShieldHitsTaken++;
+        if (damage.ShieldBroken) ShieldBreaksTaken++;
     }
 
     // 기능: 건설 패킷의 조각(배치 또는 동기화)을 기억한다. 이미 있는 id면 모양만 새로 쓴다(재접속 Sync의 최종 편집 상태).
@@ -281,4 +286,17 @@ public sealed class BotView
     public int ProjectilesSpawned;
     public int ProjectileStates;
     public int ProjectilesExploded;
+
+    // Phase 18 (QA observation of the v17 fields; bots play no sounds): ShotFired heard (anyone's, this bot's own included)
+    // and the last one's shooter and weapon id, DamageTaken shield flags, BuildEvents Destroyed records with the Collapsed
+    // reason, WorldSound heard and the last one's kind and source.
+    public int ShotsSeen;
+    public ushort LastShotShooterId;
+    public byte LastShotWeaponId;
+    public int ShieldHitsTaken;
+    public int ShieldBreaksTaken;
+    public int CollapsesSeen;
+    public int WorldSoundsReceived;
+    public WorldSoundKind LastWorldSoundKind;
+    public ushort LastWorldSoundSource;
 }

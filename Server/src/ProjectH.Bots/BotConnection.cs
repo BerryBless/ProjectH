@@ -205,7 +205,8 @@ public sealed class BotConnection : IDisposable
     }
 
     // 기능: 서버 패킷 하나를 BotView에 반영한다(Phase 14: TeamState, PlayerDowned, ChannelState, RebootStations, Phase 15: TeamMarkers,
-    //   Phase 16: ContainerStates, SupplyDrops, Phase 17: 투사체 세 패킷은 세기만 한다).
+    //   Phase 16: ContainerStates, SupplyDrops, Phase 17: 투사체 세 패킷은 세기만 한다, Phase 18: ShotFired·WorldSound·실드 플래그·
+    //   붕괴 이유는 QA용으로 세기만 한다).
     // 입력: peer·reader·channel·method - LiteNetLib 수신 정보.
     // 출력: 반환값 없음.
     private void OnReceive(NetPeer peer, NetPacketReader reader, byte channel, DeliveryMethod method)
@@ -321,7 +322,11 @@ public sealed class BotConnection : IDisposable
                 for (int i = 0; i < placed && BuildPieceRecord.TryReadPlaced(ref r, out var piece); i++) view.AddPiece(piece);
                 for (int i = 0; i < edited && BuildEventsPacket.TryReadEdited(ref r, out uint editedId, out ushort state); i++) view.ApplyEdited(editedId, state);
                 for (int i = 0; i < health && BuildEventsPacket.TryReadHealth(ref r, out _, out _); i++) { }
-                for (int i = 0; i < destroyed && BuildEventsPacket.TryReadDestroyed(ref r, out uint gone); i++) view.RemovePiece(gone);
+                for (int i = 0; i < destroyed && BuildEventsPacket.TryReadDestroyed(ref r, out uint gone, out BuildDestroyReason reason); i++)
+                {
+                    view.RemovePiece(gone);
+                    if (reason == BuildDestroyReason.Collapsed) view.CollapsesSeen++;   // Phase 18 D6
+                }
                 break;
             // Phase 14 D2, D5, D8, D10.
             case PacketId.TeamState:
@@ -369,6 +374,23 @@ public sealed class BotConnection : IDisposable
                 break;
             case PacketId.ProjectileExploded:
                 if (ProjectileExploded.TryRead(ref r, out _)) view.ProjectilesExploded++;
+                break;
+            // Phase 18 D4, D7: counted for QA (bots play no sounds).
+            case PacketId.ShotFired:
+                if (ShotFired.TryRead(ref r, out var shot))
+                {
+                    view.ShotsSeen++;
+                    view.LastShotShooterId = shot.ShooterId;
+                    view.LastShotWeaponId = shot.WeaponId;
+                }
+                break;
+            case PacketId.WorldSound:
+                if (WorldSound.TryRead(ref r, out var sound))
+                {
+                    view.WorldSoundsReceived++;
+                    view.LastWorldSoundKind = sound.Kind;
+                    view.LastWorldSoundSource = sound.SourceId;
+                }
                 break;
             case PacketId.BuildInterest:
                 // The window moved: what we keep is not worth tracking per cell for a bot; the next syncs bring it back.

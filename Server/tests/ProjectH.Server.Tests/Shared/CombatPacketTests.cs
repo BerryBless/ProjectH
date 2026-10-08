@@ -118,13 +118,17 @@ public class CombatPacketTests
     public void ShotFired_RoundTrip_AndRejectsNaN()
     {
         var writer = new PacketWriter(_buffer);
-        ShotFired.Write(ref writer, new ShotFired { ShooterId = 4, Start = new Vector3(1, 1.6f, 2), End = new Vector3(1, 1.6f, 40) });
+        ShotFired.Write(ref writer, new ShotFired { ShooterId = 4, Start = new Vector3(1, 1.6f, 2), End = new Vector3(1, 1.6f, 40), WeaponId = 7 });
         Assert.Equal(1 + ShotFired.PayloadSize, writer.Length);
+        Assert.Equal(28, writer.Length);   // Phase 18 D4: + the weapon id
         var reader = ReaderAfterId(writer.Length, PacketId.ShotFired);
         Assert.True(ShotFired.TryRead(ref reader, out var shot));
         Assert.Equal(4, shot.ShooterId);
         Assert.Equal(new Vector3(1, 1.6f, 2), shot.Start);
         Assert.Equal(new Vector3(1, 1.6f, 40), shot.End);
+        Assert.Equal(7, shot.WeaponId);
+        reader = ReaderAfterId(writer.Length - 1, PacketId.ShotFired);   // the v16 size (no weapon id) is refused
+        Assert.False(ShotFired.TryRead(ref reader, out _));
 
         writer = new PacketWriter(_buffer);
         ShotFired.Write(ref writer, new ShotFired { ShooterId = 4, End = new Vector3(float.NaN, 0, 0) });
@@ -150,6 +154,38 @@ public class CombatPacketTests
         Assert.Equal(3, damage.AttackerId);
         Assert.Equal(20, damage.Damage);
         Assert.Equal(new Vector3(0, 0, -1), damage.FromDirection);
+        Assert.Equal(0, damage.Flags);
+        Assert.Equal(18, writer.Length);   // Phase 18 D8: + the flags
+    }
+
+    // Phase 18 D8: the shield flags round-trip; an unknown bit or "broken" without "hit" is refused.
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(1, true)]
+    [InlineData(3, true)]
+    [InlineData(2, false)]
+    [InlineData(4, false)]
+    [InlineData(0x81, false)]
+    public void DamageTaken_Flags_RoundTrip_OrAreRefused(byte flags, bool ok)
+    {
+        var writer = new PacketWriter(_buffer);
+        DamageTaken.Write(ref writer, new DamageTaken { AttackerId = 3, Damage = 20, FromDirection = Vector3.UnitX, Flags = flags });
+        var reader = ReaderAfterId(writer.Length, PacketId.DamageTaken);
+        Assert.Equal(ok, DamageTaken.TryRead(ref reader, out var damage));
+        if (!ok) return;
+        Assert.Equal(flags, damage.Flags);
+        Assert.Equal((flags & 1) != 0, damage.ShieldHit);
+        Assert.Equal((flags & 2) != 0, damage.ShieldBroken);
+    }
+
+    [Theory]
+    [InlineData(0, 0, 0)]      // no shield: health only
+    [InlineData(50, 20, 1)]    // shield hit, still up
+    [InlineData(50, 0, 3)]     // shield broken
+    [InlineData(50, 50, 0)]    // shield not reduced (no damage applied)
+    public void DamageTaken_FlagsFor_FollowsTheShield(int before, int after, byte expected)
+    {
+        Assert.Equal(expected, DamageTaken.FlagsFor(before, after));
     }
 
     [Fact]
@@ -176,7 +212,7 @@ public class CombatPacketTests
     {
         var empty = new PacketReader(ReadOnlySpan<byte>.Empty);
         Assert.False(HitConfirmed.TryRead(ref empty, out _));
-        var shortDamage = new PacketReader(new byte[15]);
+        var shortDamage = new PacketReader(new byte[16]);   // Phase 18: the v16 body size
         Assert.False(DamageTaken.TryRead(ref shortDamage, out _));
         var shortDied = new PacketReader(new byte[3]);
         Assert.False(PlayerDied.TryRead(ref shortDied, out _));

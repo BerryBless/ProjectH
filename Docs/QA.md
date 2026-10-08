@@ -1311,6 +1311,23 @@ Development Player(`phase17-weapons` 작업 트리 복사본, batchmode)로 확�
 - 날아가는 수류탄·로켓은 스크린샷에 잡히지 않았다(수류탄은 내 몸에 가림, 로켓은 30 m를 0.75초). 생성·폭발 사건과 EditMode 외삽 테스트로 확인했다.
 - Critical·High 문제는 없다.
 
+## Phase 18 Unity 검증 (2026-10-08)
+
+Development Player(`phase18-audio` 작업 트리 복사본, batchmode)로 확인했다. 같은 복사본에서 EditMode 409/409가 통과했고 컴파일 오류는 0이다. 소리 자체는 batchmode에서 들을 수 없어 `/qa/status`의 `audio` 카운터로 로직만 판정했다. 소리 품질·방향감은 `QA/Scenarios/Manual/audio_listen.json`으로 사람이 확인한다.
+
+| 항목 | 결과 | 근거 |
+|---|---|---|
+| 총성과 거리 | PASS | `audio_gunshot.json`: 10 m 앞 원격 AR 3발 → `plays.GunAR` 3, 약 198 m에서 3발 → 재생 그대로 3, `droppedDistance` 3 |
+| 원격 발소리 | PASS | `audio_footstep.json`: 서 있을 때 0, 10 m 걸음 → `StepGroundWalk` 5, 범위 안 순간이동 → 늘지 않음 |
+| 건설 소리 | PASS | `audio_build.json`: 설치·편집·피해·파괴 각 1, 바닥 두 개 붕괴 → `BuildCollapse` 1 |
+| 목소리 예산 | PASS | `audio_budget.json`: SMG 14명 연사 → `GunSMG` 200회 재생, `droppedBudget` 224, `active` ≤ 24(측정 16) |
+| 한 사건 = 한 소리 | PASS | `audio_no_duplicate.json`: 실제 클릭 설치 한 번 → `BuildPlace` 정확히 1(BuildResult Ok만, 내 Placed 사건은 무음) |
+| 회귀 | PASS | unity 스위트 15/15 |
+
+발견한 문제:
+- **수정함(시나리오):** 예산 시나리오가 처음에는 사격 간격(기본 2 s)이 길어 동시 목소리가 17개에 그쳐 예산을 시험하지 못했다. 연사(burst 30, 간격 100 ms)와 `droppedBudget > 0` 검사를 넣었다. 경기 인원 상한(16명) 때문에 사격자는 14명이다.
+- Critical·High 문제는 없다.
+
 ## Adding New Actions
 
 1. **Handler를 쓴다.** 비슷한 파일에 `DelegateAction(new ActionSpec { ... }, RunAsync)`를 추가한다.

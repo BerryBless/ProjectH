@@ -21,9 +21,9 @@ public class ProtocolConstantsTests
     }
 
     [Fact]
-    public void ProtocolVersion_IsSixteen()
+    public void ProtocolVersion_IsSeventeen()
     {
-        // Phase 17 added the projectile packets, the WeaponInfo fields, the 27-byte InventoryState; v15 clients must be rejected.
-        Assert.Equal((ushort)16, ProtocolConstants.ProtocolVersion);
+        // Phase 18 added the ShotFired weapon id, the Destroyed reason, the DamageTaken flags and WorldSound; v16 clients must be rejected.
+        Assert.Equal((ushort)17, ProtocolConstants.ProtocolVersion);
     }
 }

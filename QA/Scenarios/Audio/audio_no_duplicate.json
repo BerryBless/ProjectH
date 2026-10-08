@@ -1,0 +1,162 @@
+{
+  "schemaVersion": 1,
+  "name": "Audio: One Event, One Sound",
+  "description": "Phase 18 D2, D6, D12 (request §85): one real wall placement on the Unity player plays exactly one placement sound (BuildResult Ok plays it; the server's Placed event for my own piece does not play it again). Logic only. Needs --unity-exe; SKIPPED without it.",
+  "tags": [
+    "audio",
+    "unity"
+  ],
+  "seed": 18005,
+  "timeoutSeconds": 180,
+  "server": {
+    "mode": "launch",
+    "options": {
+      "Server:MinPlayers": "2"
+    }
+  },
+  "actors": [
+    {
+      "id": "viewer",
+      "type": "UnityClient",
+      "unity": {
+        "width": 1280,
+        "height": 720
+      }
+    },
+    {
+      "id": "other"
+    }
+  ],
+  "steps": [
+    {
+      "id": "viewer_launch",
+      "phase": "arrange",
+      "action": "connect",
+      "actor": "viewer"
+    },
+    {
+      "id": "viewer_joined",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "joined",
+      "equals": true,
+      "timeoutMilliseconds": 30000
+    },
+    {
+      "id": "other_connect",
+      "action": "connect",
+      "actor": "other"
+    },
+    {
+      "id": "match_playing",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 20000
+    },
+    {
+      "id": "in_game",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "screen",
+      "equals": "InGame",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "cursor",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "cursorLocked",
+      "equals": true,
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "viewer_place",
+      "action": "setPosition",
+      "actor": "viewer",
+      "position": {
+        "x": 12.5,
+        "z": -22.5,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "other_away",
+      "action": "setPosition",
+      "actor": "other",
+      "position": {
+        "x": 60,
+        "z": 60
+      }
+    },
+    {
+      "id": "wood",
+      "action": "giveResource",
+      "actor": "viewer",
+      "material": "wood",
+      "amount": 100
+    },
+    {
+      "id": "settle",
+      "action": "wait",
+      "milliseconds": 800
+    },
+    {
+      "id": "zero",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.BuildPlace",
+      "equals": 0,
+      "timeoutMilliseconds": 1000
+    },
+    {
+      "id": "build_tool",
+      "phase": "act",
+      "action": "unityKey",
+      "actor": "viewer",
+      "key": "q"
+    },
+    {
+      "id": "tool_build",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "tool",
+      "equals": "Build",
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "place",
+      "phase": "act",
+      "action": "unityClick",
+      "actor": "viewer",
+      "holdMs": 150,
+      "description": "One real placement: BuildResult Ok plays it; the server's Placed event for my own piece must not play it again"
+    },
+    {
+      "id": "placed",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.BuildPlace",
+      "greaterThan": 0,
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "settle_events",
+      "phase": "act",
+      "action": "wait",
+      "milliseconds": 1500
+    },
+    {
+      "id": "one_sound",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.BuildPlace",
+      "equals": 1,
+      "timeoutMilliseconds": 1000
+    }
+  ]
+}

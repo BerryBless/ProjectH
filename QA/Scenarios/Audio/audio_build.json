@@ -1,0 +1,189 @@
+{
+  "schemaVersion": 1,
+  "name": "Audio: Building Sounds",
+  "description": "Phase 18 D6, D12 (request §83, §85): another player's (QA-spawned) wall placement, an edit, damage, its destruction and the collapse of the two floors it held each play their own sound on the Unity player; the two collapsed floors play one collapse sound. Logic only. Needs --unity-exe; SKIPPED without it.",
+  "tags": [
+    "audio",
+    "unity"
+  ],
+  "seed": 18003,
+  "timeoutSeconds": 180,
+  "server": {
+    "mode": "launch",
+    "options": {
+      "Server:MinPlayers": "2"
+    }
+  },
+  "actors": [
+    {
+      "id": "viewer",
+      "type": "UnityClient",
+      "unity": {
+        "width": 1280,
+        "height": 720
+      }
+    },
+    {
+      "id": "builder"
+    }
+  ],
+  "steps": [
+    {
+      "id": "viewer_launch",
+      "phase": "arrange",
+      "action": "connect",
+      "actor": "viewer"
+    },
+    {
+      "id": "viewer_joined",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "joined",
+      "equals": true,
+      "timeoutMilliseconds": 30000
+    },
+    {
+      "id": "builder_connect",
+      "action": "connect",
+      "actor": "builder"
+    },
+    {
+      "id": "match_playing",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 20000
+    },
+    {
+      "id": "in_game",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "screen",
+      "equals": "InGame",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "viewer_place",
+      "action": "setPosition",
+      "actor": "viewer",
+      "position": {
+        "x": 7.5,
+        "z": -42,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "builder_away",
+      "action": "setPosition",
+      "actor": "builder",
+      "position": {
+        "x": 60,
+        "z": 60
+      }
+    },
+    {
+      "id": "settle",
+      "action": "wait",
+      "milliseconds": 800
+    },
+    {
+      "id": "support",
+      "phase": "act",
+      "action": "spawnBuildPiece",
+      "piece": "wall",
+      "material": "wood",
+      "cellX": 17,
+      "level": 0,
+      "cellZ": 13,
+      "rotation": 0,
+      "saveAs": "support"
+    },
+    {
+      "id": "heard_place",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.BuildPlace",
+      "greaterThan": 0,
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "floor",
+      "phase": "act",
+      "action": "spawnBuildPiece",
+      "piece": "floor",
+      "material": "wood",
+      "cellX": 17,
+      "level": 1,
+      "cellZ": 12,
+      "saveAs": "floor"
+    },
+    {
+      "id": "floor2",
+      "action": "spawnBuildPiece",
+      "piece": "floor",
+      "material": "wood",
+      "cellX": 17,
+      "level": 1,
+      "cellZ": 11,
+      "saveAs": "floor2"
+    },
+    {
+      "id": "edit",
+      "action": "editBuild",
+      "pieceId": "${support.pieceId}",
+      "edit": 16
+    },
+    {
+      "id": "heard_edit",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.BuildEdit",
+      "greaterThan": 0,
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "damage",
+      "phase": "act",
+      "action": "damageBuild",
+      "pieceId": "${support.pieceId}",
+      "amount": 20
+    },
+    {
+      "id": "heard_damage",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.BuildDamage",
+      "greaterThan": 0,
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "destroy",
+      "phase": "act",
+      "action": "damageBuild",
+      "pieceId": "${support.pieceId}",
+      "amount": 5000,
+      "description": "The support goes: the two floors it held collapse"
+    },
+    {
+      "id": "heard_destroy",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.BuildDestroy",
+      "greaterThan": 0,
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "heard_collapse",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.BuildCollapse",
+      "equals": 1,
+      "timeoutMilliseconds": 3000,
+      "description": "Two collapsed floors in one frame, one collapse sound"
+    }
+  ]
+}

@@ -401,12 +401,13 @@ public sealed partial class Match
     }
 
     // 기능: 폭발 명중을 반영한다: 피해, (주인이 있으면) 처치 기여와 HitConfirmed, 대상의 DamageTaken(방향 = 대상 → 폭발점), 진행 끊기,
-    //   치명이면 치명 경로 하나(원인 Explosion, 처치 = 주인).
+    //   치명이면 치명 경로 하나(원인 Explosion, 처치 = 주인). Phase 18 D8: DamageTaken에 실드 맞음·깨짐 플래그.
     // 입력: owner - 살아 있는 주인(null = 없음), target - 대상, damage - 피해, blast - 폭발 위치.
     // 출력: 반환값 없음.
     private void ApplyExplosionHit(PlayerEntity? owner, PlayerEntity target, ushort damage, Vector3 blast)
     {
         int before = target.Health + target.Shield;
+        int shieldBefore = target.Shield;
         bool fatal = CombatRules.ApplyDamage(ref target.Health, ref target.Shield, damage);
         if (owner != null && _flow.InMatch && owner.Participant) owner.DamageDealt += before - (target.Health + target.Shield);
         bool killed = fatal && (target.IsDowned || !CanBeDowned(target));
@@ -427,6 +428,7 @@ public sealed partial class Match
             AttackerId = owner?.EntityId ?? 0,
             Damage = damage,
             FromDirection = length > 1e-4f ? toBlast / length : Vector3.Zero,
+            Flags = DamageTaken.FlagsFor(shieldBefore, target.Shield),
         });
         _send(target.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
 

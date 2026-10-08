@@ -37,10 +37,15 @@ public sealed class BuildReplication
     private int _editedCount;
     private uint[] _destroyed;
     private byte[] _destroyedCell;
+    // Phase 18 D6: why each destroyed piece left (same length and growth as _destroyed).
+    private BuildDestroyReason[] _destroyedReason;
     private int _destroyedCount;
     private readonly int _cellsPerInterest;
     private readonly int _interestPerSide;
 
+    // 기능: 한 경기의 건설 이벤트 수집기를 만든다(목록은 조각 256개 또는 경기 상한까지로 시작해 상한까지 자란다).
+    // 입력: world - 경기의 조각 저장소, catalog - 관심 칸 크기를 담은 건설 수치, maxPlayers - Tick당 Placed 칸 수.
+    // 출력: 이벤트가 없는 BuildReplication(Phase 18: Destroyed 이유 배열 포함).
     public BuildReplication(BuildWorld world, BuildingCatalog catalog, int maxPlayers)
     {
         _world = world;
@@ -59,6 +64,7 @@ public sealed class BuildReplication
         _editedCell = new byte[pieces];
         _destroyed = new uint[pieces];
         _destroyedCell = new byte[pieces];
+        _destroyedReason = new BuildDestroyReason[pieces];
         _cellsPerInterest = (int)(catalog.InterestCellSize / BuildGrid.CellSize);
         _interestPerSide = BuildGrid.CellsX / _cellsPerInterest;
     }
@@ -232,9 +238,10 @@ public sealed class BuildReplication
 
     // 기능: 조각이 이번 Tick에 World를 떠났음을 기록한다(파괴 또는 붕괴). 그 slot의 대기 중인 Health·Edited 기록은 버린다
     //   (같은 Tick에 slot이 새 조각에 다시 쓰여도 옛 조각의 기록이 새 조각에 붙지 않게).
-    // 입력: slot - 조각의 slot, id - 조각 id, shape - 관심 칸을 정할 모양.
+    // 입력: slot - 조각의 slot, id - 조각 id, shape - 관심 칸을 정할 모양, reason - 피해로 부서졌는지(Destroyed)
+    //   지지를 잃고 무너졌는지(Collapsed, Phase 18 D6).
     // 출력: 반환값 없음. Destroyed 기록이 하나 는다.
-    public void Destroyed(int slot, uint id, in BuildPieceShape shape)
+    public void Destroyed(int slot, uint id, in BuildPieceShape shape, BuildDestroyReason reason)
     {
         Unflag(_damagedFlag, _damagedSlots, ref _damagedCount, slot);
         Unflag(_editedFlag, _editedSlots, ref _editedSlotCount, slot);
@@ -244,8 +251,10 @@ public sealed class BuildReplication
             int size = Grown(_destroyed.Length, _destroyedCount + 1);
             Array.Resize(ref _destroyed, size);
             Array.Resize(ref _destroyedCell, size);
+            Array.Resize(ref _destroyedReason, size);
         }
         _destroyed[_destroyedCount] = id;
+        _destroyedReason[_destroyedCount] = reason;
         _destroyedCell[_destroyedCount++] = (byte)InterestCell(shape);
         Version++;
     }
@@ -367,7 +376,7 @@ public sealed class BuildReplication
             {
                 if ((cells & (1UL << _destroyedCell[cursor.Destroyed])) == 0) continue;
                 if (room < BuildEventsPacket.DestroyedSize) break;
-                BuildEventsPacket.WriteDestroyed(ref writer, _destroyed[cursor.Destroyed]);
+                BuildEventsPacket.WriteDestroyed(ref writer, _destroyed[cursor.Destroyed], _destroyedReason[cursor.Destroyed]);
                 room -= BuildEventsPacket.DestroyedSize;
                 destroyed++;
             }

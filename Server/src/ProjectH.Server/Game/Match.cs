@@ -1062,7 +1062,7 @@ public sealed partial class Match
     private static bool ActionsAllowed(MovementMode mode) =>
         mode == MovementMode.Ground || mode == MovementMode.Crouch || mode == MovementMode.Slide;
 
-    // 기능: 낙하 피해(Phase 12 D10): 체력만 줄이고(실드는 막지 않는다) 공격자 없는 DamageTaken을 보낸다. 치명이면 치명 경로 하나
+    // 기능: 낙하 피해(Phase 12 D10): 체력만 줄이고(실드는 막지 않는다) 공격자 없는 DamageTaken을 보낸다(Phase 18: 실드 플래그 없음). 치명이면 치명 경로 하나
     //   (Phase 14 D6: 기절 또는 탈락, 원인 Fall). 기절한 채 기어서 떨어져도 같다. 진행 중인 소생·재투입은 정책대로 끊긴다.
     // 입력: player - 착지한 플레이어, landingSpeed - 착지 속도(m/s).
     // 출력: 반환값 없음.
@@ -1162,6 +1162,10 @@ public sealed partial class Match
     // The buttons of this input with the press keys that were already down in the previous one taken away.
     internal static InputButtons PressedOnly(InputButtons buttons, InputButtons previous) => buttons & ~(previous & EdgeButtons);
 
+    // 기능: 채집 휘두르기 하나를 처리한다(조각 피해 또는 채집 대상 타격·자원·HarvestHit). Phase 18 D7: 채집 대상을 맞혔으면
+    //   맞은 점에서 WorldSoundRange 안의 다른 플레이어에게 WorldSound(타격 또는 파괴)를 보낸다.
+    // 입력: player - 휘두른 플레이어, direction - 조준 방향(단위 벡터), now - 이번 Tick.
+    // 출력: 반환값 없음. 대상 체력·자원이 바뀌고 HarvestHit(휘두른 사람)과 WorldSound(주변)가 전송된다.
     // Phase 13 D7: a harvest swing (held Fire swings at the cooldown) while damage is allowed (the dev sandbox or the
     // match). The server finds the target along the aim from the eye; a harvestable takes the damage, gives the swinger
     // its material up to the cap, and the swinger hears what happened (HarvestHit). A destroyed one leaves the world at
@@ -1183,7 +1187,8 @@ public sealed partial class Match
         }
         if (target < 0) return;
 
-        HarvestHitResult hit = _harvest.Hit(target, origin + direction * distance, direction);
+        Vector3 hitPoint = origin + direction * distance;
+        HarvestHitResult hit = _harvest.Hit(target, hitPoint, direction);
         HarvestHits++;
         BuildMaterialType material = GameMap.Harvestables[target].Material;
         int have = player.Inventory.Resource(material);
@@ -1204,12 +1209,34 @@ public sealed partial class Match
             Flags = flags,
         });
         _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
+        SendWorldSound(player, hit.Destroyed ? WorldSoundKind.HarvestDestroyed : WorldSoundKind.HarvestHit, hitPoint);
+    }
+
+    // Phase 18 D7: how far (m) a WorldSound reaches; only players this close to the sound get the packet. Server only: the
+    // client's own audio table decides how loud it plays.
+    internal const float WorldSoundRange = 30f;
+
+    // 기능: 소리를 낸 플레이어를 뺀, 소리 위치에서 WorldSoundRange 안의 플레이어에게 WorldSound를 Unreliable로 보낸다(Phase 18 D7).
+    //   연결이 끊긴 유예 플레이어는 뺀다. 죽은 플레이어·관전자도 자기 몸 위치로 거리를 잰다. 패킷은 한 번만 쓰고 할당하지 않는다(휘두르기 때만, 플레이어 수만큼 거리 비교).
+    // 입력: source - 소리를 낸 플레이어(받지 않는다), kind - 소리 종류, position - 소리 위치.
+    // 출력: 반환값 없음. 범위 안의 다른 Client에게 WorldSound가 전송된다.
+    private void SendWorldSound(PlayerEntity source, WorldSoundKind kind, Vector3 position)
+    {
+        var writer = new PacketWriter(_sendBuffer);
+        WorldSound.Write(ref writer, new WorldSound { Kind = kind, SourceId = source.EntityId, Position = position });
+        const float rangeSquared = WorldSoundRange * WorldSoundRange;
+        foreach (var p in _players)
+        {
+            if (p == source || p.IsGraced || Vector3.DistanceSquared(p.State.Position, position) > rangeSquared) continue;
+            _send(p.PeerId, writer.WrittenSpan, DeliveryMethod.Unreliable);
+        }
     }
 
     // 기능: 한 번 쏜다. 투사체 무기는 투사체를 띄운다(Phase 17 D10, ShotFired 없음). Hitscan은 산탄마다(Phase 17 D4) 서버 결정적 퍼짐(D3)으로
     //   방향을 흔들어 맵·조각·플레이어(되감은 위치) 중 가장 가까운 것에 맞히고, 거리 감쇠(D2)를 곱한 원 피해를 대상마다 합친 뒤 등급 배율을
     //   한 번 곱해 대상마다 ApplyHit 한 번(HitConfirmed 하나), 조각도 합쳐 한 번(× 무기 structureMultiplier × 재료 배율, D11).
-    //   ShotFired는 발사 하나에 하나: 한 발 무기는 퍼진 광선의 실제 끝점, 산탄총은 가운데 조준 광선의 끝점. Phase 14 D3: 같은 팀은 관통.
+    //   ShotFired는 발사 하나에 하나(Phase 18 D4: 무기 id 포함): 한 발 무기는 퍼진 광선의 실제 끝점, 산탄총은 가운데 조준 광선의 끝점.
+    //   Phase 14 D3: 같은 팀은 관통.
     // 입력: shooter - 사수, direction - 조준 방향(단위 벡터), viewTick - 사수가 본 Tick.
     // 출력: 반환값 없음. ShotFired(또는 ProjectileSpawned)가 방송되고 맞은 대상이 피해를 받는다.
     // D7: from the eye along the aim, the nearest map surface (box, terrain or floor plane) or living player stops the shot. The
@@ -1247,7 +1274,7 @@ public sealed partial class Match
         if (pellets > 1) end = origin + direction * TraceShot(shooter, origin, direction, weapon.Range, rewindTick, out _, out _);
 
         var writer = new PacketWriter(_sendBuffer);
-        ShotFired.Write(ref writer, new ShotFired { ShooterId = shooter.EntityId, Start = origin, End = end });
+        ShotFired.Write(ref writer, new ShotFired { ShooterId = shooter.EntityId, Start = origin, End = end, WeaponId = weapon.Id });   // Phase 18 D4
         Broadcast(writer.WrittenSpan, DeliveryMethod.Unreliable);
 
         // Phase 5 D2: before (and after) the match a shot still stops at the player it hit (the tracer shows
@@ -1353,6 +1380,9 @@ public sealed partial class Match
         else _replication.Damaged(slot);
     }
 
+    // 기능: 체력이 0이 된 조각을 곧바로 World에서 빼고(이유 Destroyed, Phase 18 D6) 이웃을 Tick 끝 붕괴 탐색에 올린다.
+    // 입력: slot - 조각 slot.
+    // 출력: 반환값 없음. 조각이 사라지고 Destroyed 기록이 하나 는다.
     // Phase 13 D11: a piece leaves the world now (moves and shots of the rest of this tick no longer meet it) and every
     // client hears of it at the end of the tick. D12: then whatever it held up and nothing else holds collapses in this
     // same tick, in the same BuildEvents (request §80). Final review A2: the collapse search runs once at the end of the
@@ -1361,9 +1391,12 @@ public sealed partial class Match
     private void DestroyPiece(int slot)
     {
         _support.QueueNeighbours(slot);   // before RemovePiece, which takes the piece's edges away
-        RemovePiece(slot);
+        RemovePiece(slot, BuildDestroyReason.Destroyed);
     }
 
+    // 기능: 이번 Tick의 파괴·편집으로 지지를 잃은 조각을 모두 무너뜨린다(이유 Collapsed, Phase 18 D6).
+    // 입력: 없음(대기 중인 붕괴 탐색 시작점).
+    // 출력: 반환값 없음. 무너진 조각마다 Destroyed 기록이 하나 늘고 PiecesCollapsed가 는다.
     // End of the tick (after every action, before the events go out): what this tick's destroys left unsupported falls.
     private void CollapseUnsupported()
     {
@@ -1371,7 +1404,7 @@ public sealed partial class Match
         ReadOnlySpan<int> fallen = _support.UnsupportedQueued(_build);
         for (int i = 0; i < fallen.Length; i++)
         {
-            RemovePiece(fallen[i]);
+            RemovePiece(fallen[i], BuildDestroyReason.Collapsed);
             PiecesCollapsed++;
         }
     }
@@ -1423,11 +1456,14 @@ public sealed partial class Match
         CollapseUnsupported();
     }
 
-    private void RemovePiece(int slot)
+    // 기능: 조각을 World·지지 격자에서 빼고 Destroyed 기록을 남긴다.
+    // 입력: slot - 조각 slot, reason - 체력 0으로 부서졌는지(DestroyPiece) 지지를 잃고 무너졌는지(CollapseUnsupported, Phase 18 D6).
+    // 출력: 반환값 없음. 조각이 사라지고 PiecesDestroyed가 는다.
+    private void RemovePiece(int slot, BuildDestroyReason reason)
     {
         ref BuildPiece piece = ref _build.At(slot);
         uint id = piece.Id;
-        _replication.Destroyed(slot, id, piece.Shape);
+        _replication.Destroyed(slot, id, piece.Shape, reason);
         _support.Remove(slot);
         _build.Remove(id);
         PiecesDestroyed++;
@@ -1435,11 +1471,13 @@ public sealed partial class Match
 
     // 기능: 사격 명중을 반영한다: 피해, 처치 기여, HitConfirmed(사수), DamageTaken(대상), 진행 끊기(Phase 14 D8), 치명이면 치명 경로 하나.
     //   Phase 14: HitConfirmed.Killed는 탈락일 때만 true다(기절시킨 명중은 false, Solo는 지금과 같다).
+    //   Phase 18 D8: DamageTaken에 실드 맞음·깨짐 플래그(맞기 전 실드 > 0, 이번 피해로 0).
     // 입력: shooter - 사수, target - 맞은 플레이어(다른 팀), damage - 피해량.
     // 출력: 반환값 없음.
     private void ApplyHit(PlayerEntity shooter, PlayerEntity target, ushort damage)
     {
         int before = target.Health + target.Shield;
+        int shieldBefore = target.Shield;
         bool fatal = CombatRules.ApplyDamage(ref target.Health, ref target.Shield, damage);
         if (_flow.InMatch && shooter.Participant && shooter != target) shooter.DamageDealt += before - (target.Health + target.Shield);
         bool killed = fatal && (target.IsDowned || !CanBeDowned(target));
@@ -1456,6 +1494,7 @@ public sealed partial class Match
             AttackerId = shooter.EntityId,
             Damage = damage,
             FromDirection = length > 1e-4f ? toAttacker / length : Vector3.Zero,
+            Flags = DamageTaken.FlagsFor(shieldBefore, target.Shield),
         });
         _send(target.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
 
@@ -1464,16 +1503,21 @@ public sealed partial class Match
     }
 
     // 기능: QA-1 damagePlayer: 공격자 없는 피해(낙하처럼, 단 실드를 먼저 깎는 사격 규칙). 대상은 DamageTaken을 듣고, 치명이면
-    //   치명 경로 하나(Phase 14 D6: 같은 팀에 서 있는 구성원이 있으면 기절, 기절한 사람은 탈락).
+    //   치명 경로 하나(Phase 14 D6: 같은 팀에 서 있는 구성원이 있으면 기절, 기절한 사람은 탈락). Phase 18 D8: 실드 플래그는 사격과 같다.
     // 입력: target - 대상, damage - 피해량, killed - 탈락했는지.
     // 출력: 살아 있던 대상이면 true, 아니면 false.
     internal bool DamagePlayer(PlayerEntity target, int damage, out bool killed)
     {
         killed = false;
         if (!target.Alive || damage <= 0) return false;
+        int shieldBefore = target.Shield;
         bool fatal = CombatRules.ApplyDamage(ref target.Health, ref target.Shield, damage);
         var writer = new PacketWriter(_sendBuffer);
-        DamageTaken.Write(ref writer, new DamageTaken { AttackerId = 0, Damage = (ushort)Math.Min(damage, ushort.MaxValue), FromDirection = Vector3.Zero });
+        DamageTaken.Write(ref writer, new DamageTaken
+        {
+            AttackerId = 0, Damage = (ushort)Math.Min(damage, ushort.MaxValue), FromDirection = Vector3.Zero,
+            Flags = DamageTaken.FlagsFor(shieldBefore, target.Shield),
+        });
         _send(target.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
         OnDamaged(target);
         if (fatal) ApplyFatal(target, null, DeathCause.Zone);

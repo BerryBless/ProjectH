@@ -76,7 +76,7 @@ public class PacketWriterReaderTests
 
     [Theory]
     [InlineData(0)]
-    [InlineData(47)]   // one above PacketId.ProjectileExploded (Phase 17)
+    [InlineData(48)]   // one above PacketId.WorldSound (Phase 18)
     [InlineData(255)]
     public void PacketId_OutOfRange_IsRejected(byte raw)
     {
@@ -96,6 +96,8 @@ public class PacketWriterReaderTests
     [InlineData(PacketId.TeamMarkers)]
     [InlineData(PacketId.ContainerStates)]   // Phase 16
     [InlineData(PacketId.SupplyDrops)]
+    [InlineData(PacketId.ProjectileExploded)]   // Phase 17
+    [InlineData(PacketId.WorldSound)]           // Phase 18: the new upper bound
     public void PacketId_InRange_IsAccepted(PacketId expected)
     {
         var reader = new PacketReader(new[] { (byte)expected });

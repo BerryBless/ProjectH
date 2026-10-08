@@ -58,5 +58,7 @@ namespace ProjectH.Shared.Protocol
         ProjectileSpawned = 44,
         ProjectileState = 45,
         ProjectileExploded = 46,
+        // Phase 18 D7: a sound another player made that the client cannot derive (a harvest hit), S->C Unreliable, channel 0.
+        WorldSound = 47,
     }
 }

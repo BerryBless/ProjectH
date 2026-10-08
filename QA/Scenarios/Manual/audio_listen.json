@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "name": "Audio Check: Listening (Manual)",
+  "description": "Phase 18 §85: what a person judges by ear in the Unity Editor (QA scenarios check only the logic). The tool starts the server on 127.0.0.1:7777 with two headless players; press Play and connect.",
+  "tags": [
+    "manual",
+    "audio",
+    "editor"
+  ],
+  "seed": 1801,
+  "timeoutSeconds": 3600,
+  "server": {
+    "mode": "launch",
+    "options": {
+      "Server:Port": "7777",
+      "Server:MinPlayers": "3"
+    }
+  },
+  "actors": [
+    {
+      "id": "rival1"
+    },
+    {
+      "id": "rival2"
+    }
+  ],
+  "steps": [
+    {
+      "id": "rival1_connect",
+      "phase": "arrange",
+      "action": "connect",
+      "actor": "rival1"
+    },
+    {
+      "id": "rival2_connect",
+      "action": "connect",
+      "actor": "rival2"
+    },
+    {
+      "id": "joined",
+      "phase": "act",
+      "action": "manualCheck",
+      "description": "Press Play and connect. Answer after you are in the match."
+    },
+    {
+      "id": "rival_gun",
+      "action": "giveWeapon",
+      "actor": "rival1",
+      "weapon": "Vesper AR",
+      "rarity": 0,
+      "select": true
+    },
+    {
+      "id": "gun_fire",
+      "action": "fire",
+      "actor": "rival1",
+      "count": 5
+    },
+    {
+      "id": "gunshot",
+      "action": "manualCheck",
+      "description": "You heard rival1's AR from its direction (turn the camera: the side changes), louder near and quieter far."
+    },
+    {
+      "id": "steps",
+      "action": "manualCheck",
+      "description": "Walk, sprint and crouch on grass, then on a wood floor you build (Q, click) and on stone or metal: the step speed follows the movement and each surface sounds different."
+    },
+    {
+      "id": "build",
+      "action": "manualCheck",
+      "description": "Place, edit, shoot and break a wall: each has its own sound; a collapse (break a wall under a floor) sounds different from a single break."
+    },
+    {
+      "id": "damage",
+      "action": "manualCheck",
+      "description": "Take damage with and without shield: a shield hit, the shield breaking and a health hit sound different."
+    },
+    {
+      "id": "loot_ui",
+      "action": "manualCheck",
+      "description": "Pick up an item, open a chest, click menu buttons, open the map (M): each makes a short sound. Nothing loops or repeats by itself, and many sounds at once never crackle."
+    }
+  ]
+}

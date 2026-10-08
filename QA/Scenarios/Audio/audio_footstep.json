@@ -1,0 +1,185 @@
+{
+  "schemaVersion": 1,
+  "name": "Audio: Remote Footsteps",
+  "description": "Phase 18 D5, D12 (request §80, §85): a remote player standing still makes no step sound; walking 10 m on the ground near the Unity player plays ground walk steps; a teleport inside hearing range plays none (teleport guard). Logic only. Needs --unity-exe; SKIPPED without it.",
+  "tags": [
+    "audio",
+    "unity"
+  ],
+  "seed": 18002,
+  "timeoutSeconds": 180,
+  "server": {
+    "mode": "launch",
+    "options": {
+      "Server:MinPlayers": "2"
+    }
+  },
+  "actors": [
+    {
+      "id": "viewer",
+      "type": "UnityClient",
+      "unity": {
+        "width": 1280,
+        "height": 720
+      }
+    },
+    {
+      "id": "walker"
+    }
+  ],
+  "steps": [
+    {
+      "id": "viewer_launch",
+      "phase": "arrange",
+      "action": "connect",
+      "actor": "viewer"
+    },
+    {
+      "id": "viewer_joined",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "joined",
+      "equals": true,
+      "timeoutMilliseconds": 30000
+    },
+    {
+      "id": "walker_connect",
+      "action": "connect",
+      "actor": "walker"
+    },
+    {
+      "id": "match_playing",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 20000
+    },
+    {
+      "id": "in_game",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "screen",
+      "equals": "InGame",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "viewer_place",
+      "action": "setPosition",
+      "actor": "viewer",
+      "position": {
+        "x": -70,
+        "z": -70,
+        "yaw": 45
+      }
+    },
+    {
+      "id": "walker_place",
+      "action": "setPosition",
+      "actor": "walker",
+      "position": {
+        "x": -62,
+        "z": -70
+      }
+    },
+    {
+      "id": "settle",
+      "action": "wait",
+      "milliseconds": 1000
+    },
+    {
+      "id": "still_refresh",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.StepGroundWalk",
+      "greaterThan": -1,
+      "timeoutMilliseconds": 2000
+    },
+    {
+      "id": "save_steps",
+      "action": "save",
+      "actor": "viewer",
+      "path": "actor.unity.audio.plays.StepGroundWalk",
+      "saveAs": "before"
+    },
+    {
+      "id": "still",
+      "action": "wait",
+      "milliseconds": 1500,
+      "description": "Standing still after a teleport: no step sound"
+    },
+    {
+      "id": "no_steps_still",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.StepGroundWalk",
+      "equals": "${before}",
+      "timeoutMilliseconds": 500
+    },
+    {
+      "id": "walk",
+      "phase": "act",
+      "action": "moveTo",
+      "actor": "walker",
+      "position": {
+        "x": -62,
+        "z": -60
+      },
+      "tolerance": 0.75
+    },
+    {
+      "id": "heard_steps",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.StepGroundWalk",
+      "greaterThan": "${before}",
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "walk_settle",
+      "phase": "act",
+      "action": "wait",
+      "milliseconds": 800
+    },
+    {
+      "id": "walk_refresh",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.StepGroundWalk",
+      "greaterThan": -1,
+      "timeoutMilliseconds": 2000
+    },
+    {
+      "id": "save_after_walk",
+      "action": "save",
+      "actor": "viewer",
+      "path": "actor.unity.audio.plays.StepGroundWalk",
+      "saveAs": "walked"
+    },
+    {
+      "id": "teleport",
+      "action": "setPosition",
+      "actor": "walker",
+      "position": {
+        "x": -66,
+        "z": -74
+      },
+      "description": "A teleport inside hearing range must not play steps"
+    },
+    {
+      "id": "tp_settle",
+      "action": "wait",
+      "milliseconds": 1200
+    },
+    {
+      "id": "no_steps_teleport",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.StepGroundWalk",
+      "equals": "${walked}",
+      "timeoutMilliseconds": 500
+    }
+  ]
+}

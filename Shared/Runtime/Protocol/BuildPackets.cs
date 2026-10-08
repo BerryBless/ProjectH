@@ -207,11 +207,19 @@ namespace ProjectH.Shared.Protocol
         }
     }
 
+    // Phase 18 D6: why a piece left the world (the reason byte of a BuildEvents Destroyed record). Values are the wire format.
+    public enum BuildDestroyReason : byte
+    {
+        Destroyed = 0,   // its health reached 0 (a shot, an explosion, a harvest tool, QA damageBuild)
+        Collapsed = 1,   // nothing held it up any more after a destroy or an edit in the same tick
+    }
+
     // Phase 13 D13: S->C on the build channel, ReliableOrdered: one tick's building events for one client, in this order:
     // pieces placed, Phase 13.5 D8: pieces edited (the piece's state after its last edit of the tick, once per piece),
     // health changes (the damage a piece has taken so far, once per piece per tick), pieces destroyed.
     // Layout: [PacketId 1][Version 4][Placed 1][Edited 1][Health 1][Destroyed 1] (9 bytes), then the records: Placed 14,
-    // Edited 6 (id + state: BuildEdit.PackState), Health 6 (id + damage), Destroyed 4 (id). At most MaxPacketSize bytes;
+    // Edited 6 (id + state: BuildEdit.PackState), Health 6 (id + damage), Destroyed 5 (id + Phase 18 D6 reason:
+    // BuildDestroyReason). At most MaxPacketSize bytes;
     // a tick with more is split into several packets that keep that order. Version is the match's building event count
     // after the tick (debugging and order checks, D14).
     public static class BuildEventsPacket
@@ -219,7 +227,7 @@ namespace ProjectH.Shared.Protocol
         public const int HeaderSize = 9;
         public const int EditedSize = 6;
         public const int HealthSize = 6;
-        public const int DestroyedSize = 4;
+        public const int DestroyedSize = 5;   // Phase 18 D6: id 4 + reason 1
         public const int VersionOffset = 1;
         public const int CountsOffset = 5;
 
@@ -262,7 +270,14 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt16(damage);
         }
 
-        public static void WriteDestroyed(ref PacketWriter writer, uint id) => writer.WriteUInt32(id);
+        // 기능: Destroyed 기록 하나를 쓴다(Phase 18 D6: 이유 포함).
+        // 입력: writer - 쓸 곳, id - 조각 id, reason - 피해로 부서졌는지(Destroyed), 지지를 잃고 무너졌는지(Collapsed).
+        // 출력: 반환값 없음. writer에 5바이트가 쓰인다.
+        public static void WriteDestroyed(ref PacketWriter writer, uint id, BuildDestroyReason reason)
+        {
+            writer.WriteUInt32(id);
+            writer.WriteByte((byte)reason);
+        }
 
         // 기능: 헤더를 읽는다(PacketId 다음부터).
         // 입력: reader - 패킷, version·placed·edited·health·destroyed - 결과.
@@ -299,7 +314,22 @@ namespace ProjectH.Shared.Protocol
             return reader.TryReadUInt32(out id) && reader.TryReadUInt16(out damage) && id != 0;
         }
 
-        public static bool TryReadDestroyed(ref PacketReader reader, out uint id) => reader.TryReadUInt32(out id) && id != 0;
+        // 기능: Destroyed 기록 하나를 읽는다(Phase 18 D6).
+        // 입력: reader - 기록이 시작되는 곳, id·reason - 결과.
+        // 출력: 5바이트가 읽혔고 id가 0이 아니며 이유가 Collapsed(1) 이하면 true.
+        public static bool TryReadDestroyed(ref PacketReader reader, out uint id, out BuildDestroyReason reason)
+        {
+            reason = BuildDestroyReason.Destroyed;
+            if (!reader.TryReadUInt32(out id) || !reader.TryReadByte(out byte raw)) return false;
+            if (id == 0 || raw > (byte)BuildDestroyReason.Collapsed) return false;
+            reason = (BuildDestroyReason)raw;
+            return true;
+        }
+
+        // 기능: Destroyed 기록 하나를 읽고 이유는 버린다(이유가 필요 없는 받는 쪽용). 기록 전체(5바이트)를 읽는다.
+        // 입력: reader - 기록이 시작되는 곳, id - 결과.
+        // 출력: TryReadDestroyed(reader, id, reason)와 같다.
+        public static bool TryReadDestroyed(ref PacketReader reader, out uint id) => TryReadDestroyed(ref reader, out id, out _);
     }
 
     // Phase 13 D14: S->C on the build channel, ReliableOrdered: the current pieces of some interest cells (a join, a

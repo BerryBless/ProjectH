@@ -67,6 +67,17 @@ public sealed record ActorState
     public int ProjectilesSpawned { get; init; }
     public int ProjectileStates { get; init; }
     public int ProjectilesExploded { get; init; }
+    // Phase 18: ShotFired heard (own included) and the last one's shooter and weapon id, DamageTaken with the shield-hit and
+    // shield-broken flags, Destroyed records with the Collapsed reason, WorldSound heard and the last one's kind and source.
+    public int ShotsSeen { get; init; }
+    public int LastShotShooterId { get; init; }
+    public int LastShotWeaponId { get; init; }
+    public int ShieldHitsTaken { get; init; }
+    public int ShieldBreaksTaken { get; init; }
+    public int CollapsesSeen { get; init; }
+    public int WorldSounds { get; init; }
+    public string LastWorldSoundKind { get; init; } = string.Empty;
+    public int LastWorldSoundSource { get; init; }
     // Intent progress.
     public bool MoveActive { get; init; }
     public bool MoveArrived { get; init; }
