@@ -20,6 +20,19 @@ public class ReviewFixTests
         Assert.True(await pump.StopAsync(TimeSpan.FromSeconds(3)));
     }
 
+    // Review fix C2: the server makes a weapon that comes into the hand wait its EquipTicks before it fires, so after a real slot
+    // change fire and switchWeapon wait those ticks on top of the settle ticks. The same slot (or only leaving the build or
+    // harvest tool) and an empty slot have no wait; an actor that knows no catalog adds nothing.
+    [Fact]
+    public void TheSlotSettle_WaitsTheEquipTicksOfTheWeaponComingIntoTheHand()
+    {
+        var state = new ActorState { CurrentSlot = 0, SlotEquipTicks = new[] { 12, 15, 0 } };
+        Assert.Equal(2, ActorActions.SlotSettleTicksFor(state, 0));
+        Assert.Equal(2 + 15, ActorActions.SlotSettleTicksFor(state, 1));
+        Assert.Equal(2, ActorActions.SlotSettleTicksFor(state, 2));
+        Assert.Equal(2, ActorActions.SlotSettleTicksFor(new ActorState { CurrentSlot = 0 }, 1));
+    }
+
     [Fact]
     public async Task UnfinishedFireClearsItsQueuedPresses()
     {

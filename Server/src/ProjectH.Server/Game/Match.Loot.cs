@@ -113,7 +113,7 @@ public sealed partial class Match
     }
 
     // 기능: Container마다 생성 여부와 Loot를 굴린다(D2). 이전 상태는 지운다. 표가 없는 종류는 생기지 않는다.
-    // 입력: seed - 이 경기의 Container 시드(LootSeed + Round에서 섞은 값).
+    // 입력: seed - 이 경기의 Container 시드(RoundSeed(LootSeed, LootSalt)에서 섞은 값. 리뷰 수정 C1).
     // 출력: 반환값 없음. 마스크와 Loot 칸이 바뀌고 Tick 끝에 ContainerStates가 간다.
     private void RollContainers(int seed)
     {
@@ -139,7 +139,7 @@ public sealed partial class Match
     // 출력: 반환값 없음. Tick 끝에 ContainerStates·SupplyDrops가 모두에게 간다.
     private void StartLoot(uint now, uint zoneClockStart)
     {
-        int roundSeed = unchecked(_lootSeed + _flow.Round);
+        int roundSeed = RoundSeed(_lootSeed, LootSalt);   // review fix C1: from the match secret unless DeterministicSeeds
         RollContainers(unchecked(roundSeed * -1640531535 + ContainerSeedSalt));
         ClearSupplyDrops();
         _supplyDropRng = new Random(unchecked(roundSeed * -1640531535 + SupplyDropSeedSalt));
@@ -495,7 +495,7 @@ public sealed partial class Match
         {
             int table = LootContainers.All[id].Kind == LootContainerKind.Chest ? _chestTable : _ammoBoxTable;
             if (table < 0) return false;
-            _containerRng ??= new Random(unchecked(_lootSeed * -1640531535 + ContainerSeedSalt));
+            _containerRng ??= new Random(unchecked(Seed(_lootSeed, LootSalt) * -1640531535 + ContainerSeedSalt));   // review fix C1
             _containerLootCount[id] = (byte)_lootTable.RollAll(table, _containerRng, _weapons, _items, _containerLoot.AsSpan(id * LootTable.MaxRolls, LootTable.MaxRolls));
         }
         _containerSpawned |= bit;

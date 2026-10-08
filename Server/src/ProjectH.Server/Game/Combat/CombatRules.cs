@@ -134,14 +134,39 @@ public static class CombatRules
 
     // D14: the tick a shot rewinds targets to. The client's ViewTick is untrusted: NaN means "now", and
     // anything outside [latestTick - maxRewindTicks, latestTick] is clamped into it (never below tick 0).
-    public static double ClampViewTick(float viewTick, uint latestTick, int maxRewindTicks)
+    public static double ClampViewTick(float viewTick, uint latestTick, int maxRewindTicks) =>
+        ClampViewTick(viewTick, latestTick, maxRewindTicks, out _);
+
+    // 기능: 사격이 대상을 되감을 Tick을 정한다(D14). Client의 ViewTick은 믿지 않는다: NaN이면 지금, [latestTick - allowedTicks, latestTick]
+    //   밖이면 그 안으로 자른다(Tick 0 아래로는 가지 않는다). 리뷰 수정 C3: 허용 폭은 사수의 RTT로 정한 값(AllowedRewindTicks)이다.
+    // 입력: viewTick - Client가 본 Tick, latestTick - 마지막으로 끝난 Tick, allowedTicks - 되감을 수 있는 최대 Tick, clamped - 잘렸는지 받을 곳.
+    // 출력: 되감을 Tick. clamped는 허용보다 오래된 주장을 잘랐을 때만 true(미래·NaN은 "지금"이고 잘림이 아니다).
+    public static double ClampViewTick(float viewTick, uint latestTick, int allowedTicks, out bool clamped)
     {
+        clamped = false;
         double latest = latestTick;
         if (float.IsNaN(viewTick)) return latest;
-        double oldest = latestTick > (uint)maxRewindTicks ? latestTick - (uint)maxRewindTicks : 0u;
+        double oldest = latestTick > (uint)allowedTicks ? latestTick - (uint)allowedTicks : 0u;
         if (viewTick > latest) return latest;
-        if (viewTick < oldest) return oldest;
+        if (viewTick < oldest)
+        {
+            clamped = true;
+            return oldest;
+        }
         return viewTick;
+    }
+
+    // 기능: 사수 한 명에게 허용하는 되감기 Tick을 정한다(리뷰 수정 C3, SEC-5). ViewTick은 서버보다 보간(Snapshot 간격 2개
+    //   = 2 × SnapshotEveryTicks), Snapshot이 Client로 가는 길과 입력이 돌아오는 길(합쳐서 RTT 하나 = LiteNetLib RoundTripTime),
+    //   입력 버퍼 Drain(1)만큼 뒤처지므로 RTT × SimHz / 1000 + 2 × SnapshotEveryTicks + 2(Drain 1 + 흔들림 1)를 허용한다.
+    //   30 Hz·Snapshot 2 Tick마다: RTT 20 ms = 6, 200 ms = 12(예전 고정 상한). 지연이 작은 사수는 더 좁게 되감는다.
+    // 입력: rttMs - 사수 연결의 RTT(ms, 음수 = 0), simHz - Tick 속도, snapshotEveryTicks - Snapshot 간격, maxRewindTicks - 상한(MaxRewindTicks).
+    // 출력: 2 이상 maxRewindTicks 이하의 Tick 수(maxRewindTicks가 2보다 작으면 그 값).
+    public static int AllowedRewindTicks(int rttMs, int simHz, int snapshotEveryTicks, int maxRewindTicks)
+    {
+        long rttTicks = (long)Math.Max(0, rttMs) * simHz / 1000;
+        long allowed = rttTicks + 2L * Math.Max(0, snapshotEveryTicks) + 2;
+        return (int)Math.Clamp(allowed, Math.Min(2, maxRewindTicks), maxRewindTicks);
     }
 
     // MaxRewindSeconds in ticks, cut to what PositionHistory holds (a high SimHz would otherwise reach

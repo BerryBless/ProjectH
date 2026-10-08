@@ -95,6 +95,8 @@ public sealed partial class ServerProcessManager : IDisposable
             ["Server:LootSeed"] = seed.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["Server:ZoneSeed"] = seed.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["Server:SpawnSeed"] = seed.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            // Review fix C1: a QA run is reproduced from its seed, so the match secret is off.
+            ["Server:DeterministicSeeds"] = "true",
             // Every QA actor connects from 127.0.0.1, so the server's per-IP connect limit (default burst 20) would refuse a
             // 50-100 player stress join. A burst larger than any scenario's joins and reconnects keeps the limiter on
             // (its path still runs) without refusing them; a scenario may still override it.

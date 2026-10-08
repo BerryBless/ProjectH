@@ -21,6 +21,14 @@ public static class ItemRules
     // ground; up or down PickupHeight), checked every MaterialPickupEveryTicks ticks. E never picks one.
     public const float MaterialPickupRange = 1.5f;
     public const int MaterialPickupEveryTicks = 3;
+    // Review fix C6 (SEC-20): G and an E pickup share this interval, counted from every attempt (each one can send Reliable
+    // world and inventory packets to everyone). The resources' auto pickup does not use it.
+    public const float ActionIntervalSeconds = 0.25f;
+
+    // 기능: 아이템 행동 간격을 Tick으로 바꾼다(리뷰 수정 C6, 반올림, 최소 1).
+    // 입력: simHz - Tick 속도.
+    // 출력: Tick 수(30 Hz = 8).
+    public static uint ActionIntervalTicks(int simHz) => CombatRules.TicksFromSeconds(ActionIntervalSeconds, simHz);
 
     // 기능: 이 탄 종류나 소모품을 더 넣을 수 있는 양(D3, D9, Phase 17: 수류탄). 무기는 쌓이지 않는다.
     // 입력: inventory - 인벤토리, items - 카탈로그, kind·defId - 아이템 종류와 정의 id.

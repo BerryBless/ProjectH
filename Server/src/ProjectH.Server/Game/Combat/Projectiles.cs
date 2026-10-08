@@ -64,6 +64,19 @@ public sealed class ProjectileSet
         return false;   // not reached: Count < Capacity means a free slot
     }
 
+    // 기능: 주인 JoinOrder가 같은 살아 있는 투사체 수를 센다(리뷰 수정 C5). 32칸을 훑는다. 할당 없음.
+    // 입력: ownerJoinOrder - 주인의 JoinOrder.
+    // 출력: 그 주인의 투사체 수.
+    public int CountOwnedBy(uint ownerJoinOrder)
+    {
+        int count = 0;
+        for (int i = 0; i < Capacity; i++)
+        {
+            if (_slots[i].Active && _slots[i].OwnerJoinOrder == ownerJoinOrder) count++;
+        }
+        return count;
+    }
+
     // 기능: 칸을 비운다.
     // 입력: slot - 칸.
     // 출력: 반환값 없음.
@@ -89,6 +102,9 @@ public static class ProjectileRules
 {
     // D6: below this speed (m/s) after a bounce a grenade rests (only on a surface facing up, CanRest).
     public const float RestSpeed = 1f;
+    // Review fix C5 (SEC-13): the most live projectiles one player may own (rockets and grenades together), so one player
+    // cannot fill the 32 shared slots. More are refused before anything is spent, like full slots.
+    public const int MaxPerOwner = 4;
     // Review fix: the least upward normal (cos 45 degrees) a grenade can rest on: floors, the terrain and ramps, not walls
     // or ceilings.
     public const float RestNormalY = 0.7f;

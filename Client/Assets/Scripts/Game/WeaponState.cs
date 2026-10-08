@@ -36,6 +36,7 @@ namespace ProjectH.Client.Game
             public int Ammo;
             public bool Reloading;
             public long NextFireStep;   // of Slot, after this step
+            public long SwitchReadyStep;   // review fix C2: the equip wait after this step
             public int Light;           // reserves after this step (one per AmmoType), restored before a replay
             public int Medium;
             public int Heavy;
@@ -50,6 +51,15 @@ namespace ProjectH.Client.Game
         private long _step;
         private long _reloadEndStep;
         private bool _fireHeld;
+        // Review fix C2 (server WeaponRules.Equip, PlayerEntity.SwitchReadyTick): no shot before this step after the weapon in
+        // hand changed by a predicted slot switch. Recorded per step, so a replay from the ack restores it.
+        private long _switchReadyStep;
+        // Review fix C2: the same wait for a change the client learns from InventoryState (a pickup or swap into the hand). Not
+        // part of the replay (InventoryState is not tied to an input), so it is kept apart and only ever delays a shot.
+        private long _inventoryReadyStep;
+        // True from Clear until the first InventoryState: that one is the join or respawn inventory, which the server fills
+        // before it resets the wait (WeaponRules.ResetState), so it starts no wait.
+        private bool _inventoryFresh;
 
         // catalog: every weapon of the server's WeaponCatalog (weapon items and slots refer to them by id).
         public WeaponState(WeaponInfo[] catalog)
@@ -84,7 +94,7 @@ namespace ProjectH.Client.Game
         }
 
         // Join, death and respawn: empty-handed (D1) until the server's InventoryState says otherwise.
-        // 기능: 빈손 상태로 되돌린다(슬롯 비움, 예비탄 5종 0, 재장전·발사 버튼 상태 해제).
+        // 기능: 빈손 상태로 되돌린다(슬롯 비움, 예비탄 5종 0, 재장전·발사 버튼 상태 해제, 리뷰 수정 C2: 교체 대기 0, 다음 인벤토리는 대기 없이 받음).
         // 입력: 없음.
         // 출력: 반환값 없음.
         public void Clear()
@@ -94,7 +104,19 @@ namespace ProjectH.Client.Game
             SetReserves(0, 0, 0, 0, 0);
             Reloading = false;
             _fireHeld = false;
+            _switchReadyStep = 0;
+            _inventoryReadyStep = 0;
+            _inventoryFresh = true;
         }
+
+        // Review fix C2: steps until a predicted shot is allowed after the last change of the weapon in hand (0 = none). For
+        // the HUD and tests.
+        public int SwitchRemainingSteps => (int)Math.Max(0, Math.Max(_switchReadyStep, _inventoryReadyStep) - _step);
+
+        // 기능: 지금 손에 든 무기의 교체 대기 Tick(서버 WeaponRules.Equip과 같다).
+        // 입력: 없음.
+        // 출력: 무기가 있으면 카탈로그의 EquipTicks, 빈손이면 0.
+        private int EquipTicksInHand() => HasWeapon ? Current.EquipTicks : 0;
 
         // The server's inventory (Reliable, only when it changed). Slot contents and reserves are taken as they
         // are. A slot's magazine is taken when the weapon in it changed or the slot is not the current one;
@@ -102,10 +124,14 @@ namespace ProjectH.Client.Game
         // correct a value set here (the two packets arrive in any order). The current slot index also comes
         // from the snapshot.
         // 기능: 서버 InventoryState의 슬롯 내용과 예비탄 5종(Phase 17: Shells·Rockets 포함)을 적용한다.
+        //   리뷰 수정 C2: 지금 슬롯의 무기가 바뀌었으면(빈손에 줍기, 가득 찬 상태의 교환) 그 무기의 교체 대기를 지금 Step부터 둔다.
+        //   버리기로 빈손이 되면 대기는 없다. Clear 뒤 첫 인벤토리(입장·부활)는 대기를 두지 않는다.
         // 입력: server - 받은 인벤토리 상태.
-        // 출력: 반환값 없음. 슬롯·예비탄이 바뀌고, 지금 슬롯의 무기가 바뀌었으면 재장전이 끝난다.
+        // 출력: 반환값 없음. 슬롯·예비탄이 바뀌고, 지금 슬롯의 무기가 바뀌었으면 재장전이 끝나고 교체 대기가 생길 수 있다.
         public void ApplyInventory(in InventoryState server)
         {
+            bool fresh = _inventoryFresh;
+            _inventoryFresh = false;
             for (int i = 0; i < SlotCount; i++)
             {
                 InventorySlotState s = server.GetSlot(i);
@@ -114,7 +140,13 @@ namespace ProjectH.Client.Game
                 if (!same)
                 {
                     _slots[i] = new Held { Catalog = catalog, Rarity = s.Rarity, Ammo = catalog < 0 ? 0 : s.MagAmmo };
-                    if (i == Slot) Reloading = false;
+                    if (i == Slot)
+                    {
+                        Reloading = false;
+                        // The server equipped it at its tick, before this arrived: waiting from the current predicted step
+                        // is later than the server, so a shot is never predicted that the server refuses.
+                        if (!fresh && catalog >= 0) _inventoryReadyStep = Math.Max(_inventoryReadyStep, _step + _catalog[catalog].EquipTicks);
+                    }
                 }
                 else if (i != Slot && catalog >= 0)
                 {
@@ -194,8 +226,8 @@ namespace ProjectH.Client.Game
             _history[seq % HistorySize] = new Record
             {
                 Seq = seq, Step = now, Buttons = buttons, Gated = gated, LaunchBlocked = launchBlocked, Slot = Slot, Ammo = Ammo, Reloading = Reloading,
-                NextFireStep = _slots[Slot].NextFireStep, Light = _reserve[0], Medium = _reserve[1], Heavy = _reserve[2],
-                Shells = _reserve[3], Rockets = _reserve[4],
+                NextFireStep = _slots[Slot].NextFireStep, SwitchReadyStep = _switchReadyStep, Light = _reserve[0], Medium = _reserve[1],
+                Heavy = _reserve[2], Shells = _reserve[3], Rockets = _reserve[4],
             };
             return fired;
         }
@@ -205,9 +237,10 @@ namespace ProjectH.Client.Game
         // point: the state restarts from its values and the inputs after ackSeq are replayed, rewriting their
         // history, so the next snapshot compares against consistent records and ReloadRemainingTicks is
         // measured from the ack point (Phase 3 D12).
-        // 기능: 서버의 무기 상태(ackSeq 입력 뒤)와 기록을 비교하고 다르면 서버 값에서 다시 돌린다(Phase 17: 예비탄 5종을 되돌린다).
+        // 기능: 서버의 무기 상태(ackSeq 입력 뒤)와 기록을 비교하고 다르면 서버 값에서 다시 돌린다(Phase 17: 예비탄 5종을 되돌린다,
+        //   리뷰 수정 C2: 교체 대기도 기록에서 되돌린다. 서버가 든 칸이 예측과 다르면 그 칸의 무기가 ack 시점에 손에 들어온 것으로 본다).
         // 입력: server - Snapshot의 자기 정보, ackSeq - 서버가 처리한 마지막 입력 순번.
-        // 출력: 반환값 없음. 다르면 슬롯·탄창·재장전·예비탄이 서버 값에서 다시 계산된다.
+        // 출력: 반환값 없음. 다르면 슬롯·탄창·재장전·예비탄·교체 대기가 서버 값에서 다시 계산된다.
         public void ApplyServer(in SnapshotSelf server, uint ackSeq)
         {
             if (ackSeq == 0) return;                                  // no input processed yet: nothing to compare
@@ -219,20 +252,26 @@ namespace ProjectH.Client.Game
             if (known && local.Slot == server.WeaponSlot && local.Ammo == server.Ammo && local.Reloading == serverReloading)
                 return;
 
+            int slotBefore = Slot;
             Slot = server.WeaponSlot;
             if (HasWeapon) _slots[Slot].Ammo = Math.Min(server.Ammo, (int)Current.MagazineSize);
             Reloading = serverReloading && HasWeapon;
 
             if (!known)
             {
-                // The ack is older than the history: no replay possible, restart from the server's values.
+                // The ack is older than the history: no replay possible, restart from the server's values. A slot the
+                // prediction did not hold came into the hand at some point before now: wait from now (never earlier than the server).
                 _reloadEndStep = _step + server.ReloadRemainingTicks;
+                if (slotBefore != Slot) _switchReadyStep = _step + EquipTicksInHand();
                 return;
             }
 
             long stepAfterAck = local.Step + 1;
             _reloadEndStep = stepAfterAck + server.ReloadRemainingTicks;
             if (local.Slot == Slot) _slots[Slot].NextFireStep = local.NextFireStep;
+            // Review fix C2: the server's hand differs from the prediction at the ack (e.g. a pickup into the first empty slot
+            // while empty-handed): its equip happened at or before the ack, so the wait from the ack step is never too early.
+            _switchReadyStep = local.Slot == Slot ? local.SwitchReadyStep : local.Step + EquipTicksInHand();
             _reserve[0] = local.Light;
             _reserve[1] = local.Medium;
             _reserve[2] = local.Heavy;
@@ -242,8 +281,8 @@ namespace ProjectH.Client.Game
             _history[ackSeq % HistorySize] = new Record
             {
                 Seq = ackSeq, Step = local.Step, Buttons = local.Buttons, Gated = local.Gated, LaunchBlocked = local.LaunchBlocked, Slot = Slot, Ammo = Ammo, Reloading = Reloading,
-                NextFireStep = _slots[Slot].NextFireStep, Light = local.Light, Medium = local.Medium, Heavy = local.Heavy,
-                Shells = local.Shells, Rockets = local.Rockets,
+                NextFireStep = _slots[Slot].NextFireStep, SwitchReadyStep = _switchReadyStep, Light = local.Light, Medium = local.Medium,
+                Heavy = local.Heavy, Shells = local.Shells, Rockets = local.Rockets,
             };
 
             long end = _step;
@@ -258,7 +297,8 @@ namespace ProjectH.Client.Game
         }
 
         // Same order as the server: switch -> reload -> fire.
-        // 기능: 무기 전환 → 재장전 → 발사를 서버 순서대로 한 Step 적용한다.
+        // 기능: 무기 전환 → 재장전 → 발사를 서버 순서대로 한 Step 적용한다. 리뷰 수정 C2: 칸이 바뀌면 새로 든 무기의 교체 대기를 두고
+        //   (빈 칸은 대기 없음, 같은 칸은 새로 두지 않음), 대기 중의 방아쇠는 발사 간격 안과 같다(누름만 쓰고 탄·간격·자동 재장전 없음, R은 된다).
         // 입력: buttons - 버튼, launchBlocked - Phase 17: 투사체 무기 발사 불가(서버 CanLaunch false처럼 방아쇠는 소비하되 탄·간격·자동
         //   재장전 없음), now - 이 입력의 Step.
         // 출력: 서버가 쏠 것으로 보면 true.
@@ -275,6 +315,7 @@ namespace ProjectH.Client.Game
             {
                 Slot = target;
                 Reloading = false;
+                _switchReadyStep = now + EquipTicksInHand();
             }
 
             bool fireHeld = (buttons & InputButtons.Fire) != 0;
@@ -291,7 +332,7 @@ namespace ProjectH.Client.Game
 
             bool trigger = fireHeld && (weapon.Automatic || !_fireHeld);
             _fireHeld = fireHeld;
-            if (!trigger || Reloading || now < held.NextFireStep) return false;
+            if (!trigger || Reloading || now < held.NextFireStep || now < _switchReadyStep || now < _inventoryReadyStep) return false;
             // Phase 17: the server's CanLaunch false is an invalid aim: the press is spent (FireHeld above), nothing else.
             if (launchBlocked && weapon.Projectile != ProjectileKind.None) return false;
 

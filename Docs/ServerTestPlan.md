@@ -187,6 +187,8 @@ Phase 10(spec D12)에서 "개발용 LAN 서버"라는 이유로 미룬 항목이
 - G2: IP당 동시 연결 수·전역 수락 빈도·쿠키 단계 구현(묶음 A).
 - G4: **HMAC·재전송 창 구현(암호화 없음).** 모든 데이터그램에 counter + HMAC 꼬리, 64칸 재전송 창, 서버 RSA 공개키 핀으로 세션 키 교환(묶음 B3, `SessionAuthTests`, `AuthPacketLayerTests`). 경로 위 변조·재전송은 버려지고 `authDrops`로 센다. 내용은 평문이다.
 
+- G5: **사후 판정 기록 구현(판정은 없음).** 참가자마다 사격·광선·명중 광선·가장 먼 명중·되감기 합·RTT 허용으로 자른 횟수·이동 이상·가장 큰 조준 회전을 경기 기록과 `match_player`(schema v2)에 남긴다(묶음 C7, `MatchRecordTests.AFinishedMatch_RecordsTheAntiCheatCounters`, `MySqlTests.AV1Database_IsMigratedToV2_AndTheColumnsAreSaved`). 함께 막은 것: 경기 비밀 시드(C1), 교체 대기(C2), 되감기 RTT 제한(C3), 줍기 시선(C4), 투사체 개인 상한(C5), 아이템 행동 간격(C6).
+
 ## 8. 필요한 도구 (별도 Phase로 구현)
 
 | ID | 도구 | 하는 일 | 쓰는 시나리오 |

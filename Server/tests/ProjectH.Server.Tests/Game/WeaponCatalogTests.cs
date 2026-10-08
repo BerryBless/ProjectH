@@ -92,6 +92,8 @@ public class WeaponCatalogTests
     [InlineData("\"range\": 1e39")]
     [InlineData("\"spreadDegrees\": -1")]
     [InlineData("\"spreadDegrees\": 31")]
+    [InlineData("\"equipSeconds\": -0.1")]   // review fix C2: 0-2
+    [InlineData("\"equipSeconds\": 2.1")]
     [InlineData("\"pellets\": 0")]
     [InlineData("\"pellets\": 17")]
     [InlineData("\"falloffStart\": 151")]
@@ -108,6 +110,21 @@ public class WeaponCatalogTests
     {
         // A later duplicate key overrides the valid value (System.Text.Json keeps the last one).
         Parse(One(ValidFields + ", " + overrideField));
+    }
+
+    // Review fix C2: equipSeconds is optional (0.4 s when missing), 0-2, rounded to ticks like the other times; 0 is allowed
+    // (no wait). The tick count goes to the client in the catalog.
+    [Theory]
+    [InlineData("", 30, 12)]
+    [InlineData(", \"equipSeconds\": 0", 30, 0)]
+    [InlineData(", \"equipSeconds\": 0.4", 60, 24)]
+    [InlineData(", \"equipSeconds\": 2", 128, 256)]
+    [InlineData(", \"equipSeconds\": 0.01", 30, 1)]
+    public void EquipSeconds_IsOptional_AndBecomesTicks(string field, int simHz, int ticks)
+    {
+        Assert.True(WeaponCatalog.TryParse(One(ValidFields + field), simHz, out var catalog, out string? error), error);
+        Assert.Equal(ticks, catalog![0].EquipTicks);
+        Assert.Equal(ticks, catalog.WireInfos[0].EquipTicks);
     }
 
     // Phase 17–19 review: a rocket explodes on its first hit, so a bounce above 0 is a data error (it would turn it into a grenade).
@@ -186,6 +203,7 @@ public class WeaponCatalogTests
         var catalog = WeaponCatalog.LoadFile(Path.Combine(AppContext.BaseDirectory, "weapons.json"), 30);
 
         Assert.Equal(6, catalog.Count);   // Phase 17 D1: the three below keep their numbers; + Brute SG, Sparrow P, Thunder RL
+        for (int i = 0; i < catalog.Count; i++) Assert.Equal(12, catalog[i].EquipTicks);   // review fix C2: equipSeconds 0.4
         Assert.Equal("Vesper AR", catalog[0].Name);
         Assert.Equal(20, catalog[0].Damage);
         Assert.Equal(3, catalog[0].FireIntervalTicks);    // 10 rounds/s

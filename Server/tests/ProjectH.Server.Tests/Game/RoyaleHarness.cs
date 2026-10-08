@@ -37,13 +37,16 @@ internal sealed class RoyaleHarness
         int minPlayers = 2, string lootJson = TestGameData.LootJson, bool record = true,
         Vector3[]? dropPoints = null, Action<ProjectH.Server.Persistence.MatchRecord>? matchSink = null,
         int reconnectGraceSeconds = 10, Action<string>? graceExpired = null, bool airDrop = false, int teamSize = 1,
-        ProjectH.Server.Game.Squad.SquadCatalog? squad = null, ProjectH.Server.Game.Map.MapCatalog? map = null)
+        ProjectH.Server.Game.Squad.SquadCatalog? squad = null, ProjectH.Server.Game.Map.MapCatalog? map = null,
+        bool deterministicSeeds = true)
     {
         SendPacket send = record ? (peer, data, method) => Packets.Add(new Sent(peer, data.ToArray(), method)) : static (_, _, _) => { };
+        // Review fix C1: the rule tests roll with the configured seeds (seed + round), as they did before the match secret.
         Match = new Match(new ServerOptions
             {
                 MaxPlayers = maxPlayers, MinPlayers = minPlayers, StartCountdownSeconds = 1, ResultSeconds = 1,
                 ReconnectGraceSeconds = reconnectGraceSeconds, AirDrop = airDrop, TeamSize = teamSize,
+                DeterministicSeeds = deterministicSeeds,
             },
             TestGameData.Create(lootJson: lootJson, zonesJson: zonesJson, squad: squad, map: map), send, loadout, dropPoints: dropPoints ?? LobbyRingDrops,
             matchSink: matchSink, graceExpired: graceExpired);

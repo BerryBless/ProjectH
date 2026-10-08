@@ -973,6 +973,7 @@ public sealed class HeadlessActor : IQaActor
                 WeaponId = weapon?.WeaponId ?? 0,
                 WeaponName = weapon?.Name ?? string.Empty,
                 WeaponAutomatic = weapon?.Automatic ?? false,
+                SlotEquipTicks = SlotEquipTicks(v),   // review fix C2
                 ReloadTicks = v.Self.ReloadRemainingTicks,
                 ServerTick = v.ServerTick,
                 MatchState = v.HasMatchState ? v.Match.State.ToString() : string.Empty,
@@ -1102,6 +1103,17 @@ public sealed class HeadlessActor : IQaActor
         var states = new string[v.Team.Count];
         for (int i = 0; i < states.Length; i++) states[i] = v.Team.Get(i).State.ToString();
         return states;
+    }
+
+    // 기능: 인벤토리 칸마다 든 무기의 교체 대기 Tick을 받은 카탈로그에서 읽는다(리뷰 수정 C2, QA fire·switchWeapon이 칸 교체 뒤 기다린다).
+    // 입력: v - 봇 화면 상태.
+    // 출력: 칸 수만큼의 EquipTicks(빈 칸·모르는 무기는 0). 카탈로그가 없으면 빈 배열.
+    private static int[] SlotEquipTicks(BotView v)
+    {
+        if (v.Weapons == null) return Array.Empty<int>();
+        var ticks = new int[ItemConstants.WeaponSlotCount];
+        for (int i = 0; i < ticks.Length; i++) ticks[i] = v.WeaponInSlot(i)?.EquipTicks ?? 0;
+        return ticks;
     }
 
     private static ushort[] VisibleIds(BotView v)

@@ -30,8 +30,65 @@ public class WeaponRulesTests
     private bool Tick(uint now, InputButtons buttons, bool aimValid = true)
     {
         WeaponRules.UpdateReload(_player, now);
-        WeaponRules.SelectSlot(_player, buttons);
+        WeaponRules.SelectSlot(_player, buttons, now);
         return WeaponRules.Apply(_player, buttons, aimValid, now);
+    }
+
+    // Review fix C2 (SEC-8): each held weapon keeps its own fire interval, so without an equip wait three Kestrels fired three
+    // shots in five ticks by switching. A switch makes the weapon now in hand wait its EquipTicks (shipped: 0.4 s = 12 ticks)
+    // before it fires; the blocked presses spend no round and no interval.
+    [Fact]
+    public void SwitchingSlots_DoesNotFireBeforeEquipTicks()
+    {
+        var catalog = WeaponCatalog.LoadFile(System.IO.Path.Combine(AppContext.BaseDirectory, "weapons.json"), 30);
+        Assert.True(catalog.TryGetById(2, out WeaponDefinition kestrel));
+        Assert.Equal(12, kestrel.EquipTicks);
+        var player = new PlayerEntity(1, 1, "k", 8);
+        for (int i = 0; i < Inventory.SlotCount; i++)
+            player.Inventory.Slots[i] = new HeldWeapon { Weapon = kestrel, MagAmmo = kestrel.MagazineSize };
+        player.Inventory.SetAmmo(AmmoType.Heavy, 20);
+        WeaponRules.ResetState(player);
+        int shots = 0;
+        bool Step(uint now, InputButtons buttons)
+        {
+            WeaponRules.UpdateReload(player, now);
+            WeaponRules.SelectSlot(player, buttons, now);
+            bool fired = WeaponRules.Apply(player, buttons, aimValid: true, now);
+            if (fired) shots++;
+            return fired;
+        }
+
+        const uint t = 100;
+        Assert.True(Step(t, InputButtons.Fire));
+        Assert.False(Step(t + 1, InputButtons.None));
+        Assert.False(Step(t + 2, InputButtons.Slot2 | InputButtons.Fire));
+        Assert.Equal(t + 2 + 12, player.SwitchReadyTick);
+        Assert.False(Step(t + 3, InputButtons.None));
+        Assert.False(Step(t + 4, InputButtons.Slot3 | InputButtons.Fire));
+        Assert.Equal(t + 4 + 12, player.SwitchReadyTick);
+        for (uint now = t + 5; now < t + 16; now++) Assert.False(Step(now, now % 2 == 0 ? InputButtons.Fire : InputButtons.None));
+        Assert.Equal(kestrel.MagazineSize, player.Inventory.Slots[2].MagAmmo);   // nothing spent while it was coming up
+        Assert.True(Step(t + 16, InputButtons.Fire));                           // 12 ticks after the last switch
+        Assert.Equal(2, shots);
+    }
+
+    // The wait belongs to the weapon now in hand: an empty slot has none, and selecting the slot already in hand starts none.
+    [Fact]
+    public void TheEquipWait_IsTheWeaponInHand_AndOnlyOnAChange()
+    {
+        var catalog = TestWeapons.Create(equipSeconds: 0.5f);   // 15 ticks
+        var player = new PlayerEntity(1, 1, "e", 8);
+        TestGameData.CombatLoadout.ApplyTo(player.Inventory, catalog);
+        WeaponRules.ResetState(player);
+        Assert.Equal(0u, player.SwitchReadyTick);
+        Assert.False(WeaponRules.SelectSlot(player, InputButtons.Slot1, 50));   // already in hand
+        Assert.Equal(0u, player.SwitchReadyTick);
+        Assert.True(WeaponRules.SelectSlot(player, InputButtons.Slot3, 50));    // empty slot: nothing to bring up
+        Assert.Equal(50u, player.SwitchReadyTick);
+        Assert.True(WeaponRules.SelectSlot(player, InputButtons.Slot2, 60));
+        Assert.Equal(75u, player.SwitchReadyTick);
+        WeaponRules.ResetState(player);                                          // a respawn starts with the weapon up
+        Assert.Equal(0u, player.SwitchReadyTick);
     }
 
     [Fact]
@@ -250,7 +307,7 @@ public class WeaponRulesTests
     [Fact]
     public void EmptySlot_CanBeSelected_ButNeverFiresOrReloads()
     {
-        Assert.True(WeaponRules.SelectSlot(_player, InputButtons.Slot3));
+        Assert.True(WeaponRules.SelectSlot(_player, InputButtons.Slot3, 0));
         Assert.Equal(2, _player.Inventory.CurrentSlot);
 
         for (uint now = 0; now < 10; now++) Assert.False(Tick(now, InputButtons.Fire | InputButtons.Reload));

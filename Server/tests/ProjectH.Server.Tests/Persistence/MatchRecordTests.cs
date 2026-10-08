@@ -7,6 +7,7 @@ using ProjectH.Server.Game.Combat;
 using ProjectH.Server.Persistence;
 using ProjectH.Server.Tests.Game;
 using ProjectH.Shared.Protocol;
+using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Server.Tests.Persistence;
 
@@ -52,6 +53,105 @@ public class MatchRecordTests
 
         h.TickUntil(() => h.Match.Flow.Round == 2, RoyaleHarness.ResultTicks + 5);
         Assert.Single(records);   // the result screen and the next countdown record nothing
+    }
+
+    // Review fix C7 (SEC-10, SEC-19): each participant's shots, rays, hits, farthest hit, rewind and its clamps, movement
+    // anomalies and largest aim turn go into the record (match_player), counted from the match start.
+    [Fact]
+    public void AFinishedMatch_RecordsTheAntiCheatCounters()
+    {
+        (RoyaleHarness h, List<MatchRecord> records) = Harness();
+        PlayerEntity a = h.Join(1);
+        PlayerEntity b = h.Join(2);
+        h.RunToMatch();
+        h.Place(a, new Vector3(0f, 0f, -3f));
+        h.Place(b, new Vector3(0f, 0f, 3f));
+        h.ShootUntilDead(a, b);   // the test auto weapon: one ray, 30 damage, so five hits (shield 50 + health 100)
+        h.Ticks(2);
+
+        PlayerRecord shooter = Assert.Single(records).Players.Single(p => p.DevPlayerId == "p1");
+        Assert.Equal(5, shooter.Shots);
+        Assert.Equal(5, shooter.Pellets);
+        Assert.Equal(5, shooter.Hits);
+        Assert.InRange(shooter.MaxHitDistanceCm, 550, 600);   // 6 m apart, to the front of the hit box (0.35 m nearer)
+        Assert.Equal(0, shooter.RewindTicks);                // the harness claims the latest tick
+        Assert.Equal(0, shooter.RewindClamped);
+        Assert.Equal(0, shooter.MovementAnomalies);
+        Assert.Equal(0, shooter.MaxAimTurn);                 // the same aim every shot
+        PlayerRecord target = records[0].Players.Single(p => p.DevPlayerId == "p2");
+        Assert.Equal(0, target.Shots);
+        Assert.Equal(0, target.Hits);
+    }
+
+    // The aim turn is the largest |change of AimYaw| between two real inputs, wrapped to 180 degrees, in tenths of a degree.
+    [Fact]
+    public void TheLargestAimTurn_IsWrappedAndInTenthsOfADegree()
+    {
+        (RoyaleHarness h, _) = Harness();
+        PlayerEntity a = h.Join(1);
+        h.Join(2);
+        h.Send(a, new InputCommand { AimYaw = 10f });
+        h.Match.Tick();
+        h.Send(a, new InputCommand { AimYaw = 350f });   // 20 degrees the short way
+        h.Match.Tick();
+        Assert.Equal(200, a.MaxAimTurnDeg10);
+        h.Send(a, new InputCommand { AimYaw = 175.5f });   // 174.5 degrees
+        h.Match.Tick();
+        Assert.Equal(1745, a.MaxAimTurnDeg10);
+        h.Send(a, new InputCommand { AimYaw = float.NaN });   // not a turn
+        h.Match.Tick();
+        Assert.Equal(1745, a.MaxAimTurnDeg10);
+    }
+
+    // Review C round 1: a respawn (every match start is one) resets the movement repeat, not the aim. The first input of the
+    // match only sets the aim baseline; the turns after it are measured from there.
+    [Fact]
+    public void TheFirstInputAfterTheMatchStart_IsNotATurn()
+    {
+        (RoyaleHarness h, _) = Harness();
+        PlayerEntity a = h.Join(1);
+        h.Join(2);
+        h.Send(a, new InputCommand { AimYaw = 0f });   // a countdown input: the seq is not 0 any more
+        h.Match.Tick();
+        h.RunToMatch();
+        Assert.Equal(0, a.MaxAimTurnDeg10);
+        h.Send(a, new InputCommand { AimYaw = 120f });
+        h.Match.Tick();
+        Assert.Equal(0, a.MaxAimTurnDeg10);
+        h.Send(a, new InputCommand { AimYaw = 130f });
+        h.Match.Tick();
+        Assert.Equal(100, a.MaxAimTurnDeg10);
+    }
+
+    // After more than half a second without input (a paused client) the first input only sets the baseline again.
+    [Fact]
+    public void TheFirstInputAfterAnInputGap_IsNotATurn()
+    {
+        (RoyaleHarness h, _) = Harness();
+        PlayerEntity a = h.Join(1);
+        h.Join(2);
+        h.Send(a, new InputCommand { AimYaw = 10f });
+        h.Match.Tick();
+        h.Ticks(20);   // more than SimHz / 2 = 15 ticks without input
+        h.Send(a, new InputCommand { AimYaw = 100f });
+        h.Match.Tick();
+        Assert.Equal(0, a.MaxAimTurnDeg10);
+    }
+
+    // A non-finite aim is skipped, not taken as the baseline: A -> NaN -> B measures A -> B.
+    [Fact]
+    public void ANonFiniteAim_InBetween_StillMeasuresTheTurnAroundIt()
+    {
+        (RoyaleHarness h, _) = Harness();
+        PlayerEntity a = h.Join(1);
+        h.Join(2);
+        h.Send(a, new InputCommand { AimYaw = 10f });
+        h.Match.Tick();
+        h.Send(a, new InputCommand { AimYaw = float.NaN });
+        h.Match.Tick();
+        h.Send(a, new InputCommand { AimYaw = 40f });
+        h.Match.Tick();
+        Assert.Equal(300, a.MaxAimTurnDeg10);
     }
 
     [Fact]

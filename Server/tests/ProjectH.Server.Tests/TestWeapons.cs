@@ -10,6 +10,8 @@ namespace ProjectH.Server.Tests;
 //           id 3 "Test Light" = 10 damage, 3-tick interval, 10 rounds, 15-tick reload, Light ammo.
 // 30 damage makes shield 50 + health 100 exactly five hits.
 // Phase 17: plus the shipped grenade (no weapon fires a projectile here; Phase 17 tests use the shipped weapons.json).
+// Review fix C2: equipSeconds 0 unless a test asks for it, so the tests written before the equip wait keep their timing; the
+// equip tests pass a wait or use the shipped weapons.json (0.4 s).
 internal static class TestWeapons
 {
     public const byte AutoId = 1;
@@ -24,15 +26,21 @@ internal static class TestWeapons
     public const byte LightId = 3;
     public const int LightMagazine = 10;
 
-    public static string Json(float autoRange = 100f) => $$"""
+    // 기능: 테스트 무기 카탈로그 JSON을 만든다.
+    // 입력: autoRange - Test Auto 사거리, equipSeconds - 세 무기의 교체 대기(리뷰 수정 C2, 기본 0).
+    // 출력: weapons.json 형식 문자열.
+    public static string Json(float autoRange = 100f, float equipSeconds = 0f) => $$"""
         {
           "weapons": [
             { "id": 1, "name": "Test Auto", "damage": 30, "fireIntervalSeconds": 0.1, "magazineSize": 6,
-              "reloadSeconds": 1.0, "range": {{autoRange.ToString(CultureInfo.InvariantCulture)}}, "automatic": true, "ammoType": "Medium" },
+              "reloadSeconds": 1.0, "range": {{autoRange.ToString(CultureInfo.InvariantCulture)}}, "automatic": true, "ammoType": "Medium",
+              "equipSeconds": {{equipSeconds.ToString(CultureInfo.InvariantCulture)}} },
             { "id": 2, "name": "Test Semi", "damage": 90, "fireIntervalSeconds": 0.5, "magazineSize": 2,
-              "reloadSeconds": 2.0, "range": 300, "automatic": false, "ammoType": "Heavy" },
+              "reloadSeconds": 2.0, "range": 300, "automatic": false, "ammoType": "Heavy",
+              "equipSeconds": {{equipSeconds.ToString(CultureInfo.InvariantCulture)}} },
             { "id": 3, "name": "Test Light", "damage": 10, "fireIntervalSeconds": 0.1, "magazineSize": 10,
-              "reloadSeconds": 0.5, "range": 50, "automatic": true, "ammoType": "Light" }
+              "reloadSeconds": 0.5, "range": 50, "automatic": true, "ammoType": "Light",
+              "equipSeconds": {{equipSeconds.ToString(CultureInfo.InvariantCulture)}} }
           ],
           "projectiles": {
             "Grenade": { "speed": 18, "gravity": 9.81, "lifetimeSeconds": 3.0, "explosionRadius": 5, "explosionDamage": 80,
@@ -41,9 +49,12 @@ internal static class TestWeapons
         }
         """;
 
-    public static WeaponCatalog Create(int simHz = 30, float autoRange = 100f)
+    // 기능: 테스트 무기 카탈로그를 만든다.
+    // 입력: simHz - Tick 속도, autoRange - Test Auto 사거리, equipSeconds - 교체 대기(리뷰 수정 C2, 기본 0).
+    // 출력: WeaponCatalog. 잘못되면 예외.
+    public static WeaponCatalog Create(int simHz = 30, float autoRange = 100f, float equipSeconds = 0f)
     {
-        if (!WeaponCatalog.TryParse(Json(autoRange), simHz, out var catalog, out string? error))
+        if (!WeaponCatalog.TryParse(Json(autoRange, equipSeconds), simHz, out var catalog, out string? error))
             throw new InvalidOperationException("Test catalog is invalid: " + error);
         return catalog!;
     }

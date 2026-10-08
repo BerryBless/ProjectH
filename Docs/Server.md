@@ -34,6 +34,7 @@ MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 �
 | DevRespawn | false | true = Phase 3·4 테스트 아레나(경기 흐름 없음, 피해 항상, 3초 부활, Loot 처음부터·재생성, 경기 패킷 없음). 운영은 false |
 | ZoneSeed | 1 | ≥ 0. Zone 중심 난수 시드. 경기마다 `ZoneSeed + 판 번호` |
 | SpawnSeed | 1 | ≥ 0. 투입 지점 섞기 시드. 경기마다 `SpawnSeed + 판 번호`. `AirDrop`이면 수송기 경로의 시드이기도 하다 |
+| DeterministicSeeds | false | 리뷰 수정 C1(SEC-6·11). false면 위 세 시드를 쓰지 않는다. 경기 시작마다 만드는 경기 비밀(8B 난수, 보내지 않는다)에 용도(Loot·Zone·투입 순서·경로)와 판 번호를 섞어 굴리고, 무기 퍼짐 해시에도 넣는다. 코드와 설정을 알아도 Loot·Zone·투입·퍼짐을 미리 알 수 없다. true면 예전처럼 `시드 + 판 번호`이고 퍼짐에 비밀이 없다(시험·QA 재현용, QA 도구가 띄우는 서버는 true). Production에서 true면 시작 때 Warning을 남긴다. `/qa/health`의 `seeds`는 true일 때만 값이 있다 |
 | AirDrop | true | Phase 12: 경기가 수송기에서 시작한다(`BattleRoyale.md` "공중 투입". Zone 시계는 경로가 끝나는 Tick에 시작). false면 Phase 6의 투입 지점에서 땅으로 시작한다(Phase 5–11 규칙 테스트와 Phase 11과의 부하 비교용). `DevRespawn`이 true면 이 값과 상관없이 땅에서 시작한다 |
 | BuildInfiniteResources | false | Phase 13: true면 건설에 자원이 들지 않는다(부하 테스트용, `Building.md` "자원"). 운영은 false |
 | TeamSize | 1 | 1–4. Phase 14: 팀 크기(1 Solo, 2 Duo, 4 Squad). 경기 시작 때 참가자를 입장 순서로 묶는다(언제나 2팀 이상). 기절·소생·Reboot은 2 이상에서만 생긴다(`Squad.md`) |

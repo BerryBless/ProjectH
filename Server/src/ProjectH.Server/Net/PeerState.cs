@@ -51,6 +51,9 @@ public sealed class PeerState
     // once, never cleared), and the loop tick of the newest input (the Join counts as one, so the input timeout starts
     // at the join). Joined is volatile: the network thread reads it for statistics requests (see the class comment).
     public long ConnectedTick;
+    // Review fix C3 (game loop only): LiteNetLib's RoundTripTime of this connection, copied by SweepPeers every tick; Match
+    // sizes the shooter's rewind allowance from it (0 until the first sweep: the narrowest allowance).
+    public int RttMs;
     public volatile bool Joined;
     public long LastInputTick;
     // Phase 10: Match refused the Join (MatchFull). The connection is closed a second later (GameLoop.SweepPeers), so

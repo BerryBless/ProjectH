@@ -81,6 +81,29 @@ public sealed class PlayerEntity
     public uint NextSwingTick;
     // Phase 17 D9: the tick the next grenade can be thrown at (one per throw interval). 0 at join and every new life.
     public uint NextGrenadeTick;
+    // Review fix C2 (SEC-8): the weapon in hand cannot fire before this tick. Set by WeaponRules.Equip whenever what is in hand
+    // changes (a slot switch, a pickup or swap into the hand, a drop); 0 at join and every new life (ResetState).
+    public uint SwitchReadyTick;
+    // Review fix C6 (SEC-20): the tick from which the next G or E pickup is taken (one per ItemRules.ActionIntervalTicks).
+    public uint NextItemActionTick;
+    // Review fix C7 (SEC-10, SEC-19): anti-cheat counters for the match record, game loop only, reset at every match start
+    // (Match.ResetMatchCounters). Integers only, so recording allocates nothing. Shots fired (each trigger pull, projectiles
+    // included), hitscan rays fired and rays that hit a player, the ticks the shots were rewound by (sum) and how many claims
+    // were cut to the RTT allowance, the farthest player hit (cm), moves faster than the mode allows, and the largest aim
+    // turn between two real inputs (tenths of a degree; a silent aim shows here, it is not judged).
+    public int ShotsFired;
+    public int PelletsFired;
+    public int PelletsHit;
+    public int RewindTicksSum;
+    public int RewindClamped;
+    public int MaxHitDistanceCm;
+    public int MovementAnomalies;
+    public int MaxAimTurnDeg10;
+    // Review C round 1 (game loop only): the aim baseline MaxAimTurnDeg10 is measured from, kept apart from LastInput (whose
+    // resets zero the aim). Set by every real input with a finite AimYaw; cleared at the join, a respawn, a resume, a seat
+    // reset and an input gap (Match.ResetAimBaseline), so the first input after those only sets it again.
+    public float LastAimYaw;
+    public bool HasAimBaseline;
     // Phase 13 D8: build requests waiting for the game loop (BuildRequestQueue.Capacity at most), the newest sequence
     // processed (older or equal ones are dropped: a replay or a duplicate), and the tick it may place again.
     public readonly BuildRequestQueue BuildQueue = new();

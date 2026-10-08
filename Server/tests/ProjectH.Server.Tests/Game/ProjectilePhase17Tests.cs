@@ -186,6 +186,49 @@ public class ProjectilePhase17Tests
         Assert.Equal(ProjectileSet.Capacity, h.Match.Projectiles.Count);
     }
 
+    // Review fix C5 (SEC-13): one player holds at most ProjectileRules.MaxPerOwner live projectiles, so one player cannot fill
+    // the match's 32 shared slots and keep everyone else from launching. Refused like full slots: no round, no grenade spent.
+    [Fact]
+    public void AFifthLiveProjectile_FromOnePlayer_IsRefused_WithoutSpendingAmmo()
+    {
+        SandboxHarness h = Harness();
+        PlayerEntity shooter = h.Join(1, new Vector3(2.5f, 0f, -10f));
+        ProjectileDefinition grenade = Data().Weapons.Projectile(ProjectileKind.Grenade)!;
+        Assert.Equal(4, ProjectileRules.MaxPerOwner);
+        for (int i = 0; i < ProjectileRules.MaxPerOwner; i++)
+            Assert.True(h.Match.Projectiles.TryAdd(new Projectile
+            {
+                Definition = grenade, Resting = true, ExplodeTick = uint.MaxValue, OwnerJoinOrder = shooter.JoinOrder,
+                OwnerEntityId = shooter.EntityId,
+            }, out _));
+        Assert.Equal(ProjectileRules.MaxPerOwner, h.Match.Projectiles.CountOwnedBy(shooter.JoinOrder));
+        h.Act(shooter, InputButtons.Fire | InputButtons.Slot3, WallCentre);
+        Assert.Equal(1, shooter.Inventory.Slots[2].MagAmmo);
+        h.Act(shooter, InputButtons.ThrowGrenade, WallCentre);
+        Assert.Equal(6, shooter.Inventory.Grenades);
+        Assert.DoesNotContain(h.Packets, s => s.Id == PacketId.ProjectileSpawned);
+        Assert.Equal(ProjectileRules.MaxPerOwner, h.Match.Projectiles.Count);
+    }
+
+    [Fact]
+    public void AnotherPlayer_CanStillLaunch()
+    {
+        SandboxHarness h = Harness();
+        PlayerEntity owner = h.Join(1, new Vector3(2.5f, 0f, -10f));
+        PlayerEntity other = h.Join(2, new Vector3(6f, 0f, -10f));
+        ProjectileDefinition grenade = Data().Weapons.Projectile(ProjectileKind.Grenade)!;
+        for (int i = 0; i < ProjectileRules.MaxPerOwner; i++)
+            Assert.True(h.Match.Projectiles.TryAdd(new Projectile
+            {
+                Definition = grenade, Resting = true, ExplodeTick = uint.MaxValue, OwnerJoinOrder = owner.JoinOrder,
+                OwnerEntityId = owner.EntityId,
+            }, out _));
+        h.Act(other, InputButtons.Fire | InputButtons.Slot3, WallCentre);
+        Assert.Equal(0, other.Inventory.Slots[2].MagAmmo);
+        Assert.Equal(1, h.Match.Projectiles.CountOwnedBy(other.JoinOrder));
+        Assert.Equal(ProjectileRules.MaxPerOwner + 1, h.Match.Projectiles.Count);
+    }
+
     // ---- grenades ----
 
     [Fact]

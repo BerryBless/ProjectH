@@ -31,6 +31,11 @@ public sealed class ServerOptions
     public int ZoneSeed { get; set; } = 1;
     // Phase 6 D9: each match shuffles the drop points with SpawnSeed + round number.
     public int SpawnSeed { get; set; } = 1;
+    // Review fix C1 (SEC-6, SEC-11): false (the default) seeds every roll of a match (loot, containers, supply drops, zone,
+    // drop order, route, spread) from a secret made at each match start, so nobody can predict them from the code and these
+    // options. True keeps LootSeed/ZoneSeed/SpawnSeed + round and a spread without the secret (tests, QA reproduction); a
+    // Production server warns at start when it is on.
+    public bool DeterministicSeeds { get; set; }
     // Phase 12 D4, D5: a match starts aboard the drop transport (its route is rolled with SpawnSeed + round number) and
     // the zone's clock starts when the route ends. Off = everyone starts on a drop point as in Phases 6-11 (most rule
     // tests, and a load run that compares with them). Never with DevRespawn.

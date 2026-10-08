@@ -489,5 +489,114 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual(5, state.Ammo);
             Assert.AreEqual(18, state.GetReserve(AmmoType.Shells));   // 20 at the ack (10 + 10 picked up) - 2 put in
         }
+
+        // ---- Review fix C2: the equip wait (server WeaponRules.Equip / WeaponRulesTests.SwitchingSlots_DoesNotFireBeforeEquipTicks) ----
+
+        // 기능: weapons.json의 Kestrel LR과 같은 수치의 카탈로그(반자동, 간격 38 Tick, 5발, Heavy, 교체 대기 12 Tick)를 만든다.
+        // 입력: 없음.
+        // 출력: 무기 하나(WeaponId 2)의 카탈로그.
+        private static WeaponInfo[] KestrelCatalog() => new[]
+        {
+            new WeaponInfo { WeaponId = 2, Name = "Kestrel LR", Damage = 90, FireIntervalTicks = 38, MagazineSize = 5, ReloadTicks = 75, Range = 300f, Automatic = false, AmmoType = AmmoType.Heavy, EquipTicks = 12 },
+        };
+
+        // 기능: 세 칸 모두 Kestrel인 인벤토리를 만든다.
+        // 입력: 없음.
+        // 출력: 탄창 가득, Heavy 예비탄 20.
+        private static InventoryState ThreeKestrels() => new InventoryState
+        {
+            Slot0 = new InventorySlotState { WeaponId = 2, MagAmmo = 5 },
+            Slot1 = new InventorySlotState { WeaponId = 2, MagAmmo = 5 },
+            Slot2 = new InventorySlotState { WeaponId = 2, MagAmmo = 5 },
+            HeavyAmmo = 20,
+        };
+
+        // 기능: Kestrel 세 자루를 든 WeaponState를 만든다(Clear 뒤 첫 인벤토리라 대기 없음).
+        // 입력: 없음.
+        // 출력: 0번 칸을 든 상태.
+        private static WeaponState ThreeKestrelState()
+        {
+            var state = new WeaponState(KestrelCatalog());
+            state.ApplyInventory(ThreeKestrels());
+            return state;
+        }
+
+        [Test]
+        public void SwitchingSlots_DoesNotFireBeforeEquipTicks()
+        {
+            var state = ThreeKestrelState();
+            Assert.IsTrue(Step(state, InputButtons.Fire));                              // step 0
+            Assert.IsFalse(Step(state, InputButtons.None));                             // 1
+            Assert.IsFalse(Step(state, InputButtons.Slot2 | InputButtons.Fire));        // 2: switched, not fired
+            Assert.AreEqual(1, state.Slot);
+            Assert.AreEqual(2 + 12 - 3, state.SwitchRemainingSteps);                    // ready at step 14, next step is 3
+            Assert.IsFalse(Step(state, InputButtons.None));                             // 3
+            Assert.IsFalse(Step(state, InputButtons.Slot3 | InputButtons.Fire));        // 4: ready at step 16
+            for (int step = 5; step < 16; step++)
+                Assert.IsFalse(Step(state, step % 2 == 0 ? InputButtons.Fire : InputButtons.None), "step " + step);
+            Assert.IsTrue(state.TryGetSlot(2, out _, out _, out int ammo));
+            Assert.AreEqual(5, ammo);                                                   // nothing spent while it came up
+            Assert.IsTrue(Step(state, InputButtons.Fire));                              // 16: 12 steps after the last switch
+            Assert.AreEqual(4, state.Ammo);
+        }
+
+        [Test]
+        public void SelectingTheSlotInHand_StartsNoWait_AndAnEmptySlotHasNone()
+        {
+            var state = new WeaponState(KestrelCatalog());
+            state.ApplyInventory(new InventoryState { Slot0 = new InventorySlotState { WeaponId = 2, MagAmmo = 5 }, HeavyAmmo = 20 });
+            Assert.IsTrue(Step(state, InputButtons.Slot1 | InputButtons.Fire));         // slot 0 already in hand
+            Assert.IsFalse(Step(state, InputButtons.Slot2));                            // an empty slot: no weapon, no wait
+            Assert.IsFalse(state.HasWeapon);
+            Assert.AreEqual(0, state.SwitchRemainingSteps);
+            Assert.IsFalse(Step(state, InputButtons.Slot1 | InputButtons.Fire));        // back to the Kestrel: waits again
+            Assert.AreEqual(12 + 2 - 3, state.SwitchRemainingSteps);
+        }
+
+        [Test]
+        public void DuringTheWait_ReloadStarts_AndTheBlockedPressIsSpent()
+        {
+            var state = ThreeKestrelState();
+            Assert.IsTrue(Step(state, InputButtons.Fire));                              // slot 0: 4 rounds left
+            Assert.IsFalse(Step(state, InputButtons.Slot2));                            // 1
+            Assert.IsFalse(Step(state, InputButtons.Slot1 | InputButtons.Reload | InputButtons.Fire));   // 2: back, R works
+            Assert.AreEqual(0, state.Slot);
+            Assert.IsTrue(state.Reloading);
+            Assert.AreEqual(4, state.Ammo);
+        }
+
+        [Test]
+        public void APickupIntoTheHand_FromInventoryState_Waits_ButTheJoinInventoryDoesNot()
+        {
+            var state = new WeaponState(KestrelCatalog());
+            state.ApplyInventory(new InventoryState { HeavyAmmo = 20 });                // the join inventory: empty-handed
+            Assert.IsFalse(Step(state, InputButtons.Fire));                             // step 0
+            Assert.IsFalse(Step(state, InputButtons.None));                             // 1
+            state.ApplyInventory(new InventoryState { Slot0 = new InventorySlotState { WeaponId = 2, MagAmmo = 5 }, HeavyAmmo = 20 });
+            Assert.AreEqual(12, state.SwitchRemainingSteps);                            // ready at step 2 + 12
+            for (int step = 2; step < 14; step++)
+                Assert.IsFalse(Step(state, step % 2 == 0 ? InputButtons.Fire : InputButtons.None), "step " + step);
+            Assert.IsTrue(Step(state, InputButtons.Fire));                              // 14
+
+            state.Clear();                                                              // death: the respawn inventory starts no wait
+            state.ApplyInventory(ThreeKestrels());
+            Assert.AreEqual(0, state.SwitchRemainingSteps);
+        }
+
+        [Test]
+        public void AMismatchReplay_KeepsTheWaitOfThePredictedSwitch()
+        {
+            var state = ThreeKestrelState();
+            Assert.IsTrue(Step(state, InputButtons.Fire));                              // seq 1, step 0: slot 0 has 4
+            Assert.IsFalse(Step(state, InputButtons.Slot2));                            // seq 2, step 1: ready at 13
+            Assert.IsFalse(Step(state, InputButtons.None));                             // seq 3, step 2
+            // The server says slot 1 holds 3 rounds after seq 2 (we had 5): snap and replay seq 3 from the ack.
+            state.ApplyServer(new SnapshotSelf { WeaponSlot = 1, Ammo = 3 }, 2);
+            Assert.AreEqual(3, state.Ammo);
+            Assert.AreEqual(13 - 3, state.SwitchRemainingSteps);
+            for (int step = 3; step < 13; step++)
+                Assert.IsFalse(Step(state, step % 2 == 1 ? InputButtons.Fire : InputButtons.None), "step " + step);
+            Assert.IsTrue(Step(state, InputButtons.Fire));                              // 13
+        }
     }
 }

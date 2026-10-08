@@ -5,6 +5,7 @@ using System.Numerics;
 using LiteNetLib;
 using ProjectH.Server.Game;
 using ProjectH.Server.Game.Items;
+using ProjectH.Server.Game.Build;
 using ProjectH.Shared.Protocol;
 using ProjectH.Shared.Simulation;
 using Xunit;
@@ -31,8 +32,8 @@ public class PickupDropTests
         _match = NewMatch(TestGameData.CombatLoadout);
     }
 
-    private Match NewMatch(StartingLoadout loadout, LootPoint[]? lootPoints = null) =>
-        new(new ServerOptions { MaxPlayers = 3, DevRespawn = true },TestGameData.Create(),
+    private Match NewMatch(StartingLoadout loadout, LootPoint[]? lootPoints = null, GameData? data = null) =>
+        new(new ServerOptions { MaxPlayers = 3, DevRespawn = true }, data ?? TestGameData.Create(),
             (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)), loadout,
             lootPoints ?? Array.Empty<LootPoint>());
 
@@ -272,6 +273,7 @@ public class PickupDropTests
         _match.RemoveItemAt(IndexOf(medkits));
         ushort cells = Put(ItemKind.Consumable, (byte)ConsumableType.ShieldCell, 9, new Vector3(1f, 0f, 0f));
         Press(a, InputButtons.None);   // final review A5: released between presses
+        PastItemInterval();            // review fix C6
         Press(a, InputButtons.Interact);
         Assert.Equal(TestGameData.ShieldCellMaxStack, a.Inventory.ShieldCells);
         Assert.Equal(3, _match.WorldItems[IndexOf(cells)].Data.Amount);
@@ -323,6 +325,7 @@ public class PickupDropTests
         Press(a, InputButtons.Drop);
         Assert.Equal(1, _match.WorldItems.Count);
         a.Inventory.Slots[0] = weapon;   // in hand again (as a pickup would)
+        PastItemInterval();              // review fix C6: only the held button keeps the next two from dropping
         Press(a, InputButtons.Drop);
         Press(a, InputButtons.Drop);
         Assert.Equal(1, _match.WorldItems.Count);
@@ -438,14 +441,14 @@ public class PickupDropTests
     public void DropAndPickUpAgain_DoesNotSkipTheFireInterval()
     {
         var a = Join(1, Vector3.Zero);
-        Press(a, InputButtons.Drop);                        // Auto out of slot 0: slot 0 is now free
-        _match.RemoveItemAt(0);                             // (keep only the semi on the ground later)
+        a.Inventory.Slots[0] = default;                     // slot 0 free (review fix C6: set up, not a G that would start the item interval)
         Press(a, InputButtons.Slot2);
         Send(a, InputButtons.Fire);
         _match.Tick();
         uint firedAt = _match.ServerTick - 1;               // the tick's "now"
         Assert.Equal(TestWeapons.SemiMagazine - 1, a.Inventory.Slots[1].MagAmmo);
         Press(a, InputButtons.Drop);                        // semi out of slot 1
+        PastItemInterval();                                 // review fix C6 (still inside the semi's 15-tick interval)
         Press(a, InputButtons.Interact);                    // back in, into slot 0 (the first empty one)
         Assert.Equal(TestWeapons.SemiId, a.Inventory.Slots[0].Weapon!.Id);
         Assert.Equal(0, a.Inventory.CurrentSlot);           // empty-handed: taken in hand
@@ -466,6 +469,230 @@ public class PickupDropTests
         Assert.Equal(1, shots);   // and it does fire once the interval is over
     }
 
+    // 기능: Fire를 누르고 떼기를 번갈아 보내며 slot의 탄창이 줄어든 첫 Tick(그 Tick의 now)을 찾는다.
+    // 입력: player - 쏘는 플레이어, slot - 지켜볼 칸, maxTicks - 최대 Tick 수.
+    // 출력: 처음 쏜 Tick의 now. 그 안에 쏘지 않으면 테스트가 실패한다.
+    private uint FirstShotTick(PlayerEntity player, int slot, int maxTicks)
+    {
+        for (int i = 0; i < maxTicks; i++)
+        {
+            uint now = _match.ServerTick;
+            Send(player, now % 2 == 0 ? InputButtons.Fire : InputButtons.None);
+            int before = player.Inventory.Slots[slot].MagAmmo;
+            _match.Tick();
+            if (player.Inventory.Slots[slot].MagAmmo < before) return now;
+        }
+        Assert.Fail($"no shot within {maxTicks} ticks");
+        return 0;
+    }
+
+    // Review fix C2 (SEC-8): a weapon picked up into the hand (empty-handed, or swapped with the one in hand) waits its equip
+    // ticks before it fires, like a slot switch, so a pickup cannot skip the wait.
+    [Fact]
+    public void AWeaponPickedUpIntoTheHand_WaitsItsEquipTicks()
+    {
+        _match = NewMatch(new StartingLoadout { Weapons = new[] { new LoadoutWeapon(TestWeapons.AutoId, 0) } },
+            data: TestGameData.Create(equipSeconds: 0.4f));   // 12 ticks
+        var a = Join(1, Vector3.Zero);
+        Press(a, InputButtons.Slot2);                                   // empty-handed
+        Put(ItemKind.Weapon, TestWeapons.SemiId, 2, new Vector3(1f, 0f, 0f));
+        uint pickedAt = _match.ServerTick;
+        Press(a, InputButtons.Interact);
+        Assert.Equal(1, a.Inventory.CurrentSlot);
+        Assert.Equal(pickedAt + 12, a.SwitchReadyTick);
+        Assert.True(FirstShotTick(a, 1, 30) >= pickedAt + 12);
+
+        // A swap with all three slots full brings the ground weapon into the hand too.
+        Press(a, InputButtons.Slot3);
+        Put(ItemKind.Weapon, TestWeapons.LightId, 10, new Vector3(1f, 0f, 0f));
+        Press(a, InputButtons.Interact);                                // into slot 2 (the hand), not a swap yet
+        Put(ItemKind.Weapon, TestWeapons.AutoId, 6, new Vector3(1f, 0f, 0f));
+        Press(a, InputButtons.None);                                    // E released, so the next E is a new press
+        for (int i = 0; i < 10; i++) _match.Tick();                     // past the item action interval (review fix C6)
+        uint swappedAt = _match.ServerTick;
+        Press(a, InputButtons.Interact);                                // all full: swaps with slot 2
+        Assert.Equal(TestWeapons.AutoId, a.Inventory.Slots[2].Weapon!.Id);
+        Assert.Equal(swappedAt + 12, a.SwitchReadyTick);
+    }
+
+    // Review fix C6 (SEC-20): G and an E pickup share one item action interval (0.25 s = 8 ticks at 30 Hz), counted from every
+    // attempt, done or not, so a client alternating them every tick makes at most four Reliable item changes a second.
+    [Fact]
+    public void AlternatingDropAndPickup_IsLimitedToFourPerSecond()
+    {
+        _match = NewMatch(new StartingLoadout { Weapons = new[] { new LoadoutWeapon(TestWeapons.AutoId, 0) } });
+        var a = Join(1, Vector3.Zero);
+        Assert.Equal(8u, ItemRules.ActionIntervalTicks(30));
+        // A client that presses, every tick, whatever would change its hand: G while holding, E while empty-handed (a button
+        // already held is released for one tick first, so every press is a new one).
+        bool held = true;
+        int changes = 0;
+        InputButtons last = InputButtons.None;
+        for (int i = 0; i < 30; i++)
+        {
+            InputButtons want = held ? InputButtons.Drop : InputButtons.Interact;
+            last = want == last ? InputButtons.None : want;
+            Press(a, last);
+            bool now = !a.Inventory.Slots[0].IsEmpty;
+            if (now != held) changes++;
+            held = now;
+        }
+        Assert.InRange(changes, 3, 4);
+        Assert.Equal(1, Enumerable.Range(0, 3).Count(s => !a.Inventory.Slots[s].IsEmpty) + _match.WorldItems.Count);   // conserved
+    }
+
+    // 기능: 아이템 행동 간격(리뷰 수정 C6)이 지나도록 입력 없이 Tick을 돌린다.
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    private void PastItemInterval()
+    {
+        for (uint i = 0; i < ItemRules.ActionIntervalTicks(30); i++) _match.Tick();
+    }
+
+    // ---- Review fix C4 (SEC-9): an item is picked up only in line of sight from the eye ----
+
+    // 기능: 지금 경기의 원점 근처 칸 경계에 나무 벽을 세운다.
+    // 입력: 없음.
+    // 출력: 벽의 경계 상자(벽은 X로 길고 Z로 얇다).
+    private Box WallNearTheOrigin()
+    {
+        int cell = (int)MathF.Floor(GameMap.HalfSize / BuildGrid.CellSize);
+        Assert.True(BuildGrid.TryNormalize(BuildPieceType.Wall, cell, 0, cell, 0, out BuildPieceShape wall));
+        Assert.Equal(ProjectH.Shared.Protocol.BuildResultCode.Ok, _match.PlacePiece(wall, BuildMaterialType.Wood, out _));
+        Box bounds = BuildGrid.BoundsOf(wall);
+        Assert.True(bounds.Max.X - bounds.Min.X > 3f && bounds.Max.Z - bounds.Min.Z < 0.5f, "a wall along X");
+        return bounds;
+    }
+
+    // 기능: 지면 위 점(지형 높이)을 만든다.
+    // 입력: x·z - 수평 위치.
+    // 출력: 그 자리의 지면 점.
+    private static Vector3 Ground(float x, float z) => new(x, GameMap.Terrain.Height(x, z), z);
+
+    [Fact]
+    public void PickingUp_ThroughABuildWall_IsNothingInRange()
+    {
+        Box wall = WallNearTheOrigin();
+        float x = (wall.Min.X + wall.Max.X) * 0.5f;
+        var a = Join(1, Ground(x, wall.Min.Z - 0.6f));
+        ushort id = Put(ItemKind.Consumable, (byte)ConsumableType.Medkit, 1, Ground(x, wall.Max.Z + 0.6f));
+        Press(a, InputButtons.Interact);
+        Assert.Equal(PickupResultCode.NothingInRange, ResultsTo(1).Last().Result);
+        Assert.True(IndexOf(id) >= 0);
+        Assert.Equal(0, a.Inventory.Medkits);
+
+        // The same item on the player's side of the wall is taken (past the item action interval).
+        Press(a, InputButtons.None);
+        for (int i = 0; i < 10; i++) _match.Tick();
+        ushort near = Put(ItemKind.Consumable, (byte)ConsumableType.Medkit, 1, Ground(x + 0.5f, wall.Min.Z - 1.2f));
+        Press(a, InputButtons.Interact);
+        Assert.Equal(PickupResultCode.Ok, ResultsTo(1).Last().Result);
+        Assert.True(IndexOf(near) < 0);
+    }
+
+    // The south door of the map (GameMap.Doors[0], centre x -54, z 50.25). The player faces away from it, so E is a pickup.
+    [Fact]
+    public void PickingUp_ThroughAClosedDoor_IsNothingInRange_AndOkWhenOpen()
+    {
+        Box door = GameMap.Doors[0];
+        float x = (door.Min.X + door.Max.X) * 0.5f;
+        var a = Join(1, Ground(x, door.Min.Z - 0.6f), yaw: 180f);
+        ushort id = Put(ItemKind.Consumable, (byte)ConsumableType.Medkit, 1, Ground(x, door.Max.Z + 0.6f));
+        Assert.False(_match.Doors.IsOpen(0));
+        Press(a, InputButtons.Interact);
+        Assert.False(_match.Doors.IsOpen(0));   // not a door press
+        Assert.Equal(PickupResultCode.NothingInRange, ResultsTo(1).Last().Result);
+        Assert.True(IndexOf(id) >= 0);
+
+        _match.Doors.Set(0, true);
+        Press(a, InputButtons.None);
+        for (int i = 0; i < 10; i++) _match.Tick();
+        Press(a, InputButtons.Interact);
+        Assert.Equal(PickupResultCode.Ok, ResultsTo(1).Last().Result);
+        Assert.True(IndexOf(id) < 0);
+    }
+
+    // A map box (a building wall) between the eye and the item blocks the pickup the same way.
+    [Fact]
+    public void PickingUp_ThroughAWall_IsNothingInRange()
+    {
+        Assert.True(FindThinMapWall(out Vector3 near, out Vector3 far), "a thin map wall with open ground on both sides");
+        var a = Join(1, near);
+        ushort id = Put(ItemKind.Consumable, (byte)ConsumableType.Medkit, 1, far);
+        Press(a, InputButtons.Interact);
+        Assert.Equal(PickupResultCode.NothingInRange, ResultsTo(1).Last().Result);
+        Assert.True(IndexOf(id) >= 0);
+    }
+
+    // 기능: 두께 0.8 m 이하이고 눈보다 높은 맵 상자 하나와 그 양쪽 0.5 m의 빈 지면 두 점을 찾는다(X 방향으로 얇은 벽).
+    // 입력: near·far - 찾은 두 점.
+    // 출력: 찾았으면 true.
+    private static bool FindThinMapWall(out Vector3 near, out Vector3 far)
+    {
+        ReadOnlySpan<Box> boxes = GameMap.Boxes;
+        for (int i = 0; i < boxes.Length; i++)
+        {
+            Box b = boxes[i];
+            float thickness = b.Max.X - b.Min.X;
+            if (thickness > 0.8f || thickness < 0.05f || b.Max.Z - b.Min.Z < 2f) continue;
+            float z = (b.Min.Z + b.Max.Z) * 0.5f;
+            near = Ground(b.Min.X - 0.5f, z);
+            far = Ground(b.Max.X + 0.5f, z);
+            if (b.Min.Y > near.Y + 0.2f || b.Max.Y < near.Y + 2.5f || MathF.Abs(far.Y - near.Y) > 0.2f) continue;
+            if (Blocked(boxes, near) || Blocked(boxes, far)) continue;
+            return true;
+        }
+        near = far = default;
+        return false;
+    }
+
+    // 기능: 발 위치의 몸(반폭 0.4 m, 높이 1.8 m)이 맵 상자와 겹치는지 본다.
+    // 입력: boxes - 맵 상자, feet - 발 위치.
+    // 출력: 겹치면 true.
+    private static bool Blocked(ReadOnlySpan<Box> boxes, Vector3 feet)
+    {
+        for (int i = 0; i < boxes.Length; i++)
+        {
+            Box b = boxes[i];
+            if (feet.X > b.Min.X - 0.4f && feet.X < b.Max.X + 0.4f && feet.Z > b.Min.Z - 0.4f && feet.Z < b.Max.Z + 0.4f
+                && feet.Y + 1.8f > b.Min.Y && feet.Y < b.Max.Y) return true;
+        }
+        return false;
+    }
+
+    // Resources lying in reach are picked up on touch, but not through a wall.
+    [Fact]
+    public void MaterialAutoPickup_RespectsLineOfSight()
+    {
+        Box wall = WallNearTheOrigin();
+        float x = (wall.Min.X + wall.Max.X) * 0.5f;
+        var a = Join(1, Ground(x, wall.Min.Z - 0.4f));
+        int before = a.Inventory.Resource(BuildMaterialType.Wood);
+        ushort behind = Put(ItemKind.Material, (byte)(BuildMaterialType.Wood + 1), 10, Ground(x, wall.Max.Z + 0.4f));
+        ushort front = Put(ItemKind.Material, (byte)(BuildMaterialType.Wood + 1), 10, Ground(x + 0.6f, wall.Min.Z - 0.9f));
+        for (int i = 0; i < 2 * ItemRules.MaterialPickupEveryTicks; i++) _match.Tick();
+        Assert.True(IndexOf(behind) >= 0);
+        Assert.True(IndexOf(front) < 0);
+        Assert.Equal(before + 10, a.Inventory.Resource(BuildMaterialType.Wood));
+    }
+
+    // Review C round 1: a player whose resource is full takes nothing, so the sight test is not run for it (the same outcome, the
+    // order only saves the trace); the item stays whether or not a wall is in the way.
+    [Fact]
+    public void MaterialAutoPickup_AFullPlayer_SkipsTheItem_BehindAWallOrNot()
+    {
+        Box wall = WallNearTheOrigin();
+        float x = (wall.Min.X + wall.Max.X) * 0.5f;
+        var a = Join(1, Ground(x, wall.Min.Z - 0.4f));
+        a.Inventory.SetResource(BuildMaterialType.Wood, _match.Building.MaxResource);
+        ushort behind = Put(ItemKind.Material, (byte)(BuildMaterialType.Wood + 1), 10, Ground(x, wall.Max.Z + 0.4f));
+        ushort front = Put(ItemKind.Material, (byte)(BuildMaterialType.Wood + 1), 10, Ground(x + 0.6f, wall.Min.Z - 0.9f));
+        for (int i = 0; i < 2 * ItemRules.MaterialPickupEveryTicks; i++) _match.Tick();
+        Assert.True(IndexOf(behind) >= 0);
+        Assert.True(IndexOf(front) >= 0);
+        Assert.Equal(_match.Building.MaxResource, a.Inventory.Resource(BuildMaterialType.Wood));
+    }
+
     // The missed-input repeat copies the last input's buttons. It must never repeat a drop or a pickup.
     [Fact]
     public void MissedInputTicks_DoNotRepeatDropOrPickup()
@@ -476,8 +703,11 @@ public class PickupDropTests
         Put(ItemKind.Ammo, (byte)AmmoType.Light, 10, new Vector3(0f, 0f, -0.6f));
         _sent.Clear();
 
-        Send(a, InputButtons.Drop | InputButtons.Interact);
+        // Review fix C6: G and E share the item interval, so each goes in its own real input, one interval apart.
+        Send(a, InputButtons.Drop);
         for (int i = 0; i < 12; i++) _match.Tick();   // one real input, then 11 repeated ticks
+        Send(a, InputButtons.Interact);
+        for (int i = 0; i < 12; i++) _match.Tick();
 
         Assert.Single(SpawnedTo(1));                   // one weapon dropped
         Assert.False(a.Inventory.Slots[1].IsEmpty);    // the semi stayed
@@ -666,6 +896,7 @@ public class PickupDropTests
             packet.Set(0, new InputCommand { Seq = 2 * i - 1 });   // final review A5: released between presses
             _match.EnqueueInput(1, packet);
             _match.Tick();
+            PastItemInterval();                                     // review fix C6
             _match.SpawnItem(new LootRoll(ItemKind.Ammo, (byte)AmmoType.Light, 0, 1), a.State.Position, -1);
             packet.Set(0, new InputCommand { Seq = 2 * i, Buttons = InputButtons.Interact });
             _match.EnqueueInput(1, packet);
@@ -700,6 +931,7 @@ public class PickupDropTests
             _match.Tick();
             swapAllocated = GC.GetAllocatedBytesForCurrentThread() - start;
             Assert.Equal(5, a.Inventory.Current.MagAmmo);
+            PastItemInterval();   // review fix C6
 
             packet.Set(0, new InputCommand { Seq = ++seq, Buttons = InputButtons.Drop });
             _match.EnqueueInput(1, packet);
@@ -709,6 +941,7 @@ public class PickupDropTests
             Assert.True(a.Inventory.Current.IsEmpty);
             // Put the slot back so the next round swaps again (outside the measured ticks).
             a.Inventory.Slots[a.Inventory.CurrentSlot] = new HeldWeapon { Weapon = a.Inventory.Slots[(a.Inventory.CurrentSlot + 1) % 3].Weapon, MagAmmo = 1 };
+            PastItemInterval();
         }
         Assert.Equal(0, swapAllocated);
         Assert.Equal(0, dropAllocated);

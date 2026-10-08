@@ -21,6 +21,9 @@ public sealed class WeaponCatalog
     public const float MaxProjectileSpeed = 200f;
     public const float MaxProjectileGravity = 50f;
     public const double MaxProjectileLifetimeSeconds = 30;
+    // Review fix C2: the wait after a weapon comes into the hand. 0.4 s is a third of the Kestrel's 1.25 s interval.
+    public const double DefaultEquipSeconds = 0.4;
+    public const double MaxEquipSeconds = 2;
     public const float MaxExplosionRadius = 10f;
     public const float MaxBounce = 0.95f;
     public const float MaxThrowUpDegrees = 45f;
@@ -170,7 +173,7 @@ public sealed class WeaponCatalog
         }
     }
 
-    // 기능: 무기 항목 하나를 검증한다(Phase 17: 산탄·퍼짐·감쇠·구조물 배율·반동·투사체, 빠지면 기본값).
+    // 기능: 무기 항목 하나를 검증한다(Phase 17: 산탄·퍼짐·감쇠·구조물 배율·반동·투사체, 리뷰 수정 C2: 교체 대기 equipSeconds 0-2 → Tick. 빠지면 기본값).
     // 입력: w - JSON 항목, simHz - Tick 속도, projectiles - 이미 읽은 투사체 정의, weapon - 결과.
     // 출력: 맞으면 null과 무기, 틀리면 이유.
     private static string? Validate(WeaponJson? w, int simHz, ProjectileDefinition?[] projectiles, out WeaponDefinition? weapon)
@@ -204,6 +207,11 @@ public sealed class WeaponCatalog
         if (!float.IsFinite(falloffMin) || falloffMin < 0f || falloffMin > 1f) return "falloffMinRatio must be 0-1.";
         float structure = (float)(w.StructureMultiplier ?? 1);
         if (!float.IsFinite(structure) || structure < 0f || structure > 10f) return "structureMultiplier must be 0-10.";
+        // Review fix C2: optional, 0.4 s when missing, 0-2 s (0 = no wait).
+        double equipSeconds = w.EquipSeconds ?? DefaultEquipSeconds;
+        if (!double.IsFinite(equipSeconds) || equipSeconds < 0 || equipSeconds > MaxEquipSeconds) return $"equipSeconds must be 0-{MaxEquipSeconds}.";
+        ushort equipTicks = equipSeconds == 0 ? (ushort)0 : (ushort)Math.Max(1, Math.Round(equipSeconds * simHz, MidpointRounding.AwayFromZero));
+        if (equipTicks > WeaponCatalogPacket.MaxEquipTicks) return $"equipSeconds must be at most {WeaponCatalogPacket.MaxEquipTicks} ticks.";
         ProjectileDefinition? projectile = null;
         if (w.Projectile != null)
         {
@@ -213,7 +221,7 @@ public sealed class WeaponCatalog
         }
 
         weapon = new WeaponDefinition((byte)w.Id, w.Name, (ushort)w.Damage, fireTicks, (byte)w.MagazineSize,
-            reloadTicks, range, w.Automatic, ammoType, (byte)pellets, spread, falloffStart, falloffMin, structure, recoil, projectile);
+            reloadTicks, range, w.Automatic, ammoType, (byte)pellets, spread, falloffStart, falloffMin, structure, recoil, projectile, equipTicks);
         return null;
     }
 
@@ -281,6 +289,8 @@ public sealed class WeaponCatalog
         public double? FalloffMinRatio { get; set; }
         public double? StructureMultiplier { get; set; }
         public string? Projectile { get; set; }
+        // Review fix C2: optional (null = DefaultEquipSeconds).
+        public double? EquipSeconds { get; set; }
     }
 
     // Phase 17: every number is required (a missing one stays 0 and fails), except the grenade-only throw fields on a rocket.

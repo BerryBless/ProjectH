@@ -22,7 +22,7 @@ public class MatchWorldItemsTests
     private readonly List<Sent> _sent = new();
 
     private Match NewMatch(int seed = 1, LootPoint[]? points = null) =>
-        new(new ServerOptions { MaxPlayers = 4, LootSeed = seed, DevRespawn = true }, TestGameData.Create(),
+        new(new ServerOptions { MaxPlayers = 4, LootSeed = seed, DevRespawn = true, DeterministicSeeds = true }, TestGameData.Create(),
             (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)), lootPoints: points);
 
     private static PacketReader Reader(Sent s)

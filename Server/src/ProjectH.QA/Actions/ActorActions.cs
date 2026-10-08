@@ -16,6 +16,16 @@ public static class ActorActions
     private const int AssumedHz = 30;         // the server's SimHz default; only converts ms to input ticks
     private const int SlotSettleTicks = 2;
 
+    // 기능: 칸 선택 입력 뒤 기다릴 Tick을 정한다(리뷰 수정 C2). 칸이 실제로 바뀌면 서버가 새로 든 무기의 교체 대기(EquipTicks) 동안 쏘지 않으므로
+    //   그만큼 더 기다린다. 같은 칸(건설·채집 도구에서 무기로 돌아오기만 하는 경우 포함)과 빈 칸은 대기가 없다.
+    // 입력: state - Actor의 지금 상태(칸마다의 EquipTicks는 그 Actor가 받은 WeaponCatalog 값, 모르면 0), want - 고를 칸.
+    // 출력: 기다릴 Tick 수(SlotSettleTicks + 대기).
+    internal static int SlotSettleTicksFor(ActorState state, int want)
+    {
+        if (want == state.CurrentSlot || want < 0 || want >= state.SlotEquipTicks.Count) return SlotSettleTicks;
+        return SlotSettleTicks + Math.Max(0, state.SlotEquipTicks[want]);
+    }
+
     public static void Register(ActionRegistry r)
     {
         // A Unity player needs time to start and join (QA-4); a headless client joins in well under a second.
@@ -402,7 +412,7 @@ public static class ActorActions
         if (slot != null || !string.Equals(s.Tool, nameof(ProjectH.Shared.Protocol.ToolKind.Weapon), StringComparison.Ordinal))
         {
             int want = slot ?? s.CurrentSlot;
-            await SendAppliedAsync(ctx, actor, new ScriptCommand(new[] { new InputStep(SlotButton(want), 1), new InputStep(InputButtons.None, SlotSettleTicks) }), token).ConfigureAwait(false);
+            await SendAppliedAsync(ctx, actor, new ScriptCommand(new[] { new InputStep(SlotButton(want), 1), new InputStep(InputButtons.None, SlotSettleTicksFor(s, want)) }), token).ConfigureAwait(false);
             bool selected = await WaitShortAsync(ctx, () =>
             {
                 ActorState a = actor.State;
@@ -470,7 +480,7 @@ public static class ActorActions
         IQaActor actor = ctx.Actor();
         if (RequireJoined(actor) is { } notJoined) return notJoined;
         int slot = ctx.Int("slot", 0, ItemConstantsSlots - 1)!.Value;
-        bool done = await SendAppliedAsync(ctx, actor, new ScriptCommand(new[] { new InputStep(SlotButton(slot), 1), new InputStep(InputButtons.None, SlotSettleTicks) }), token).ConfigureAwait(false)
+        bool done = await SendAppliedAsync(ctx, actor, new ScriptCommand(new[] { new InputStep(SlotButton(slot), 1), new InputStep(InputButtons.None, SlotSettleTicksFor(actor.State, slot)) }), token).ConfigureAwait(false)
             && await ctx.WaitUntilAsync(() => actor.State.CurrentSlot == slot && actor.State.ScriptSteps == 0, token).ConfigureAwait(false);
         return done ? StepOutcome.Pass($"slot {slot}") : StepOutcome.Fail($"Slot {slot} not selected.", $"slot {slot}", $"slot {actor.State.CurrentSlot}");
     }

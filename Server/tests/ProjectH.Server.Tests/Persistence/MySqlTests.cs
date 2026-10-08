@@ -86,6 +86,68 @@ public class MySqlTests
         Assert.Null(await store.GetStatsAsync(NewId("nobody"), CancellationToken.None));
     }
 
+    // Review fix C7: a database of the first schema (no schema_version table, match_player without the eight anti-cheat
+    // columns) is moved to version 2 by EnsureSchemaAsync: the columns are added (only the missing ones, so a half-done
+    // migration finishes), version 2 is written, a second run changes nothing, and a match then saves the counters. Runs in
+    // this class, whose tests run one at a time, because it changes the shared tables.
+    [MySqlFact]
+    public async Task AV1Database_IsMigratedToV2_AndTheColumnsAreSaved()
+    {
+        MatchStore store = await StoreAsync();
+        await using (var connection = new MySqlConnection(MySqlFactAttribute.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await Execute(connection, "DROP TABLE IF EXISTS schema_version");
+            foreach (string column in MatchStore.AntiCheatColumns) await Execute(connection, $"ALTER TABLE match_player DROP COLUMN {column}");
+            // Half done: one column was added before the server stopped.
+            await Execute(connection, "ALTER TABLE match_player ADD COLUMN shots INT NOT NULL DEFAULT 0");
+        }
+
+        await store.EnsureSchemaAsync(CancellationToken.None);
+        await store.EnsureSchemaAsync(CancellationToken.None);   // twice: nothing left to do
+
+        await using (var connection = new MySqlConnection(MySqlFactAttribute.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var columns = new MySqlCommand(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'match_player' " +
+                "AND COLUMN_NAME IN ('shots', 'pellets', 'hits', 'rewind_ticks', 'rewind_clamped', 'max_hit_distance_cm', " +
+                "'movement_anomalies', 'max_aim_turn')", connection);
+            Assert.Equal(8L, Convert.ToInt64(await columns.ExecuteScalarAsync()));
+            await using var version = new MySqlCommand("SELECT version FROM schema_version WHERE id = 1", connection);
+            Assert.Equal(MatchStore.SchemaVersion, Convert.ToInt32(await version.ExecuteScalarAsync()));
+        }
+
+        string a = NewId("v");
+        long matchId = await store.SaveAsync(Match(7, new PlayerRecord(a, 1, 1, 150, 9000, Shots: 5, Pellets: 40, Hits: 12, RewindTicks: 30,
+            RewindClamped: 2, MaxHitDistanceCm: 4321, MovementAnomalies: 1, MaxAimTurn: 1745)), CancellationToken.None);
+        await using (var connection = new MySqlConnection(MySqlFactAttribute.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var row = new MySqlCommand(
+                "SELECT p.shots, p.pellets, p.hits, p.rewind_ticks, p.rewind_clamped, p.max_hit_distance_cm, p.movement_anomalies, p.max_aim_turn " +
+                "FROM match_player p JOIN account a ON a.id = p.account_id WHERE p.match_id = @match AND a.dev_player_id = @dev", connection);
+            row.Parameters.AddWithValue("@match", matchId);
+            row.Parameters.AddWithValue("@dev", a);
+            await using MySqlDataReader reader = await row.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(new[] { 5, 40, 12, 30, 2, 4321, 1, 1745 }, new[]
+            {
+                reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3), reader.GetInt32(4), reader.GetInt32(5),
+                reader.GetInt32(6), reader.GetInt32(7),
+            });
+        }
+    }
+
+    // 기능: SQL 한 문장을 실행한다(시험 준비용).
+    // 입력: connection - 열린 연결, sql - 문장.
+    // 출력: 반환값 없음.
+    private static async Task Execute(MySqlConnection connection, string sql)
+    {
+        await using var command = new MySqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync();
+    }
+
     // One bad row rolls the whole match back: no match row, no history and no statistics for anyone in it.
     [MySqlFact]
     public async Task AFailingSave_ChangesNothing()

@@ -89,6 +89,38 @@ public class CombatRulesTests
         Assert.Equal(expected, CombatRules.ClampViewTick(viewTick, 100u, 6));
     }
 
+    // Review fix C3 (SEC-5): the rewind a shooter gets follows its own RTT. ViewTick lags the server by the interpolation
+    // (2 snapshot intervals = 2 x SnapshotEveryTicks), the snapshot's trip out plus the input's trip back (one full RTT, which is
+    // LiteNetLib's RoundTripTime) and the drain (1) plus one tick of jitter: RTT x SimHz / 1000 + 2 x SnapshotEveryTicks + 2,
+    // at least 2 and at most MaxRewindTicks. 30 Hz, snapshots every 2 ticks: 20 ms -> 6, 200 ms -> 12 (the old fixed limit).
+    [Theory]
+    [InlineData(20, 30, 2, 12, 6)]
+    [InlineData(200, 30, 2, 12, 12)]
+    [InlineData(100, 30, 2, 12, 9)]
+    [InlineData(0, 30, 2, 12, 6)]
+    [InlineData(-50, 30, 2, 12, 6)]        // never measured yet (or garbage): counted as 0
+    [InlineData(5000, 30, 2, 12, 12)]
+    [InlineData(int.MaxValue, 128, 1, 31, 31)]
+    [InlineData(0, 30, 0, 12, 2)]          // the floor
+    public void AllowedRewind_ForRtt20ms_IsSixTicks_AndFor200ms_IsTwelve(int rttMs, int simHz, int snapshotEveryTicks, int max, int expected)
+    {
+        Assert.Equal(expected, CombatRules.AllowedRewindTicks(rttMs, simHz, snapshotEveryTicks, max));
+    }
+
+    // A ViewTick older than the allowance is cut to it and reported (the shooter's RewindClamped counter); a future or NaN one is
+    // "now", not a clamp.
+    [Theory]
+    [InlineData(94f, 94.0, false)]
+    [InlineData(93.5f, 94.0, true)]
+    [InlineData(float.NegativeInfinity, 94.0, true)]
+    [InlineData(1e9f, 100.0, false)]
+    [InlineData(float.NaN, 100.0, false)]
+    public void ClampViewTick_ReportsAClampBelowTheAllowance(float viewTick, double expected, bool clamped)
+    {
+        Assert.Equal(expected, CombatRules.ClampViewTick(viewTick, 100u, 6, out bool wasClamped));
+        Assert.Equal(clamped, wasClamped);
+    }
+
     [Fact]
     public void ClampViewTick_NearMatchStart_NeverGoesBelowZero()
     {

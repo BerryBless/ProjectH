@@ -11,7 +11,7 @@
 ## 생성과 Loot (D2, D5)
 
 - **경기 시작**(`StartMatch`)에 Container마다 생성 여부(`loot.json` `spawnChance`: Chest 0.7, Ammo Box 0.8)와 Loot(Chest·AmmoBox 표)를 미리 굴려 서버에 둔다(Container마다 4칸 고정 배열). 열기 전에는 아무것도 보내지 않는다(생성 마스크만).
-- **시드 흐름이 바닥 Loot와 따로다.** 바닥 Loot는 그대로 `LootSeed + 판 번호`의 `Random`, Container는 그 값에 상수를 섞은 시드, Supply Drop은 또 다른 상수다. 그래서 Container를 열지 않으면 바닥 Loot는 바닥 표만으로 정해지고(`FloorLootRegressionTests`가 해시로 고정한다), Container를 열어도 바닥 아이템은 바뀌지 않는다. Phase 17 D13: 바닥 표에 탄 종류 목록(4종)과 수류탄이 들어가 바닥 결과가 **의도적으로** 바뀌었고, 해시는 Phase 17 코드에서 다시 잡았다(이유는 테스트 주석).
+- **시드 흐름이 바닥 Loot와 따로다.** 바닥 Loot는 그대로 `LootSeed + 판 번호`(리뷰 수정 C1: `DeterministicSeeds`일 때. 기본은 경기 비밀에서 섞은 Loot 시드)의 `Random`, Container는 그 값에 상수를 섞은 시드, Supply Drop은 또 다른 상수다. 그래서 Container를 열지 않으면 바닥 Loot는 바닥 표만으로 정해지고(`FloorLootRegressionTests`가 해시로 고정한다), Container를 열어도 바닥 아이템은 바뀌지 않는다. Phase 17 D13: 바닥 표에 탄 종류 목록(4종)과 수류탄이 들어가 바닥 결과가 **의도적으로** 바뀌었고, 해시는 Phase 17 코드에서 다시 잡았다(이유는 테스트 주석).
 - **개발 모드**는 서버 시작 때 같은 방식(판 번호 1)으로 정하고 다시 채우지 않는다. Supply Drop은 없다.
 - **표 규칙**(`loot.json`, 수치는 JSON만 바꾼다):
   - Chest: 3개, 무기 1개 보장 + 탄약·회복·실드·자원(나무·돌·금속 중 하나, 30) 중 가중치로 2개.

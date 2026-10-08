@@ -1,7 +1,8 @@
 {
   // Phase 17 D1, D2, D10, D11 (Docs/Weapons.md). damage is per pellet; spreadDegrees is the half angle of the cone the server
   // spreads each ray in; damage falls linearly from falloffStart to falloffMinRatio x damage at range; a piece takes
-  // damage x structureMultiplier x its material's multiplier; recoilDegrees is the client's camera kick only.
+  // damage x structureMultiplier x its material's multiplier; recoilDegrees is the client's camera kick only. Review fix C2:
+  // equipSeconds (optional, 0.4 when missing, 0-2) is the wait after a weapon comes into the hand before it can fire.
   "weapons": [
     {
       "id": 1,
@@ -13,6 +14,7 @@
       "range": 150,
       "automatic": true,
       "ammoType": "Medium",
+      "equipSeconds": 0.4,
       "spreadDegrees": 1.0,
       "falloffStart": 50,
       "falloffMinRatio": 0.7,
@@ -29,6 +31,7 @@
       "range": 300,
       "automatic": false,
       "ammoType": "Heavy",
+      "equipSeconds": 0.4,
       "spreadDegrees": 0,
       "structureMultiplier": 1.5,
       "recoilDegrees": 3.0
@@ -43,6 +46,7 @@
       "range": 80,
       "automatic": true,
       "ammoType": "Light",
+      "equipSeconds": 0.4,
       "spreadDegrees": 2.5,
       "falloffStart": 25,
       "falloffMinRatio": 0.6,
@@ -59,6 +63,7 @@
       "range": 35,
       "automatic": false,
       "ammoType": "Shells",
+      "equipSeconds": 0.4,
       "pellets": 8,
       "spreadDegrees": 6.0,
       "falloffStart": 8,
@@ -76,6 +81,7 @@
       "range": 80,
       "automatic": false,
       "ammoType": "Light",
+      "equipSeconds": 0.4,
       "spreadDegrees": 1.5,
       "falloffStart": 20,
       "falloffMinRatio": 0.6,
@@ -92,6 +98,7 @@
       "range": 160,
       "automatic": false,
       "ammoType": "Rockets",
+      "equipSeconds": 0.4,
       "projectile": "Rocket",
       "recoilDegrees": 5.0
     }

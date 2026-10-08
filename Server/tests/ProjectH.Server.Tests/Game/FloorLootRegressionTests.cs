@@ -25,7 +25,7 @@ public class FloorLootRegressionTests
     [Fact]
     public void DevSandboxLoot_IsPinned()
     {
-        var h = new SandboxHarness(options: new ServerOptions { MaxPlayers = 8, DevRespawn = true, LootSeed = 7 });
+        var h = new SandboxHarness(options: new ServerOptions { MaxPlayers = 8, DevRespawn = true, LootSeed = 7, DeterministicSeeds = true });
         Assert.Equal(DevSandboxHash, Hash(h.Match.WorldItems));
     }
 

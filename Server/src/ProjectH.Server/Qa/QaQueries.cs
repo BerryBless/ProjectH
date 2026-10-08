@@ -92,7 +92,7 @@ internal static class QaQueries
         typeof(QaQueries).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
         ?? typeof(QaQueries).Assembly.GetName().Version?.ToString() ?? "unknown";
 
-    // 기능: GET /qa/health 본문을 만든다(Phase 14: options.teamSize, Phase 15: map 수치, Phase 16: loot 수치).
+    // 기능: GET /qa/health 본문을 만든다(Phase 14: options.teamSize, Phase 15: map 수치, Phase 16: loot 수치, 리뷰 수정 C1: seeds는 DeterministicSeeds일 때만, 아니면 null).
     // 입력: t - QA Tick 문맥.
     // 출력: 익명 객체.
     public static object Health(QaTick t)
@@ -117,7 +117,8 @@ internal static class QaQueries
             pid = Environment.ProcessId,
             version = Version,
             environment = qa.EnvironmentName,
-            seeds = new { loot = o.LootSeed, zone = o.ZoneSeed, spawn = o.SpawnSeed },
+            // Review fix C1: the seeds reproduce a match only with DeterministicSeeds; otherwise the match secret decides (null).
+            seeds = o.DeterministicSeeds ? new { loot = o.LootSeed, zone = o.ZoneSeed, spawn = o.SpawnSeed } : null,
             options = new
             {
                 maxPlayers = o.MaxPlayers,

@@ -68,6 +68,10 @@ public sealed class GameLoop : IDisposable
     private readonly long _congestedTicks;
     // Final review A4: Match asks this (one delegate, made once) for a peer's building-channel backlog.
     private readonly Func<int, int> _buildBacklog;
+    // Review fixes C3, C7: made once (NewMatch runs again on every reset): a peer's RTT for the rewind allowance, and the
+    // movement anomaly report.
+    private readonly Func<int, int> _rttOf;
+    private readonly Action<ushort> _movementAnomaly;
     private volatile Func<NetPeer, byte, int>? _queueProbe;
     private readonly CancellationTokenSource _stop = new();
     private Thread? _thread;
@@ -175,6 +179,8 @@ public sealed class GameLoop : IDisposable
         _inputTimeoutTicks = (long)options.InputTimeoutSeconds * options.SimHz;
         _congestedTicks = (long)CongestedSeconds * options.SimHz;
         _buildBacklog = BuildBacklog;
+        _rttOf = RttOf;
+        _movementAnomaly = OnMovementAnomaly;
         _playerFailed = OnPlayerFailed;
         _statsQueries = statsQueries ?? new StatsQueryQueue();
         _health.StatsQueries = () => _statsQueries.Counts;
@@ -218,9 +224,26 @@ public sealed class GameLoop : IDisposable
     // Server review M7: made once (NewMatch runs again on every reset).
     private readonly Action<int, Exception> _playerFailed;
 
+    // 기능: 새 경기 객체를 만든다(경기 초기화마다. 리뷰 수정 C3: 연결 RTT 질의, C7: 이동 이상 보고 포함).
+    // 입력: 없음.
+    // 출력: 대기 상태의 Match.
     private Match NewMatch() => new(_options, _data, SendToPeer, _loadout, dropPoints: _dropPoints, matchSink: _matchSink,
-        graceExpired: OnGraceExpired, movementAnomaly: _health.AddMovementAnomaly, sendBuild: SendToPeerBuild, buildBacklog: _buildBacklog,
-        playerFailed: _playerFailed);
+        graceExpired: OnGraceExpired, movementAnomaly: _movementAnomaly, sendBuild: SendToPeerBuild, buildBacklog: _buildBacklog,
+        playerFailed: _playerFailed, rttOf: _rttOf);
+
+    // 기능: 연결의 RTT를 돌려준다(리뷰 수정 C3, Game Loop 스레드). SweepPeers가 Tick마다 PeerState.RttMs를 갱신한다.
+    // 입력: peerId - 연결 id.
+    // 출력: RTT(ms). 모르는 연결이면 0(가장 좁은 되감기).
+    private int RttOf(int peerId) => _peers.TryGetValue(peerId, out NetPeer? peer) && peer.Tag is PeerState state ? state.RttMs : 0;
+
+    // 기능: Match가 알린 이동 이상 하나를 Health에 세고 그 Entity id를 Debug로 남긴다(리뷰 수정 C7, Game Loop 스레드).
+    // 입력: entityId - 이상이 난 플레이어의 Entity id(기록에는 그 플레이어의 MovementAnomalies로 남는다).
+    // 출력: 반환값 없음.
+    private void OnMovementAnomaly(ushort entityId)
+    {
+        _health.AddMovementAnomaly();
+        _logger.LogDebug("Movement anomaly: entity {EntityId}", entityId);
+    }
 
     // Server review M7: Match took a player whose own tick threw out of the match. Its connection is closed with ServerError
     // (the client may reconnect and join as a new player) and forgotten here at once, without calling back into Match (it
@@ -747,6 +770,7 @@ public sealed class GameLoop : IDisposable
     // 2. Phase 10 D3, D4: a connection that has not joined within JoinTimeoutSeconds, and a joined player that sent no
     //    input for InputTimeoutSeconds (dead and spectating players included: the client sends input while joined).
     // 3. A connection whose Join was refused, one second after the refusal (see Join).
+    // 4. Review fix C3: copies each live connection's RoundTripTime into PeerState.RttMs (the rewind allowance).
     private void SweepPeers()
     {
         // Cleared first: a fault in an earlier sweep (RemovePeer threw) must not leave entries behind for every later tick.
@@ -761,6 +785,7 @@ public sealed class GameLoop : IDisposable
                 continue;
             }
             var state = (PeerState)peer.Tag;
+            state.RttMs = peer.RoundTripTime;   // review fix C3: read once per tick for the rewind allowance (an int read)
             if (state.JoinRefused)
             {
                 // No code: the JoinMatchResponse said why, and a remote close without a code is never retried (D10).

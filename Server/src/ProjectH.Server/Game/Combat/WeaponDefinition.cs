@@ -11,13 +11,15 @@ public sealed class WeaponDefinition
     // 기능: 검증이 끝난 무기 정의를 만든다.
     // 입력: id·name·damage(산탄 하나당)·fireIntervalTicks·magazineSize·reloadTicks·range·automatic·ammoType - Phase 4 값,
     //   pellets - 한 발의 산탄 수, spreadDegrees - 퍼짐 원뿔 반각, falloffStart·falloffMinRatio - 감쇠 시작 거리와 사거리에서의 비율,
-    //   structureMultiplier - 구조물 피해 배율, recoilDegrees - Client 반동, projectile - 투사체 정의(null = Hitscan).
+    //   structureMultiplier - 구조물 피해 배율, recoilDegrees - Client 반동, projectile - 투사체 정의(null = Hitscan),
+    //   equipTicks - 손에 든 뒤 쏠 수 있을 때까지의 Tick(리뷰 수정 C2, 0 = 바로).
     // 출력: 바뀌지 않는 WeaponDefinition.
     public WeaponDefinition(byte id, string name, ushort damage, ushort fireIntervalTicks, byte magazineSize,
         ushort reloadTicks, float range, bool automatic, AmmoType ammoType, byte pellets = 1, float spreadDegrees = 0f,
         float falloffStart = float.PositiveInfinity, float falloffMinRatio = 1f, float structureMultiplier = 1f, float recoilDegrees = 0f,
-        ProjectileDefinition? projectile = null)
+        ProjectileDefinition? projectile = null, ushort equipTicks = 0)
     {
+        EquipTicks = equipTicks;
         Id = id;
         Name = name;
         Damage = damage;
@@ -62,8 +64,10 @@ public sealed class WeaponDefinition
     // Phase 17 D6: what the weapon launches instead of a ray (null = hitscan).
     public ProjectileDefinition? Projectile { get; }
     public bool IsProjectile => Projectile != null;
+    // Review fix C2 (SEC-8): ticks from coming into the hand (WeaponRules.Equip) to the first shot.
+    public ushort EquipTicks { get; }
 
-    // 기능: 무기를 WeaponCatalog 와이어 값으로 바꾼다(Phase 17: 산탄·퍼짐·반동·투사체 종류 포함).
+    // 기능: 무기를 WeaponCatalog 와이어 값으로 바꾼다(Phase 17: 산탄·퍼짐·반동·투사체 종류 포함, 리뷰 수정 C2: 교체 대기 Tick).
     // 입력: 없음.
     // 출력: WeaponInfo.
     public WeaponInfo ToWire() => new WeaponInfo
@@ -81,5 +85,6 @@ public sealed class WeaponDefinition
         SpreadDegrees = SpreadDegrees,
         RecoilDegrees = RecoilDegrees,
         Projectile = Projectile?.Kind ?? ProjectileKind.None,
+        EquipTicks = EquipTicks,
     };
 }

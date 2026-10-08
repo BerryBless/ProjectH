@@ -61,14 +61,21 @@ public sealed partial class Match
     private bool ProjectilesAllowed =>
         _flow.State != MatchFlowState.Starting && _flow.State != MatchFlowState.Finished && _flow.State != MatchFlowState.Closing;
 
-    // 기능: 손에 든 무기가 이번 입력에 쏠 수 있는지 본다(D6: 투사체 무기는 빈 칸과 경기 상태를 탄 소비 전에 확인한다).
-    // 입력: weapon - 현재 칸의 무기(null = 빈 칸).
-    // 출력: Hitscan 무기·빈 칸이면 true, 투사체 무기는 빈 칸이 있고 ProjectilesAllowed가 true이면(시작 카운트다운·결과 화면 아님) true.
-    private bool CanLaunch(WeaponDefinition? weapon)
+    // 기능: 손에 든 무기가 이번 입력에 쏠 수 있는지 본다(D6: 투사체 무기는 빈 칸과 경기 상태를 탄 소비 전에 확인한다. 리뷰 수정 C5:
+    //   주인 개인 상한도).
+    // 입력: owner - 쏘는 사람, weapon - 현재 칸의 무기(null = 빈 칸).
+    // 출력: Hitscan 무기·빈 칸이면 true, 투사체 무기는 ProjectilesAllowed가 true이고(시작 카운트다운·결과 화면 아님) HasRoom(owner)이면 true.
+    private bool CanLaunch(PlayerEntity owner, WeaponDefinition? weapon)
     {
         if (weapon == null || !weapon.IsProjectile) return true;
-        return ProjectilesAllowed && _projectiles.HasFree;
+        return ProjectilesAllowed && HasRoom(owner);
     }
+
+    // 기능: 이 사람의 투사체가 하나 더 들어갈 자리가 있는지 본다: 빈 칸이 있고(32칸 공유) 그 사람의 살아 있는 투사체가 MaxPerOwner보다 적음(리뷰 수정 C5).
+    // 입력: owner - 주인.
+    // 출력: 들어가면 true.
+    private bool HasRoom(PlayerEntity owner) =>
+        _projectiles.HasFree && _projectiles.CountOwnedBy(owner.JoinOrder) < ProjectileRules.MaxPerOwner;
 
     // 기능: 수류탄을 던진다(D9). 행동 가능 모드는 호출자(ProcessActions)가 보장한다. 조건: 조준 유효, ProjectilesAllowed가 true(시작 카운트다운·결과 화면 아님), 수류탄 정의 있음,
     //   소지 ≥ 1, 간격이 지남, 빈 투사체 칸. 칸을 먼저 확보한 뒤 수를 줄이고, 진행 중인 회복·소생·재투입을 끊는다.
@@ -121,9 +128,14 @@ public sealed partial class Match
     // 기능: 투사체 하나를 만든다. 주인의 Entity id·JoinOrder·팀을 저장하고 모두에게 ProjectileSpawned를 보낸다.
     //   StartTick = 시뮬레이션 중인 Tick이고, 첫 이동은 다음 Tick의 UpdateProjectiles에서 한다.
     // 입력: owner - 주인, definition - 정의, origin - 시작 위치, velocity - 시작 속도, multiplier - 폭발 피해 배율(등급).
-    // 출력: 만들었으면 true, 칸이 없으면 false.
+    // 출력: 만들었으면 true, 칸이 없거나 주인의 개인 상한(리뷰 수정 C5)이면 false.
     private bool SpawnProjectile(PlayerEntity owner, ProjectileDefinition definition, Vector3 origin, Vector3 velocity, float multiplier)
     {
+        if (!HasRoom(owner))
+        {
+            ProjectilesRefused++;
+            return false;
+        }
         uint tick = ServerTick + 1;
         var projectile = new Projectile
         {

@@ -46,7 +46,10 @@ docker compose up -d
 | `player_profile` | `account_id`, `display_name` VARCHAR(32), `updated_at` | PK `account_id`, FK → `account` |
 | `player_stats` | `account_id`, `matches`, `wins`, `kills`, `deaths` INT, `damage`, `survival_ms` BIGINT, `updated_at` | PK `account_id`, FK → `account` |
 | `game_match` | `id` BIGINT AUTO_INCREMENT, `round_no` INT, `started_at`, `ended_at`, `players` TINYINT UNSIGNED, `winner_account_id` NULL | PK `id`, FK `winner_account_id` → `account` |
-| `match_player` | `match_id`, `account_id`, `placement` TINYINT UNSIGNED, `kills` SMALLINT UNSIGNED, `damage` INT, `survival_ms` INT | PK `(match_id, account_id)`, 인덱스 `(account_id, match_id)`, FK → `game_match`, `account` |
+| `match_player` | `match_id`, `account_id`, `placement` TINYINT UNSIGNED, `kills` SMALLINT UNSIGNED, `damage` INT, `survival_ms` INT, (v2) `shots`, `pellets`, `hits`, `rewind_ticks`, `rewind_clamped`, `max_hit_distance_cm`, `movement_anomalies`, `max_aim_turn` INT NOT NULL DEFAULT 0 | PK `(match_id, account_id)`, 인덱스 `(account_id, match_id)`, FK → `game_match`, `account` |
+| `schema_version` | `id` TINYINT UNSIGNED(늘 1), `version` INT, `updated_at` | PK `id` |
+
+- **스키마 버전(리뷰 수정 C7):** 지금 버전은 2(`MatchStore.SchemaVersion`)다. `EnsureSchemaAsync`는 표를 `CREATE TABLE IF NOT EXISTS`로 만든 뒤 `schema_version`을 읽는다. 행이 없으면(Phase 9의 기존 DB) 1이다. 2보다 낮으면 `match_player`의 Anti-cheat 열 8개를 열마다 `information_schema.COLUMNS`로 확인해 없는 것만 `ALTER TABLE … ADD COLUMN … INT NOT NULL DEFAULT 0`으로 더하고 버전 2를 적는다(`GREATEST`로 더 높은 버전은 낮추지 않는다). 새 DB도 같은 길로 v1 표를 만든 뒤 열을 더한다. 몇 번을 실행해도, 중간에 끊겨 일부 열만 있는 DB에서 다시 실행해도 안전하다. 확인과 ALTER 사이에 다른 서버가 먼저 더하면 중복 열 오류(1060)를 무시한다. MySQL DDL은 Transaction 밖(열마다 자동 Commit)이라 짧은 Lock만 잡는다. 버전이 2보다 높으면 아무것도 하지 않는다. 기존 행의 새 열은 0이다.
 
 - `player_profile.display_name`은 처음 저장할 때 `dev_player_id`로 채운다. 이름을 바꾸는 기능은 아직 없다.
 - `game_match.players`는 실제로 `match_player`에 쓴 행 수다.
@@ -74,6 +77,7 @@ Game Loop(경기가 끝나는 Tick) → MatchRecord 하나 → MatchHistoryQueue
 | 피해 | 다른 플레이어에게서 실제로 깎은 Shield + Health의 합. 넘치는 피해(오버킬)와 Zone 피해, 자기 자신에게 준 피해는 넣지 않는다 |
 | 생존 시간 | 경기 시작부터 탈락 Tick까지(ms). 끝까지 산 사람은 종료 Tick까지 |
 | 승자 | 순위 1인 플레이어. 없으면 NULL |
+| Anti-cheat(리뷰 수정 C7, v2 열) | 경기 시작부터 센다(`PlayerEntity`의 정수 카운터, 할당 없음). `shots` 방아쇠 수(투사체 포함), `pellets` Hitscan 광선 수, `hits` 플레이어를 맞힌 광선 수, `rewind_ticks` 되감은 Tick 합, `rewind_clamped` RTT 허용보다 오래된 ViewTick을 자른 횟수, `max_hit_distance_cm` 맞힌 광선의 가장 먼 거리(cm, 히트박스 앞면까지), `movement_anomalies` 모드 속도를 넘은 이동 수, `max_aim_turn` 두 실제 입력 사이 AimYaw 변화(180°로 감은 값)의 최댓값(0.1° 단위). 판정은 하지 않고 사후 확인용으로만 남긴다 |
 
 - 참가자 전원을 넣는다. 경기 중 접속을 끊은 참가자는 떠나는 때 기록해 두었다가 함께 넣는다(이탈은 탈락, Phase 5 D10).
 - 경기 중 합류한 관전자는 참가자가 아니므로 넣지 않는다.

@@ -25,7 +25,7 @@ internal sealed class SandboxHarness
 
     public SandboxHarness(StartingLoadout? loadout = null, ServerOptions? options = null, GameData? data = null)
     {
-        options ??= new ServerOptions { MaxPlayers = 8, DevRespawn = true };
+        options ??= new ServerOptions { MaxPlayers = 8, DevRespawn = true, DeterministicSeeds = true };   // review fix C1
         Match = new Match(options, data ?? TestGameData.Create(), (peer, bytes, method) => Packets.Add(new Sent(peer, bytes.ToArray(), method)),
             loadout ?? TestGameData.CombatLoadout);
     }

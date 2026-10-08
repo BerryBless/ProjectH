@@ -29,6 +29,9 @@ namespace ProjectH.Shared.Protocol
         public float SpreadDegrees;          // Phase 17 D3: the cone's half angle, 0..MaxSpreadDegrees
         public float RecoilDegrees;          // Phase 17 D3: the client's camera kick per shot, 0..MaxRecoilDegrees
         public ProjectileKind Projectile;    // Phase 17 D6: None = hitscan
+        // Review fix C2: ticks after the weapon comes into the hand (a slot switch, or a pickup or swap into the hand) before it
+        // can fire, 0..WeaponCatalogPacket.MaxEquipTicks. The client's WeaponState waits the same before predicting a shot.
+        public ushort EquipTicks;
     }
 
     // Phase 17 D2, D7: what the client needs of a projectile kind to extrapolate and draw it between the projectile events:
@@ -58,8 +61,10 @@ namespace ProjectH.Shared.Protocol
         public const float MaxSpreadDegrees = 30f;
         public const float MaxRecoilDegrees = 30f;
         public const int MaxProjectiles = 2;   // one per ProjectileKind
+        // Review fix C2: weapons.json allows equipSeconds 0-2 and SimHz is at most 128, so at most 256 ticks.
+        public const int MaxEquipTicks = 256;
 
-        // 기능: WeaponCatalog 패킷을 쓴다(Phase 17: 산탄·퍼짐·반동·투사체 종류와 투사체 목록 포함).
+        // 기능: WeaponCatalog 패킷을 쓴다(Phase 17: 산탄·퍼짐·반동·투사체 종류와 투사체 목록 포함, 리뷰 수정 C2: 무기마다 끝에 EquipTicks u16).
         // 입력: writer - 대상, weapons - 1..MaxWeapons개(서버가 시작 때 검증), projectiles - 0..MaxProjectiles개(종류마다 하나, null = 없음).
         // 출력: 반환값 없음. writer에 패킷이 쓰인다.
         public static void Write(ref PacketWriter writer, WeaponInfo[] weapons, ProjectileInfo[] projectiles)
@@ -82,6 +87,7 @@ namespace ProjectH.Shared.Protocol
                 writer.WriteSingle(w.SpreadDegrees);
                 writer.WriteSingle(w.RecoilDegrees);
                 writer.WriteByte((byte)w.Projectile);
+                writer.WriteUInt16(w.EquipTicks);   // review fix C2
             }
             int projectileCount = projectiles == null ? 0 : projectiles.Length;
             writer.WriteByte((byte)projectileCount);
@@ -101,7 +107,7 @@ namespace ProjectH.Shared.Protocol
         // 출력: 성공하면 true와 무기 배열, 아니면 false. 할당한다(입장 때 한 번).
         public static bool TryRead(ref PacketReader reader, out WeaponInfo[] weapons) => TryRead(ref reader, out weapons, out _);
 
-        // 기능: WeaponCatalog 본문을 읽는다(Phase 17: 투사체 목록 포함). 서버가 보내지 않는 값은 거절한다.
+        // 기능: WeaponCatalog 본문을 읽는다(Phase 17: 투사체 목록 포함, 리뷰 수정 C2: EquipTicks 0..MaxEquipTicks). 서버가 보내지 않는 값은 거절한다.
         // 입력: reader - 본문(PacketId 뒤).
         // 출력: 성공하면 true와 무기·투사체 배열. 범위 밖 값, 같은 투사체 종류 둘, 목록에 없는 투사체를 쏘는 무기가 있으면 false.
         //   할당한다(입장 때 한 번, Tick 경로가 아니다).
@@ -131,6 +137,7 @@ namespace ProjectH.Shared.Protocol
                 if (!reader.TryReadSingle(out w.RecoilDegrees) || !InRange(w.RecoilDegrees, MaxRecoilDegrees)) return false;
                 if (!reader.TryReadByte(out byte projectile) || projectile > (byte)ProjectileKind.Rocket) return false;
                 w.Projectile = (ProjectileKind)projectile;
+                if (!reader.TryReadUInt16(out w.EquipTicks) || w.EquipTicks > MaxEquipTicks) return false;
                 result[i] = w;
             }
 

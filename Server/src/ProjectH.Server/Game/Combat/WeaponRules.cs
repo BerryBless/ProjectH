@@ -10,7 +10,7 @@ namespace ProjectH.Server.Game.Combat;
 // and the packets. The client copies these rules for presentation (Client WeaponState); keep the two in step.
 public static class WeaponRules
 {
-    // 기능: 대기 중인 것이 없는 상태로 되돌린다(입장·리스폰, 인벤토리를 채운 뒤. Phase 17: 수류탄 간격도).
+    // 기능: 대기 중인 것이 없는 상태로 되돌린다(입장·리스폰, 인벤토리를 채운 뒤. Phase 17: 수류탄 간격도, 리뷰 수정 C2: 교체 대기도).
     // 입력: player - 플레이어.
     // 출력: 반환값 없음.
     public static void ResetState(PlayerEntity player)
@@ -19,6 +19,17 @@ public static class WeaponRules
         player.ReloadEndTick = 0;
         player.FireHeld = false;
         player.NextGrenadeTick = 0;
+        player.SwitchReadyTick = 0;
+    }
+
+    // 기능: 손에 든 것이 바뀐 뒤의 교체 대기를 둔다(리뷰 수정 C2, SEC-8). 칸 교체, 손으로 줍기·교환, 버리기 뒤에 부른다.
+    //   무기는 칸마다 자기 발사 간격을 갖고 있어서, 이 대기가 없으면 칸을 바꿔 가며 간격을 건너뛸 수 있다.
+    // 입력: player - 플레이어(지금 손에 든 칸이 이미 바뀐 상태), now - 마지막 Tick.
+    // 출력: 반환값 없음. SwitchReadyTick = now + 손에 든 무기의 EquipTicks(빈손이면 now).
+    public static void Equip(PlayerEntity player, uint now)
+    {
+        ref HeldWeapon held = ref player.Inventory.Current;
+        player.SwitchReadyTick = now + (held.IsEmpty ? 0u : held.Weapon!.EquipTicks);
     }
 
     // Runs every tick for a living player, whether or not an input arrived. A finished reload moves rounds
@@ -39,10 +50,11 @@ public static class WeaponRules
         inventory.Changed = true;
     }
 
-    // Exactly one of Slot1/Slot2/Slot3 selects that slot, empty or not (an empty slot means no weapon out);
-    // several bits at once are contradictory and ignored. A switch cancels the reload, which belongs to the
-    // weapon being put away. Returns true when the current slot changed.
-    public static bool SelectSlot(PlayerEntity player, InputButtons buttons)
+    // 기능: Slot1/Slot2/Slot3 중 정확히 하나가 눌렸으면 그 칸을 든다(비어 있어도. 빈 칸은 무기를 넣은 상태). 여러 비트는 모순이라 무시한다.
+    //   바뀌면 재장전(넣는 무기의 것)을 취소하고, 리뷰 수정 C2: 새로 든 무기의 교체 대기를 둔다(Equip).
+    // 입력: player - 플레이어, buttons - 이번 입력에서 눌린 버튼, now - 마지막 Tick.
+    // 출력: 칸이 바뀌었으면 true, 아니면 false(같은 칸은 대기를 새로 두지 않는다).
+    public static bool SelectSlot(PlayerEntity player, InputButtons buttons, uint now)
     {
         int target;
         switch (buttons & (InputButtons.Slot1 | InputButtons.Slot2 | InputButtons.Slot3))
@@ -55,13 +67,15 @@ public static class WeaponRules
         if (target == player.Inventory.CurrentSlot) return false;
         player.Inventory.CurrentSlot = target;
         player.Reloading = false;
+        Equip(player, now);
         return true;
     }
 
     // 기능: Client가 보낸 입력 하나를 재장전 → 발사 순서로 처리한다. 쏘면 탄 하나(산탄총도 방아쇠 한 번에 하나)와 발사 간격을 쓴다.
     // 입력: player - 플레이어, buttons - 눌린 버튼, aimValid - 조준이 유효하고(유한) 쏠 수 있는지(Phase 17: 투사체 무기는 빈 투사체 칸이
     //   있고 ProjectilesAllowed가 true일 때(시작 카운트다운·결과 화면 아님)만 true. false면 탄도 간격도 쓰지 않는다), now - 마지막 Tick.
-    // 출력: 쐈으면 true. 빈 칸은 쏘지 않는다.
+    // 출력: 쐈으면 true. 빈 칸은 쏘지 않는다. 리뷰 수정 C2: now < SwitchReadyTick(교체 대기 중)이면 쏘지 않는다(탄·간격을 쓰지 않고 누름은 쓴다,
+    //   발사 간격과 같다). R 재장전은 대기 중에도 시작한다.
     public static bool Apply(PlayerEntity player, InputButtons buttons, bool aimValid, uint now)
     {
         bool fireHeld = (buttons & InputButtons.Fire) != 0;
@@ -78,7 +92,7 @@ public static class WeaponRules
 
         bool trigger = fireHeld && (weapon.Automatic || !player.FireHeld);
         player.FireHeld = fireHeld;
-        if (!trigger || !aimValid || player.Reloading || now < held.NextFireTick) return false;
+        if (!trigger || !aimValid || player.Reloading || now < held.NextFireTick || now < player.SwitchReadyTick) return false;
 
         if (held.MagAmmo == 0)
         {

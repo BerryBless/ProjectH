@@ -35,7 +35,7 @@ stateDiagram-v2
 
 `AirDrop=false`(`DevRespawn`이면 항상)면 아래 Phase 6의 투입 지점이다. 인벤토리·월드 아이템·Loot·참가자 확정은 두 경우 모두 같다.
 
-**Phase 6 방식(투입 지점):** 모든 접속자를 투입 지점으로 옮긴다(Phase 6 D9: `DropPoints` 24곳을 시드 `SpawnSeed + 판 번호`로 섞어 플레이어 목록 순서로 배정, 24명을 넘으면 같은 지점의 동쪽·서쪽 3 m. `PlayerRespawned`, Seq 유지) → 인벤토리를 비우고 Health 100·Shield 0 → 월드 아이템을 모두 지운다 → Loot를 시드 `LootSeed + 판 번호`로 새로 굴린다 → 참가자와 생존자 수를 확정하고 처치 수를 0으로 → Zone을 시드 `ZoneSeed + 판 번호`로 시작한다. 판 재시작과 대기는 여전히 중앙 5 m 원이다.
+**Phase 6 방식(투입 지점):** 모든 접속자를 투입 지점으로 옮긴다(Phase 6 D9: `DropPoints` 24곳을 시드 `SpawnSeed + 판 번호`로 섞어 플레이어 목록 순서로 배정, 24명을 넘으면 같은 지점의 동쪽·서쪽 3 m. `PlayerRespawned`, Seq 유지) → 인벤토리를 비우고 Health 100·Shield 0 → 월드 아이템을 모두 지운다 → Loot를 시드 `LootSeed + 판 번호`로 새로 굴린다 → 참가자와 생존자 수를 확정하고 처치 수를 0으로 → Zone을 시드 `ZoneSeed + 판 번호`로 시작한다. 판 재시작과 대기는 여전히 중앙 5 m 원이다. (리뷰 수정 C1: `시드 + 판 번호`는 `DeterministicSeeds`일 때다. 기본은 경기 시작마다 만든 경기 비밀에 용도·판 번호를 섞은 시드다, `Server.md` 옵션 표.)
 
 ## Safe Zone (`SafeZone`, D6–D8)
 

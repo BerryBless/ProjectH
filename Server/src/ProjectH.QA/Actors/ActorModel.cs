@@ -51,6 +51,9 @@ public sealed record ActorState
     public int WeaponId { get; init; }
     public string WeaponName { get; init; } = string.Empty;
     public bool WeaponAutomatic { get; init; }
+    // Review fix C2: the EquipTicks of the weapon in each inventory slot, from the catalog this actor received (0 = empty slot or
+    // unknown; empty list = no catalog, e.g. a Unity actor). fire and switchWeapon wait them after a real slot change.
+    public IReadOnlyList<int> SlotEquipTicks { get; init; } = Array.Empty<int>();
     public int ReloadTicks { get; init; }
     public uint ServerTick { get; init; }
     public string MatchState { get; init; } = string.Empty;

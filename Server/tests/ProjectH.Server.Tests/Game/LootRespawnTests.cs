@@ -128,6 +128,7 @@ public class LootRespawnTests
         _a.State.Position = new Vector3(8f, 0f, 0f);
         Press(InputButtons.Drop);                          // G: a dropped weapon, not a spawn item
         Assert.Equal(before + 1, _match.WorldItems.Count);
+        for (int i = 0; i < 8; i++) _match.Tick();         // review fix C6: past the item action interval
         Press(InputButtons.Interact);
         for (int i = 0; i < 100; i++) _match.Tick();
         Assert.Equal(before, _match.WorldItems.Count);

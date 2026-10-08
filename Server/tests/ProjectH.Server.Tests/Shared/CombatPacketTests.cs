@@ -68,7 +68,8 @@ public class CombatPacketTests
         var writer = new PacketWriter(_buffer);
         WeaponCatalogPacket.Write(ref writer, weapons, NoProjectiles);
         Assert.False(writer.Overflowed);
-        Assert.Equal(2 + 8 * 41 + 1, writer.Length);   // Phase 4: ammo type; Phase 17: pellets, spread, recoil, projectile + the projectile count
+        // Phase 4: ammo type; Phase 17: pellets, spread, recoil, projectile + the projectile count; review fix C2: equip ticks u16.
+        Assert.Equal(2 + 8 * 43 + 1, writer.Length);
         Assert.True(writer.Length <= ProtocolConstants.MaxPacketSize);
     }
 
@@ -103,6 +104,23 @@ public class CombatPacketTests
         WeaponCatalogPacket.Write(ref writer, new[] { weapon }, NoProjectiles);
         var reader = ReaderAfterId(writer.Length, PacketId.WeaponCatalog);
         Assert.False(WeaponCatalogPacket.TryRead(ref reader, out _));
+    }
+
+    // Review fix C2: the equip ticks travel with each weapon, 0..MaxEquipTicks.
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(12, true)]
+    [InlineData(WeaponCatalogPacket.MaxEquipTicks, true)]
+    [InlineData(WeaponCatalogPacket.MaxEquipTicks + 1, false)]
+    public void WeaponCatalog_EquipTicks_RoundTrip_UpToTheLimit(int equipTicks, bool valid)
+    {
+        var weapon = Weapon(1, "Kestrel LR");
+        weapon.EquipTicks = (ushort)equipTicks;
+        var writer = new PacketWriter(_buffer);
+        WeaponCatalogPacket.Write(ref writer, new[] { weapon }, NoProjectiles);
+        var reader = ReaderAfterId(writer.Length, PacketId.WeaponCatalog);
+        Assert.Equal(valid, WeaponCatalogPacket.TryRead(ref reader, out var read));
+        if (valid) Assert.Equal(equipTicks, read[0].EquipTicks);
     }
 
     [Fact]

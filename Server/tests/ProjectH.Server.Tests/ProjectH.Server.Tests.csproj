@@ -53,6 +53,9 @@
     <Compile Include="..\..\..\Client\Assets\Scripts\Net\NetClient.cs" Link="ClientCopies\Net\NetClient.cs" />
     <!-- Review fix B3 (B-T5): the client's authentication layer that NetClient uses. -->
     <Compile Include="..\..\..\Client\Assets\Scripts\Net\AuthPacketLayer.cs" Link="ClientCopies\Net\AuthPacketLayer.cs" />
+    <!-- Review fix C2: the client's copy of the weapon rules (equip wait), compared with the server's WeaponRules
+         (ClientWeaponStateParityTests). -->
+    <Compile Include="..\..\..\Client\Assets\Scripts\Game\WeaponState.cs" Link="ClientCopies\Game\WeaponState.cs" />
   </ItemGroup>
 
 </Project>

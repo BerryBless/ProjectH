@@ -77,7 +77,26 @@ public sealed class MatchStore
           CONSTRAINT fk_match_player_account FOREIGN KEY (account_id) REFERENCES account (id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin
         """,
+        // Review fix C7: one row (id 1), the schema version the migrations below brought this database to. A database without
+        // the table is version 1 (Phase 9).
+        """
+        CREATE TABLE IF NOT EXISTS schema_version (
+          id TINYINT UNSIGNED NOT NULL,
+          version INT NOT NULL,
+          updated_at DATETIME(3) NOT NULL,
+          PRIMARY KEY (id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin
+        """,
     };
+
+    // Review fix C7: the version this code writes and reads, and the match_player columns version 2 adds (the anti-cheat
+    // counters of PlayerRecord, in that order).
+    public const int SchemaVersion = 2;
+    public static readonly string[] AntiCheatColumns =
+    {
+        "shots", "pellets", "hits", "rewind_ticks", "rewind_clamped", "max_hit_distance_cm", "movement_anomalies", "max_aim_turn",
+    };
+    private const int DuplicateColumnError = 1060;   // ER_DUP_FIELDNAME: another server added the column first
 
     private readonly string _connectionString;
 
@@ -87,6 +106,11 @@ public sealed class MatchStore
         _connectionString = connectionString;
     }
 
+    // 기능: 스키마를 만들고 최신 버전으로 옮긴다(Phase 9 D3, 리뷰 수정 C7). CREATE IF NOT EXISTS 뒤 schema_version을 읽고, 2보다 낮으면(표 없음 =
+    //   기존 DB = 1) match_player에 없는 Anti-cheat 열만 information_schema로 확인해 ALTER로 더하고 버전 2를 적는다. 몇 번을 실행해도,
+    //   중간에 끊긴 이동을 다시 실행해도 안전하다. DDL은 MySQL에서 Transaction 밖이다(열마다 자동 Commit). 더 높은 버전이면 건드리지 않는다.
+    // 입력: cancellationToken - 취소.
+    // 출력: 완료되면 끝나는 Task. 연결은 반환된다.
     public async Task EnsureSchemaAsync(CancellationToken cancellationToken)
     {
         await using var connection = new MySqlConnection(_connectionString);
@@ -96,8 +120,54 @@ public sealed class MatchStore
             await using var command = new MySqlCommand(sql, connection);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
+
+        int version;
+        await using (var command = new MySqlCommand("SELECT version FROM schema_version WHERE id = 1", connection))
+        {
+            object? value = await command.ExecuteScalarAsync(cancellationToken);
+            version = value == null || value is DBNull ? 1 : Convert.ToInt32(value);
+        }
+        if (version >= SchemaVersion) return;
+
+        foreach (string column in AntiCheatColumns)
+        {
+            if (await HasColumnAsync(connection, "match_player", column, cancellationToken)) continue;
+            // The name comes from AntiCheatColumns (a constant list), never from input.
+            await using var command = new MySqlCommand($"ALTER TABLE match_player ADD COLUMN {column} INT NOT NULL DEFAULT 0", connection);
+            try
+            {
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+            catch (MySqlException e) when (e.Number == DuplicateColumnError)
+            {
+                // Added by another server between the check and the ALTER: the column is there, which is all this needs.
+            }
+        }
+        await using (var command = new MySqlCommand(
+            "INSERT INTO schema_version (id, version, updated_at) VALUES (1, @version, UTC_TIMESTAMP(3)) AS new " +
+            "ON DUPLICATE KEY UPDATE version = GREATEST(schema_version.version, new.version), updated_at = new.updated_at", connection))
+        {
+            command.Parameters.AddWithValue("@version", SchemaVersion);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
+    // 기능: 지금 데이터베이스의 표에 열이 있는지 information_schema로 본다(리뷰 수정 C7).
+    // 입력: connection - 열린 연결, table·column - 표와 열 이름, cancellationToken - 취소.
+    // 출력: 있으면 true.
+    private static async Task<bool> HasColumnAsync(MySqlConnection connection, string table, string column, CancellationToken cancellationToken)
+    {
+        await using var command = new MySqlCommand(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @table AND COLUMN_NAME = @column",
+            connection);
+        command.Parameters.AddWithValue("@table", table);
+        command.Parameters.AddWithValue("@column", column);
+        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) > 0;
+    }
+
+    // 기능: 끝난 경기 하나를 한 Transaction으로 저장한다(계정·프로필·경기·참가자(리뷰 수정 C7: Anti-cheat 열 포함)·누적 통계, 아니면 아무것도).
+    // 입력: record - 경기 기록, cancellationToken - 취소.
+    // 출력: 새 game_match id. 실패하면 예외(Rollback).
     // One transaction for the whole match. Returns the new game_match id.
     public async Task<long> SaveAsync(MatchRecord record, CancellationToken cancellationToken)
     {
@@ -146,9 +216,12 @@ public sealed class MatchStore
         {
             if (!write[i]) continue;
             PlayerRecord player = record.Players[i];
+            // Review fix C7: plus the eight anti-cheat counters (schema v2).
             await using (var command = new MySqlCommand(
-                "INSERT INTO match_player (match_id, account_id, placement, kills, damage, survival_ms) " +
-                "VALUES (@match, @account, @placement, @kills, @damage, @survival)", connection, transaction))
+                "INSERT INTO match_player (match_id, account_id, placement, kills, damage, survival_ms, shots, pellets, hits, rewind_ticks, " +
+                "rewind_clamped, max_hit_distance_cm, movement_anomalies, max_aim_turn) " +
+                "VALUES (@match, @account, @placement, @kills, @damage, @survival, @shots, @pellets, @hits, @rewindTicks, @rewindClamped, " +
+                "@maxHitDistance, @movementAnomalies, @maxAimTurn)", connection, transaction))
             {
                 command.Parameters.AddWithValue("@match", matchId);
                 command.Parameters.AddWithValue("@account", accountIds[i]);
@@ -156,6 +229,14 @@ public sealed class MatchStore
                 command.Parameters.AddWithValue("@kills", Math.Min(player.Kills, ushort.MaxValue));
                 command.Parameters.AddWithValue("@damage", player.Damage);
                 command.Parameters.AddWithValue("@survival", player.SurvivalMs);
+                command.Parameters.AddWithValue("@shots", player.Shots);
+                command.Parameters.AddWithValue("@pellets", player.Pellets);
+                command.Parameters.AddWithValue("@hits", player.Hits);
+                command.Parameters.AddWithValue("@rewindTicks", player.RewindTicks);
+                command.Parameters.AddWithValue("@rewindClamped", player.RewindClamped);
+                command.Parameters.AddWithValue("@maxHitDistance", player.MaxHitDistanceCm);
+                command.Parameters.AddWithValue("@movementAnomalies", player.MovementAnomalies);
+                command.Parameters.AddWithValue("@maxAimTurn", player.MaxAimTurn);
                 await command.ExecuteNonQueryAsync(cancellationToken);
             }
             await using (var command = new MySqlCommand(

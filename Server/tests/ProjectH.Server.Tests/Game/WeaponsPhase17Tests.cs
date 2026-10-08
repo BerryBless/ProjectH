@@ -19,14 +19,18 @@ public class WeaponsPhase17Tests
 {
     public const byte Ar = 1, Sniper = 2, Smg = 3, Shotgun = 4, Pistol = 5, Rocket = 6;
 
-    // 기능: 운영 weapons.json과 테스트 아이템·Loot·자기장 데이터로 GameData를 만든다.
+    // 기능: 운영 weapons.json과 테스트 아이템·Loot·자기장 데이터로 GameData를 만든다. 리뷰 수정 C2: 교체 대기(equipSeconds)만 0으로 바꾼다
+    //   (이 테스트들은 칸을 바꾸는 입력으로 바로 쏘는 무기 동작을 본다. 교체 대기는 WeaponRulesTests·PickupDropTests가 운영 값으로 본다).
     // 입력: 없음.
     // 출력: GameData.
     public static GameData Data()
     {
         ItemCatalog items = TestGameData.Items();
-        WeaponCatalog weapons = WeaponCatalog.LoadFile(Path.Combine(AppContext.BaseDirectory, "weapons.json"), 30);
-        return new GameData(weapons, items, TestGameData.Loot(items), TestGameData.Zones());
+        string json = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "weapons.json"));
+        string noWait = System.Text.RegularExpressions.Regex.Replace(json, "\"equipSeconds\":\\s*[0-9.]+", "\"equipSeconds\": 0");
+        Assert.NotEqual(json, noWait);
+        Assert.True(WeaponCatalog.TryParse(noWait, 30, out WeaponCatalog? weapons, out string? error), error);
+        return new GameData(weapons!, items, TestGameData.Loot(items), TestGameData.Zones());
     }
 
     // 기능: 세 칸에 무기를 든 장비(실드 0, 탄·수류탄 넉넉히)를 만든다.
@@ -51,21 +55,39 @@ public class WeaponsPhase17Tests
     public void Spread_IsDeterministic_InsideTheCone_AndZeroIsExact()
     {
         Vector3 aim = Vector3.Normalize(new Vector3(0.3f, -0.1f, 1f));
-        Assert.Equal(aim, WeaponSpread.Spread(aim, 0f, 7, 100, 0));
-        Assert.Equal(WeaponSpread.Spread(aim, 6f, 7, 100, 3), WeaponSpread.Spread(aim, 6f, 7, 100, 3));
-        Assert.NotEqual(WeaponSpread.Spread(aim, 6f, 7, 100, 3), WeaponSpread.Spread(aim, 6f, 7, 100, 4));
-        Assert.NotEqual(WeaponSpread.Spread(aim, 6f, 7, 100, 3), WeaponSpread.Spread(aim, 6f, 7, 101, 3));
-        Assert.NotEqual(WeaponSpread.Spread(aim, 6f, 7, 100, 3), WeaponSpread.Spread(aim, 6f, 8, 100, 3));
+        Assert.Equal(aim, WeaponSpread.Spread(aim, 0f, 7, 100, 0, 0UL));
+        Assert.Equal(WeaponSpread.Spread(aim, 6f, 7, 100, 3, 0UL), WeaponSpread.Spread(aim, 6f, 7, 100, 3, 0UL));
+        Assert.NotEqual(WeaponSpread.Spread(aim, 6f, 7, 100, 3, 0UL), WeaponSpread.Spread(aim, 6f, 7, 100, 4, 0UL));
+        Assert.NotEqual(WeaponSpread.Spread(aim, 6f, 7, 100, 3, 0UL), WeaponSpread.Spread(aim, 6f, 7, 101, 3, 0UL));
+        Assert.NotEqual(WeaponSpread.Spread(aim, 6f, 7, 100, 3, 0UL), WeaponSpread.Spread(aim, 6f, 8, 100, 3, 0UL));
         float maxAngle = 0f;
         for (int i = 0; i < 5000; i++)
         {
-            Vector3 d = WeaponSpread.Spread(aim, 6f, (ushort)(i % 50), (uint)(i / 8), i % 8);
+            Vector3 d = WeaponSpread.Spread(aim, 6f, (ushort)(i % 50), (uint)(i / 8), i % 8, 0UL);
             Assert.Equal(1f, d.Length(), 4);
             float angle = MathF.Acos(Math.Clamp(Vector3.Dot(d, aim), -1f, 1f)) * 180f / MathF.PI;
             Assert.True(angle <= 6f + 1e-3f, $"angle {angle}");
             maxAngle = MathF.Max(maxAngle, angle);
         }
         Assert.True(maxAngle > 5f);   // the cone is used, not only its centre
+    }
+
+    // Review fix C1 (SEC-11): the match secret is part of the hash, so a client that knows the tick, its entity id and the code
+    // cannot work out the server's spread; the same secret still gives the same rays.
+    [Fact]
+    public void DifferentSecrets_GiveDifferentDirections()
+    {
+        Vector3 aim = Vector3.Normalize(new Vector3(0.3f, -0.1f, 1f));
+        Assert.NotEqual(WeaponSpread.Spread(aim, 6f, 7, 100, 3, 0x1234_5678_9ABC_DEF0UL), WeaponSpread.Spread(aim, 6f, 7, 100, 3, 0x0FED_CBA9_8765_4321UL));
+        Assert.NotEqual(WeaponSpread.Spread(aim, 6f, 7, 100, 3, 1UL), WeaponSpread.Spread(aim, 6f, 7, 100, 3, 0UL));
+    }
+
+    [Fact]
+    public void TheSameSecret_IsDeterministic()
+    {
+        Vector3 aim = Vector3.Normalize(new Vector3(-0.2f, 0.1f, 1f));
+        const ulong secret = 0xDEAD_BEEF_0123_4567UL;
+        Assert.Equal(WeaponSpread.Spread(aim, 6f, 9, 500, 2, secret), WeaponSpread.Spread(aim, 6f, 9, 500, 2, secret));
     }
 
     [Fact]

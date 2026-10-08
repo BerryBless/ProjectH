@@ -21,7 +21,8 @@ public sealed class GameServerService : IHostedService, System.IDisposable
     private readonly IHostApplicationLifetime _lifetime;
     private readonly TimeSpan _fatalStall;   // server review M8 (Zero = off)
 
-    // 기능: 게임 서버를 만든다(데이터 파일, 리뷰 수정 B1: 서버 키 — Production에서 개발용 키면 예외로 시작을 막는다, GameLoop, Meter).
+    // 기능: 게임 서버를 만든다(데이터 파일, 리뷰 수정 B1: 서버 키 — Production에서 개발용 키면 예외로 시작을 막는다, 리뷰 수정 C1: Production에서
+    //   DeterministicSeeds면 Warning, GameLoop, Meter).
     // 입력: options - 서버 설정, logger - 로그, matchHistory·writer - 경기 기록, statsQueries - 전적 요청 큐, lifetime - 호스트 수명,
     //   environment - 호스트 환경(Production 판단), qa - QA 모드일 때만.
     // 출력: 시작 전의 GameServerService.
@@ -36,6 +37,9 @@ public sealed class GameServerService : IHostedService, System.IDisposable
             logger.LogWarning("Server identity: DEV KEY (fingerprint {Fingerprint}, {Source}); never use it on a public server", identity.Fingerprint, identity.Source);
         else
             logger.LogInformation("Server identity: fingerprint {Fingerprint} ({Source})", identity.Fingerprint, identity.Source);
+        // Review fix C1: seeds anyone can read from the options make the loot, zone and spread predictable.
+        if (options.Value.DeterministicSeeds && environment.IsProduction())
+            logger.LogWarning("DeterministicSeeds is on in Production: loot, zone, drop order and spread can be predicted from the seed options");
         // The data files are copied next to appsettings.json. A missing or invalid file throws here, so the
         // host refuses to start, the same as an invalid ServerOptions value (Phase 3 D4, Phase 4 D2).
         var data = GameData.LoadDirectory(AppContext.BaseDirectory, options.Value.SimHz);
