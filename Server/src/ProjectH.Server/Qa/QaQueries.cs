@@ -27,7 +27,13 @@ public sealed record QaPlayerDto(
     // Phase 15: this player's waypoint (null = none), and its team's active pings and waypoints as the server holds them.
     QaVec3? Waypoint = null, int TeamPingCount = 0, QaPingDto[]? TeamPings = null, int TeamWaypointCount = 0, QaWaypointDto[]? TeamWaypoints = null,
     // Phase 17: grenades held and the tick the next throw is allowed.
-    int Grenades = 0, long NextGrenadeTick = 0);
+    int Grenades = 0, long NextGrenadeTick = 0,
+    // Phase 19: the vehicle this player sits in (0 = on foot) and its seat (0 driver, 1 passenger, -1 on foot).
+    int VehicleId = 0, int Seat = -1);
+
+// Phase 19 D14: a vehicle (state = VehicleState name; driver and passenger as DevPlayerIds, null = empty seat).
+public sealed record QaVehicleDto(int Id, string State, int Health, int MaxHealth, QaVec3 Position, float Heading, float Speed, float Steer,
+    string? Driver, int DriverId, string? Passenger, int PassengerId, long WreckEndTick);
 
 // Phase 17 D17: a live projectile (kind = ProjectileKind name; owner as DevPlayerId while the owner is in the match).
 public sealed record QaProjectileDto(int Id, string Kind, int OwnerId, string? Owner, QaVec3 Position, QaVec3 Velocity, bool Resting, long ExplodeTick);
@@ -186,7 +192,7 @@ internal static class QaQueries
     }
 
     // 기능: 플레이어 하나의 QA DTO를 만든다(Phase 14: 팀, 기절, 기절시킨 사람, 카드, 진행, 소생자, Phase 15: Waypoint와 팀 Ping·Waypoint,
-    //   Phase 17: Shells·Rockets 예비탄, 수류탄 수와 다음 던지기 Tick).
+    //   Phase 17: Shells·Rockets 예비탄, 수류탄 수와 다음 던지기 Tick, Phase 19: 탄 차량 id와 좌석).
     // 입력: m - 경기, p - 플레이어.
     // 출력: QaPlayerDto.
     public static QaPlayerDto Player(Match m, PlayerEntity p)
@@ -220,7 +226,39 @@ internal static class QaQueries
                 new QaVec3(ping.Position.X, ping.Position.Y, ping.Position.Z), ping.EndTick, ping.TargetId,
                 ping.Kind == MapMarkerKind.Enemy ? NameOf(m, ping.TargetId) : null)),
             waypoints.Length, Array.ConvertAll(waypoints, w => new QaWaypointDto(w.OwnerId, NameOf(m, w.OwnerId), new QaVec3(w.Position.X, w.Position.Y, w.Position.Z))),
-            inv.Grenades, p.NextGrenadeTick);
+            inv.Grenades, p.NextGrenadeTick,
+            p.Vehicle?.Id ?? 0, p.InVehicle ? p.Seat : -1);
+    }
+
+    // 기능: Phase 19 D14: 차량 목록과 수치를 보여 준다(GET /qa/vehicles). 차량은 vehicles 배열과 id 키("3": {...}) 둘 다로 넣어
+    //   vehicle.<id>.health 같은 경로를 바로 읽게 한다.
+    // 입력: m - 경기.
+    // 출력: 사전(count, vehicles, 차량 id 키들, spawned, wrecked, enters, exits, impacts, runOvers, statesSent).
+    public static Dictionary<string, object?> Vehicles(Match m)
+    {
+        var list = new List<QaVehicleDto>(m.VehicleCount);
+        var root = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (ProjectH.Server.Game.Vehicles.Vehicle v in m.VehicleSlots)
+        {
+            if (!v.InUse) continue;
+            PlayerEntity? driver = v.Seats[VehicleSettings.DriverSeat];
+            PlayerEntity? passenger = v.Seats[VehicleSettings.PassengerSeat];
+            var dto = new QaVehicleDto(v.Id, v.State.ToString(), v.Health, m.VehicleData.MaxHealth,
+                new QaVec3(v.Move.Position.X, v.Move.Position.Y, v.Move.Position.Z), v.Move.Heading, v.Move.Speed, v.Move.Steer,
+                driver?.DevPlayerId, driver?.EntityId ?? 0, passenger?.DevPlayerId, passenger?.EntityId ?? 0, v.WreckEndTick);
+            list.Add(dto);
+            root[v.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)] = dto;
+        }
+        root["count"] = list.Count;
+        root["vehicles"] = list;
+        root["spawned"] = m.VehiclesSpawned;
+        root["wrecked"] = m.VehiclesWrecked;
+        root["enters"] = m.VehicleEnters;
+        root["exits"] = m.VehicleExits;
+        root["impacts"] = m.VehicleImpacts;
+        root["runOvers"] = m.VehicleRunOvers;
+        root["statesSent"] = m.VehicleStatesSent;
+        return root;
     }
 
     // 기능: Phase 17 D17: 살아 있는 투사체와 최근 폭발, 투사체 수치를 보여 준다(GET /qa/projectiles).

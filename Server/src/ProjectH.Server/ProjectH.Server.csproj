@@ -36,6 +36,7 @@
     <None Update="building.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="squad.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="map.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="vehicles.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

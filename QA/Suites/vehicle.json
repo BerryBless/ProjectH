@@ -1,0 +1,14 @@
+{
+  "name": "vehicle",
+  "description": "Phase 19 vehicles over the real protocol (headless, about 2 min): the match start's cars and spawnVehicle, entering both seats, driving (throttle, steering, brake), exiting to the driver's side, shots hitting the car and not its occupant, a wreck putting its occupants out with damage and vanishing 5 s later, a driver's disconnect emptying the seat and stopping the car, and a wall stopping a car undamaged. The Unity screenshot visual_vehicle (written by the lead) needs a player and belongs in unity.json.",
+  "scenarios": [
+    "Vehicle/vehicle_spawn.json",
+    "Vehicle/vehicle_enter.json",
+    "Vehicle/vehicle_drive.json",
+    "Vehicle/vehicle_exit.json",
+    "Vehicle/vehicle_damage.json",
+    "Vehicle/vehicle_destroy.json",
+    "Vehicle/vehicle_disconnect.json",
+    "Vehicle/vehicle_build_block.json"
+  ]
+}

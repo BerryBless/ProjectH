@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "name": "Vehicle Build Block",
+  "description": "Phase 19 D3 (request §91, §93): a car driven into a building wall stops in front of it (the move is cancelled, no driving through); the wall takes no damage (cars never damage pieces) while the car takes impact damage above 8 m/s.",
+  "tags": ["vehicle", "building"],
+  "seed": 19008,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "wall", "phase": "arrange", "action": "spawnBuildPiece", "piece": "wall", "material": "wood", "cellX": 16, "level": 0, "cellZ": 16, "rotation": 0, "saveAs": "wall", "description": "z 0, x 0..5" },
+    { "id": "spawn_car", "action": "spawnVehicle", "x": 2.5, "z": -10, "heading": 0, "saveAs": "car" },
+    { "id": "b_away", "action": "setPosition", "actor": "playerB", "position": { "x": -8, "z": 10 } },
+    { "id": "a_place", "action": "setPosition", "actor": "playerA", "position": { "x": 0.5, "z": -10, "yaw": 0 } },
+    { "id": "settle", "action": "wait", "milliseconds": 300 },
+    { "id": "a_enter", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "a_driver", "action": "waitFor", "condition": "player.seat", "actor": "playerA", "equals": 0, "timeoutMilliseconds": 2000 },
+
+    { "id": "a_throttle", "phase": "act", "action": "moveVector", "actor": "playerA", "y": 1, "milliseconds": 2500 },
+    { "id": "a_stop_input", "action": "moveVector", "actor": "playerA", "x": 0, "y": 0 },
+
+    { "id": "car_stopped", "phase": "assert", "action": "waitFor", "condition": "vehicle.speed", "vehicleId": "${car.vehicleId}", "equals": 0, "timeoutMilliseconds": 2000 },
+    { "id": "car_short_of_wall", "assert": "vehicle.position.z", "vehicleId": "${car.vehicleId}", "between": [-3, -2.2] },
+    { "id": "impact_counted", "assert": "vehicle.impacts", "greaterThan": 0 },
+    { "id": "car_hurt", "assert": "vehicle.health", "vehicleId": "${car.vehicleId}", "lessThan": 400 },
+    { "id": "wall_standing", "assert": "build.exists", "pieceId": "${wall.pieceId}", "equals": true },
+    { "id": "wall_undamaged", "assert": "build.piece.damage", "pieceId": "${wall.pieceId}", "equals": 0 }
+  ]
+}

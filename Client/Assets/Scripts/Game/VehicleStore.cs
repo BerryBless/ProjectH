@@ -1,0 +1,338 @@
+using System;
+using System.Numerics;
+using ProjectH.Client.Game.Audio;
+using ProjectH.Shared.Protocol;
+using ProjectH.Shared.Simulation;
+
+namespace ProjectH.Client.Game
+{
+    // Phase 19 D15: a vehicle change worth a sound, found when a VehicleStates record is applied (AudioEventRules.VehicleSoundsFor).
+    public struct VehicleChange
+    {
+        public byte Id;
+        public VehicleSounds Sounds;
+        public Vector3 Position;
+    }
+
+    // Phase 19 D4, D9, D15: the vehicles as the client knows them from VehicleStates (Unreliable, channel 0). A fixed pool of
+    // VehicleSettings.MaxVehicles slots, one per vehicle id, each with a fixed ring of SampleCapacity records for the
+    // interpolation at the render tick (the same delay as remote players). Rules:
+    //  - a packet whose ServerTick is not newer than the last applied one is dropped (Unreliable may reorder);
+    //  - a vehicle missing from the packets for HideSeconds is hidden: its slot is freed, so when it comes back it starts a new
+    //    ring and its first record is a baseline (no sound), like a vehicle entering the interest range;
+    //  - the latest packet's records are the truth for "who sits where" (IsSeated, the enter prompt) as long as a packet came
+    //    within HideSeconds (with no vehicle at all the server sends nothing);
+    //  - Driver and Passenger are kept per sample, so a remote player is drawn seated from the render tick on, not early.
+    // Cleared at a disconnect and at a join or resume (Reset). Pure (no UnityEngine): the EditMode tests drive it. Main thread.
+    public sealed class VehicleStore
+    {
+        public const float HideSeconds = 1f;
+        public const int SampleCapacity = 8;
+
+        private sealed class Slot
+        {
+            public bool Used;
+            public byte Id;
+            public float LastSeen;
+            public uint LatestTick;
+            public VehicleRecord Latest;
+            public readonly uint[] Ticks = new uint[SampleCapacity];
+            public readonly VehicleRecord[] Samples = new VehicleRecord[SampleCapacity];
+            public int Count;
+            public int Newest = -1;
+        }
+
+        private readonly Slot[] _slots = new Slot[VehicleSettings.MaxVehicles];
+        private readonly VehicleRecord[] _latest = new VehicleRecord[VehicleSettings.MaxVehicles];
+        private readonly VehicleChange[] _changes = new VehicleChange[VehicleSettings.MaxVehicles];
+        // This frame's sample of every slot at the render tick (Render), read by the views and the seated checks.
+        private readonly VehicleRecord[] _drawn = new VehicleRecord[VehicleSettings.MaxVehicles];
+        private readonly bool[] _drawnValid = new bool[VehicleSettings.MaxVehicles];
+        private int _latestCount;
+        private float _latestAt;
+        private bool _hasTick;
+        private uint _lastTick;
+
+        // 기능: 빈 슬롯 풀을 만든다.
+        // 입력: 없음.
+        // 출력: 차량이 없는 저장소.
+        public VehicleStore()
+        {
+            for (int i = 0; i < _slots.Length; i++) _slots[i] = new Slot();
+        }
+
+        // The last applied packet's tick and its AckInputSeq (the driver's prediction reads them).
+        public uint LastTick => _lastTick;
+        public uint LastAck { get; private set; }
+        // Packets dropped as older than the last applied one, and records dropped for want of a slot (debug, tests).
+        public int DroppedOld { get; private set; }
+        public int DroppedRecords { get; private set; }
+        // The changes the last Apply found (valid until the next Apply).
+        public int ChangeCount { get; private set; }
+        public VehicleChange Change(int i) => _changes[i];
+        // The latest packet's records (empty once no packet came for HideSeconds).
+        public ReadOnlySpan<VehicleRecord> Latest => new ReadOnlySpan<VehicleRecord>(_latest, 0, _latestCount);
+        public int SlotCount => _slots.Length;
+
+        // 기능: 슬롯이 지금 보이는 차량을 갖는지 본다.
+        // 입력: slot - 슬롯 번호.
+        // 출력: 보이면 true.
+        public bool IsVisible(int slot) => _slots[slot].Used;
+
+        // 기능: 보이는 차량 수를 센다(QA, 디버그).
+        // 입력: 없음.
+        // 출력: 보이는 슬롯 수.
+        public int VisibleCount
+        {
+            get
+            {
+                int n = 0;
+                for (int i = 0; i < _slots.Length; i++)
+                {
+                    if (_slots[i].Used) n++;
+                }
+                return n;
+            }
+        }
+
+        // 기능: VehicleStates 하나를 적용한다: 오래된 Tick이면 버리고, 아니면 최신 기록을 바꾸고 차량마다 표본을 더하며 소리 낼 변화를 모은다.
+        // 입력: serverTick·ackInputSeq - 패킷 헤더, records·count - 읽은 기록(NetClient의 재사용 배열), now - 받은 시각(초), simHz - 서버 Tick률.
+        // 출력: 적용했으면 true(ChangeCount·Change가 이번 변화), 오래된 패킷이면 false(아무것도 바뀌지 않는다). 할당 없음.
+        public bool Apply(uint serverTick, uint ackInputSeq, ReadOnlySpan<VehicleRecord> records, int count, float now, int simHz)
+        {
+            ChangeCount = 0;
+            if (_hasTick && serverTick <= _lastTick)
+            {
+                DroppedOld++;
+                return false;
+            }
+            _hasTick = true;
+            _lastTick = serverTick;
+            LastAck = ackInputSeq;
+            int n = Math.Min(Math.Max(count, 0), Math.Min(records.Length, _latest.Length));
+            for (int i = 0; i < n; i++) _latest[i] = records[i];
+            _latestCount = n;
+            _latestAt = now;
+            float hz = simHz > 0 ? simHz : 30f;
+            for (int i = 0; i < n; i++)
+            {
+                VehicleRecord r = records[i];
+                if (!IsFinite(r.Position) || !IsFinite(r.Heading) || !IsFinite(r.Speed)) continue;
+                int index = Find(r.Id);
+                bool baseline = index < 0;
+                if (baseline) index = Allocate(r.Id);
+                if (index < 0)
+                {
+                    DroppedRecords++;
+                    continue;
+                }
+                Slot s = _slots[index];
+                float elapsed = baseline ? 0f : (serverTick - s.LatestTick) / hz;
+                VehicleSounds sounds = AudioEventRules.VehicleSoundsFor(s.Latest, r, baseline, elapsed);
+                if (sounds != VehicleSounds.None && ChangeCount < _changes.Length)
+                    _changes[ChangeCount++] = new VehicleChange { Id = r.Id, Sounds = sounds, Position = r.Position };
+                s.Latest = r;
+                s.LatestTick = serverTick;
+                s.LastSeen = now;
+                s.Newest = (s.Newest + 1) % SampleCapacity;
+                s.Ticks[s.Newest] = serverTick;
+                s.Samples[s.Newest] = r;
+                if (s.Count < SampleCapacity) s.Count++;
+            }
+            return true;
+        }
+
+        // 기능: HideSeconds 동안 패킷에 없던 차량을 숨기고(슬롯을 비운다), 그동안 패킷이 하나도 없었으면 최신 기록도 비운다. 매 프레임 부른다.
+        // 입력: now - 지금 시각(초, Apply와 같은 시계).
+        // 출력: 반환값 없음.
+        public void Expire(float now)
+        {
+            for (int i = 0; i < _slots.Length; i++)
+            {
+                Slot s = _slots[i];
+                if (s.Used && now - s.LastSeen > HideSeconds) Free(s);
+            }
+            if (_latestCount > 0 && now - _latestAt > HideSeconds) _latestCount = 0;
+        }
+
+        // 기능: 모두 잊는다(끊김, 입장·재개: 다음 기록은 모두 기준이고 Tick 비교도 처음부터).
+        // 입력: 없음.
+        // 출력: 반환값 없음.
+        public void Reset()
+        {
+            for (int i = 0; i < _slots.Length; i++)
+            {
+                Free(_slots[i]);
+                _drawnValid[i] = false;
+            }
+            _latestCount = 0;
+            _hasTick = false;
+            _lastTick = 0;
+            LastAck = 0;
+            ChangeCount = 0;
+        }
+
+        // 기능: 이번 프레임에 모든 보이는 차량을 renderTick에서 표본으로 뽑아 둔다(Update에서 한 번, 원격 플레이어 렌더 전).
+        // 입력: renderTick - 원격 플레이어와 같은 렌더 Tick.
+        // 출력: 반환값 없음. Drawn·TrySeatAt이 이 값을 읽는다. 할당 없음.
+        public void Render(double renderTick)
+        {
+            for (int i = 0; i < _slots.Length; i++) _drawnValid[i] = TrySample(i, renderTick, out _drawn[i]);
+        }
+
+        // 기능: 이번 프레임 표본 중 한 차량의 운동 값을 운전자 예측으로 바꾼다(D9: 내가 운전하는 차량은 예측 위치에 그리고, 그 조수석
+        //   사람도 예측 좌석에 앉힌다). 상태·좌석·체력은 표본 그대로다.
+        // 입력: id - 차량 id, move - 그리는 예측 상태(위치·방향·속도·조향).
+        // 출력: 반환값 없음. 그 차량이 이번 프레임에 보이지 않으면 아무것도 하지 않는다.
+        public void OverrideDrawn(byte id, in VehicleMove move)
+        {
+            for (int i = 0; i < _slots.Length; i++)
+            {
+                if (!_drawnValid[i] || _slots[i].Id != id) continue;
+                _drawn[i].Position = move.Position;
+                _drawn[i].Heading = move.Heading;
+                _drawn[i].Speed = move.Speed;
+                _drawn[i].Steer = move.Steer;
+                return;
+            }
+        }
+
+        // 기능: 이번 프레임에 그릴 슬롯의 표본을 돌려준다(Render가 뽑은 것).
+        // 입력: slot - 슬롯 번호, record - 결과.
+        // 출력: 보이고 표본이 있으면 true와 보간한 기록.
+        public bool TryGetDrawn(int slot, out VehicleRecord record)
+        {
+            record = _drawn[slot];
+            return _drawnValid[slot];
+        }
+
+        // 기능: 한 플레이어가 renderTick(이번 프레임 Render)에 어느 차량에 앉아 있는지 찾는다(원격 몸 자세·발소리).
+        // 입력: entityId - 플레이어, vehicle - 결과(그 차량의 보간 표본), seat - 결과(좌석 번호).
+        // 출력: 앉아 있으면 true.
+        public bool TrySeatAt(ushort entityId, out VehicleRecord vehicle, out int seat)
+        {
+            seat = -1;
+            vehicle = default;
+            if (entityId == 0) return false;
+            for (int i = 0; i < _slots.Length; i++)
+            {
+                if (!_drawnValid[i]) continue;
+                ref readonly VehicleRecord r = ref _drawn[i];
+                if (r.Driver == entityId) seat = VehicleSettings.DriverSeat;
+                else if (r.Passenger == entityId) seat = VehicleSettings.PassengerSeat;
+                else continue;
+                vehicle = r;
+                return true;
+            }
+            return false;
+        }
+
+        // 기능: 최신 패킷 기준으로 한 플레이어가 앉아 있는지 찾는다(내 탄 상태, D15 IsSeated).
+        // 입력: entityId - 플레이어, index - 결과(Latest 번호), seat - 결과(좌석 번호).
+        // 출력: 앉아 있으면 true.
+        public bool TryFindSeat(ushort entityId, out int index, out int seat)
+        {
+            index = -1;
+            seat = -1;
+            if (entityId == 0) return false;
+            for (int i = 0; i < _latestCount; i++)
+            {
+                if (_latest[i].Driver == entityId) seat = VehicleSettings.DriverSeat;
+                else if (_latest[i].Passenger == entityId) seat = VehicleSettings.PassengerSeat;
+                else continue;
+                index = i;
+                return true;
+            }
+            return false;
+        }
+
+        // 기능: 최신 패킷 기준으로 한 플레이어가 앉아 있는지 본다.
+        // 입력: entityId - 플레이어.
+        // 출력: 앉아 있으면 true.
+        public bool IsSeated(ushort entityId) => TryFindSeat(entityId, out _, out _);
+
+        // 기능: 한 슬롯을 renderTick에서 보간한다(위치·방향·속도·조향은 두 표본 사이를 보간, 상태·좌석·체력은 renderTick 이하의 가장 새 표본,
+        //   첫 표본보다 앞이면 첫 표본, 마지막보다 뒤면 마지막 표본 그대로: 외삽하지 않는다).
+        // 입력: slot - 슬롯 번호, renderTick - 렌더 Tick, record - 결과.
+        // 출력: 보이고 표본이 있으면 true.
+        public bool TrySample(int slot, double renderTick, out VehicleRecord record)
+        {
+            record = default;
+            Slot s = _slots[slot];
+            if (!s.Used || s.Count == 0) return false;
+            for (int i = 0; i < s.Count; i++)
+            {
+                int index = (s.Newest - i + SampleCapacity) % SampleCapacity;
+                if (s.Ticks[index] > renderTick) continue;
+                record = s.Samples[index];
+                if (i == 0) return true;
+                int next = (index + 1) % SampleCapacity;
+                ref readonly VehicleRecord b = ref s.Samples[next];
+                float t = (float)((renderTick - s.Ticks[index]) / (s.Ticks[next] - s.Ticks[index]));
+                record.Position = Vector3.Lerp(record.Position, b.Position, t);
+                record.Heading = LerpHeading(record.Heading, b.Heading, t);
+                record.Speed += (b.Speed - record.Speed) * t;
+                record.Steer += (b.Steer - record.Steer) * t;
+                return true;
+            }
+            record = s.Samples[(s.Newest - s.Count + 1 + SampleCapacity) % SampleCapacity];
+            return true;
+        }
+
+        // 기능: 두 방향 사이를 짧은 쪽으로 보간한다.
+        // 입력: a, b - 도, t - 0..1.
+        // 출력: 0..360의 도.
+        public static float LerpHeading(float a, float b, float t)
+        {
+            float delta = (b - a) % 360f;
+            if (delta > 180f) delta -= 360f;
+            else if (delta < -180f) delta += 360f;
+            return VehicleSimulation.NormalizeHeading(a + delta * t);
+        }
+
+        // 기능: id의 슬롯을 찾는다.
+        // 입력: id - 차량 id.
+        // 출력: 슬롯 번호, 없으면 -1.
+        private int Find(byte id)
+        {
+            for (int i = 0; i < _slots.Length; i++)
+            {
+                if (_slots[i].Used && _slots[i].Id == id) return i;
+            }
+            return -1;
+        }
+
+        // 기능: 빈 슬롯을 id에 준다(표본 고리는 비어 있다).
+        // 입력: id - 차량 id.
+        // 출력: 슬롯 번호, 빈 슬롯이 없으면 -1.
+        private int Allocate(byte id)
+        {
+            for (int i = 0; i < _slots.Length; i++)
+            {
+                Slot s = _slots[i];
+                if (s.Used) continue;
+                s.Used = true;
+                s.Id = id;
+                s.Count = 0;
+                s.Newest = -1;
+                return i;
+            }
+            return -1;
+        }
+
+        // 기능: 슬롯을 비운다(숨김).
+        // 입력: s - 슬롯.
+        // 출력: 반환값 없음.
+        private static void Free(Slot s)
+        {
+            s.Used = false;
+            s.Count = 0;
+            s.Newest = -1;
+            s.Latest = default;
+        }
+
+        private static bool IsFinite(float v) => !float.IsNaN(v) && !float.IsInfinity(v);
+
+        private static bool IsFinite(Vector3 v) => IsFinite(v.X) && IsFinite(v.Y) && IsFinite(v.Z);
+    }
+}

@@ -1328,6 +1328,24 @@ Development Player(`phase18-audio` 작업 트리 복사본, batchmode)로 확인
 - **수정함(시나리오):** 예산 시나리오가 처음에는 사격 간격(기본 2 s)이 길어 동시 목소리가 17개에 그쳐 예산을 시험하지 못했다. 연사(burst 30, 간격 100 ms)와 `droppedBudget > 0` 검사를 넣었다. 경기 인원 상한(16명) 때문에 사격자는 14명이다.
 - Critical·High 문제는 없다.
 
+## Phase 19 Unity 검증 (2026-10-08)
+
+Development Player(`phase19-vehicle` 작업 트리 복사본, batchmode)로 확인했다. 같은 복사본에서 EditMode 433/433이 통과했고 컴파일 오류는 0이다. 스크린샷은 에이전트가 직접 보고 판정했다.
+
+| 항목 | 결과 | 근거 |
+|---|---|---|
+| 차량과 탑승 안내 | PASS | `visual_vehicle.json`: 노란 차량(몸통 + 바퀴), 옆에 서면 "[E] 탑승" |
+| 실제 E로 타기 | PASS | Unity `vehicle.seated` true·`seat` 0, 서버 `player.seat` 0, `VehicleEnter` 소리 1. 차량 카메라(뒤 위), "[E] 내리기", 속도·체력 막대 |
+| 실제 W로 운전·Space로 제동 | PASS | 서버 차량 속도 3 m/s 초과, 화면 "42 km/h", 제동 뒤 멈춤 |
+| 실제 E로 내리기 | PASS | Unity·서버 모두 내림, `VehicleExit` 소리 1 |
+| 피해·파괴 표시 | PASS | 체력 100(25 %) → 회색 연기 구, Wrecked → 검은 차체, `Explosion` 소리 |
+| 회귀 | PASS | unity 스위트 16개 중 15개 통과. `audio_footstep`이 한 번 실패(순간이동 뒤 발소리 5 → 6)했고 다시 돌린 3번은 모두 통과했다(아래) |
+
+발견한 문제:
+- **간헐 실패(Phase 18 시나리오):** `audio_footstep`의 순간이동 검사가 약 7번에 1번 발소리 하나를 더 센다. 발소리 순간이동 보호 코드는 Phase 19에서 바뀌지 않았다(탄 사람 무음만 더함). Known Issue로 둔다.
+- **수정함(Client):** 탄 동안 차량 HUD(속도·체력 막대)가 무기 칸 목록 위에 겹쳐 그려졌다. 탄 동안에는 무기 칸 목록을 숨긴다.
+- Critical·High 문제는 없다.
+
 ## Adding New Actions
 
 1. **Handler를 쓴다.** 비슷한 파일에 `DelegateAction(new ActionSpec { ... }, RunAsync)`를 추가한다.

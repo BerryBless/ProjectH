@@ -139,6 +139,16 @@ public sealed class FakeQaServer : IQaServerClient
     public Task<JsonElement> GetProjectilesAsync(CancellationToken token) =>
         Task.FromResult(JsonSerializer.SerializeToElement(new { projectiles = Array.Empty<object>(), explosionsTotal = 1, launched = 1 }));
 
+    // 기능: Phase 19: GET /qa/vehicles 대신 차량 하나(id 3)를 서버처럼 id 키로 돌려준다.
+    // 입력: token - 취소(쓰지 않음).
+    // 출력: count와 "3" 키를 가진 JSON.
+    public Task<JsonElement> GetVehiclesAsync(CancellationToken token) =>
+        Task.FromResult(JsonSerializer.SerializeToElement(new Dictionary<string, object>
+        {
+            ["count"] = 1,
+            ["3"] = new { id = 3, state = "Active", health = 400, speed = 0f },
+        }));
+
     // QA-5: settable so baseline tests can make a run worse than the previous one.
     public object Metrics { get; set; } = new { tickP50Ms = 0.4, tickP95Ms = 0.9, tickP99Ms = 1.5, tickMaxMs = 3.0, workingSetMB = 80.5 };
 

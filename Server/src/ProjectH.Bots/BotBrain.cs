@@ -51,6 +51,8 @@ public sealed class BotBrain
 
     private readonly Random _rng;
     private readonly BotSteering _steering = new();
+    // Phase 19: alternates the exit press while seated (Tick).
+    private bool _exitToggle;
     private readonly ushort[] _ignoredTargets = new ushort[Memory];
     private readonly float[] _ignoredUntil = new float[Memory];
     private readonly ushort[] _blacklistedItems = new ushort[Memory];
@@ -90,7 +92,7 @@ public sealed class BotBrain
     public Vector3 LandingTarget => _landingTarget;
     public uint JumpTick => _jumpTick;
 
-    // 기능: 봇의 이번 Tick 입력을 정한다(죽음, 투입, Phase 14 기절이면 팀원 쪽으로 기어감, 그 외 결정과 행동).
+    // 기능: 봇의 이번 Tick 입력을 정한다(죽음, 투입, Phase 14 기절이면 팀원 쪽으로 기어감, Phase 19 차량에 탔으면 내리기, 그 외 결정과 행동).
     // 입력: view - 봇이 아는 것, now - 지금 시각(초), command - 이번 입력.
     // 출력: 보낼 입력이 있으면 true.
     // This tick's input. False = send nothing (not joined, or no snapshot yet). A dead or spectating bot returns true
@@ -123,6 +125,16 @@ public sealed class BotBrain
         if (view.MyMode == MovementMode.Downed)
         {
             Crawl(view, now, ref command);
+            command.ViewTick = view.ServerTick;
+            return true;
+        }
+        // Phase 19 D16: bots never drive. One that got into a vehicle (an E press for an item next to it) gets out: E on every
+        // other input (the server acts on a press, so it needs the release in between), no throttle, no brake.
+        if (view.MySeat >= 0)
+        {
+            _exitToggle = !_exitToggle;
+            if (_exitToggle) command.Buttons |= InputButtons.Interact;
+            command.Yaw = _bodyYaw;
             command.ViewTick = view.ServerTick;
             return true;
         }

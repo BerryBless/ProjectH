@@ -21,9 +21,9 @@ public class ProtocolConstantsTests
     }
 
     [Fact]
-    public void ProtocolVersion_IsSeventeen()
+    public void ProtocolVersion_IsEighteen()
     {
-        // Phase 18 added the ShotFired weapon id, the Destroyed reason, the DamageTaken flags and WorldSound; v16 clients must be rejected.
-        Assert.Equal((ushort)17, ProtocolConstants.ProtocolVersion);
+        // Phase 19 added VehicleStates; v17 clients must be rejected.
+        Assert.Equal((ushort)18, ProtocolConstants.ProtocolVersion);
     }
 }

@@ -1,0 +1,18 @@
+{
+  // Phase 19 D12: the server-only vehicle numbers. Validated at startup (VehicleCatalog). The motion numbers, the enter range
+  // and the seats are Shared VehicleSettings (the driver's prediction needs them). Impact damage = (speed - impactMinSpeed) x
+  // impactDamagePerMps to the vehicle; run-over damage = speed x runOverDamagePerMps to a non-team player, once per
+  // runOverCooldownSeconds per player. A wreck stays wreckSeconds; its occupants take wreckOccupantDamage, credited to the
+  // last enemy who damaged the vehicle within wreckCreditSeconds. interestRange: VehicleStates carries the vehicles this
+  // close to the recipient.
+  "maxHealth": 400,
+  "impactMinSpeed": 8,
+  "impactDamagePerMps": 6,
+  "runOverMinSpeed": 6,
+  "runOverDamagePerMps": 2,
+  "runOverCooldownSeconds": 1,
+  "wreckSeconds": 5,
+  "wreckOccupantDamage": 25,
+  "wreckCreditSeconds": 10,
+  "interestRange": 120
+}

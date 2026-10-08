@@ -19,6 +19,8 @@ public sealed class BotConnection : IDisposable
     private readonly MarkerWaypoint[] _markerWaypoints = new MarkerWaypoint[MapMarkerConstants.MaxWaypoints];
     // Phase 16 D7: SupplyDrops is read here first, like TeamMarkers (a refused packet keeps the view's last list).
     private readonly SupplyDropInfo[] _supplyDrops = new SupplyDropInfo[SupplyDropsPacket.MaxSupplyDrops];
+    // Phase 19: VehicleStates is read into this fixed array, then copied into the view.
+    private readonly VehicleRecord[] _vehicleRecords = new VehicleRecord[VehicleSettings.MaxVehicles];
     private readonly InputCommand[] _sent = new InputCommand[ProtocolConstants.MaxInputsPerPacket];
     private NetPeer? _peer;
     private int _sentCount;
@@ -206,7 +208,7 @@ public sealed class BotConnection : IDisposable
 
     // 기능: 서버 패킷 하나를 BotView에 반영한다(Phase 14: TeamState, PlayerDowned, ChannelState, RebootStations, Phase 15: TeamMarkers,
     //   Phase 16: ContainerStates, SupplyDrops, Phase 17: 투사체 세 패킷은 세기만 한다, Phase 18: ShotFired·WorldSound·실드 플래그·
-    //   붕괴 이유는 QA용으로 세기만 한다).
+    //   붕괴 이유는 QA용으로 세기만 한다, Phase 19: VehicleStates는 QA용으로 목록과 좌석만 둔다).
     // 입력: peer·reader·channel·method - LiteNetLib 수신 정보.
     // 출력: 반환값 없음.
     private void OnReceive(NetPeer peer, NetPacketReader reader, byte channel, DeliveryMethod method)
@@ -391,6 +393,11 @@ public sealed class BotConnection : IDisposable
                     view.LastWorldSoundKind = sound.Kind;
                     view.LastWorldSoundSource = sound.SourceId;
                 }
+                break;
+            // Phase 19 D13: the vehicles are only kept for QA (bots never drive or enter).
+            case PacketId.VehicleStates:
+                if (VehicleStatesPacket.TryRead(ref r, _vehicleRecords, out uint vehicleTick, out _, out int vehicleCount))
+                    view.ApplyVehicles(_vehicleRecords, vehicleCount, vehicleTick);
                 break;
             case PacketId.BuildInterest:
                 // The window moved: what we keep is not worth tracking per cell for a bot; the next syncs bring it back.

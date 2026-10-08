@@ -125,6 +125,18 @@ public sealed class PlayerEntity
     public bool HasWaypoint;
     public System.Numerics.Vector3 Waypoint;
 
+    // Phase 19 D5, D15: the vehicle this player sits in (null = on foot) and its seat. Set and cleared only by Match
+    // (EnterVehicle, Unseat); every path that removes, resets, knocks down or eliminates the player unseats it first.
+    // While seated the movement mode stays Ground, so every gate that must not treat a seated player as walking checks
+    // InVehicle (Match.CanAct).
+    public Vehicles.Vehicle? Vehicle;
+    public int Seat;
+    public bool InVehicle => Vehicle != null;
+    // Phase 19 D10: this tick's input of a seated player (a real one or the missed-input repeat), read by the vehicle step.
+    public InputCommand VehicleInput;
+    // Phase 19 D3: the tick before which no vehicle runs this player over again (one run-over hit per cooldown).
+    public uint RunOverReadyTick;
+
     // Phase 10 D2: the tick the reconnect grace ends at (only meaningful while PeerId is NoPeer).
     public uint GraceEndTick;
     public bool IsGraced => PeerId == NoPeer;

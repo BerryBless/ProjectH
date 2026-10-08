@@ -1,0 +1,334 @@
+{
+  "schemaVersion": 1,
+  "name": "Vehicle On A Unity Client (Screenshots)",
+  "description": "Phase 19 D11, D14 (request §86, §95): a Unity Development player sees a car with the enter prompt, really presses E and sits in the driver seat (vehicle camera, speed and health HUD, enter sound), really holds W and the car moves, brakes with Space to a stop, presses E to get out (exit sound), then sees the car damaged (smoke below 30 %) and wrecked (dark, explosion sound). Needs --unity-exe; SKIPPED without it.",
+  "tags": [
+    "vehicle",
+    "unity",
+    "slow"
+  ],
+  "seed": 19101,
+  "timeoutSeconds": 240,
+  "server": {
+    "mode": "launch",
+    "options": {
+      "Server:MinPlayers": "2"
+    }
+  },
+  "actors": [
+    {
+      "id": "viewer",
+      "type": "UnityClient",
+      "unity": {
+        "width": 1600,
+        "height": 900
+      }
+    },
+    {
+      "id": "other",
+      "type": "HeadlessClient"
+    }
+  ],
+  "steps": [
+    {
+      "id": "viewer_launch",
+      "phase": "arrange",
+      "action": "connect",
+      "actor": "viewer"
+    },
+    {
+      "id": "viewer_joined",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "joined",
+      "equals": true,
+      "timeoutMilliseconds": 30000
+    },
+    {
+      "id": "other_connect",
+      "action": "connect",
+      "actor": "other"
+    },
+    {
+      "id": "match_playing",
+      "action": "waitFor",
+      "condition": "match.playing",
+      "equals": true,
+      "timeoutMilliseconds": 20000
+    },
+    {
+      "id": "in_game",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "screen",
+      "equals": "InGame",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "id": "cursor",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "cursorLocked",
+      "equals": true,
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "other_away",
+      "action": "setPosition",
+      "actor": "other",
+      "position": {
+        "x": 60,
+        "z": 60
+      }
+    },
+    {
+      "id": "spawn_car",
+      "action": "spawnVehicle",
+      "x": 0,
+      "z": -10,
+      "heading": 0,
+      "saveAs": "car"
+    },
+    {
+      "id": "viewer_place",
+      "action": "setPosition",
+      "actor": "viewer",
+      "position": {
+        "x": -2,
+        "z": -13,
+        "yaw": 20
+      }
+    },
+    {
+      "id": "car_seen",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "vehicle.visibleVehicles",
+      "greaterThan": 0,
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "place_settle",
+      "action": "wait",
+      "milliseconds": 900
+    },
+    {
+      "id": "shot_prompt",
+      "phase": "act",
+      "action": "captureScreenshot",
+      "actor": "viewer",
+      "name": "car_and_enter_prompt"
+    },
+    {
+      "id": "walk_up",
+      "action": "setPosition",
+      "actor": "viewer",
+      "position": {
+        "x": -2,
+        "z": -10,
+        "yaw": 0
+      }
+    },
+    {
+      "id": "walk_settle",
+      "action": "wait",
+      "milliseconds": 500
+    },
+    {
+      "id": "press_e",
+      "action": "unityKey",
+      "actor": "viewer",
+      "key": "e",
+      "description": "Really press E beside the driver side"
+    },
+    {
+      "id": "seated",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "vehicle.seated",
+      "equals": true,
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "driver_seat",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "vehicle.seat",
+      "equals": 0,
+      "timeoutMilliseconds": 1000
+    },
+    {
+      "id": "server_seat",
+      "action": "waitFor",
+      "condition": "player.seat",
+      "actor": "viewer",
+      "equals": 0,
+      "timeoutMilliseconds": 2000
+    },
+    {
+      "id": "enter_sound",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.VehicleEnter",
+      "equals": 1,
+      "timeoutMilliseconds": 2000
+    },
+    {
+      "id": "seat_settle",
+      "phase": "act",
+      "action": "wait",
+      "milliseconds": 600
+    },
+    {
+      "id": "shot_seated",
+      "action": "captureScreenshot",
+      "actor": "viewer",
+      "name": "seated_vehicle_camera_and_hud"
+    },
+    {
+      "id": "throttle",
+      "action": "unityKey",
+      "actor": "viewer",
+      "key": "w",
+      "holdMs": 1500,
+      "description": "Really hold W: the driver's predicted car speeds up"
+    },
+    {
+      "id": "moving",
+      "phase": "assert",
+      "action": "waitFor",
+      "condition": "vehicle.speed",
+      "vehicleId": "${car.vehicleId}",
+      "greaterThan": 3,
+      "timeoutMilliseconds": 1500
+    },
+    {
+      "id": "shot_drive",
+      "phase": "act",
+      "action": "captureScreenshot",
+      "actor": "viewer",
+      "name": "driving_speed_hud"
+    },
+    {
+      "id": "brake",
+      "action": "unityKey",
+      "actor": "viewer",
+      "key": "space",
+      "holdMs": 1200
+    },
+    {
+      "id": "stopped",
+      "phase": "assert",
+      "action": "waitFor",
+      "condition": "vehicle.speed",
+      "vehicleId": "${car.vehicleId}",
+      "lessThan": 0.1,
+      "timeoutMilliseconds": 2000
+    },
+    {
+      "id": "exit",
+      "phase": "act",
+      "action": "unityKey",
+      "actor": "viewer",
+      "key": "e"
+    },
+    {
+      "id": "out",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "vehicle.seated",
+      "equals": false,
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "server_out",
+      "action": "waitFor",
+      "condition": "player.seat",
+      "actor": "viewer",
+      "equals": -1,
+      "timeoutMilliseconds": 2000
+    },
+    {
+      "id": "exit_sound",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.VehicleExit",
+      "equals": 1,
+      "timeoutMilliseconds": 2000
+    },
+    {
+      "id": "step_back",
+      "phase": "act",
+      "action": "unityLook",
+      "actor": "viewer",
+      "dx": 300,
+      "ms": 150,
+      "description": "Turn about 30 degrees toward the car"
+    },
+    {
+      "id": "damage",
+      "action": "damageVehicle",
+      "vehicleId": "${car.vehicleId}",
+      "amount": 300
+    },
+    {
+      "id": "damaged",
+      "phase": "assert",
+      "action": "waitFor",
+      "condition": "vehicle.health",
+      "vehicleId": "${car.vehicleId}",
+      "equals": 100,
+      "timeoutMilliseconds": 2000
+    },
+    {
+      "id": "smoke_settle",
+      "phase": "act",
+      "action": "wait",
+      "milliseconds": 600
+    },
+    {
+      "id": "shot_smoke",
+      "action": "captureScreenshot",
+      "actor": "viewer",
+      "name": "damaged_vehicle_smoke"
+    },
+    {
+      "id": "wreck",
+      "action": "damageVehicle",
+      "vehicleId": "${car.vehicleId}",
+      "amount": 200
+    },
+    {
+      "id": "wrecked",
+      "phase": "assert",
+      "action": "waitFor",
+      "condition": "vehicle.state",
+      "vehicleId": "${car.vehicleId}",
+      "equals": "Wrecked",
+      "timeoutMilliseconds": 2000
+    },
+    {
+      "id": "wreck_settle",
+      "phase": "act",
+      "action": "wait",
+      "milliseconds": 400
+    },
+    {
+      "id": "shot_wreck",
+      "action": "captureScreenshot",
+      "actor": "viewer",
+      "name": "wrecked_vehicle"
+    },
+    {
+      "id": "wreck_sound",
+      "phase": "assert",
+      "action": "waitForUnity",
+      "actor": "viewer",
+      "condition": "audio.plays.Explosion",
+      "greaterThan": 0,
+      "timeoutMilliseconds": 2000
+    }
+  ]
+}

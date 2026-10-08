@@ -143,6 +143,12 @@ public sealed record ActorState
     public int SupplyDropCount { get; init; }
     public IReadOnlyList<string> SupplyDropStates { get; init; } = Array.Empty<string>();
     public long SupplyDropsReceived { get; init; }
+    // Phase 19 D14: what this client knows of the vehicles (the newest VehicleStates): the vehicle and seat our entity sits in
+    // (0 / -1 = on foot), how many vehicles the packet listed and how many VehicleStates arrived.
+    public int VehicleId { get; init; }
+    public int Seat { get; init; } = -1;
+    public int VehicleCount { get; init; }
+    public long VehicleStatesReceived { get; init; }
     // The newest command applied (ActorCommand.Id).
     public long LastCommandId { get; init; }
     // Last exception of this actor's pump work (the pump keeps running).

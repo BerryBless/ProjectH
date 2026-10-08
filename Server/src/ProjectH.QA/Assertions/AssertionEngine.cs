@@ -10,7 +10,7 @@ namespace ProjectH.QA;
 // One query per evaluation; waitFor repeats it at the run's poll interval (request §29, §149).
 public static class AssertionEngine
 {
-    public static readonly string[] Roots = { "player", "match", "build", "loot", "projectiles", "server", "network", "actor", "event", "var", "group" };
+    public static readonly string[] Roots = { "player", "match", "build", "loot", "projectiles", "vehicle", "server", "network", "actor", "event", "var", "group" };
 
     // Paths whose numeric values are protocol enums (the server sends names; numbers are mapped for comparisons).
     private static readonly Dictionary<string, Type> s_enumPaths = new(StringComparer.OrdinalIgnoreCase)
@@ -46,7 +46,8 @@ public static class AssertionEngine
         return null;
     }
 
-    // 기능: 검증 경로 하나를 값으로 바꾼다(Phase 16: loot.* = GET /qa/loot, at·radius 선택. Phase 17: projectiles.* = GET /qa/projectiles).
+    // 기능: 검증 경로 하나를 값으로 바꾼다(Phase 16: loot.* = GET /qa/loot, at·radius 선택. Phase 17: projectiles.* = GET /qa/projectiles.
+    //   Phase 19: vehicle.* = GET /qa/vehicles, vehicleId를 주면 그 차량의 필드, vehicle.<id>.<필드>도 된다).
     // 입력: path - 점으로 나눈 경로, ctx - Step 문맥, token - 취소.
     // 출력: 그 경로의 JSON 값, 없으면 null.
     public static async Task<JsonElement?> ResolveAsync(string path, StepContext ctx, CancellationToken token)
@@ -102,6 +103,20 @@ public static class AssertionEngine
                 // Phase 17: GET /qa/projectiles (projectiles[], explosions[] oldest first, launched, refused, explosionsTotal, grenadesThrown).
                 JsonElement projectiles = await run.Server.GetProjectilesAsync(token).ConfigureAwait(false);
                 return JsonPath.Get(projectiles, rest);
+            }
+            case "vehicle":
+            {
+                // Phase 19: GET /qa/vehicles. With 'vehicleId' the path reads that vehicle (vehicle.health, vehicle.exists, ...);
+                // without it the root (vehicle.count, vehicle.<id>.health, vehicle.wrecked, ...).
+                JsonElement vehicles = await run.Server.GetVehiclesAsync(token).ConfigureAwait(false);
+                if (ctx.Param("vehicleId") is JsonElement id)
+                {
+                    string key = Comparison.TryNumber(id, out double n) ? ((long)n).ToString(System.Globalization.CultureInfo.InvariantCulture) : id.ToString();
+                    JsonElement? vehicle = JsonPath.Child(vehicles, key);
+                    if (rest.Length == 1 && rest[0].Equals("exists", StringComparison.OrdinalIgnoreCase)) return JsonPath.From(vehicle != null);
+                    return JsonPath.Get(vehicle, rest);
+                }
+                return JsonPath.Get(vehicles, rest);
             }
             case "server":
                 return await ResolveServerAsync(rest, ctx, token).ConfigureAwait(false);

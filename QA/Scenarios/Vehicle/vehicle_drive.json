@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "name": "Vehicle Drive",
+  "description": "Phase 19 D2, D10 (request §90): the driver's move input drives the car (W = throttle): it moves forward and gains speed, the seated player rides along; steering turns it while moving; holding Space (brake) stops it.",
+  "tags": ["vehicle"],
+  "seed": 19003,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "spawn_car", "phase": "arrange", "action": "spawnVehicle", "x": 0, "z": -10, "heading": 0, "saveAs": "car" },
+    { "id": "b_away", "action": "setPosition", "actor": "playerB", "position": { "x": -8, "z": 10 } },
+    { "id": "a_place", "action": "setPosition", "actor": "playerA", "position": { "x": -2, "z": -10, "yaw": 0 } },
+    { "id": "settle", "action": "wait", "milliseconds": 300 },
+    { "id": "a_enter", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "a_driver", "action": "waitFor", "condition": "player.seat", "actor": "playerA", "equals": 0, "timeoutMilliseconds": 2000 },
+
+    { "id": "a_throttle", "phase": "act", "action": "moveVector", "actor": "playerA", "y": 1, "milliseconds": 1000 },
+    { "id": "car_fast", "phase": "assert", "assert": "vehicle.speed", "vehicleId": "${car.vehicleId}", "greaterThan": 3 },
+    { "id": "car_moved", "assert": "vehicle.position.z", "vehicleId": "${car.vehicleId}", "greaterThan": -8 },
+    { "id": "rider_moved", "assert": "player.position.z", "actor": "playerA", "greaterThan": -8 },
+    { "id": "heading_straight", "assert": "vehicle.heading", "vehicleId": "${car.vehicleId}", "equals": 0 },
+
+    { "id": "a_steer", "phase": "act", "action": "moveVector", "actor": "playerA", "x": 1, "y": 1, "milliseconds": 500 },
+    { "id": "car_turned", "phase": "assert", "assert": "vehicle.heading", "vehicleId": "${car.vehicleId}", "between": [10, 120] },
+
+    { "id": "a_coast", "phase": "act", "action": "moveVector", "actor": "playerA", "x": 0, "y": 0 },
+    { "id": "a_brake", "action": "press", "actor": "playerA", "button": "Jump", "hold": true },
+    { "id": "car_stopped", "phase": "assert", "action": "waitFor", "condition": "vehicle.speed", "vehicleId": "${car.vehicleId}", "equals": 0, "timeoutMilliseconds": 1000, "description": "Braking (24 m/s^2) stops it in about 0.5 s; coasting (4 m/s^2) would take 3 s" },
+    { "id": "a_release", "action": "release", "actor": "playerA", "button": "Jump" },
+    { "id": "still_driving", "assert": "player.seat", "actor": "playerA", "equals": 0 },
+    { "id": "not_damaged", "assert": "vehicle.health", "vehicleId": "${car.vehicleId}", "equals": 400 }
+  ]
+}

@@ -16,6 +16,7 @@
     "Audio/audio_footstep.json",
     "Audio/audio_build.json",
     "Audio/audio_budget.json",
-    "Audio/audio_no_duplicate.json"
+    "Audio/audio_no_duplicate.json",
+    "Vehicle/visual_vehicle.json"
   ]
 }

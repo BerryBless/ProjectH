@@ -123,7 +123,7 @@ namespace ProjectH.Client.Game.Audio
             return x;
         }
 
-        // 기능: 종류의 기본 수치를 돌려준다(D1: 잡음 버스트·감쇠 사인·필터한 잡음의 조합).
+        // 기능: 종류의 기본 수치를 돌려준다(D1: 잡음 버스트·감쇠 사인·필터한 잡음의 조합. Phase 19: 차량 타기·내리기는 문 수치, 충돌은 금속 소리).
         // 입력: kind - 소리 종류.
         // 출력: 수치. 표에 없는 값이면 짧은 딸깍 소리.
         private static Recipe RecipeOf(SoundKind kind)
@@ -187,6 +187,11 @@ namespace ProjectH.Client.Game.Audio
                 case SoundKind.UiClick: return R(0.05f, 0.0005f, 0.3f, 120f, 0.6f, 0.7f, 1400f, 1400f, 90f);
                 case SoundKind.MapOpen: return R(0.18f, 0.02f, 0.5f, 14f, 0.4f, 0.2f, 600f, 900f, 15f);
                 case SoundKind.MapClose: return R(0.15f, 0.02f, 0.5f, 14f, 0.4f, 0.2f, 900f, 600f, 15f);
+
+                // Phase 19 D11: the door recipes (no vehicle assets yet), and a dull metal crunch for an impact.
+                case SoundKind.VehicleEnter: return R(0.45f, 0.02f, 0.3f, 6f, 0.1f, 0.5f, 180f, 260f, 5f);
+                case SoundKind.VehicleExit: return R(0.35f, 0.002f, 0.6f, 20f, 0.15f, 0.5f, 140f, 90f, 9f);
+                case SoundKind.VehicleImpact: return R(0.5f, 0.001f, 1f, 9f, 0.25f, 0.6f, 150f, 60f, 10f, 2, 0.05f);
                 default: return R(0.05f, 0.0005f, 0.3f, 120f, 0.6f, 0.7f, 1000f, 1000f, 90f);
             }
         }

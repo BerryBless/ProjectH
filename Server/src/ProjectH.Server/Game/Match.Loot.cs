@@ -329,9 +329,9 @@ public sealed partial class Match
 
     // 기능: E 누름(D4): 소생·재투입 대상이 없을 때 부른다. 문과 Container(착지한 Supply Drop 포함) 중 더 가까운 쪽(같은 거리면 문)을 쓴다.
     //   Container가 대상인데 시선에 막히면 그 E는 아무것도 하지 않는다(Phase 16 리뷰: Client는 시선을 모르고 "[E] 열기"를 띄우며 줍기 안내·문
-    //   예측을 끄므로, 그 상태에서 줍기나 문이 움직이면 안 된다). 둘 다 없으면 줍기.
-    // 입력: player - 행동 가능한 살아 있는 플레이어.
-    // 출력: 반환값 없음. Container가 열리거나 문이 바뀌거나 PickupResult가 간다.
+    //   예측을 끄므로, 그 상태에서 줍기나 문이 움직이면 안 된다). 둘 다 없으면 (Phase 19 D6) 탈 수 있는 차량, 그것도 없으면 줍기.
+    // 입력: player - 행동 가능한 살아 있는 플레이어(차량에 타지 않음).
+    // 출력: 반환값 없음. Container가 열리거나 문이 바뀌거나 차량에 타거나 PickupResult가 간다.
     private void Interact(PlayerEntity player)
     {
         Vector3 feet = player.State.Position;
@@ -347,6 +347,7 @@ public sealed partial class Match
             ToggleDoor(door);
             return;
         }
+        if (TryEnterVehicle(player)) return;   // Phase 19 D6: before a pickup, so an item by the car never blocks entering
         Pickup(player);
     }
 

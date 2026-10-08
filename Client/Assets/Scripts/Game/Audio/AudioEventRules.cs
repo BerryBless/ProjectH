@@ -18,6 +18,45 @@ namespace ProjectH.Client.Game.Audio
     // the EditMode tests drive every rule here.
     public static class AudioEventRules
     {
+        // Phase 19 D15: an impact sounds when the speed of an Active vehicle falls by more than braking can take off between two
+        // records plus this margin (m/s), from at least ImpactMinSpeed. A blocked tick sets the speed to 0 at once; braking (24
+        // m/s^2) removes about 1.6 m/s between two 15 Hz records.
+        public const float ImpactSpeedMargin = 2f;
+        public const float ImpactMinSpeed = 5f;
+        // Records further apart than this are not compared for an impact (a gap hides what happened between them).
+        public const float ImpactMaxGapSeconds = 0.25f;
+
+        // 기능: 같은 차량의 이전 기록과 새 기록을 비교해 낼 소리를 고른다(Phase 19 D15: Phase 18 기준 상태 규칙). 기준 기록(입장·재개 뒤,
+        //   관심 영역에 들어온 첫 기록, 숨김 뒤 다시 보인 첫 기록)은 소리가 없다. Active → Wrecked는 파괴(폭발 소리, 그때 내리는 사람의 내림
+        //   소리는 내지 않는다), 좌석에 새 사람이 앉으면 탐, 좌석이 비거나 사람이 바뀌면 내림, 두 기록 사이 속도가 제동보다 크게 줄면 충돌.
+        // 입력: previous - 이전 기록, current - 새 기록, baseline - 기준 기록인지, elapsedSeconds - 두 기록의 서버 시간 차(초).
+        // 출력: 낼 소리 비트(없으면 None).
+        public static VehicleSounds VehicleSoundsFor(in VehicleRecord previous, in VehicleRecord current, bool baseline, float elapsedSeconds)
+        {
+            if (baseline) return VehicleSounds.None;
+            if (previous.State == VehicleState.Active && current.State == VehicleState.Wrecked) return VehicleSounds.Wrecked;
+            if (current.State != VehicleState.Active || previous.State != VehicleState.Active) return VehicleSounds.None;
+            VehicleSounds sounds = VehicleSounds.None;
+            SeatChanged(previous.Driver, current.Driver, ref sounds);
+            SeatChanged(previous.Passenger, current.Passenger, ref sounds);
+            float before = Math.Abs(previous.Speed);
+            float after = Math.Abs(current.Speed);
+            if (elapsedSeconds > 0f && elapsedSeconds <= ImpactMaxGapSeconds && before >= ImpactMinSpeed &&
+                before - after > VehicleSettings.BrakeDeceleration * elapsedSeconds + ImpactSpeedMargin)
+                sounds |= VehicleSounds.Impact;
+            return sounds;
+        }
+
+        // 기능: 좌석 하나의 바뀜을 소리 비트에 더한다.
+        // 입력: before·after - 이전·새 좌석의 Entity id(0 = 빔), sounds - 더할 비트.
+        // 출력: 반환값 없음. 비었던 좌석에 앉으면 Entered, 앉은 사람이 떠나면 Exited, 사람이 바뀌면 둘 다 더해진다.
+        private static void SeatChanged(ushort before, ushort after, ref VehicleSounds sounds)
+        {
+            if (before == after) return;
+            if (before != 0) sounds |= VehicleSounds.Exited;
+            if (after != 0) sounds |= VehicleSounds.Entered;
+        }
+
         // 기능: 받은 피해의 소리를 고른다(D8: DamageTaken 플래그).
         // 입력: damage - 받은 DamageTaken.
         // 출력: 실드 깨짐이면 ShieldBreak, 실드 맞음이면 ShieldHit, 아니면 HealthHit.
@@ -93,6 +132,17 @@ namespace ProjectH.Client.Game.Audio
             }
             return false;
         }
+    }
+
+    // Phase 19 D15: the sounds one vehicle record can make (AudioEventRules.VehicleSoundsFor).
+    [Flags]
+    public enum VehicleSounds : byte
+    {
+        None = 0,
+        Entered = 1,
+        Exited = 2,
+        Impact = 4,
+        Wrecked = 8,
     }
 
     // Phase 18 D9: door sounds. The server's changes come through OnServerState (right after PredictedDoors.ApplyServer), our own

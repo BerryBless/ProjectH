@@ -59,12 +59,15 @@ namespace ProjectH.Client.Game
         }
 
         // Every frame: where the feet are drawn, the facing, and the mode's pose.
-        public void Place(Vector3 feet, float yaw, MovementMode mode, bool sprinting)
+        // 기능: 발 위치·방향·모드의 자세로 캐릭터를 놓는다(Phase 19: 앉아 있으면 앉은 자세, 피격 상자 끔).
+        // 입력: feet - 그리는 발 위치, yaw - 방향(앉아 있으면 차량 방향), mode - 이동 모드, sprinting - 질주 중, seated - 차량에 앉아 있는지.
+        // 출력: 반환값 없음. 자세가 바뀔 때만 모양·충돌 상자를 고친다.
+        public void Place(Vector3 feet, float yaw, MovementMode mode, bool sprinting, bool seated = false)
         {
             Root.position = feet;
-            PlayerPose pose = PlayerPose.For(mode, sprinting, _alive);
+            PlayerPose pose = PlayerPose.For(mode, sprinting, _alive, seated);
             if (!_hasPose || pose.BodyHeight != _pose.BodyHeight || pose.Prone != _pose.Prone || pose.Wings != _pose.Wings ||
-                pose.Hidden != _pose.Hidden || pose.HitHeight != _pose.HitHeight)
+                pose.Hidden != _pose.Hidden || pose.HitHeight != _pose.HitHeight || pose.Seated != _pose.Seated)
             {
                 ApplyShape(pose);
             }
@@ -75,6 +78,9 @@ namespace ProjectH.Client.Game
             if (pose.Wings) _wingsTransform.localRotation = Quaternion.Euler(0f, yaw, 0f);
         }
 
+        // 기능: 자세의 모양을 적용한다(몸 높이·엎드림·날개·숨김, 원격이면 피격 상자 크기와 켜짐. Phase 19: 앉으면 피격 상자를 끈다).
+        // 입력: pose - 적용할 자세.
+        // 출력: 반환값 없음.
         private void ApplyShape(in PlayerPose pose)
         {
             float half = pose.BodyHeight * 0.5f;
@@ -93,7 +99,8 @@ namespace ProjectH.Client.Game
                 _collider.size = new Vector3(2f * MoveSettings.HalfWidth, pose.HitHeight, 2f * MoveSettings.HalfWidth);
                 _collider.center = new Vector3(0f, pose.HitHeight * 0.5f, 0f);
                 // Phase 14 D3: shots pass through teammates, so the aim ray must too (the aim point lands on the enemy behind).
-                _collider.enabled = _alive && !pose.Hidden && !_teammate;
+                // Phase 19 D5: shots pass seated players (the vehicle takes them), so the aim ray does too.
+                _collider.enabled = _alive && !pose.Hidden && !_teammate && !pose.Seated;
             }
         }
 

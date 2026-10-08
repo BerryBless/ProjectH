@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "name": "Vehicle Disconnect",
+  "description": "Phase 19 D6, D15 (request §74): A drives, then its connection drops during the match: the server graces A and puts it out of the car at once (the driver seat is empty), the driverless car brakes to a stop; A reconnects and resumes on foot beside the car.",
+  "tags": ["vehicle", "reconnect"],
+  "seed": 19007,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "spawn_car", "phase": "arrange", "action": "spawnVehicle", "x": 0, "z": -10, "heading": 0, "saveAs": "car" },
+    { "id": "b_away", "action": "setPosition", "actor": "playerB", "position": { "x": -8, "z": 10 } },
+    { "id": "a_place", "action": "setPosition", "actor": "playerA", "position": { "x": -2, "z": -10, "yaw": 0 } },
+    { "id": "settle", "action": "wait", "milliseconds": 300 },
+    { "id": "a_enter", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "a_driver", "action": "waitFor", "condition": "player.seat", "actor": "playerA", "equals": 0, "timeoutMilliseconds": 2000 },
+    { "id": "a_throttle", "action": "moveVector", "actor": "playerA", "y": 1, "milliseconds": 700 },
+    { "id": "car_moving", "assert": "vehicle.speed", "vehicleId": "${car.vehicleId}", "greaterThan": 2 },
+
+    { "id": "a_drop", "phase": "act", "action": "disconnect", "actor": "playerA" },
+    { "id": "a_graced", "phase": "assert", "action": "waitFor", "condition": "player.graced", "actor": "playerA", "equals": true, "timeoutMilliseconds": 3000 },
+    { "id": "seat_empty", "assert": "vehicle.driverId", "vehicleId": "${car.vehicleId}", "equals": 0 },
+    { "id": "a_out", "assert": "player.vehicleId", "actor": "playerA", "equals": 0 },
+    { "id": "car_stops", "action": "waitFor", "condition": "vehicle.speed", "vehicleId": "${car.vehicleId}", "equals": 0, "timeoutMilliseconds": 3000 },
+    { "id": "car_z", "action": "save", "path": "vehicle.position.z", "vehicleId": "${car.vehicleId}", "saveAs": "carZ" },
+
+    { "id": "a_reconnect", "phase": "act", "action": "reconnect", "actor": "playerA" },
+    { "id": "resumed", "phase": "assert", "action": "waitForEvent", "event": "PlayerResumed", "actor": "playerA", "timeoutMilliseconds": 3000 },
+    { "id": "a_on_foot", "assert": "player.seat", "actor": "playerA", "equals": -1 },
+    { "id": "a_beside_x", "assert": "player.position.x", "actor": "playerA", "between": [-2.5, -1.5] },
+    { "id": "a_beside_z", "assert": "player.position.z", "actor": "playerA", "approximately": "${carZ}", "tolerance": 1.5 },
+    { "id": "a_client_foot", "action": "waitFor", "condition": "actor.seat", "actor": "playerA", "equals": -1, "timeoutMilliseconds": 3000 },
+    { "id": "car_still_there", "assert": "vehicle.state", "vehicleId": "${car.vehicleId}", "equals": "Active" }
+  ]
+}

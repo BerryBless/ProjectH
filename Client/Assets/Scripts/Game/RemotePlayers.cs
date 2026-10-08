@@ -14,6 +14,7 @@ namespace ProjectH.Client.Game
         public MovementMode Mode;
         public bool Sprinting;
         public bool Alive;
+        public bool Seated;   // Phase 19 D15: in a vehicle seat at the render tick (no footsteps)
     }
 
     // Views of other players. An entry is added on PlayerSpawned and removed on PlayerDespawned or
@@ -29,6 +30,8 @@ namespace ProjectH.Client.Game
             public PlayerView View;
             public RemotePlayerInterpolator Interpolator;
             public bool Alive = true;
+            // Phase 19 D15: seated at this frame's render tick (set by Render).
+            public bool Seated;
         }
 
         private readonly Dictionary<ushort, Entry> _entries = new Dictionary<ushort, Entry>();
@@ -82,7 +85,7 @@ namespace ProjectH.Client.Game
             return true;
         }
 
-        // 기능: 모든 원격 플레이어가 renderTick에 그려지는 발·모드·질주·생존을 버퍼에 쓴다(Phase 18 D5: 발소리).
+        // 기능: 모든 원격 플레이어가 renderTick에 그려지는 발·모드·질주·생존(Phase 19: 이번 프레임 Render의 탑승 여부)을 버퍼에 쓴다(Phase 18 D5: 발소리).
         // 입력: renderTick - 렌더 Tick, buffer - 결과를 쓸 고정 배열(가득 차면 나머지는 쓰지 않는다).
         // 출력: 쓴 수. 샘플이 없는 플레이어는 빠진다. 할당 없음(구조체 열거자).
         public int CollectPoses(double renderTick, RemotePose[] buffer)
@@ -93,7 +96,7 @@ namespace ProjectH.Client.Game
                 if (count == buffer.Length) break;
                 Entry entry = pair.Value;
                 if (!entry.Interpolator.TrySample(renderTick, out Vector3 feet, out _, out MovementMode mode, out bool sprinting, out _)) continue;
-                buffer[count++] = new RemotePose { EntityId = pair.Key, Feet = feet, Mode = mode, Sprinting = sprinting, Alive = entry.Alive };
+                buffer[count++] = new RemotePose { EntityId = pair.Key, Feet = feet, Mode = mode, Sprinting = sprinting, Alive = entry.Alive, Seated = entry.Seated };
             }
             return count;
         }
@@ -141,15 +144,30 @@ namespace ProjectH.Client.Game
             entry.Interpolator.Push(tick, entity.Position.ToUnity(), entity.Yaw, entity.Mode, entity.IsSprinting, entity.IsExhausted);
         }
 
-        public void Render(double renderTick)
+        // 기능: 모든 원격 플레이어를 renderTick에 놓는다. Phase 19 D15: 이번 프레임 차량 표본(VehicleStore.Render, 내가 운전하는 차량은 예측
+        //   위치)에서 앉아 있는 사람은 그 차량의 좌석 위치·방향에 앉은 자세로 놓는다(피격 상자 없음).
+        // 입력: renderTick - 렌더 Tick, vehicles - 이번 프레임의 차량 표본(null이면 차량 없음).
+        // 출력: 반환값 없음. 뷰와 각 항목의 Seated가 바뀐다. 할당 없음(구조체 열거자).
+        public void Render(double renderTick, VehicleStore vehicles = null)
         {
             foreach (var pair in _entries)
             {
                 Entry entry = pair.Value;
                 if (!entry.Interpolator.TrySample(renderTick, out Vector3 feet, out float yaw, out MovementMode mode, out bool sprinting, out _))
+                {
+                    entry.Seated = false;
                     continue;
+                }
+                VehicleRecord vehicle = default;
+                int seat = -1;
+                entry.Seated = entry.Alive && vehicles != null && vehicles.TrySeatAt(pair.Key, out vehicle, out seat);
+                if (entry.Seated)
+                {
+                    feet = VehicleSimulation.SeatPosition(vehicle.Position, vehicle.Heading, seat).ToUnity();
+                    yaw = vehicle.Heading;
+                }
                 // The hit box stays axis-aligned like the server's AABB (D7); only the capsule turns and leans.
-                entry.View.Place(feet, yaw, mode, sprinting);
+                entry.View.Place(feet, yaw, mode, sprinting, entry.Seated);
             }
         }
 

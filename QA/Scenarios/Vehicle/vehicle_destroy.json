@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "name": "Vehicle Destroy",
+  "description": "Phase 19 D7 (request §92): a car with a driver and a passenger is damaged to 0: it becomes a wreck, both occupants are put out and take 25 damage each (cause Explosion), and the wreck is removed 5 s later (the clients stop receiving it).",
+  "tags": ["vehicle"],
+  "seed": 19006,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "spawn_car", "phase": "arrange", "action": "spawnVehicle", "x": 0, "z": -6, "heading": 0, "saveAs": "car" },
+    { "id": "a_place", "action": "setPosition", "actor": "playerA", "position": { "x": -2, "z": -6, "yaw": 90 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": 2, "z": -6, "yaw": 270 } },
+    { "id": "a_hp", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "b_hp", "action": "setHealth", "actor": "playerB", "value": 100 },
+    { "id": "a_no_shield", "action": "setShield", "actor": "playerA", "value": 0 },
+    { "id": "b_no_shield", "action": "setShield", "actor": "playerB", "value": 0 },
+    { "id": "settle", "action": "wait", "milliseconds": 300 },
+    { "id": "a_enter", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "a_driver", "action": "waitFor", "condition": "player.seat", "actor": "playerA", "equals": 0, "timeoutMilliseconds": 2000 },
+    { "id": "b_enter", "action": "press", "actor": "playerB", "button": "Interact" },
+    { "id": "b_passenger", "action": "waitFor", "condition": "player.seat", "actor": "playerB", "equals": 1, "timeoutMilliseconds": 2000 },
+    { "id": "cars_seen", "action": "waitFor", "condition": "actor.vehicleCount", "actor": "playerA", "greaterThan": 0, "timeoutMilliseconds": 2000 },
+
+    { "id": "destroy", "phase": "act", "action": "damageVehicle", "vehicleId": "${car.vehicleId}", "amount": 1000 },
+    { "id": "wrecked", "phase": "assert", "assert": "vehicle.state", "vehicleId": "${car.vehicleId}", "equals": "Wrecked" },
+    { "id": "a_out", "assert": "player.seat", "actor": "playerA", "equals": -1 },
+    { "id": "b_out", "assert": "player.seat", "actor": "playerB", "equals": -1 },
+    { "id": "a_hurt", "assert": "player.health", "actor": "playerA", "equals": 75 },
+    { "id": "b_hurt", "assert": "player.health", "actor": "playerB", "equals": 75 },
+    { "id": "wrecked_count", "assert": "vehicle.wrecked", "equals": 1 },
+    { "id": "a_client_out", "action": "waitFor", "condition": "actor.seat", "actor": "playerA", "equals": -1, "timeoutMilliseconds": 2000 },
+    { "id": "wreck_gone", "action": "waitFor", "condition": "vehicle.exists", "vehicleId": "${car.vehicleId}", "equals": false, "timeoutMilliseconds": 7000 },
+    { "id": "four_left", "assert": "vehicle.count", "equals": 4 }
+  ]
+}

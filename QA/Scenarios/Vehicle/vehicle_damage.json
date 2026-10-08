@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "name": "Vehicle Damage",
+  "description": "Phase 19 D7 (request §92): B shoots at the head of A sitting in a car, above the car's body (BodyTop 1.8 m): only the seated rule protects A, the shot passes; then B shoots the car's body with real fire: its health drops (weapon damage x 1), A is still unhurt and the shooter gets no hit confirm.",
+  "tags": ["vehicle", "combat"],
+  "seed": 19005,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "spawn_car", "phase": "arrange", "action": "spawnVehicle", "x": 0, "z": -6, "heading": 0, "saveAs": "car" },
+    { "id": "a_place", "action": "setPosition", "actor": "playerA", "position": { "x": -2, "z": -6, "yaw": 90 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": 0.5, "z": -18, "yaw": 0 } },
+    { "id": "b_rifle", "action": "giveWeapon", "actor": "playerB", "weapon": "Kestrel LR", "description": "No spread: the head shot cannot stray into the car body" },
+    { "id": "b_ammo", "action": "giveAmmo", "actor": "playerB", "type": "heavy", "amount": 12 },
+    { "id": "settle", "action": "wait", "milliseconds": 300 },
+    { "id": "a_enter", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "a_driver", "action": "waitFor", "condition": "player.seat", "actor": "playerA", "equals": 0, "timeoutMilliseconds": 2000 },
+    { "id": "a_hp", "action": "save", "path": "player.health", "actor": "playerA", "saveAs": "aHp" },
+    { "id": "b_aim_head", "action": "aim", "actor": "playerB", "at": { "x": -0.5, "y": 2.2, "z": -5.8 }, "description": "The driver's head, above the car body" },
+
+    { "id": "b_fire_head", "phase": "act", "action": "fire", "actor": "playerB", "slot": 0, "count": 1 },
+    { "id": "head_settle", "action": "wait", "milliseconds": 300 },
+    { "id": "driver_not_hit", "phase": "assert", "assert": "player.health", "actor": "playerA", "equals": "${aHp}" },
+    { "id": "car_not_hit", "assert": "vehicle.health", "vehicleId": "${car.vehicleId}", "equals": 400 },
+
+    { "id": "b_aim", "phase": "act", "action": "aim", "actor": "playerB", "at": { "x": 0, "y": 1.2, "z": -6 } },
+    { "id": "b_fire", "action": "fire", "actor": "playerB", "count": 2 },
+    { "id": "car_hurt", "phase": "assert", "action": "waitFor", "condition": "vehicle.health", "vehicleId": "${car.vehicleId}", "lessThan": 400, "timeoutMilliseconds": 3000 },
+    { "id": "car_active", "assert": "vehicle.state", "vehicleId": "${car.vehicleId}", "equals": "Active" },
+    { "id": "driver_unhurt", "assert": "player.health", "actor": "playerA", "equals": "${aHp}" },
+    { "id": "still_seated", "assert": "player.seat", "actor": "playerA", "equals": 0 },
+    { "id": "no_hit_confirm", "assert": "actor.hitsLanded", "actor": "playerB", "equals": 0 }
+  ]
+}

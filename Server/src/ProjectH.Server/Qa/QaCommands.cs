@@ -29,11 +29,12 @@ internal static class QaCommands
         "damagePlayer", "killPlayer", "forceMatchState", "setZone", "spawnLoot", "spawnBuildPiece", "damageBuild", "editBuild",
         "downPlayer", "giveRebootCard", "setStationCooldown", "spawnSupplyDrop", "setContainer",
         "giveGrenade",   // Phase 17 D17
+        "spawnVehicle", "damageVehicle",   // Phase 19 D14
     };
     private static readonly string[] ContainerStates = { "none", "closed", "open" };   // Match.QaSetContainer state
 
     // 기능: QA Arrange 명령 하나를 실행한다(Phase 14: downPlayer, giveRebootCard, setStationCooldown, Phase 16: spawnSupplyDrop, setContainer,
-    //   Phase 17: giveGrenade, giveAmmo의 shells·rockets, giveItem·spawnLoot의 grenade).
+    //   Phase 17: giveGrenade, giveAmmo의 shells·rockets, giveItem·spawnLoot의 grenade, Phase 19: spawnVehicle, damageVehicle).
     // 입력: t - QA Tick 문맥, command - 이름, player - 대상 DevPlayerId, runId - 실행 id, args - 인자, logger - 로그.
     // 출력: QaResult(200, 400, 404, 409).
     public static QaResult Execute(QaTick t, string command, string? player, string? runId, JsonElement args, ILogger logger)
@@ -52,6 +53,8 @@ internal static class QaCommands
             case "setStationCooldown": return SetStationCooldown(m, a);
             case "spawnSupplyDrop": return SpawnSupplyDrop(m, a);
             case "setContainer": return SetContainer(m, a);
+            case "spawnVehicle": return SpawnVehicle(m, a);
+            case "damageVehicle": return DamageVehicle(m, a);
         }
 
         if (Array.IndexOf(Names, command) < 0)
@@ -102,7 +105,7 @@ internal static class QaCommands
         return QaResult.Ok(new { tick = t.Match.ServerTick });
     }
 
-    // 기능: 플레이어를 Tick 사이에 옮긴다(맵 상자·닫힌 문과 겹치면 거절). Phase 14: 기절한 사람은 기절 모드 그대로.
+    // 기능: 플레이어를 Tick 사이에 옮긴다(맵 상자·닫힌 문과 겹치면 거절). Phase 14: 기절한 사람은 기절 모드 그대로. Phase 19: 탄 사람은 먼저 내린다.
     // 입력: m - 경기, p - 대상, a - 인자(x, z, y·yaw 선택).
     // 출력: Ok면 새 위치.
     // A teleport between ticks: the next Step starts from here, so the movement self-check (which compares one Step's
@@ -124,6 +127,8 @@ internal static class QaCommands
         // movement anomaly (only pieces are exempt there): refuse instead. Pieces are allowed (the simulation lifts out of them).
         if (MovementSimulation.OverlapsAny(position, MoveSettings.Height, m.Doors.World))
             return QaResult.Error(409, $"({x}, {fy}, {z}) overlaps the map (a box or a closed door); pick a free spot or pass y.");
+        // Phase 19: a seated player leaves its seat first (the teleport is a forced exit's spot, then here).
+        m.QaUnseat(p);
         // Phase 14: a knocked-down player stays down (only the server's revive or elimination leaves the Downed mode).
         MovementMode mode = p.IsDowned ? MovementMode.Downed : MovementMode.Ground;
         p.State = new MoveState { Position = position, Yaw = fyaw, Mode = mode };
@@ -506,6 +511,36 @@ internal static class QaCommands
         if (code != BuildResultCode.Ok) return QaResult.Error(409, $"The edit was refused: {code}.");
         ProjectH.Shared.Simulation.BuildPieceShape shape = m.Build.At(slot).Shape;
         return QaResult.Ok(new { code = code.ToString(), edit = (int)shape.Edit, rotation = (int)shape.Rotation });
+    }
+
+    // 기능: Phase 19 D14 spawnVehicle: 차량을 하나 만든다(경기 상태와 상관없이, 최대 MaxVehicles). 맵 상자·닫힌 문·채집 대상과 겹치면 거절.
+    // 입력: m - 경기, a - 인자(x, z, heading 선택(기본 0)).
+    // 출력: Ok면 { vehicleId, x, y, z, heading }, 칸이 없으면 409.
+    private static QaResult SpawnVehicle(Match m, QaArgs a)
+    {
+        double x = a.RequiredNumber("x", -VehicleSettings.MapBound, VehicleSettings.MapBound);
+        double z = a.RequiredNumber("z", -VehicleSettings.MapBound, VehicleSettings.MapBound);
+        double heading = a.Number("heading", -360, 720) ?? 0;
+        if (a.Error != null) return Bad(a);
+        if (m.QaVehicleBlocked((float)x, (float)z, (float)heading))
+            return QaResult.Error(409, $"A vehicle at ({x}, {z}) heading {heading} overlaps the map or a build (a box, a closed door, a harvestable, a building piece or a ramp).");
+        if (!m.SpawnVehicle((float)x, (float)z, (float)heading, out var v) || v == null)
+            return QaResult.Error(409, $"No free vehicle slot (at most {VehicleSettings.MaxVehicles}).");
+        return QaResult.Ok(new { vehicleId = (int)v.Id, x = v.Move.Position.X, y = v.Move.Position.Y, z = v.Move.Position.Z, heading = v.Move.Heading });
+    }
+
+    // 기능: Phase 19 D14 damageVehicle: 차량에 공격자 없는 피해를 준다(0이 되면 잔해, 탄 사람은 내리고 피해).
+    // 입력: m - 경기, a - 인자(vehicleId, amount).
+    // 출력: Ok면 { health, state }, 없는 차량 404, 이미 잔해 409.
+    private static QaResult DamageVehicle(Match m, QaArgs a)
+    {
+        long id = a.RequiredInteger("vehicleId", 1, 255);
+        long amount = a.RequiredInteger("amount", 1, 100000);
+        if (a.Error != null) return Bad(a);
+        var v = m.FindVehicle((int)id);
+        if (v == null) return QaResult.Error(404, $"No vehicle {id}.");
+        if (!m.QaDamageVehicle(v, (int)amount)) return QaResult.Error(409, $"Vehicle {id} is already wrecked.");
+        return QaResult.Ok(new { health = v.Health, state = v.State.ToString() });
     }
 
     private static QaResult DamageBuild(Match m, QaArgs a)

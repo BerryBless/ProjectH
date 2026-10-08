@@ -121,6 +121,11 @@ namespace ProjectH.Client.Qa
     //                           playing now, and the requests the mixer dropped (budget: no voice or the per-frame cap, plus voices
     //                           cut off; duplicate: same kind and source within its interval; distance: beyond the kind's audible
     //                           distance; queueOverflow: the 64-request queue was full). Counters only grow.
+    //   Phase 19 (written only when Vehicle has a value, after audio; QaVehicleStatus):
+    //   vehicle               - {"seated":bool,"vehicleId":n,"seat":n,"speed":m/s,"health":n,"visibleVehicles":n}: whether the newest
+    //                           VehicleStates names us in a seat, that vehicle's id (0 = none), our seat (0 driver, 1 passenger,
+    //                           -1 none), its speed (the driver's prediction while driving, else the newest record; 0 when not
+    //                           seated, 2 decimals), its health (0 when not seated) and how many vehicles are drawn this frame.
     public struct QaMapStatus
     {
         public bool MapOpen;
@@ -141,6 +146,19 @@ namespace ProjectH.Client.Qa
         public string LootPrompt;          // null = not written
         public int? Projectiles;           // Phase 17: null = not written
         public QaAudioStatus? Audio;       // Phase 18: null = not written
+        public QaVehicleStatus? Vehicle;   // Phase 19: null = not written
+    }
+
+    // Phase 19 D14: the vehicle fields /qa/status reports (QaMapStatus.Vehicle). Plain values only (this file is linked into the
+    // QA tool's tests).
+    public struct QaVehicleStatus
+    {
+        public bool Seated;
+        public int VehicleId;
+        public int Seat;
+        public float Speed;
+        public int Health;
+        public int VisibleVehicles;
     }
 
     // Phase 18 D12: the audio counters /qa/status reports (QaMapStatus.Audio). KindNames and Plays are parallel arrays (index =
@@ -981,7 +999,7 @@ namespace ProjectH.Client.Qa
 
         // 기능: 지도 필드를 쓴다(앞에 쉼표를 붙인다). 정규 값은 소수 넷째 자리까지, 월드 값은 둘째 자리까지(없으면 null).
         //   Phase 16: LootPrompt가 있으면 mapSupplyDrops와 lootPrompt를 끝에 더한다. Phase 17: 그 뒤 Projectiles가 있으면 projectiles를 더한다.
-        //   Phase 18: 그 뒤 Audio가 있으면 audio 객체를 더한다.
+        //   Phase 18: 그 뒤 Audio가 있으면 audio 객체를 더한다. Phase 19: 그 뒤 Vehicle이 있으면 vehicle 객체를 더한다.
         // 입력: sb - 이어 쓸 StringBuilder, map - 지도 필드.
         // 출력: 반환값 없음.
         private static void AppendMap(StringBuilder sb, in QaMapStatus map)
@@ -1023,6 +1041,27 @@ namespace ProjectH.Client.Qa
             sb.Append(",\"projectiles\":");
             QaJsonWriter.AppendLong(sb, map.Projectiles.Value);
             if (map.Audio.HasValue) AppendAudio(sb, map.Audio.Value);
+            if (map.Vehicle.HasValue) AppendVehicle(sb, map.Vehicle.Value);
+        }
+
+        // 기능: vehicle 객체를 쓴다(앞에 쉼표를 붙인다, Phase 19 D14).
+        // 입력: sb - 이어 쓸 StringBuilder, vehicle - 차량 필드.
+        // 출력: 반환값 없음. 할당 없음.
+        private static void AppendVehicle(StringBuilder sb, in QaVehicleStatus vehicle)
+        {
+            sb.Append(",\"vehicle\":{\"seated\":");
+            QaJsonWriter.AppendBool(sb, vehicle.Seated);
+            sb.Append(",\"vehicleId\":");
+            QaJsonWriter.AppendLong(sb, vehicle.VehicleId);
+            sb.Append(",\"seat\":");
+            QaJsonWriter.AppendLong(sb, vehicle.Seat);
+            sb.Append(",\"speed\":");
+            QaJsonWriter.AppendFixed(sb, vehicle.Speed, 2);
+            sb.Append(",\"health\":");
+            QaJsonWriter.AppendLong(sb, vehicle.Health);
+            sb.Append(",\"visibleVehicles\":");
+            QaJsonWriter.AppendLong(sb, vehicle.VisibleVehicles);
+            sb.Append('}');
         }
 
         // 기능: audio 객체를 쓴다(앞에 쉼표를 붙인다, Phase 18 D12). 종류 이름이 null인 칸은 건너뛴다.

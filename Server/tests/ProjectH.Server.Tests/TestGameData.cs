@@ -157,9 +157,11 @@ internal static class TestGameData
     // 입력: simHz - Tick 속도, autoRange - 테스트 자동 무기 사거리, lootJson·zonesJson - 데이터, squad·map - 카탈로그(null = 기본값).
     // 출력: GameData.
     public static GameData Create(int simHz = 30, float autoRange = 100f, string lootJson = LootJson, string zonesJson = ZonesJson,
-        ProjectH.Server.Game.Squad.SquadCatalog? squad = null, ProjectH.Server.Game.Map.MapCatalog? map = null)
+        ProjectH.Server.Game.Squad.SquadCatalog? squad = null, ProjectH.Server.Game.Map.MapCatalog? map = null,
+        ProjectH.Server.Game.Vehicles.VehicleCatalog? vehicles = null)
     {
         ItemCatalog items = Items(simHz);
-        return new GameData(TestWeapons.Create(simHz, autoRange), items, Loot(items, lootJson), Zones(simHz, zonesJson), squad: squad, map: map);
+        return new GameData(TestWeapons.Create(simHz, autoRange), items, Loot(items, lootJson), Zones(simHz, zonesJson), squad: squad, map: map,
+            vehicles: vehicles);
     }
 }

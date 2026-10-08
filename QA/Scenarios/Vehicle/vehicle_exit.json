@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "name": "Vehicle Exit",
+  "description": "Phase 19 D6 (request §89): a seated driver presses E: it leaves the car to the driver's side, 2 m from the centre (heading 0: -X), standing in Ground mode; the driver seat is empty and its own client knows it is on foot.",
+  "tags": ["vehicle"],
+  "seed": 19004,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "spawn_car", "phase": "arrange", "action": "spawnVehicle", "x": 0, "z": -6, "heading": 0, "saveAs": "car" },
+    { "id": "b_away", "action": "setPosition", "actor": "playerB", "position": { "x": -8, "z": 10 } },
+    { "id": "a_place", "action": "setPosition", "actor": "playerA", "position": { "x": 2, "z": -6, "yaw": 270 } },
+    { "id": "settle", "action": "wait", "milliseconds": 300 },
+    { "id": "a_enter", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "a_driver", "action": "waitFor", "condition": "player.seat", "actor": "playerA", "equals": 0, "timeoutMilliseconds": 2000 },
+    { "id": "seated_wait", "action": "wait", "milliseconds": 300 },
+
+    { "id": "a_exit", "phase": "act", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "a_on_foot", "phase": "assert", "action": "waitFor", "condition": "player.seat", "actor": "playerA", "equals": -1, "timeoutMilliseconds": 2000 },
+    { "id": "a_no_car", "assert": "player.vehicleId", "actor": "playerA", "equals": 0 },
+    { "id": "a_left_side", "assert": "player.position.x", "actor": "playerA", "between": [-2.1, -1.9] },
+    { "id": "a_beside", "assert": "player.position.z", "actor": "playerA", "between": [-6.1, -5.9] },
+    { "id": "a_ground", "assert": "player.mode", "actor": "playerA", "equals": "Ground" },
+    { "id": "seat_empty", "assert": "vehicle.driverId", "vehicleId": "${car.vehicleId}", "equals": 0 },
+    { "id": "a_client_foot", "action": "waitFor", "condition": "actor.seat", "actor": "playerA", "equals": -1, "timeoutMilliseconds": 2000 },
+    { "id": "exits", "assert": "vehicle.exits", "equals": 1 }
+  ]
+}

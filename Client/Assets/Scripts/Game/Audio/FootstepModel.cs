@@ -137,6 +137,12 @@ namespace ProjectH.Client.Game.Audio
             return gait;
         }
 
+        // 기능: 이 플레이어를 발소리 표본에서 살아 있는 것으로 볼지 정한다(Phase 19 D15: 차량에 앉은 사람은 발소리가 없다. 좌석은 26 m/s까지
+        //   움직여 순간이동 보호를 지나는 속도로도 움직이므로 죽은 것처럼 넘겨 소리를 끄고 시작점을 지운다: 내리는 2 m 순간이동도 걸음이 아니다).
+        // 입력: alive - 살아 있음(기절 포함), seated - 차량에 앉아 있음.
+        // 출력: Sample의 alive로 넘길 값(살아 있고 앉아 있지 않으면 true).
+        public static bool Audible(bool alive, bool seated) => alive && !seated;
+
         // 기능: 모드가 발소리 없는 공중 모드인지 본다.
         // 입력: mode - 이동 모드.
         // 출력: Freefall·Glide·Transport·Vault면 true.

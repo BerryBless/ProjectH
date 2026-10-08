@@ -9,6 +9,7 @@ using ProjectH.Server.Game.Combat;
 using ProjectH.Server.Game.Flow;
 using ProjectH.Server.Game.Harvest;
 using ProjectH.Server.Game.Items;
+using ProjectH.Server.Game.Vehicles;
 using ProjectH.Server.Game.Zone;
 using ProjectH.Server.Persistence;
 using ProjectH.Shared.Protocol;
@@ -127,13 +128,14 @@ public sealed partial class Match
     // map's LootPoints.All; dropPoints null = the map's DropPoints.All (Phase 6 D9).
     // Phase 13 D13: sendBuild sends on the building channel (LiteNetLib channel 1); null = everything through send (tests).
     // buildBacklog: final review A4, a peer's queued reliable packets on the building channel (null = none).
-    // 기능: 경기 객체를 만든다(데이터 카탈로그, Phase 15 지도 수치 포함, 개발 모드면 Loot와 Phase 16 Container도 채운다).
+    // vehicleSpawns: Phase 19 D8, where StartMatch places the vehicles and their headings (null = VehicleSpawns, empty = none).
+    // 기능: 경기 객체를 만든다(데이터 카탈로그, Phase 15 지도 수치, Phase 19 차량 수치와 생성 지점 포함, 개발 모드면 Loot와 Phase 16 Container도 채운다).
     // 입력: options - 서버 설정, data - 게임 데이터, send - 패킷 전송, 나머지 - 위 설명의 테스트용·선택 인자.
     // 출력: 대기 상태의 Match.
     public Match(ServerOptions options, GameData data, SendPacket send, StartingLoadout? loadout = null, LootPoint[]? lootPoints = null,
         Vector3[]? dropPoints = null, Action<MatchRecord>? matchSink = null, Action<string>? graceExpired = null,
         Action? movementAnomaly = null, SendPacket? sendBuild = null, Func<int, int>? buildBacklog = null,
-        Action<int, Exception>? playerFailed = null)
+        Action<int, Exception>? playerFailed = null, (Vector3 Position, float Heading)[]? vehicleSpawns = null)
     {
         _playerFailed = playerFailed;
         _failedPlayers = new List<(PlayerEntity, Exception)>(options.MaxPlayers);
@@ -161,6 +163,24 @@ public sealed partial class Match
         _items = data.Items;
         _squad = data.Squad;          // Phase 14 D11
         _map = data.Map;              // Phase 15 D9
+        _vehicleData = data.Vehicles; // Phase 19 D12
+        if (vehicleSpawns == null)
+        {
+            _vehicleSpawnPoints = VehicleSpawns.All.ToArray();
+            _vehicleSpawnHeadings = new float[_vehicleSpawnPoints.Length];
+            for (int i = 0; i < _vehicleSpawnHeadings.Length; i++) _vehicleSpawnHeadings[i] = VehicleSpawns.Heading(i);
+        }
+        else
+        {
+            if (vehicleSpawns.Length > VehicleSettings.MaxVehicles) throw new ArgumentException("Too many vehicle spawns.", nameof(vehicleSpawns));
+            _vehicleSpawnPoints = new Vector3[vehicleSpawns.Length];
+            _vehicleSpawnHeadings = new float[vehicleSpawns.Length];
+            for (int i = 0; i < vehicleSpawns.Length; i++)
+            {
+                _vehicleSpawnPoints[i] = vehicleSpawns[i].Position;
+                _vehicleSpawnHeadings[i] = vehicleSpawns[i].Heading;
+            }
+        }
         _teamSize = options.TeamSize; // Phase 14 D1
         _building = data.Building;
         _infiniteResources = options.BuildInfiniteResources;
@@ -375,6 +395,10 @@ public sealed partial class Match
         return JoinResult.Ok;
     }
 
+    // 기능: 연결이 끊긴 플레이어를 유예로 남기거나 바로 내보낸다(Phase 10 D2). Phase 19 D6: 유예로 남는 사람이 차량에 탔으면 그 자리에서 내리고
+    //   유예 동안 이어 가는 마지막 입력의 이동·버튼을 지운다(쥐고 있던 가속이 걷기로 이어지지 않게).
+    // 입력: peerId - 끊긴 연결, allowGrace - 서버가 닫은 연결이 아니면 true.
+    // 출력: 유예로 남겼으면 true, 나갔으면 false.
     // Phase 10 D2: the connection of peerId is gone. During the match a living participant whose connection was not
     // closed by the server (allowGrace) stays in the world for ReconnectGraceSeconds: no input, it can be shot and the
     // zone still hurts it. Everyone else leaves at once. Returns true when the player was kept.
@@ -387,6 +411,9 @@ public sealed partial class Match
             return false;
         }
         _playersByPeer.Remove(peerId);
+        // Phase 19 D6: a dropped driver leaves the seat at once (the car brakes). Review fix: and does not walk on with the
+        // throttle it held (the grace coasts on LastInput): its move and buttons are cleared.
+        if (ForceExit(player)) player.LastInput = new InputCommand { Seq = player.LastInput.Seq, Yaw = player.LastInput.Yaw };
         player.PeerId = PlayerEntity.NoPeer;
         player.GraceEndTick = ServerTick + _graceTicks;
         player.Inputs.Reset();
@@ -404,10 +431,12 @@ public sealed partial class Match
     //   D10: 경기 중 이탈은 탈락이다(소지품은 남은 사람들에게 드롭, 결과 없음). Phase 14: 진행 중인 소생·재투입을 끝내고, 팀이 살아
     //   있으면 들고 있던 카드를 떨어뜨리며, 이 사람의 카드는 사라진다(D9). 그 뒤 분대 전멸을 검사한다(D6: 마지막 Up 구성원이 나가면
     //   기절한 팀원이 탈락하고, 팀 배치가 이 사람의 기록에도 들어간다). Phase 15: 이 사람의 Ping과 Waypoint를 지운다(팀은 Tick 끝에 새 목록을 받는다).
+    //   Phase 19: 차량에 타고 있었으면 먼저 내린다(소지품은 내린 자리에 떨어진다).
     // 입력: player - 떠나는 플레이어.
     // 출력: 반환값 없음.
     private void RemovePlayer(PlayerEntity player)
     {
+        ForceExit(player);   // Phase 19: no seat keeps a player who left
         _players.Remove(player);
         _graced.Remove(player);
 
@@ -468,7 +497,7 @@ public sealed partial class Match
     public void EnqueueEdit(int peerId, in BuildEditRequest request) => EnqueueBuild(peerId, new BuildQueueItem(request));
 
     // 기능: 경기 한 Tick: 유예 만료, 경기 흐름, 자기장, (Phase 16) Supply Drop 일정·착지, 건설 요청, (Phase 17) 투사체 이동·폭발, 플레이어 Tick,
-    //   붕괴, 경기 끝 판정, 그리고 Tick 끝 전송
+    //   (Phase 19) 차량 Step·좌석·치기, 붕괴, 경기 끝 판정, 그리고 Tick 끝 전송(Phase 19: Snapshot과 같은 Tick에 VehicleStates)
     //   (인벤토리·경기·문·채집·Container·Supply Drop·자원·팀·스테이션,
     //   Phase 15 지도 표시 만료와 TeamMarkers, 건설 사건, Snapshot).
     // 입력: 없음.
@@ -541,6 +570,8 @@ public sealed partial class Match
         // Review round 2: every player of this tick failed (GameLoop counts such ticks; read after Tick returns).
         EveryPlayerFailed = ticked > 0 && _failedPlayers.Count == ticked;
         if (_failedPlayers.Count > 0) RemoveFailedPlayers();
+        // Phase 19 D13: the vehicles after the players (the drivers' inputs of this tick), then the seats follow them.
+        UpdateVehicles(now);
         // Final review A2: one support search for every piece destroyed this tick.
         CollapseUnsupported();
 
@@ -562,11 +593,16 @@ public sealed partial class Match
         // After every move of this tick, so all players are recorded at the same moment. A snapshot with
         // ServerTick N shows exactly the positions recorded at N, which is what ViewTick refers to.
         foreach (var player in _players) player.History.Record(ServerTick, player.State.Position, player.State.Mode);
-        if (ServerTick % (uint)_snapshotEveryTicks == 0) SendSnapshots();
+        RecordVehicles();   // Phase 19 D7: the same moment, for the vehicles' rewind
+        if (ServerTick % (uint)_snapshotEveryTicks == 0)
+        {
+            SendSnapshots();
+            SendVehicleStates();   // Phase 19 D4: the same tick, Unreliable
+        }
     }
 
     // 기능: 한 플레이어의 Tick 부분(server review M7: Tick이 격리한다): 입력, (Phase 14 기절이면 출혈), 이동, 재장전, 행동,
-    //   (Phase 14 소생·재투입 진행), 회복 완료.
+    //   (Phase 14 소생·재투입 진행), 회복 완료. Phase 19 D5: 차량에 탄 사람은 이동·행동·회복 완료 대신 TickSeated(차량 입력, E로 내리기)만 한다.
     // 입력: player - 플레이어, now - 마지막으로 끝난 Tick.
     // 출력: 반환값 없음. 플레이어 상태가 갱신된다.
     private void TickPlayer(PlayerEntity player, uint now)
@@ -580,6 +616,13 @@ public sealed partial class Match
         if (!player.Alive) return;
         // Phase 14 D5: a knocked-down player bleeds every tick, input or not (the server times it, request §37).
         if (player.IsDowned && Bleed(player)) return;
+        // Phase 19 D5, D10: seated, the input drives the car (UpdateVehicles) and E exits; no move, no action. No heal completes
+        // either: entering cancels it and nothing can start one from a seat.
+        if (player.InVehicle)
+        {
+            TickSeated(player, input, sent, previous, now);
+            return;
+        }
 
         // Phase 12 D5: a rider is placed on the route at the tick being simulated (now + 1, the tick its snapshot
         // reports) and may jump. Everyone else steps with the same boxes and terrain as client prediction
@@ -590,7 +633,7 @@ public sealed partial class Match
         // Only an input the client really sent can act: the missed-input repeat copies the last input's
         // buttons and must never invent a switch, reload or shot. Phase 12 D12: and only in a mode that allows
         // actions (after this tick's move).
-        if (sent && ActionsAllowed(player.State.Mode)) ProcessActions(player, input, previous, now);
+        if (sent && CanAct(player)) ProcessActions(player, input, previous, now);
         // Gated, the fire button's held state still follows the input: landing with Fire held must not fire a
         // semi-automatic weapon without a new press (the client's WeaponState does the same).
         else if (sent) player.FireHeld = (input.Buttons & InputButtons.Fire) != 0;
@@ -710,10 +753,10 @@ public sealed partial class Match
     }
 
     // 기능: 편집 요청을 검증하고 맞으면 조각 모양을 바꾼다(Phase 13.5 D5). 순서대로 보고 처음 걸린 이유로 답한다:
-    //   1 살아 있음·경기 진행·행동 가능 모드(도구는 보지 않는다, §29) → InvalidState, 2 조각 있음 → NotFound,
+    //   1 살아 있음·경기 진행·행동 가능 모드·(Phase 19) 차량에 타지 않음(도구는 보지 않는다, §29) → InvalidState, 2 조각 있음 → NotFound,
     //   3 BuildRules.CanEdit → NotOwner, 4 BuildEdit.TryApply(유효한 상태, Ramp 외 회전 불변) → InvalidRequest,
     //   (상태가 지금과 같으면 여기서 Ok, 아무것도 바꾸지 않음), 5 InReach → OutOfRange, 6 맵·문·지형 또는 대상 외 조각이 시선을
-    //   막음 → Blocked, 7 새로 막히는 부분이 캐릭터를 가르거나 Vault 경로를 가로지르거나 올린 몸이 들어가지 않음 → Blocked,
+    //   막음 → Blocked, 7 새로 막히는 부분이 캐릭터를 가르거나 Vault 경로를 가로지르거나 올린 몸이 들어가지 않거나 (Phase 19) 차량 발자국과 겹침 → Blocked,
     //   8 Ramp 회전 변경 뒤 접지도 이웃도 없음 → Unsupported. 성공하면 id·소유자·재료·진행·피해는 그대로 두고 모양만 바꾼다(D6).
     // 입력: player - 요청한 플레이어, request - 편집 요청, id - 결과 조각 id, changed - 결과 변경 여부.
     // 출력: 결과 코드. Ok면 id = 대상 id(changed = 모양이 실제로 바뀌었는지), 거절이면 id 0과 changed false.
@@ -721,7 +764,7 @@ public sealed partial class Match
     {
         id = 0;
         changed = false;
-        if (!player.Alive || _flow.State == MatchFlowState.Finished || _flow.State == MatchFlowState.Closing || !ActionsAllowed(player.State.Mode))
+        if (!player.Alive || _flow.State == MatchFlowState.Finished || _flow.State == MatchFlowState.Closing || !CanAct(player))
             return BuildResultCode.InvalidState;
         if (request.PieceId == 0 || !_build.TryGetSlot(request.PieceId, out int slot)) return BuildResultCode.NotFound;
         BuildPiece piece = _build.At(slot);
@@ -740,8 +783,9 @@ public sealed partial class Match
         if (!CombatRules.TryAimDirection(player.LastInput.AimYaw, player.LastInput.AimPitch, out Vector3 aim) ||
             !BuildRules.InReach(eye, aim, before, _building.BuildRange, _building.ViewAngleDegrees))
             return BuildResultCode.OutOfRange;
+        // Phase 19 review: nor refill a piece around a car (the car ignores what it starts in and would drive through).
         if (BuildRules.BehindAWall(eye, before, _doors.World, GameMap.Terrain) || BuildRules.BehindAPiece(eye, before, piece.Id, _build) ||
-            EditCutsAPlayer(piece.Id, before, after))
+            EditCutsAPlayer(piece.Id, before, after) || EditCutsAVehicle(before, after))
             return BuildResultCode.Blocked;
 
         if (!ApplyEdit(slot, before, after)) return BuildResultCode.Unsupported;
@@ -843,7 +887,8 @@ public sealed partial class Match
         return penetrates;
     }
 
-    // 기능: 배치 요청을 순서대로 검증하고 맞으면 조각을 놓는다(Phase 14: 놓으면 진행 중인 소생·재투입이 끊긴다).
+    // 기능: 배치 요청을 순서대로 검증하고 맞으면 조각을 놓는다(Phase 14: 놓으면 진행 중인 소생·재투입이 끊긴다. Phase 19: 탄 사람은 InvalidState,
+    //   차량 발자국과 겹치면 Blocked).
     // 입력: player - 요청자, request - 배치 요청, tick - 시뮬레이션 중인 Tick(CreatedTick), id - 새 조각 id.
     // 출력: 결과 코드(Ok면 id가 새 조각).
     // D9 (request §45): every check in order; the first that fails is the answer, and nothing changes then. On success the
@@ -853,7 +898,7 @@ public sealed partial class Match
     {
         id = 0;
         if (!player.Alive || _flow.State == MatchFlowState.Finished || _flow.State == MatchFlowState.Closing) return BuildResultCode.InvalidState;
-        if (player.Inventory.Tool != ToolKind.Build || !ActionsAllowed(player.State.Mode)) return BuildResultCode.InvalidState;
+        if (player.Inventory.Tool != ToolKind.Build || !CanAct(player)) return BuildResultCode.InvalidState;
         if (request.Material > (byte)BuildMaterialType.Metal ||
             !BuildGrid.TryNormalize((BuildPieceType)request.Piece, request.X, request.Y, request.Z, request.Rotation, out BuildPieceShape shape))
             return BuildResultCode.InvalidRequest;
@@ -866,8 +911,9 @@ public sealed partial class Match
         if (!CombatRules.TryAimDirection(player.LastInput.AimYaw, player.LastInput.AimPitch, out Vector3 aim) ||
             !BuildRules.InReach(eye, aim, shape, _building.BuildRange, _building.ViewAngleDegrees))
             return BuildResultCode.OutOfRange;
+        // Phase 19 D8: nor across a vehicle (it would be trapped in the piece).
         if (BuildRules.Buried(shape, GameMap.Terrain) || BuildRules.BehindAWall(eye, shape, _doors.World, GameMap.Terrain) || CutsTheMap(shape) ||
-            CutsAPlayer(shape))
+            CutsAPlayer(shape) || CutsAVehicle(shape))
             return BuildResultCode.Blocked;
 
         // D12: on the ground or a map box, or held by a standing piece.
@@ -1106,7 +1152,8 @@ public sealed partial class Match
     }
 
     // 기능: 살아 있는 플레이어의 실제 입력 하나를 spec §2 순서로 처리한다. Phase 14 D7: 소생·재투입 대상이 범위 안이면 E 누름은 문·줍기를 하지 않는다.
-    //   Phase 16 D4: 그 밖의 E는 Interact(문과 Container 중 가까운 쪽, 없으면 줍기)다. Phase 17: 투사체 무기는 빈 칸·경기 상태를 탄 소비 전에
+    //   Phase 16 D4: 그 밖의 E는 Interact(문과 Container 중 가까운 쪽, 없으면 (Phase 19) 차량, 그다음 줍기)다. Phase 19 리뷰: E로 차에 탔으면 그 입력의
+    //   나머지(사격·휘두르기·수류탄·회복 시작)는 하지 않는다. Phase 17: 투사체 무기는 빈 칸·경기 상태를 탄 소비 전에
     //   확인하고(D6), 발사 뒤 6 누름이 수류탄을 던진다(D9, 회복 시작 전).
     // 입력: player - 행위자, input - 받은 입력, previous - 직전 실제 입력의 버튼, now - 마지막 Tick.
     // 출력: 반환값 없음.
@@ -1127,6 +1174,13 @@ public sealed partial class Match
         // Phase 12 D9: E acts on a door in front first, an item otherwise. Phase 14 D7: neither while a revive or reboot target
         // is in reach (holding E there starts that instead). Phase 16 D4: a container in reach competes with the door (the nearer wins).
         if ((buttons & InputButtons.Interact) != 0 && !HasChannelTarget(player, now)) Interact(player);
+        // Phase 19 review: E just seated the player; nothing else of this input acts from the seat (no shot, swing, throw or
+        // heal). Fire's held state still follows the input, like the gated path in TickPlayer.
+        if (player.InVehicle)
+        {
+            player.FireHeld = (input.Buttons & InputButtons.Fire) != 0;
+            return;
+        }
 
         bool aimValid = CombatRules.TryAimDirection(input.AimYaw, input.AimPitch, out Vector3 direction);
         bool fire = (buttons & InputButtons.Fire) != 0;
@@ -1236,7 +1290,7 @@ public sealed partial class Match
     //   방향을 흔들어 맵·조각·플레이어(되감은 위치) 중 가장 가까운 것에 맞히고, 거리 감쇠(D2)를 곱한 원 피해를 대상마다 합친 뒤 등급 배율을
     //   한 번 곱해 대상마다 ApplyHit 한 번(HitConfirmed 하나), 조각도 합쳐 한 번(× 무기 structureMultiplier × 재료 배율, D11).
     //   ShotFired는 발사 하나에 하나(Phase 18 D4: 무기 id 포함): 한 발 무기는 퍼진 광선의 실제 끝점, 산탄총은 가운데 조준 광선의 끝점.
-    //   Phase 14 D3: 같은 팀은 관통.
+    //   Phase 14 D3: 같은 팀은 관통. Phase 19 D7: 되감은 차량도 맞고(피해 × 1, 맞힘 확인 없음), 탄 사람은 맞지 않는다.
     // 입력: shooter - 사수, direction - 조준 방향(단위 벡터), viewTick - 사수가 본 Tick.
     // 출력: 반환값 없음. ShotFired(또는 ProjectileSpawned)가 방송되고 맞은 대상이 피해를 받는다.
     // D7: from the eye along the aim, the nearest map surface (box, terrain or floor plane) or living player stops the shot. The
@@ -1260,18 +1314,20 @@ public sealed partial class Match
         int pellets = weapon.Pellets;
         _pelletTargetCount = 0;
         _pelletPieceCount = 0;
+        _pelletVehicleCount = 0;   // Phase 19
         Vector3 end = origin;
         for (int i = 0; i < pellets; i++)
         {
             Vector3 ray = WeaponSpread.Spread(direction, weapon.SpreadDegrees, shooter.EntityId, tick, i);
-            float distance = TraceShot(shooter, origin, ray, weapon.Range, rewindTick, out PlayerEntity? target, out int pieceSlot);
+            float distance = TraceShot(shooter, origin, ray, weapon.Range, rewindTick, out PlayerEntity? target, out int pieceSlot, out Vehicle? vehicle);
             if (pellets == 1) end = origin + ray * distance;
             float raw = weapon.Damage * CombatRules.FalloffMultiplier(distance, weapon.FalloffStart, weapon.Range, weapon.FalloffMinRatio);
             if (target != null) AddPelletHit(target, raw);
             else if (pieceSlot >= 0) AddPelletPiece(pieceSlot, raw);
+            else if (vehicle != null) AddPelletVehicle(vehicle, raw);   // Phase 19 D7
         }
         // D4: one tracer per trigger pull, along the unspread aim.
-        if (pellets > 1) end = origin + direction * TraceShot(shooter, origin, direction, weapon.Range, rewindTick, out _, out _);
+        if (pellets > 1) end = origin + direction * TraceShot(shooter, origin, direction, weapon.Range, rewindTick, out _, out _, out _);
 
         var writer = new PacketWriter(_sendBuffer);
         ShotFired.Write(ref writer, new ShotFired { ShooterId = shooter.EntityId, Start = origin, End = end, WeaponId = weapon.Id });   // Phase 18 D4
@@ -1296,8 +1352,12 @@ public sealed partial class Match
                 DamagePiece(slot, CombatRules.ScaledDamage(_pelletPieceDamage[i], rarity) * weapon.StructureMultiplier *
                                   _building.Material(_build.At(slot).Material).StructureDamageMultiplier);
             }
+            // Phase 19 D7: a vehicle takes the (rarity-scaled) weapon damage x 1; the shooter gets no HitConfirmed.
+            for (int i = 0; i < _pelletVehicleCount; i++)
+                DamageVehicle(_pelletVehicles[i]!, CombatRules.ScaledDamage(_pelletVehicleDamage[i], rarity), shooter);
         }
         Array.Clear(_pelletTargets, 0, _pelletTargetCount);   // no reference kept past the shot
+        Array.Clear(_pelletVehicles, 0, _pelletVehicleCount);
     }
 
     // Phase 17 D4: one shot's hits, summed per target before the rarity is applied once. At most MaxPellets entries each.
@@ -1338,34 +1398,57 @@ public sealed partial class Match
         _pelletPieceDamage[_pelletPieceCount++] = raw;
     }
 
-    // 기능: 광선 하나의 첫 명중을 찾는다(맵 상자·닫힌 문·채집 대상·지형 → 조각(같은 거리면 조각) → 되감은 다른 팀 플레이어).
-    // 입력: shooter - 사수(건너뜀), origin·ray - 광선, range - 사거리, rewindTick - 대상을 되감을 Tick, target·pieceSlot - 결과.
-    // 출력: 멈춘 거리. 플레이어에 맞으면 target(pieceSlot -1), 조각에 맞으면 pieceSlot(target null), 아니면 둘 다 없음.
-    private float TraceShot(PlayerEntity shooter, Vector3 origin, Vector3 ray, float range, double rewindTick, out PlayerEntity? target, out int pieceSlot)
+    // 기능: 광선 하나의 첫 명중을 찾는다(맵 상자·닫힌 문·채집 대상·지형 → 조각(같은 거리면 조각) → (Phase 19) 되감은 Active 차량 → 되감은 다른 팀 플레이어,
+    //   탄 사람은 건너뛴다). 차량은 플레이어보다 가깝고 그 플레이어 몸이 차량 발자국과 겹치지 않을 때만 플레이어를 가린다(차 발자국 안에 선 사람도 맞는다).
+    // 입력: shooter - 사수(건너뜀), origin·ray - 광선, range - 사거리, rewindTick - 대상을 되감을 Tick, target·pieceSlot·vehicle - 결과.
+    // 출력: 멈춘 거리. 가장 가까운 하나만 채워진다: 플레이어 target, 조각 pieceSlot(아니면 -1), 차량 vehicle. 맵에 멈추면 모두 없음.
+    private float TraceShot(PlayerEntity shooter, Vector3 origin, Vector3 ray, float range, double rewindTick, out PlayerEntity? target, out int pieceSlot,
+        out Vehicle? vehicle)
     {
         float nearest = HitScan.TraceWorld(origin, ray, range, Blockers, GameMap.Terrain);   // a closed door or a tree stops it
         // Phase 13 D11: a piece in front stops the shot too (no rewind: pieces as they are now, like doors). Final review B7:
         // a piece level with what the world trace met wins (a level 0 floor's top is the ground plane, y 0).
         if (!PieceTrace.Trace(origin, ray, nearest + PieceTieTolerance, _build, out _, out pieceSlot, out float pieceDistance)) pieceSlot = -1;
         else nearest = pieceDistance;
+        // Phase 19 D7: a vehicle in front, where the shooter saw it (rewound like the players). Review fix: it does not cut the
+        // players' range here: a player standing inside a parked car's footprint is tested against the world and pieces, and
+        // the vehicle wins below only when it is nearer and the player's body is clear of it (no one-way cover).
+        vehicle = TraceVehicles(origin, ray, nearest, rewindTick, out float vehicleDistance);
 
         target = null;
+        Vector3 targetFeet = default;
+        float targetHeight = 0f;
         foreach (var other in _players)
         {
             // Phase 14 D3: friendly fire is off: a shot passes through teammates (it can hit an enemy behind one).
-            if (other == shooter || !other.Alive || SameTeam(shooter, other)) continue;
+            // Phase 19 D7: a seated player is not hit (its vehicle is).
+            if (other == shooter || !other.Alive || other.InVehicle || SameTeam(shooter, other)) continue;
 
             // Phase 12 D13: the hit box has the height of the mode the target was in then; a transport rider is not hit.
             Vector3 feet = other.History.Sample(rewindTick, out MovementMode mode);
             if (mode == MovementMode.Transport) continue;
-            if (HitScan.TracePlayer(origin, ray, nearest, feet, MovementSimulation.CollisionHeight(mode), out float distance) &&
+            float height = MovementSimulation.CollisionHeight(mode);
+            if (HitScan.TracePlayer(origin, ray, nearest, feet, height, out float distance) &&
                 (target == null || distance < nearest))
             {
                 nearest = distance;
                 target = other;
+                targetFeet = feet;
+                targetHeight = height;
             }
         }
-        if (target != null) pieceSlot = -1;
+        if (target != null && vehicle != null && vehicleDistance < nearest && !BodyTouchesVehicle(vehicle, rewindTick, targetFeet, targetHeight))
+            target = null;   // the car stands in front of the player
+        if (target != null)
+        {
+            pieceSlot = -1;
+            vehicle = null;
+        }
+        else if (vehicle != null)
+        {
+            nearest = vehicleDistance;
+            pieceSlot = -1;
+        }
         return nearest;
     }
 
@@ -1588,7 +1671,7 @@ public sealed partial class Match
     //   마지막 팀들이 같은 Tick에 전멸했으면 나중에 처리된 팀(배치 1)이 이긴다. 우승 팀이 여럿이면(QA 강제 종료) 플레이어 순서로 마지막
     //   팀이다. WinnerId = 우승 팀에서 경기에 남은 가장 작은 Entity id(모두 나갔으면 0). Solo는 지금과 같다. 진행 중인 소생·재투입은
     //   끊는다(결과 화면에서는 출혈·채널이 돌지 않는다). Phase 15: 모든 Ping·Waypoint를 지우고 Tick 끝에 각 팀에 빈 목록을 보낸다.
-    //   Phase 17: 남은 투사체를 폭발 없이 지운다.
+    //   Phase 17: 남은 투사체를 폭발 없이 지운다. Phase 19: 탄 사람을 내리고 차량을 지운다.
     // 입력: now - 마지막 Tick.
     // 출력: 반환값 없음. 결과가 보내지고 기록이 Sink로 간다.
     private void FinishMatch(uint now)
@@ -1597,6 +1680,7 @@ public sealed partial class Match
         CancelAllChannels();   // Phase 14 review: no revive or reboot completes on the result screen
         ClearProjectiles();    // Phase 17 D6: gone without an explosion (clients clear theirs when MatchState changes)
         ClearMarkersAtFinish(); // Phase 15
+        ClearVehicles();        // Phase 19 D6, D8: everyone out, no vehicle on the result screen
         byte winnerTeam = 0;
         foreach (var player in _players)
         {
@@ -1671,6 +1755,9 @@ public sealed partial class Match
         return min.X < box.Max.X && max.X > box.Min.X && min.Y < box.Max.Y && max.Y > box.Min.Y && min.Z < box.Max.Z && max.Z > box.Min.Z;
     }
 
+    // 기능: 걸어 다니는 살아 있는 플레이어가 닿는 범위의 자원 아이템을 자동으로 줍는다(Phase 13 D15). Phase 19: 차량에 탄 사람은 줍지 않는다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 자원과 월드 아이템이 바뀐다.
     // Phase 13 D15 (request §158, §159): every living player on foot takes the Material items within MaterialPickupRange,
     // up to the resource cap; what does not fit stays with the smaller amount. Players in list order, so two reaching
     // for one item: the first takes it. At most WorldItems.Capacity items per player, every few ticks.
@@ -1680,7 +1767,7 @@ public sealed partial class Match
         float rangeSq = ItemRules.MaterialPickupRange * ItemRules.MaterialPickupRange;
         foreach (var player in _players)
         {
-            if (!player.Alive || !ActionsAllowed(player.State.Mode)) continue;
+            if (!player.Alive || !CanAct(player)) continue;   // Phase 19: not from a seat
             for (int i = _worldItems.Count - 1; i >= 0; i--)
             {
                 WorldItemData item = _worldItems[i].Data;
@@ -2035,8 +2122,12 @@ public sealed partial class Match
     private void Respawn(PlayerEntity player) => Respawn(player, SpawnPosition(player.EntityId));
 
     // Phase 12: mode is the movement mode the player starts in (Transport aboard the drop transport).
+    // 기능: 플레이어를 주어진 위치·모드로 새로 시작시킨다(Phase 19: 탄 사람은 먼저 내린다). 모두에게 PlayerRespawned.
+    // 입력: player - 플레이어, position - 위치, mode - 시작 모드.
+    // 출력: 반환값 없음.
     private void Respawn(PlayerEntity player, Vector3 position, MovementMode mode = MovementMode.Ground)
     {
+        ForceExit(player);
         // Keep the yaw so the camera does not snap; everything else starts over at the given position (rested).
         player.State = new MoveState { Position = position, Yaw = player.State.Yaw, Mode = mode };
         player.Sprinting = false;
@@ -2058,6 +2149,7 @@ public sealed partial class Match
 
     // 기능: Starting -> Playing 시작 리셋(D3). Phase 14: 분대 상태를 지우고 참가자를 입장 순서로 팀에 묶는다(D1). Phase 15: 지도 표시를 지우고
     //   새 팀마다 Tick 끝에 빈 TeamMarkers를 보낸다. Phase 16: Container를 따로 둔 시드로 굴리고 Supply Drop 목록을 비운다. Phase 17: 투사체를 지운다.
+    //   Phase 19: 차량을 지우고 생성 지점마다 새로 만든다.
     // 입력: now - 마지막 Tick.
     // 출력: 반환값 없음. 경기 세계가 새로 시작된다.
     // D3: Starting -> Playing, in this one tick: everyone to a drop point (Phase 6 D9), empty-handed with Health 100 and
@@ -2070,6 +2162,7 @@ public sealed partial class Match
     {
         ClearWorldItems();
         ClearProjectiles();                  // Phase 17 D6: nothing of the lobby flies into the match
+        ClearVehicles();                     // Phase 19 D8: the lobby (QA) vehicles go; the match spawns its own below
         ClearMarkers();                      // Phase 15: before the teams are made again
         ResetSquadState(keepTeams: false);   // Phase 14: no channel, knock-down or station cooldown survives into the match
         _hasRoute = _airDrop;
@@ -2102,6 +2195,7 @@ public sealed partial class Match
         _harvest.Reset();
         // Phase 13 D10: no piece of the lobby survives into the match.
         ClearBuilds();
+        SpawnMatchVehicles();                // Phase 19 D8: after the pieces are gone and everyone left their seat
         _matchStartedUtc = DateTime.UtcNow;
         _loot.Restart(unchecked(_lootSeed + _flow.Round));
         for (int point = 0; point < _loot.Count; point++) SpawnItem(_loot.Roll(point), _loot.Position(point), point);
@@ -2115,7 +2209,7 @@ public sealed partial class Match
     }
 
     // 기능: Finished -> Closing -> 다음 라운드 리셋(D13). Phase 14: 팀과 분대 상태를 지운다(대기실에는 팀이 없다). Phase 15: 남은 지도 표시를
-    //   팀이 지워지기 전에 지우고 알린다. Phase 16: Container 마스크와 Supply Drop 목록을 지운다. Phase 17: 투사체를 지운다.
+    //   팀이 지워지기 전에 지우고 알린다. Phase 16: Container 마스크와 Supply Drop 목록을 지운다. Phase 17: 투사체를 지운다. Phase 19: 차량을 지운다.
     // 입력: now - 마지막 Tick.
     // 출력: 반환값 없음.
     // D13: Finished -> Closing -> the next round, in this one tick: everyone alive on the spawn ring with an
@@ -2126,6 +2220,7 @@ public sealed partial class Match
         while (_graced.Count > 0) ExpireGraced(_graced[0]);
         ClearWorldItems();
         ClearProjectiles();   // Phase 17 D6
+        ClearVehicles();      // Phase 19 D8
         _hasRoute = false;
         // Phase 13 D6, D10: the lobby gets the whole map back, without the match's pieces.
         _harvest.Reset();

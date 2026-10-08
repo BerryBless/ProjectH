@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "name": "Vehicle Spawn",
+  "description": "Phase 19 D8, D14 (request §95): the match start places a car on each of the 4 VehicleSpawns; spawnVehicle adds one in the plaza (Active, 400 health, standing), and both clients receive VehicleStates listing it (interest range 120 m).",
+  "tags": ["vehicle"],
+  "seed": 19001,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+    { "id": "start_cars", "assert": "vehicle.count", "equals": 4 },
+    { "id": "start_spawned", "assert": "vehicle.spawned", "equals": 4 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": -4, "z": -10, "yaw": 0 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": 4, "z": -10, "yaw": 0 } },
+    { "id": "spawn_car", "phase": "act", "action": "spawnVehicle", "x": 0, "z": -6, "heading": 0, "saveAs": "car" },
+
+    { "id": "five_cars", "phase": "assert", "assert": "vehicle.count", "equals": 5 },
+    { "id": "car_active", "assert": "vehicle.state", "vehicleId": "${car.vehicleId}", "equals": "Active" },
+    { "id": "car_health", "assert": "vehicle.health", "vehicleId": "${car.vehicleId}", "equals": 400 },
+    { "id": "car_standing", "assert": "vehicle.speed", "vehicleId": "${car.vehicleId}", "equals": 0 },
+    { "id": "car_empty", "assert": "vehicle.driverId", "vehicleId": "${car.vehicleId}", "equals": 0 },
+    { "id": "a_sees_cars", "action": "waitFor", "condition": "actor.vehicleCount", "actor": "playerA", "equals": 5, "timeoutMilliseconds": 3000, "description": "The 4 match cars (all within 120 m of A) and the spawned one" },
+    { "id": "b_sees_cars", "action": "waitFor", "condition": "actor.vehicleStatesReceived", "actor": "playerB", "greaterThan": 0, "timeoutMilliseconds": 3000 },
+    { "id": "a_on_foot", "assert": "actor.seat", "actor": "playerA", "equals": -1 }
+  ]
+}

@@ -25,6 +25,9 @@ public static class FlowActions
     public const int MaxWaitMs = 600_000;
     public const int MaxSpawn = ActorManager.MaxActors;
 
+    // 기능: 흐름 Action(wait, assert, waitFor, save, waitForEvent 등)을 등록한다(Phase 19: 검증·save에 vehicleId 인자).
+    // 입력: r - Action 목록.
+    // 출력: 반환값 없음.
     public static void Register(ActionRegistry r)
     {
         r.Add(new DelegateAction(new ActionSpec
@@ -35,7 +38,7 @@ public static class FlowActions
             Check = CheckWait,
         }, WaitAsync));
 
-        string[] operatorParams = Comparison.Operators.Append("tolerance").Append("pieceId").Append("at").Append("radius").Append("windowSeconds").ToArray();
+        string[] operatorParams = Comparison.Operators.Append("tolerance").Append("pieceId").Append("vehicleId").Append("at").Append("radius").Append("windowSeconds").ToArray();
         r.Add(new DelegateAction(new ActionSpec
         {
             Name = "assert",
@@ -60,7 +63,7 @@ public static class FlowActions
             Name = "save",
             Actor = ActorUse.Optional,
             Required = new[] { "path" },
-            Optional = new[] { "pieceId", "at", "radius", "windowSeconds" },
+            Optional = new[] { "pieceId", "vehicleId", "at", "radius", "windowSeconds" },
             PositionParams = new[] { "at" },
             Check = s => CheckAssertion(s, "path", requireOperator: false).Concat(s.SaveAs == null ? new[] { "'save' needs 'saveAs'." } : Array.Empty<string>()),
         }, SaveAsync));

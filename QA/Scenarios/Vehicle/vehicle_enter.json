@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "name": "Vehicle Enter",
+  "description": "Phase 19 D6 (request §89): A stands 0.9 m beside a car's driver side and presses E: it takes the driver seat (server and its own client agree). B presses E beside the other side: the passenger seat. Too far away (2.1 m from the body) E enters nothing.",
+  "tags": ["vehicle"],
+  "seed": 19002,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "spawn_car", "phase": "arrange", "action": "spawnVehicle", "x": 0, "z": -6, "heading": 0, "saveAs": "car" },
+    { "id": "b_far", "action": "setPosition", "actor": "playerB", "position": { "x": 3.2, "z": -6, "yaw": 270 } },
+    { "id": "a_place", "action": "setPosition", "actor": "playerA", "position": { "x": -2, "z": -6, "yaw": 90 } },
+    { "id": "settle", "action": "wait", "milliseconds": 300 },
+
+    { "id": "b_too_far", "phase": "act", "action": "press", "actor": "playerB", "button": "Interact" },
+    { "id": "b_not_in", "phase": "assert", "assert": "player.seat", "actor": "playerB", "equals": -1 },
+
+    { "id": "a_enter", "phase": "act", "action": "press", "actor": "playerA", "button": "Interact" },
+    { "id": "a_driver", "phase": "assert", "action": "waitFor", "condition": "player.seat", "actor": "playerA", "equals": 0, "timeoutMilliseconds": 2000 },
+    { "id": "a_vehicle", "assert": "player.vehicleId", "actor": "playerA", "equals": "${car.vehicleId}" },
+    { "id": "car_driver", "assert": "vehicle.driverId", "vehicleId": "${car.vehicleId}", "greaterThan": 0 },
+    { "id": "a_client_seat", "action": "waitFor", "condition": "actor.seat", "actor": "playerA", "equals": 0, "timeoutMilliseconds": 2000 },
+    { "id": "a_client_car", "assert": "actor.vehicleId", "actor": "playerA", "equals": "${car.vehicleId}" },
+
+    { "id": "b_closer", "phase": "arrange", "action": "setPosition", "actor": "playerB", "position": { "x": 2, "z": -6, "yaw": 270 } },
+    { "id": "settle_b", "action": "wait", "milliseconds": 300 },
+    { "id": "b_enter", "phase": "act", "action": "press", "actor": "playerB", "button": "Interact" },
+    { "id": "b_passenger", "phase": "assert", "action": "waitFor", "condition": "player.seat", "actor": "playerB", "equals": 1, "timeoutMilliseconds": 2000 },
+    { "id": "car_passenger", "assert": "vehicle.passengerId", "vehicleId": "${car.vehicleId}", "greaterThan": 0 },
+    { "id": "b_client_seat", "action": "waitFor", "condition": "actor.seat", "actor": "playerB", "equals": 1, "timeoutMilliseconds": 2000 },
+    { "id": "enters", "assert": "vehicle.enters", "equals": 2 }
+  ]
+}

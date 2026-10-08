@@ -66,6 +66,7 @@ namespace ProjectH.Client.Game.Audio
         public void AddCollapse(Vector3 position) => _collapse.Add(new NVector3(position.x, position.y, position.z), _listener);
 
         // 기능: 이번 프레임의 발소리를 계산한다(D5): 내 발(예측, 2D·작게)과 듣는 위치 30 m 안의 원격 플레이어(3D). 발밑 재질은 소리를 낼 때만 찾는다.
+        //   Phase 19 D15: 차량에 앉은 사람(나는 예측기의 Seated, 원격은 렌더 Tick의 Seated)은 발소리가 없다(FootstepModel.Audible).
         // 입력: remotes - 원격 플레이어, renderTick - 원격을 그리는 Tick, myId - 내 Entity id, predictor - 내 예측(null 가능),
         //   store - 확정 조각, listener - 듣는 위치, now - 현재 시각, deltaTime - 프레임 시간.
         // 출력: 반환값 없음. 발소리 요청이 큐에 들어간다. 할당 없음.
@@ -77,8 +78,8 @@ namespace ProjectH.Client.Game.Audio
             if (predictor != null)
             {
                 Vector3 feet = predictor.RenderPosition;
-                FootstepGait gait = _footsteps.Sample(myId, ToNumerics(feet), predictor.Mode, predictor.Sprinting, !predictor.IsDead, now, deltaTime,
-                    predictor.HorizontalSpeed);
+                FootstepGait gait = _footsteps.Sample(myId, ToNumerics(feet), predictor.Mode, predictor.Sprinting,
+                    FootstepModel.Audible(!predictor.IsDead, predictor.Seated), now, deltaTime, predictor.HorizontalSpeed);
                 if (gait != FootstepGait.None && SurfaceProbe.TryFind(ToNumerics(feet), store, out SurfaceMaterial surface))
                     Play2D(AudioCatalog.FootstepFor(gait, surface), myId, AudioCatalog.OwnFootstepVolumeScale);
             }
@@ -88,7 +89,8 @@ namespace ProjectH.Client.Game.Audio
             {
                 RemotePose pose = _poses[i];
                 if ((pose.Feet - listener).sqrMagnitude > rangeSq) continue;   // not sampled: its slot is freed (EndFrame)
-                FootstepGait gait = _footsteps.Sample(pose.EntityId, ToNumerics(pose.Feet), pose.Mode, pose.Sprinting, pose.Alive, now, deltaTime);
+                FootstepGait gait = _footsteps.Sample(pose.EntityId, ToNumerics(pose.Feet), pose.Mode, pose.Sprinting,
+                    FootstepModel.Audible(pose.Alive, pose.Seated), now, deltaTime);
                 if (gait == FootstepGait.None || !SurfaceProbe.TryFind(ToNumerics(pose.Feet), store, out SurfaceMaterial surface)) continue;
                 Play3D(AudioCatalog.FootstepFor(gait, surface), pose.Feet, pose.EntityId);
             }

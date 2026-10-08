@@ -33,6 +33,9 @@ namespace ProjectH.Client.UI
         public const string HintGlide = "[Space] 글라이더 펼치기";
         public const string HintDoorOpen = "[E] 문 열기";
         public const string HintDoorClose = "[E] 문 닫기";
+        // Phase 19 D11: getting in and out of a vehicle.
+        public const string HintVehicleEnter = "[E] 탑승";
+        public const string HintVehicleExit = "[E] 내리기";
         // Phase 16 D4, D8: the "[E] 열기" hint per loot target kind.
         public const string HintOpenChest = "[E] 상자 열기";
         public const string HintOpenAmmoBox = "[E] 탄약 상자 열기";
@@ -259,6 +262,11 @@ namespace ProjectH.Client.UI
         // ---- Phase 15: map and pings ----
 
         public const string MapHint = "[왼쪽 클릭] 웨이포인트  [오른쪽 클릭] 지우기  [M] 닫기";
+
+        // 기능: 차량 속도 줄을 만든다(Phase 19 D11, 값이 바뀔 때만 부른다).
+        // 입력: kmh - 시속(km/h, 음수는 0).
+        // 출력: "42 km/h".
+        public static string VehicleSpeed(int kmh) => Int(kmh < 0 ? 0 : kmh) + " km/h";
 
         // 기능: 월드 Ping의 거리 문구를 만든다(DistanceText가 정수 m가 바뀔 때만 부른다).
         // 입력: meters - 정수 거리(m).

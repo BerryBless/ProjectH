@@ -84,6 +84,37 @@ public sealed class BotView
     public readonly SupplyDropInfo[] SupplyDrops = new SupplyDropInfo[SupplyDropsPacket.MaxSupplyDrops];
     public int SupplyDropCount;
     public long SupplyDropsReceived;
+    // Phase 19 D13: the vehicles as the newest VehicleStates had them (fixed array; the count says how many are filled), its
+    // server tick (older packets are dropped: Unreliable), how many arrived, and the vehicle and seat our entity sits in
+    // (0 / -1 = on foot). The bots never drive (D16); the QA tool reads these.
+    public readonly VehicleRecord[] Vehicles = new VehicleRecord[VehicleSettings.MaxVehicles];
+    public int VehicleCount;
+    public uint VehicleTick;
+    public long VehicleStatesReceived;
+    public byte MyVehicleId;
+    public int MySeat = -1;
+
+    // 기능: VehicleStates 하나를 반영한다(마지막으로 반영한 것보다 오래된 Tick이면 버린다). 우리 Entity가 Driver·Passenger인 차량에서 좌석을 정한다.
+    // 입력: records - 읽은 기록, count - 수, serverTick - 패킷 Tick.
+    // 출력: 반영했으면 true.
+    public bool ApplyVehicles(ReadOnlySpan<VehicleRecord> records, int count, uint serverTick)
+    {
+        if (VehicleStatesReceived > 0 && serverTick < VehicleTick) return false;
+        VehicleTick = serverTick;
+        VehicleStatesReceived++;
+        VehicleCount = Math.Min(count, Vehicles.Length);
+        MyVehicleId = 0;
+        MySeat = -1;
+        for (int i = 0; i < VehicleCount; i++)
+        {
+            VehicleRecord v = records[i];
+            Vehicles[i] = v;
+            if (MyId == 0) continue;
+            if (v.Driver == MyId) { MyVehicleId = v.Id; MySeat = VehicleSettings.DriverSeat; }
+            else if (v.Passenger == MyId) { MyVehicleId = v.Id; MySeat = VehicleSettings.PassengerSeat; }
+        }
+        return true;
+    }
 
     // 기능: 이 Entity가 우리 팀원(자기 제외)인지 본다(D15: 봇은 팀원을 겨누지 않는다).
     // 입력: id - Entity id.

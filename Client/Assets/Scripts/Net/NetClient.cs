@@ -21,6 +21,8 @@ namespace ProjectH.Client.Net
     public delegate void TeamMarkersHandler(MarkerPing[] pings, int pingCount, MarkerWaypoint[] waypoints, int waypointCount);
     // Phase 16 D7: the whole supply drop list, in NetClient's reused array (valid only during the call).
     public delegate void SupplyDropsHandler(SupplyDropInfo[] drops, int count);
+    // Phase 19 D4: one VehicleStates, its records in NetClient's reused array (valid only during the call).
+    public delegate void VehicleStatesHandler(uint serverTick, uint ackInputSeq, VehicleRecord[] records, int count);
 
     // Owns the LiteNetLib client. Main thread only: UnsyncedEvents is off and Poll() is called from
     // Update, so every callback below runs on the Unity main thread. Buffers are reused: receiving
@@ -37,6 +39,8 @@ namespace ProjectH.Client.Net
         private readonly MarkerWaypoint[] _markerWaypoints = new MarkerWaypoint[MapMarkerConstants.MaxWaypoints];
         // Phase 16 D7: SupplyDrops is read into this (same rule: the event only after a whole read; the receiver copies).
         private readonly SupplyDropInfo[] _supplyDrops = new SupplyDropInfo[SupplyDropsPacket.MaxSupplyDrops];
+        // Phase 19 D4: VehicleStates is read into this (same rule: the event only after a whole read; the receiver copies).
+        private readonly VehicleRecord[] _vehicles = new VehicleRecord[VehicleSettings.MaxVehicles];
         // The current connection. Events from any other peer (an attempt CancelConnect gave up on) are ignored.
         private NetPeer _server;
         private bool _disposed;
@@ -127,6 +131,8 @@ namespace ProjectH.Client.Net
         public event Action<ProjectileExploded> ProjectileExplodedReceived;
         // Phase 18 D7: a harvest hit near us by another player (Unreliable). Struct.
         public event Action<WorldSound> WorldSoundReceived;
+        // Phase 19 D4: the vehicles in our interest range (Unreliable channel 0: may come late or out of order).
+        public event VehicleStatesHandler VehicleStatesReceived;
 
         public ClientState State { get; private set; } = ClientState.Disconnected;
         public string LastError { get; private set; }
@@ -329,7 +335,8 @@ namespace ProjectH.Client.Net
 
         // 기능: 받은 패킷 하나를 읽어 해당 이벤트를 올린다(Phase 13.5: BuildEvents의 Edited 기록 포함, Phase 14: 분대 패킷 4종,
         //   Phase 15: TeamMarkers, Phase 16: ContainerStates·SupplyDrops, Phase 17: 투사체 카탈로그와 투사체 패킷 3종,
-        //   Phase 18: 사건 Placed 기록은 BuildPlacedEventReceived도 올리고(Sync는 아님), Destroyed 기록은 이유와 함께, WorldSound).
+        //   Phase 18: 사건 Placed 기록은 BuildPlacedEventReceived도 올리고(Sync는 아님), Destroyed 기록은 이유와 함께, WorldSound.
+        //   Phase 19: VehicleStates).
         //   메인 스레드에서 Poll이 부른다.
         // 입력: peer - 보낸 쪽(지금 연결이 아니면 무시), reader - 패킷, channelNumber·deliveryMethod - 쓰지 않는다.
         // 출력: 반환값 없음. 읽기에 실패한 기록이 있으면 그 패킷의 나머지는 버린다.
@@ -551,6 +558,11 @@ namespace ProjectH.Client.Net
 
                 case PacketId.WorldSound:
                     if (WorldSound.TryRead(ref packet, out var worldSound)) WorldSoundReceived?.Invoke(worldSound);
+                    break;
+
+                case PacketId.VehicleStates:
+                    if (VehicleStatesPacket.TryRead(ref packet, _vehicles, out uint vehicleTick, out uint vehicleAck, out int vehicleCount))
+                        VehicleStatesReceived?.Invoke(vehicleTick, vehicleAck, _vehicles, vehicleCount);
                     break;
             }
         }

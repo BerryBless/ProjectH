@@ -60,5 +60,7 @@ namespace ProjectH.Shared.Protocol
         ProjectileExploded = 46,
         // Phase 18 D7: a sound another player made that the client cannot derive (a harvest hit), S->C Unreliable, channel 0.
         WorldSound = 47,
+        // Phase 19 D4: the vehicles near the recipient, S->C Unreliable on channel 0 with every snapshot.
+        VehicleStates = 48,
     }
 }

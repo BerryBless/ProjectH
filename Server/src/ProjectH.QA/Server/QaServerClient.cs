@@ -18,6 +18,8 @@ public interface IQaServerClient
     Task<JsonElement> GetLootAsync(float? x, float? z, float? radius, CancellationToken token);
     // Phase 17: GET /qa/projectiles (live projectiles, the recent explosions and the projectile counters).
     Task<JsonElement> GetProjectilesAsync(CancellationToken token);
+    // Phase 19: GET /qa/vehicles (the vehicles, also keyed by id, and the vehicle counters).
+    Task<JsonElement> GetVehiclesAsync(CancellationToken token);
     Task<JsonElement> GetMetricsAsync(int? windowSeconds, CancellationToken token);
     Task<JsonElement> GetEventsAsync(long after, int max, CancellationToken token);
     Task StopServerAsync(CancellationToken token);
@@ -126,6 +128,11 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
     // 입력: token - 취소.
     // 출력: 응답 JSON의 data.
     public Task<JsonElement> GetProjectilesAsync(CancellationToken token) => GetAsync("qa/projectiles", token);
+
+    // 기능: Phase 19: GET /qa/vehicles를 부른다.
+    // 입력: token - 취소.
+    // 출력: 응답 JSON의 data.
+    public Task<JsonElement> GetVehiclesAsync(CancellationToken token) => GetAsync("qa/vehicles", token);
 
     public Task<JsonElement> GetMetricsAsync(int? windowSeconds, CancellationToken token) =>
         GetAsync(windowSeconds == null ? "qa/metrics" : $"qa/metrics?windowSeconds={windowSeconds.Value}", token);

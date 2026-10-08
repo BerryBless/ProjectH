@@ -33,6 +33,7 @@ namespace ProjectH.Client.Game
         private readonly GameObject _bar;
         private readonly RectTransform _barFill;
         private bool _visible;
+        private bool _slotsHidden;   // Phase 19: the weapon slot lines are hidden while seated
         private float _noticeHideTime = -1f;
 
         public InventoryHud()
@@ -80,6 +81,17 @@ namespace ProjectH.Client.Game
             if (_root == null || visible == _visible) return;
             _visible = visible;
             _root.SetActive(visible);
+        }
+
+        // 기능: 무기 슬롯 줄 3개를 보이거나 숨긴다(Phase 19: 차량에 앉아 있으면 무기를 쓸 수 없고 차량 HUD가 같은 자리에 그려진다). 소모품 줄은
+        //   그대로 둔다. 바뀔 때만 SetActive를 부른다.
+        // 입력: visible - 슬롯 줄을 보일지.
+        // 출력: 반환값 없음.
+        public void SetSlotsVisible(bool visible)
+        {
+            if (_root == null || visible != _slotsHidden) return;
+            _slotsHidden = !visible;
+            for (int i = 0; i < _slots.Length; i++) _slots[i].gameObject.SetActive(visible);
         }
 
         public void SetSlot(int slot, bool selected, string weapon, string rarityName, int rarity, int ammo, int reserve)

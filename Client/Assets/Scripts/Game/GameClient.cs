@@ -22,6 +22,8 @@ namespace ProjectH.Client.Game
         private const double InterpolationSnapshots = 2.0;
         // Aim ray length before the weapon catalog arrives.
         private const float DefaultAimRange = 300f;
+        // Phase 19: vehicle sound sources start here (projectile ids, door indices and entity ids stay below it).
+        private const uint VehicleSoundSource = 0x10000u;
         // Phase 15 D6: how far a ping's ray looks (its own ray, cast only on a press, so a short weapon range does not limit it).
         private const float PingRange = 300f;
 
@@ -100,6 +102,16 @@ namespace ProjectH.Client.Game
         private readonly ProjectileTracks _projectiles = new ProjectileTracks();
         private ProjectileViews _projectileViews;
         private ProjectileInfo[] _projectileCatalog;
+        // Phase 19 D4, D9, D11, D15: the vehicles from VehicleStates (reset at a disconnect and at a join or resume), their views,
+        // and our newest own snapshot (entity, self block, ack, tick) so leaving a seat can snap the movement prediction at once
+        // when that snapshot is already at or after the exit tick.
+        private readonly VehicleStore _vehicles = new VehicleStore();
+        private VehicleViews _vehicleViews;
+        private bool _hasOwnSnapshot;
+        private SnapshotEntity _ownEntity;
+        private SnapshotSelf _ownSelf;
+        private uint _ownAck;
+        private uint _ownTick;
         // Phase 11 D9: entity id -> name from PlayerSpawned. At most one entry per player in the match: removed on
         // despawn, cleared with the match state (disconnect).
         private readonly Dictionary<ushort, string> _names = new Dictionary<ushort, string>();
@@ -289,7 +301,28 @@ namespace ProjectH.Client.Game
             LootPrompt = Qa.QaHttp.LootPromptName((byte)_lootPrompt),
             Projectiles = _projectileViews.Drawn,   // Phase 17
             Audio = _audio.QaStatus,                // Phase 18 D12
+            Vehicle = QaVehicle,                    // Phase 19 D14
         };
+
+        // 기능: /qa/status의 vehicle 필드를 모은다(Phase 19 D14: 최신 VehicleStates 기준 탄 상태, 그 차량의 속도·체력, 그린 차량 수).
+        // 입력: 없음.
+        // 출력: 차량 필드. 앉아 있지 않으면 vehicleId 0, seat -1, speed·health 0.
+        private Qa.QaVehicleStatus QaVehicle
+        {
+            get
+            {
+                var status = new Qa.QaVehicleStatus { Seat = -1, VisibleVehicles = _vehicleViews.Drawn };
+                if (!_vehicles.TryFindSeat(MyEntityId, out int index, out int seat)) return status;
+                VehicleRecord record = _vehicles.Latest[index];
+                status.Seated = true;
+                status.VehicleId = record.Id;
+                status.Seat = seat;
+                status.Health = record.Health;
+                bool driving = _predictor != null && _predictor.Vehicle.Active && _predictor.Vehicle.VehicleId == record.Id;
+                status.Speed = driving ? _predictor.Vehicle.State.Speed : record.Speed;
+                return status;
+            }
+        }
 #endif
 
         // 기능: 게임 입력 기준으로 커서가 잠겨 있는지 알려 준다.
@@ -403,8 +436,8 @@ namespace ProjectH.Client.Game
 
         // 기능: 소리 시스템(Phase 18: 클립 합성, 목소리 풀, UI 클릭음 연결)·월드·입력·카메라·HUD·건설 표시(Phase 13.5: 편집 오버레이)·
         //   분대 표시(Phase 14: 분대 HUD, 팀원 표지, 스테이션 기둥)·지도(Phase 15: 미니맵, 전체 지도, 월드 표지)·Loot 표시(Phase 16: Container,
-        //   Supply Drop)·투사체 표시(Phase 17)·네트워크를 만들고 네트워크 이벤트(Phase 17: 투사체 패킷 3종, Phase 18: 사건 Placed·WorldSound 포함)를
-        //   구독한다.
+        //   Supply Drop)·투사체 표시(Phase 17)·차량 표시(Phase 19)·네트워크를 만들고 네트워크 이벤트(Phase 17: 투사체 패킷 3종, Phase 18: 사건
+        //   Placed·WorldSound, Phase 19: VehicleStates 포함)를 구독한다.
         // 입력: 없음(Unity가 한 번 부른다).
         // 출력: 반환값 없음. 만든 것은 모두 OnDestroy가 해제한다. 배치와 편집은 순번 카운터 하나를 같이 쓴다.
         private void Awake()
@@ -453,6 +486,7 @@ namespace ProjectH.Client.Game
             _containerViews = new ContainerViews(_buildSource);
             _supplyDropViews = new SupplyDropViews(_buildSource);
             _projectileViews = new ProjectileViews(_buildSource);
+            _vehicleViews = new VehicleViews(_buildSource);
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             _qaRecorder = Qa.QaInputRecorder.FromLaunch();
@@ -506,11 +540,14 @@ namespace ProjectH.Client.Game
             _net.ProjectileExplodedReceived += OnProjectileExploded;
             _net.BuildPlacedEventReceived += OnBuildPlacedEvent;
             _net.WorldSoundReceived += OnWorldSound;
+            _net.VehicleStatesReceived += OnVehicleStates;
         }
 
         // 기능: 한 프레임의 Client 처리: 네트워크 Poll, 재접속, 입력·커서, 원격 플레이어 렌더, 시점과 이동 예측, 로컬 뷰 배치.
         //   Phase 14 D7: E가 눌려 있으면 이번 프레임의 모든 입력에 InteractHeld를 켠다.
         //   Phase 17 D9: 행동할 수 없는 모드(기절·탑승·낙하 등)이거나 수류탄이 없으면 6(ThrowGrenade) 누름을 버린다(서버도 막는다).
+        //   Phase 19: 차량을 숨김 규칙으로 정리하고 렌더 Tick 표본을 뽑는다. 앉아 있으면 누르고 있는 Space를 제동으로 모든 입력에 넣고, 조수석이면
+        //   그리는 차량의 좌석에 둔다. 원격 플레이어는 예측 뒤에 그린다(내가 운전하는 차량의 조수석 사람이 예측 좌석에 앉도록).
         // 입력: 없음(Unity가 매 프레임 부른다).
         // 출력: 반환값 없음. 예측 상태와 보낼 입력 Step 수(_pendingSteps)가 갱신된다. 커서 잠금은 CursorLocked(QA 가정 포함)로 본다.
         private void Update()
@@ -521,14 +558,24 @@ namespace ProjectH.Client.Game
             _input.Update(_inputBlocked || !CursorLocked);
             UpdateCursorAndButtons();
 
-            if (_clock != null && _clock.IsReady)
+            // Phase 19 D4: hide vehicles missing for a second (with no vehicle the server sends nothing), and leave a seat whose
+            // packets stopped.
+            _vehicles.Expire(Time.unscaledTime);
+            if (_predictor != null && _predictor.Seated && !_vehicles.IsSeated(MyEntityId)) _predictor.EndSeated(_vehicles.LastTick);
+
+            bool clockReady = _clock != null && _clock.IsReady;
+            if (clockReady)
             {
                 // The only place _renderTick is set: LateUpdate sends this exact value as ViewTick (see SetAim).
                 _renderTick = _clock.RenderTick(Time.unscaledTimeAsDouble, _interpolationDelaySeconds);
-                _remotePlayers.Render(_renderTick);
+                _vehicles.Render(_renderTick);
             }
 
-            if (_predictor == null) return;
+            if (_predictor == null)
+            {
+                if (clockReady) _remotePlayers.Render(_renderTick, _vehicles);
+                return;
+            }
 
             // Phase 11 D5: with a screen up or the cursor free, no look, move, sprint or fire, and keys pressed meanwhile
             // are dropped. The predictor still steps, so empty inputs keep going out (the Phase 10 input timeout).
@@ -539,17 +586,37 @@ namespace ProjectH.Client.Game
             if (!blocked && _input.Sprint) held |= InputButtons.Sprint;
             if (!blocked && _input.CrouchHeld) held |= InputButtons.Crouch;   // Phase 12 D7
             if (!blocked && _input.InteractHeld) held |= InputButtons.InteractHeld;   // Phase 14 D7
+            if (!blocked && _predictor.Seated && _input.JumpHeld) held |= InputButtons.Jump;   // Phase 19 D10: the brake is held
             if (_fireHeld) held |= InputButtons.Fire;
             held = _edit.MaskHeld(held);   // Phase 13.5 D10: no shot while the left button picks edit tiles
             if (blocked) _input.QueuedButtons = InputButtons.None;
             if (!blocked) UpdateBuildKeys();
             InputButtons queued = _input.QueuedButtons;
             // Phase 17 D9: a throw the server would refuse is not sent (dead presses are dropped by the predictor).
-            if (!LocalPlayerPredictor.ActionsAllowed(_predictor.Mode) || _inventory.Grenades == 0) queued &= ~InputButtons.ThrowGrenade;
+            if (!_predictor.CanAct || _inventory.Grenades == 0) queued &= ~InputButtons.ThrowGrenade;
             _pendingSteps += _predictor.Advance(Time.deltaTime, blocked ? Vector2.zero : _input.Move, _camera.Yaw, held, ref queued);
             _input.QueuedButtons = queued;
 
-            _localView.Place(_predictor.RenderPosition, _predictor.RenderYaw, _predictor.Mode, _predictor.Sprinting);
+            // Phase 19 D9: the driver's vehicle is drawn where it is predicted; a passenger (ourselves or a remote one in our car)
+            // sits on the seat of the vehicle as drawn.
+            float viewYaw = _predictor.RenderYaw;
+            VehiclePredictor driven = _predictor.Vehicle;
+            if (driven.Active)
+            {
+                var move = driven.State;
+                move.Position = driven.RenderPosition;
+                move.Heading = driven.RenderHeading;
+                _vehicles.OverrideDrawn(driven.VehicleId, move);
+                viewYaw = driven.RenderHeading;
+            }
+            else if (_predictor.Seated && _vehicles.TrySeatAt(MyEntityId, out VehicleRecord seatedIn, out int seat))
+            {
+                _predictor.SetSeatPosition(VehicleSimulation.SeatPosition(seatedIn.Position, seatedIn.Heading, seat).ToUnity());
+                viewYaw = seatedIn.Heading;
+            }
+            if (clockReady) _remotePlayers.Render(_renderTick, _vehicles);
+
+            _localView.Place(_predictor.RenderPosition, viewYaw, _predictor.Mode, _predictor.Sprinting, _predictor.Seated && !_predictor.IsDead);
         }
 
         // 기능: 카메라가 움직인 뒤의 프레임 처리: 조준점(과 맞힌 Collider), 입력 전송, 사격 효과, 편집 모드(Phase 13.5), 건설, 표시, HUD.
@@ -559,6 +626,8 @@ namespace ProjectH.Client.Game
         //   Phase 17: 투사체·폭발 표시(등장 전에도, 지금 서버 Tick 추정으로 외삽), 내 예광탄의 퍼짐·산탄(로켓은 예광탄 없음)과 반동 킥, 무기 줄의
         //   탄 종류 이름.
         //   Phase 18: 내 예측 사격의 총성(로켓은 발사음)을 낸다.
+        //   Phase 19: 차량 표시(등장 전에도), 앉아 있으면 차량 카메라·조준점 숨김·차량 HUD, 안내 순서("[E] 내리기"가 먼저, "[E] 탑승"은 문·Loot
+        //   다음 줍기 앞: 서버 우선순위의 복사본 VehiclePrompt), 행동 판정은 탄 상태를 포함한 CanAct로 본다. 앉아 있으면 무기 슬롯 줄을 숨긴다.
         // 입력: 없음(LateUpdate가 매 프레임 부른다).
         // 출력: 반환값 없음. 예측 입력이 전송되고 화면이 갱신된다.
         private void LateUpdateGame()
@@ -587,6 +656,7 @@ namespace ProjectH.Client.Game
                 _projectileViews.Draw(_projectiles, projectileTick, _simHz);
             }
             _projectileViews.Tick(Time.time);
+            DrawVehicles();
             if (_predictor == null) _buildStore.ClearChanged();   // nothing reads the changes before the spawn: do not let them pile up
             if (_predictor == null) return;
             float now = Time.time;
@@ -598,12 +668,17 @@ namespace ProjectH.Client.Game
             Vector3 followFeet = watching ? watched : _predictor.RenderPosition;
             // Phase 12 D14: the camera eases to our own mode (a watched player gets the standard camera).
             MovementMode mode = watching || !alive ? MovementMode.Ground : _predictor.Mode;
-            _camera.Follow(followFeet, _aiming, Time.deltaTime, mode, !watching && alive && _predictor.Sprinting);
+            // Phase 19 D11: seated, the vehicle camera follows the vehicle as drawn.
+            bool seated = alive && _predictor.Seated;
+            Vector3 vehicleCenter = default;
+            bool vehicleCamera = !watching && seated && TryGetMyVehicle(out vehicleCenter, out _);
+            _camera.Follow(vehicleCamera ? vehicleCenter : followFeet, _aiming, Time.deltaTime, mode, !watching && alive && _predictor.Sprinting,
+                vehicleCamera);
             // Phase 6 D7: the place name of whoever the camera follows. Text changes only when the place does.
             _poiLabel.SetVisible(true);
             _poiLabel.SetPosition(followFeet);
-            // Phase 14 D4: downed, nothing can be aimed or fired.
-            _crosshair.SetVisible(alive && !_blockedThisFrame && _predictor.Mode != MovementMode.Downed);
+            // Phase 14 D4: downed, nothing can be aimed or fired. Phase 19 D5: nor seated.
+            _crosshair.SetVisible(alive && !_blockedThisFrame && _predictor.Mode != MovementMode.Downed && !seated);
 
             // After the camera moved, so aim, tracer and the sent inputs all use the crosshair of this frame.
             Vector3 aimPoint = FindAimPoint(out Collider aimCollider);
@@ -644,14 +719,14 @@ namespace ProjectH.Client.Game
                 _camera.Kick(fired.RecoilDegrees * shots);
             }
             _fireEffects.Tick(now);
-            UpdateEdit(alive, LocalPlayerPredictor.ActionsAllowed(_predictor.Mode), now, aimCollider);
-            UpdateBuild(alive, LocalPlayerPredictor.ActionsAllowed(_predictor.Mode), now);
+            UpdateEdit(alive, _predictor.CanAct, now, aimCollider);
+            UpdateBuild(alive, _predictor.CanAct, now);
             UpdateBuildPresentation(alive, now);
 
             _hud.SetVitals(_health, _shield);
             // Phase 12 D14: the energy bar (hidden when full and not sprinting) and the hint line.
             float energy = _predictor.Energy / MovementTuning.MaxEnergy;
-            bool onFoot = LocalPlayerPredictor.ActionsAllowed(_predictor.Mode);
+            bool onFoot = _predictor.CanAct;   // Phase 19: not seated either
             // Shown on foot and in the air alike (the energy recovers while falling, too).
             _hud.SetEnergy(energy, alive && (energy < 1f || _predictor.Sprinting), _predictor.Exhausted);
             // Phase 14 D7: a revive or reboot in range (or under way) comes before the door and the item prompt, like the server.
@@ -669,7 +744,16 @@ namespace ProjectH.Client.Game
                 else loot = -1;
             }
             _lootPrompt = LootState.KindOf(loot);
-            _hud.SetHint(squadHint ?? (loot >= 0 ? LootHint(_lootPrompt) : Hint(alive, door)));
+            // Phase 19 D6, D15: after the door and the loot, before the pickup, as the server picks (Ground or Crouch, not in a channel).
+            int enter = -1;
+            if (alive && !seated && !squadTarget && door < 0 && loot < 0 &&
+                (_predictor.Mode == MovementMode.Ground || _predictor.Mode == MovementMode.Crouch))
+                enter = VehiclePrompt.FindEnterTarget(hintFeet, _vehicles.Latest, _vehicles.Latest.Length);
+            // Seated, E always gets out first (the server reads it before anything else).
+            string hint = seated ? UiText.HintVehicleExit
+                : squadHint ?? (loot >= 0 ? LootHint(_lootPrompt) : Hint(alive, door) ?? (enter >= 0 ? UiText.HintVehicleEnter : null));
+            _hud.SetHint(hint);
+            UpdateVehicleHud(seated);
             if (_weapons != null && _weapons.HasWeapon)
                 _hud.SetWeapon(_weapons.Current.Name, _weapons.Ammo, _weapons.Reserve, _weapons.Reloading, AmmoName(_weapons.Current.AmmoType));
             else _hud.ClearWeapon();
@@ -677,7 +761,8 @@ namespace ProjectH.Client.Game
 
             // D9, D12: E means the door first, and aboard, falling or vaulting it does nothing: no item prompt then. Phase 16 D4:
             // nor with a container or supply drop to open.
-            UpdateInventoryHud(alive, onFoot && door < 0 && loot < 0 && !squadTarget, now);
+            _inventoryHud.SetSlotsVisible(!seated);   // Phase 19: the vehicle HUD takes their place; toggles only on a change
+            UpdateInventoryHud(alive, onFoot && door < 0 && loot < 0 && !squadTarget && enter < 0, now);
             UpdateMatchHud(alive);
             UpdateMap(alive, watching, followFeet);
         }
@@ -689,6 +774,53 @@ namespace ProjectH.Client.Game
         {
             LateUpdateGame();
             TickAudio();
+        }
+
+        // 기능: 차량 뷰를 이번 프레임 표본(내가 운전하는 차량은 예측)으로 그리고, 보이지 않는 슬롯은 숨긴다(Phase 19 D11). 할당 없음.
+        // 입력: 없음.
+        // 출력: 반환값 없음.
+        private void DrawVehicles()
+        {
+            float now = Time.time;
+            for (int i = 0; i < _vehicles.SlotCount; i++)
+            {
+                if (_clock != null && _vehicles.TryGetDrawn(i, out VehicleRecord record)) _vehicleViews.Draw(i, record, now, Time.deltaTime);
+                else _vehicleViews.Hide(i);
+            }
+        }
+
+        // 기능: 내가 앉은 차량의 그리는 중심과 최신 기록을 찾는다(Phase 19: 카메라·HUD).
+        // 입력: center - 결과(운전 중이면 예측 위치, 조수석이면 렌더 Tick 표본), record - 결과(최신 패킷의 기록).
+        // 출력: 앉아 있고 그 차량이 보이면 true.
+        private bool TryGetMyVehicle(out Vector3 center, out VehicleRecord record)
+        {
+            center = default;
+            record = default;
+            if (!_vehicles.TryFindSeat(MyEntityId, out int index, out _)) return false;
+            record = _vehicles.Latest[index];
+            if (_predictor != null && _predictor.Vehicle.Active && _predictor.Vehicle.VehicleId == record.Id)
+            {
+                center = _predictor.Vehicle.RenderPosition.ToUnity();
+                return true;
+            }
+            if (!_vehicles.TrySeatAt(MyEntityId, out VehicleRecord drawn, out _)) return false;
+            center = drawn.Position.ToUnity();
+            return true;
+        }
+
+        // 기능: 탄 동안의 차량 HUD(속도 km/h, 체력 막대)를 갱신한다(Phase 19 D11). 속도는 운전 중이면 예측, 아니면 최신 기록.
+        // 입력: seated - 살아서 앉아 있는지.
+        // 출력: 반환값 없음.
+        private void UpdateVehicleHud(bool seated)
+        {
+            if (!seated || !_vehicles.TryFindSeat(MyEntityId, out int index, out _))
+            {
+                _hud.SetVehicle(false, 0f, 0f);
+                return;
+            }
+            VehicleRecord record = _vehicles.Latest[index];
+            bool driving = _predictor.Vehicle.Active && _predictor.Vehicle.VehicleId == record.Id;
+            _hud.SetVehicle(true, driving ? _predictor.Vehicle.State.Speed : record.Speed, record.Health / (float)VehiclePrompt.MaxHealth);
         }
 
         // 기능: 소리 한 프레임(Phase 18): 문 변화(D9: 예측 마스크와 마지막으로 들은 마스크 비교), 발소리(D5), 내 재장전 시작, 자기장 축소 시작
@@ -898,7 +1030,7 @@ namespace ProjectH.Client.Game
             _build.Update(now, inBuildMode, pressed, inBuildMode && _fireHeld, feet.ToNumerics(), eye, _camera.Yaw, _camera.Pitch, _buildStore);
         }
 
-        // 기능: 건설 표시 한 프레임: 바뀐 조각과 짓는 중인 조각, 유령, 편집 오버레이(Phase 13.5), 휘두르기·채집 효과, HUD.
+        // 기능: 건설 표시 한 프레임: 바뀐 조각과 짓는 중인 조각, 유령, 편집 오버레이(Phase 13.5), 휘두르기·채집 효과(Phase 19: 앉아 있으면 없음), HUD.
         //   저장소의 변경 목록은 여기서 매 프레임 비운다.
         // 입력: alive - 살아 있음, now - 현재 시각.
         // 출력: 반환값 없음. 화면 Object와 HUD가 갱신된다.
@@ -908,7 +1040,7 @@ namespace ProjectH.Client.Game
             _buildStore.ClearChanged();
             _buildPreview.Update(_build);
             _editOverlay.Update(_edit);
-            bool onFoot = LocalPlayerPredictor.ActionsAllowed(_predictor.Mode);
+            bool onFoot = _predictor.CanAct;   // Phase 19: no swing while seated
             if (alive && onFoot && _tools.Current == ToolKind.Harvest && _fireHeld && !_blockedThisFrame && now >= _nextSwingAt)
             {
                 float interval = _build.Catalog != null && _simHz > 0 ? _build.Catalog.HarvestCooldownTicks / (float)_simHz : 0.5f;
@@ -947,7 +1079,7 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 분대 표시 한 프레임(Phase 14 D14): 분대 HUD 줄(2명 이상일 때), 소지 카드, 팀원 표지(경기 안의 팀원, 기절이면 빨강),
-        //   내 기절 막대, 나와 관련된 소생·재투입 진행 막대(서버 Tick 기준), 그리고 소생·재투입 안내를 고른다.
+        //   내 기절 막대, 나와 관련된 소생·재투입 진행 막대(서버 Tick 기준), 그리고 소생·재투입 안내를 고른다(Phase 19: 앉아 있으면 안내 없음).
         // 입력: alive - 살아 있음, targetInRange - 결과(소생·재투입 대상이 범위 안이거나 내가 진행 중이면 true: 문·줍기 안내를 끈다).
         // 출력: 안내 문구(UiText 상수) 또는 null. 문자열은 바뀔 때만 만들고 이 함수는 할당하지 않는다.
         private string UpdateSquad(bool alive, out bool targetInRange)
@@ -999,7 +1131,7 @@ namespace ProjectH.Client.Game
             }
             _squadHud.SetChannel(label, progress);
 
-            bool up = alive && LocalPlayerPredictor.ActionsAllowed(_predictor.Mode) && !_spectator.Active;
+            bool up = alive && _predictor.CanAct && !_spectator.Active;   // Phase 19: seated, E gets out instead
             if (!up) return null;
             if (label != null)
             {
@@ -1147,7 +1279,7 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 구독을 풀고 만든 것을 만든 역순으로 해제한다(편집 오버레이는 공유 Mesh보다 먼저, Phase 14 분대 표시, Phase 15 지도,
-        //   Phase 16 Loot 표시, Phase 17 투사체 표시, Phase 18 소리 시스템 포함).
+        //   Phase 16 Loot 표시, Phase 17 투사체 표시, Phase 18 소리 시스템, Phase 19 차량 표시 포함).
         // 입력: 없음(Unity가 부른다, 종료 때도).
         // 출력: 반환값 없음.
         private void OnDestroy()
@@ -1198,6 +1330,7 @@ namespace ProjectH.Client.Game
             _net.ProjectileExplodedReceived -= OnProjectileExploded;
             _net.BuildPlacedEventReceived -= OnBuildPlacedEvent;
             _net.WorldSoundReceived -= OnWorldSound;
+            _net.VehicleStatesReceived -= OnVehicleStates;
             _net.Dispose();
             ClearMatchState();
             // Phase 18: the clips and voices go with the client; buttons that outlive it no longer reach the audio.
@@ -1208,6 +1341,7 @@ namespace ProjectH.Client.Game
             _qaRecorder = null;
 #endif
             _killFeed.Dispose();
+            _vehicleViews.Dispose();
             _projectileViews.Dispose();
             _supplyDropViews.Dispose();
             _containerViews.Dispose();
@@ -1250,7 +1384,8 @@ namespace ProjectH.Client.Game
         // 기능: 커서 잠금과 발사·조준 버튼 상태를 이번 프레임 값으로 정한다.
         // 입력: 없음(InputReader, UI 제어 값, 관전 상태를 읽는다).
         // 출력: 반환값 없음. Cursor.lockState, _fireHeld, _aiming, _fireBlockedUntilRelease가 바뀌고 관전 중 클릭이면 대상이 넘어간다.
-        //       Phase 13.5: 편집 모드 중에는 _fireHeld와 _aiming이 false다(왼쪽은 칸 선택, 오른쪽은 Reset).
+        //       Phase 13.5: 편집 모드 중에는 _fireHeld와 _aiming이 false다(왼쪽은 칸 선택, 오른쪽은 Reset). Phase 19: 차량에 앉아 있어도 false다
+        //       (행동 없음, 조준 줌이 차량 카메라를 당기지 않게).
         // Left click locks a free cursor (only once joined) and fires while it is locked (D12).
         // Aim and fire only count while the cursor is locked, i.e. while the mouse controls the game.
         // Phase 5 D5: while spectating, a left click on a locked cursor moves to the next player and never fires;
@@ -1290,8 +1425,9 @@ namespace ProjectH.Client.Game
             if (!_input.FireHeld) _fireBlockedUntilRelease = false;
             // Phase 13.5 D10: in edit mode the left button picks tiles and the right one resets: neither fires nor aims, so
             // Fire never reaches an input (the server does not shoot) and the camera does not zoom.
-            _fireHeld = locked && !_inputBlocked && _input.FireHeld && !_fireBlockedUntilRelease && !_spectator.Active && !_edit.Active;
-            _aiming = locked && !_inputBlocked && _input.AimHeld && !_edit.Active;
+            bool seated = _predictor != null && _predictor.Seated;
+            _fireHeld = locked && !_inputBlocked && _input.FireHeld && !_fireBlockedUntilRelease && !_spectator.Active && !_edit.Active && !seated;
+            _aiming = locked && !_inputBlocked && _input.AimHeld && !_edit.Active && !seated;
         }
 
         // 기능: 조준선이 가리키는 점과 그곳의 Collider를 낸다. 원격 플레이어는 PlayerViewFactory.RemoteHitLayer에 Collider가 있어
@@ -1385,7 +1521,7 @@ namespace ProjectH.Client.Game
         // 기능: 참가 응답을 처리한다. 성공(또는 재개)이면 Entity·Tick 정보와 시계를 정하고 건설·편집·도구 상태를 처음으로 되돌린다.
         //   Phase 17 D7: 투사체를 비운다(서버가 살아 있는 것을 ProjectileSpawned로 다시 보낸다).
         //   Phase 18 D9: 소리의 상태 비교를 처음으로 되돌린다(이어서 오는 문·Container·Supply Drop 상태는 기준일 뿐 변화가 아니다). 응답의
-        //   ServerTick을 투사체 재전송 기준으로 기억한다.
+        //   ServerTick을 투사체 재전송 기준으로 기억한다. Phase 19 D15: 차량 상태를 비운다(다음 기록은 기준이고 Tick 비교도 처음부터).
         // 입력: response - 서버의 참가 응답.
         // 출력: 반환값 없음. 거절이면 자동 재접속을 멈춘다.
         private void OnJoined(JoinMatchResponse response)
@@ -1411,6 +1547,7 @@ namespace ProjectH.Client.Game
             ClearProjectiles();
             _audio.ResetMatch();
             _audio.Doors.ArmBaseline(Time.unscaledTime, false);
+            ClearVehicles();
             _projectileJoinTick = response.ServerTick;
             _interpolationDelaySeconds = InterpolationSnapshots / response.SnapshotHz;
             _clock = new ServerClock(response.SimHz);
@@ -1552,6 +1689,10 @@ namespace ProjectH.Client.Game
             _names.Remove(entityId);
         }
 
+        // 기능: Snapshot을 적용한다: 내 체력·실드·무기·도구, 내 엔티티로 이동 예측 교정(Phase 19: 내린 순간 Snap을 위해 마지막 내 기록을 기억),
+        //   원격 플레이어 표본.
+        // 입력: header - 헤더, entities·count - NetClient의 재사용 배열.
+        // 출력: 반환값 없음.
         private void OnSnapshot(in WorldSnapshotHeader header, SnapshotEntity[] entities, int count)
         {
             if (_clock == null) return;
@@ -1567,6 +1708,11 @@ namespace ProjectH.Client.Game
             {
                 if (entities[i].EntityId == MyEntityId)
                 {
+                    _hasOwnSnapshot = true;
+                    _ownEntity = entities[i];
+                    _ownSelf = header.Self;
+                    _ownAck = header.AckInputSeq;
+                    _ownTick = header.ServerTick;
                     if (_predictor != null) _predictor.Reconcile(entities[i], header.Self, header.AckInputSeq, header.ServerTick);
                 }
                 else
@@ -1965,6 +2111,78 @@ namespace ProjectH.Client.Game
             if (_predictor != null) _predictor.DestroyedHarvestables = destroyed;
         }
 
+        // 기능: VehicleStates 하나를 처리한다(Phase 19 D4, D9, D15): 오래된 Tick이면 버리고, 아니면 저장소에 적용해 변화 소리를 내고
+        //   내 탄 상태를 맞춘다.
+        // 입력: serverTick·ackInputSeq - 헤더, records·count - NetClient의 재사용 배열(호출 동안만 유효).
+        // 출력: 반환값 없음.
+        private void OnVehicleStates(uint serverTick, uint ackInputSeq, VehicleRecord[] records, int count)
+        {
+            if (_clock == null) return;
+            int n = Math.Min(Math.Max(count, 0), records.Length);
+            if (!_vehicles.Apply(serverTick, ackInputSeq, new ReadOnlySpan<VehicleRecord>(records, 0, n), n, Time.unscaledTime, _simHz))
+                return;
+            PlayVehicleSounds();
+            ApplyMySeat(serverTick, ackInputSeq);
+        }
+
+        // 기능: 방금 적용한 기록의 변화 소리를 차량 자리에서 낸다(Phase 19 D11, D15: 파괴 = 폭발, 타기·내리기 = 문 소리, 충돌). 기준 기록은
+        //   저장소가 이미 걸렀다.
+        // 입력: 없음(VehicleStore의 이번 변화).
+        // 출력: 반환값 없음. 소리 요청이 큐에 들어간다.
+        private void PlayVehicleSounds()
+        {
+            for (int i = 0; i < _vehicles.ChangeCount; i++)
+            {
+                VehicleChange change = _vehicles.Change(i);
+                Vector3 at = change.Position.ToUnity();
+                // Vehicle sources are kept apart from projectile ids (both can make an Explosion).
+                uint source = VehicleSoundSource + change.Id;
+                if ((change.Sounds & VehicleSounds.Wrecked) != 0)
+                {
+                    _audio.Play3D(SoundKind.Explosion, at, source);
+                    continue;
+                }
+                if ((change.Sounds & VehicleSounds.Entered) != 0) _audio.Play3D(SoundKind.VehicleEnter, at, source);
+                if ((change.Sounds & VehicleSounds.Exited) != 0) _audio.Play3D(SoundKind.VehicleExit, at, source);
+                if ((change.Sounds & VehicleSounds.Impact) != 0) _audio.Play3D(SoundKind.VehicleImpact, at, source);
+            }
+        }
+
+        // 기능: 최신 VehicleStates로 내 탄 상태를 맞춘다(D15 인계): 나를 적은 기록이 있으면 앉히고(처음이면 편집 취소·웅크리기 해제, 내리기 입력까지
+        //   처리했는데도 앉아 있으면 거절된 내리기를 지운다), 운전석이면
+        //   그 기록과 ack로 운전 예측을 시작하거나 맞춘다. 없는데 앉아 있었으면 내리고, 이미 받은 내 Snapshot이 그 Tick 이후면 바로 Snap한다.
+        // 입력: serverTick - 패킷 Tick, ackInputSeq - 패킷의 내 마지막 처리 입력.
+        // 출력: 반환값 없음.
+        private void ApplyMySeat(uint serverTick, uint ackInputSeq)
+        {
+            if (_predictor == null) return;
+            if (!_predictor.IsDead && _vehicles.TryFindSeat(MyEntityId, out int index, out int seat))
+            {
+                if (!_predictor.Seated)
+                {
+                    CancelEdit();
+                    _input.ResetCrouch();
+                }
+                _predictor.SetSeated(seat);
+                _predictor.ExitRefused(ackInputSeq);   // still seated after the exit input: refused, the brake comes back
+                if (seat == VehicleSettings.DriverSeat) _predictor.Vehicle.Reconcile(_vehicles.Latest[index], ackInputSeq);
+                return;
+            }
+            if (!_predictor.Seated) return;
+            _predictor.EndSeated(serverTick);
+            if (_hasOwnSnapshot && _ownTick >= serverTick) _predictor.Reconcile(_ownEntity, _ownSelf, _ownAck, _ownTick);
+        }
+
+        // 기능: 차량 상태와 표시를 비운다(끊김, 입장·재개).
+        // 입력: 없음.
+        // 출력: 반환값 없음.
+        private void ClearVehicles()
+        {
+            _vehicles.Reset();
+            _vehicleViews.HideAll();
+            _hasOwnSnapshot = false;
+        }
+
         private void OnStats(StatsResponse response)
         {
             _stats = response;
@@ -2007,7 +2225,7 @@ namespace ProjectH.Client.Game
 
         // 기능: 경기 상태 전체를 비운다(끊김, 종료). 조각·편집 예측·편집 모드와 오버레이, Phase 14 팀·채널·스테이션·분대 표시,
         //   Phase 15 팀 Ping·Waypoint·경로 선·지도 아이콘·월드 표지, Phase 16 Container·Supply Drop 상태와 표시, Phase 17 투사체·폭발·투사체
-        //   카탈로그·카메라 반동, Phase 18 소리 대기 요청·발소리·변화 추적 상태도 비운다.
+        //   카탈로그·카메라 반동, Phase 18 소리 대기 요청·발소리·변화 추적 상태, Phase 19 차량 상태·표시·차량 HUD도 비운다(무기 슬롯 줄은 다시 보이게).
         // 입력: 없음.
         // 출력: 반환값 없음. 화면 Object는 숨기거나 풀로 돌아간다.
         private void ClearMatchState()
@@ -2069,6 +2287,7 @@ namespace ProjectH.Client.Game
             _hud.SetVisible(false);
             _inventoryHud.SetUseProgress(-1f);
             _inventoryHud.SetPrompt(0, 0, null, null);
+            _inventoryHud.SetSlotsVisible(true);
             _inventoryHud.SetVisible(false);
             _fireEffects.HideAll();
             _squad.Clear();
@@ -2090,6 +2309,8 @@ namespace ProjectH.Client.Game
             _camera.ResetRecoil();
             _audio.ResetMatch();
             _projectileJoinTick = 0;
+            ClearVehicles();
+            _hud.SetVehicle(false, 0f, 0f);
         }
     }
 }

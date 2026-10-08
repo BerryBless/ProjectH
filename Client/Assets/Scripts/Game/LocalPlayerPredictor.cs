@@ -16,6 +16,10 @@ namespace ProjectH.Client.Game
     // Phase 12: the whole MoveState (mode, horizontal velocity, energy, vault ticks) is predicted and reconciled. Aboard the
     // drop transport it rides the route at the server tick each input will be simulated at (snapshot tick - ack + seq),
     // and its own shoulder bashes and E on doors are predicted into PredictedDoors.
+    // Phase 19 D9, D15: seated in a vehicle (VehicleStates says so; the mode stays Ground) the movement is not predicted or
+    // reconciled: inputs are still made and recorded (the server reads them as the vehicle's), the position is the seat, no
+    // door is predicted and no action is allowed. In the driver seat the owned VehiclePredictor steps with every input. Leaving
+    // the seat snaps the movement prediction to the next snapshot at or after the exit tick (the history is stale by then).
     public sealed class LocalPlayerPredictor
     {
         public const int HistorySize = 64;                 // ~2 s at 30 Hz; older unacked input -> snap
@@ -34,6 +38,8 @@ namespace ProjectH.Client.Game
 
         private readonly InputCommand[] _inputs = new InputCommand[HistorySize];
         private readonly MoveState[] _results = new MoveState[HistorySize];
+        // Phase 19: whether the input of each slot was made while seated (no action for it, like a non-acting mode).
+        private readonly bool[] _seatedAt = new bool[HistorySize];
         private readonly float _stepSeconds;
         private readonly PredictedDoors _doors;
         private readonly CollisionWorld _collision = new CollisionWorld();
@@ -48,7 +54,17 @@ namespace ProjectH.Client.Game
         private DropRoute _route;
         private long _tickBase;
         private bool _hasTickBase;
+        // Phase 19 D15: after leaving a seat, the next snapshot at or after this tick replaces the state (no comparison).
+        private bool _snapPending;
+        private uint _snapFromTick;
+        // Phase 19 review: the seq of the seated input that carried the exit press (0 = none). The server unseats on that input
+        // and walks the next ones, so later seated inputs drop the held brake (Jump would be a jump on foot) until the exit is
+        // known (EndSeated) or refused (ExitRefused).
+        private uint _exitSeq;
 
+        // 기능: 이동 예측기를 만든다(Phase 19: 운전 예측기를 같이 만든다).
+        // 입력: simHz - 서버 Tick률, spawnState - 시작 상태, doors - 예측 문(null이면 새로 만든다).
+        // 출력: 시작 상태에서 예측을 시작하는 객체.
         public LocalPlayerPredictor(int simHz, MoveState spawnState, PredictedDoors doors = null)
         {
             _stepSeconds = 1f / simHz;
@@ -56,7 +72,20 @@ namespace ProjectH.Client.Game
             _state = spawnState;
             _previous = spawnState;
             RenderPosition = spawnState.Position.ToUnity();
+            Vehicle = new VehiclePredictor(this, _stepSeconds);
         }
+
+        // Phase 19 D9: the driver's vehicle prediction (active only while we drive).
+        public VehiclePredictor Vehicle { get; }
+        // Phase 19 D15: seated in a vehicle (from VehicleStates), and in which seat (-1 = none).
+        public bool Seated { get; private set; }
+        public int Seat { get; private set; } = -1;
+        // The predicted doors' mask (the vehicle prediction gathers with it, like the movement).
+        internal byte DoorMask => _doors.OpenMask;
+        // Phase 19 review: the seq of the input that asked to get out, 0 when none is pending.
+        public uint ExitSeq => _exitSeq;
+        // Phase 19 D15: may our newest state act (not seated and an acting mode). The server takes no action from a seated input.
+        public bool CanAct => !Seated && ActionsAllowed(_state.Mode);
 
         public uint LastSeq { get; private set; }
         public Vector3 RenderPosition { get; private set; }
@@ -107,15 +136,24 @@ namespace ProjectH.Client.Game
             _hasRoute = false;
         }
 
-        // D12: whether the server lets the input seq act (the mode after its move).
-        public bool ActionsAllowedAt(uint seq) => ActionsAllowed(_results[(int)(seq % HistorySize)].Mode);
+        // 기능: 서버가 입력 seq로 행동하게 하는지 본다(D12: 그 이동 뒤 모드. Phase 19: 앉은 채 만든 입력은 행동하지 않는다).
+        // 입력: seq - 최근 HistorySize개 안의 입력 번호.
+        // 출력: 행동할 수 있으면 true.
+        public bool ActionsAllowedAt(uint seq)
+        {
+            int slot = (int)(seq % HistorySize);
+            return !_seatedAt[slot] && ActionsAllowed(_results[slot].Mode);
+        }
 
         public static bool ActionsAllowed(MovementMode mode) =>
             mode == MovementMode.Ground || mode == MovementMode.Crouch || mode == MovementMode.Slide;
 
         // 기능: 프레임 시간만큼 고정 Tick 시뮬레이션을 돌리고 Step마다 입력 하나를 만든다(죽어 있으면 빈 입력).
+        //   Phase 19: 앉아 있으면 이동·문 예측 없이 입력만 만들고(누르고 있는 Jump = 제동도 모든 Step에), 운전 중이면 차량을 예측하며
+        //   위치를 좌석으로 둔다. 내리기 누름(Interact)을 실은 입력 뒤의 앉은 입력에서는 Jump를 뺀다(서버가 걸어서 처리해 점프가 된다).
         // 입력: deltaTime - 프레임 시간, move - 이동 입력, yaw - 카메라 방향, held - 누르고 있는 버튼(Sprint·Fire·Crouch·
-        //   Phase 14 InteractHeld, 모든 Step에 들어간다), queued - 누른 순간 버튼(마지막 Step에만, 쓴 비트는 지운다. Phase 17: ThrowGrenade 포함).
+        //   Phase 14 InteractHeld, 모든 Step에 들어간다. Phase 19: 앉아 있으면 Jump도), queued - 누른 순간 버튼(마지막 Step에만, 쓴 비트는
+        //   지운다. Phase 17: ThrowGrenade 포함).
         // 출력: 돈 Step 수(만든 입력 수).
         // held: Sprint, Fire, Crouch and InteractHeld, applied to every step. queued: Jump, Reload, Slot1-3, Interact, Drop, UseMedkit,
         // UseShieldCell, the tool keys and (Phase 17) ThrowGrenade presses; they ride on
@@ -142,6 +180,26 @@ namespace ProjectH.Client.Game
                     command = new InputCommand { Seq = ++LastSeq, Yaw = yaw };
                     if (lastStep) queued = InputButtons.None;
                 }
+                else if (Seated)
+                {
+                    // Phase 19 D10: the vehicle reads Jump (brake) and Sprint (boost) as held on every tick. After an exit press the
+                    // brake is dropped: the server walks those inputs, and the car without a driver brakes by itself.
+                    var buttons = held & (HeldButtons | InputButtons.Jump);
+                    if (_exitSeq != 0) buttons &= ~InputButtons.Jump;
+                    if (lastStep)
+                    {
+                        buttons |= queued & QueuedButtons;
+                        queued = InputButtons.None;
+                    }
+                    command = new InputCommand { Seq = ++LastSeq, MoveX = move.x, MoveY = move.y, Yaw = yaw, Buttons = buttons };
+                    if (_exitSeq == 0 && (buttons & InputButtons.Interact) != 0) _exitSeq = command.Seq;
+                    Sprinting = false;
+                    if (Vehicle.Active)
+                    {
+                        Vehicle.Step(command);
+                        _state.Position = Vehicle.SeatFeet(Seat);
+                    }
+                }
                 else
                 {
                     var buttons = held & HeldButtons;
@@ -160,13 +218,83 @@ namespace ProjectH.Client.Game
                 int slot = (int)(command.Seq % HistorySize);
                 _inputs[slot] = command;
                 _results[slot] = _state;
+                _seatedAt[slot] = Seated && !IsDead;
                 steps++;
             }
 
             float alpha = _accumulator / _stepSeconds;
+            if (Seated && !IsDead)
+            {
+                // Phase 19 D9: the seat of the vehicle as drawn (the driver's prediction; a passenger's seat comes from
+                // SetSeatPosition).
+                _previous = _state;
+                _renderError = Vector3.zero;
+                if (Vehicle.Active)
+                {
+                    Vehicle.UpdateRender(alpha, deltaTime);
+                    RenderPosition = Vehicle.RenderSeat(Seat).ToUnity();
+                }
+                return steps;
+            }
             _renderError = Vector3.Lerp(_renderError, Vector3.zero, 1f - Mathf.Exp(-ErrorDecayPerSecond * deltaTime));
             RenderPosition = Vector3.Lerp(_previous.Position.ToUnity(), _state.Position.ToUnity(), alpha) + _renderError;
             return steps;
+        }
+
+        // 기능: 차량에 앉았음을 알린다(Phase 19 D15: VehicleStates가 나를 Driver·Passenger로 적었다). 이동 예측이 멈추고 모드는 서버처럼
+        //   Ground, 속도는 0이 된다. 운전석이 아니면 운전 예측을 멈춘다.
+        // 입력: seat - 좌석 번호(0 운전석, 1 조수석).
+        // 출력: 반환값 없음.
+        public void SetSeated(int seat)
+        {
+            if (!Seated)
+            {
+                _state.Mode = MovementMode.Ground;
+                _state.HorizontalVelocity = default;
+                _state.VelocityY = 0f;
+                _previous = _state;
+                _renderError = Vector3.zero;
+                Sprinting = false;
+            }
+            Seated = true;
+            Seat = seat;
+            _snapPending = false;
+            if (seat != VehicleSettings.DriverSeat) Vehicle.Stop();
+        }
+
+        // 기능: 좌석 발 위치를 정한다(조수석: 그리는 차량의 좌석, Phase 19 D9). 앉아 있지 않거나 죽었으면 무시한다.
+        // 입력: feet - 좌석 발 위치.
+        // 출력: 반환값 없음. 예측 위치와 그리는 위치가 좌석이 된다.
+        public void SetSeatPosition(Vector3 feet)
+        {
+            if (!Seated || IsDead) return;
+            _state.Position = feet.ToNumerics();
+            _previous = _state;
+            RenderPosition = feet;
+        }
+
+        // 기능: 내리기 요청이 거절되었는지 본다(Phase 19 리뷰: 내릴 자리가 없으면 서버는 내리지 않는다). 그 입력까지 처리한 VehicleStates가
+        //   여전히 나를 앉은 사람으로 적었으면 대기 중인 내리기를 지워 제동(Jump)이 다시 나가게 한다.
+        // 입력: ackInputSeq - 나를 앉은 사람으로 적은 VehicleStates의 AckInputSeq.
+        // 출력: 반환값 없음.
+        public void ExitRefused(uint ackInputSeq)
+        {
+            if (_exitSeq != 0 && ackInputSeq >= _exitSeq) _exitSeq = 0;
+        }
+
+        // 기능: 차량에서 내렸음을 알린다(Phase 19 D15). 대기 중인 내리기를 지우고 운전 예측을 멈추고, fromTick 이후의 다음 Snapshot이 비교 없이 상태를 바꾸게 한다
+        //   (내리기는 순간이동이고 앉은 동안의 이동 기록은 낡았다).
+        // 입력: fromTick - 내림을 알린 VehicleStates의 ServerTick.
+        // 출력: 반환값 없음.
+        public void EndSeated(uint fromTick)
+        {
+            if (!Seated) return;
+            Seated = false;
+            Seat = -1;
+            _exitSeq = 0;
+            Vehicle.Stop();
+            _snapPending = true;
+            _snapFromTick = fromTick;
         }
 
         // One input, exactly as Match.Tick runs it: ride the route aboard, otherwise one Step against the predicted world;
@@ -250,17 +378,30 @@ namespace ProjectH.Client.Game
         }
 
         // PlayerDied for us (Reliable): stop predicting until the respawn.
+        // 기능: 내 사망을 적용한다(예측 정지, Phase 19: 운전 예측도 멈춘다. 대기 중인 내리기도 지운다. 탄 상태는 서버가 먼저 내리므로 VehicleStates가 지운다).
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void SetDead()
         {
             IsDead = true;
+            _exitSeq = 0;
+            Vehicle.Stop();
         }
 
         // PlayerRespawned for us: a teleport. State restarts at the spawn point (Phase 12: in the mode the server says),
         // but Seq continues: the server drops any seq it has already taken, so restarting at 1 would make every later
         // input ignored.
+        // 기능: 부활 순간이동을 적용한다(Phase 19: 탄 상태, 대기 중인 Snap과 내리기도 지운다).
+        // 입력: spawn - 부활 상태.
+        // 출력: 반환값 없음.
         public void Respawn(MoveState spawn)
         {
             IsDead = false;
+            Seated = false;
+            Seat = -1;
+            _snapPending = false;
+            _exitSeq = 0;
+            Vehicle.Stop();
             _state = spawn;
             _previous = spawn;
             _renderError = Vector3.zero;
@@ -272,6 +413,10 @@ namespace ProjectH.Client.Game
         // Phase 12: the owner's movement state comes in two parts, the entity (position, VelocityY, mode and flags) and the
         // snapshot's self block (horizontal velocity, energy, tick counters). serverTick: the snapshot's tick; with ackSeq
         // it gives the tick every later input is simulated at (D5).
+        // 기능: 내 Snapshot으로 이동 예측을 맞춘다. Phase 19 D15: 앉아 있으면 건너뛰고, 내린 뒤에는 내린 Tick 이후의 첫 Snapshot으로 비교 없이
+        //   상태를 바꾸고 ack 뒤 입력을 재실행한다(교정 오프셋 없이 바로 옮김).
+        // 입력: server - 내 엔티티 기록, self - Self 블록, ackSeq - 처리된 마지막 입력, serverTick - Snapshot Tick.
+        // 출력: 반환값 없음. 예측 상태가 바뀔 수 있다.
         public void Reconcile(in SnapshotEntity server, in SnapshotSelf self, uint ackSeq, uint serverTick)
         {
             // Snapshot data is untrusted and NetClient does not validate it. A non-finite value would
@@ -297,6 +442,9 @@ namespace ProjectH.Client.Game
                 _tickBase = (long)serverTick - ackSeq;
                 _hasTickBase = true;
             }
+            // Phase 19 D15: seated, the server places us on the seat and the vehicle prediction does the work. A snapshot older
+            // than the exit still shows the seat.
+            if (Seated || (_snapPending && serverTick < _snapFromTick)) return;
 
             var authoritative = new MoveState
             {
@@ -331,12 +479,15 @@ namespace ProjectH.Client.Game
             if (ackSeq == 0 || ackSeq > LastSeq || LastSeq - ackSeq >= HistorySize)
             {
                 // Nothing to replay from (no input sent yet, or history already overwritten).
+                _snapPending = false;
                 Snap(authoritative);
                 return;
             }
 
             MoveState predicted = _results[(int)(ackSeq % HistorySize)];
-            if (Matches(predicted, authoritative)) return;
+            bool exitSnap = _snapPending;
+            _snapPending = false;
+            if (!exitSnap && Matches(predicted, authoritative)) return;
 
             // Misprediction: restart from the server state and replay unacknowledged inputs.
             System.Numerics.Vector3 oldPosition = _state.Position;
@@ -351,9 +502,11 @@ namespace ProjectH.Client.Game
                 _results[slot] = _state;
             }
 
-            // Keep the rendered position continuous and let the difference decay, unless it is large.
+            // Keep the rendered position continuous and let the difference decay, unless it is large. Phase 19: leaving a seat
+            // always jumps (the seat and the exit spot are different places, not a misprediction).
             Vector3 correction = (oldPosition - _state.Position).ToUnity();
-            _renderError = correction.sqrMagnitude > SnapDistance * SnapDistance ? Vector3.zero : _renderError + correction;
+            _renderError = exitSnap || correction.sqrMagnitude > SnapDistance * SnapDistance ? Vector3.zero : _renderError + correction;
+            if (exitSnap) return;
             if (firstTickBase && predicted.Mode == MovementMode.Transport) return;   // held, not mispredicted
             LastCorrection = correction.magnitude;
             Corrections++;

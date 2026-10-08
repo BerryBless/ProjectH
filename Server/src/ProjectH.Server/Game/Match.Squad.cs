@@ -106,11 +106,12 @@ public sealed partial class Match
     }
 
     // 기능: 플레이어를 기절시킨다(D4, D5): Downed 모드, 체력 = downedHealth, 실드 0, 출혈 시작, 진행 중인 재장전·회복·소생 취소,
-    //   PlayerDowned 방송. 자유낙하·글라이드 중이었으면 이어지는 착지의 낙하 피해를 한 번 면한다(DownedInAir).
+    //   PlayerDowned 방송. 자유낙하·글라이드 중이었으면 이어지는 착지의 낙하 피해를 한 번 면한다(DownedInAir). Phase 19: 차량에 탔으면 먼저 내린다.
     // 입력: victim - 서 있던 플레이어, attacker - 기절시킨 사람(null = 없음), cause - 원인(Phase 17: 공격자가 있어도 그대로 보낸다. 사격은 Zone, 폭발은 Explosion).
     // 출력: 반환값 없음.
     private void Down(PlayerEntity victim, PlayerEntity? attacker, DeathCause cause)
     {
+        ForceExit(victim);   // Phase 19 D6: out of the vehicle first (the downed body crawls from the exit spot)
         victim.DownedInAir = victim.State.Mode == MovementMode.Freefall || victim.State.Mode == MovementMode.Glide;
         victim.State.Mode = MovementMode.Downed;
         victim.State.ModeTicks = 0;
@@ -157,13 +158,14 @@ public sealed partial class Match
     }
 
     // 기능: 한 명의 탈락을 반영한다(D9의 옛 Kill 본문 + Phase 14): 사망, 재장전·회복·소생 취소, 경기 중이면 사람 수와 배치·처치 수,
-    //   PlayerDied 방송(announce), 소지품 드롭, 팀이 살아 있으면 들고 있던 카드와 자기 카드 드롭(아니면 카드는 사라진다).
+    //   PlayerDied 방송(announce), 소지품 드롭, 팀이 살아 있으면 들고 있던 카드와 자기 카드 드롭(아니면 카드는 사라진다). Phase 19: 차량에 탔으면 먼저 내린다.
     // 입력: victim - 탈락자, killer - 처치자(null = 없음), cause - PlayerDied의 원인(Phase 17: 처치자가 있어도 그대로. 사격 Zone, 폭발 Explosion),
     //   placement - 보낼(잠정) 배치,
     //   announce - PlayerDied를 보낼지(경기 이탈은 보내지 않는다), teamSurvives - 팀이 아직 살아 있는지(카드를 떨어뜨린다).
     // 출력: 반환값 없음.
     private void EliminateOne(PlayerEntity victim, PlayerEntity? killer, DeathCause cause, byte placement, bool announce, bool teamSurvives)
     {
+        ForceExit(victim);   // Phase 19 D6: out first, so DropEverything drops where it stands
         victim.Alive = false;
         victim.RespawnAtTick = ServerTick + _respawnTicks;
         // The reload dies with the player; otherwise the corpse's snapshots would report it (D10).
@@ -328,7 +330,7 @@ public sealed partial class Match
 
     // 기능: 한 Tick의 소생·재투입 진행(D7, D8, D10): 진행 중이면 계속 조건을 보고 끝나면 완료하며, 아니면 E를 누르고 있을 때 시작한다.
     //   누르고 있음은 매 입력의 InteractHeld다(놓친 입력의 반복도 이어지지만 유예 중인 사람은 바로 취소한다, D13). 다른 행동(사격, 회복,
-    //   무기·도구 키, 드롭, 재장전)을 한 실제 입력은 취소한다. 경기 중(또는 개발 모드)에만 돈다.
+    //   무기·도구 키, 드롭, 재장전)을 한 실제 입력은 취소한다. 경기 중(또는 개발 모드)에만 돈다. Phase 19 D15: 차량에 탄 사람은 시작·계속할 수 없다.
     // 입력: player - 살아 있는 플레이어, input - 이 Tick 입력, sent - 실제로 받은 입력인지, previous - 직전 실제 입력의 버튼, now - 마지막 Tick.
     // 출력: 반환값 없음.
     private void UpdateChannel(PlayerEntity player, in InputCommand input, bool sent, InputButtons previous, uint now)
@@ -342,7 +344,7 @@ public sealed partial class Match
         }
         bool held = (input.Buttons & InputButtons.InteractHeld) != 0 && !player.IsGraced;
         bool interrupted = sent && ((input.Buttons & ChannelInterruptHeld) != 0 || (PressedOnly(input.Buttons, previous) & ChannelInterruptEdges) != 0);
-        bool able = player.IsUp && ActionsAllowed(player.State.Mode);
+        bool able = player.IsUp && CanAct(player);   // Phase 19 D15: never from a seat
         if (player.ChannelActive)
         {
             if (!held || interrupted || !able || !ChannelStillValid(player))

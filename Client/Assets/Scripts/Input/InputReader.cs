@@ -128,6 +128,8 @@ namespace ProjectH.Client.Input
         public Vector2 Move => _move.ReadValue<Vector2>();
         public Vector2 LookDelta => _look.ReadValue<Vector2>();
         public bool Sprint => _sprint.IsPressed();
+        // Phase 19 D10: Space is down now (the vehicle's brake is held; on foot the press stays the queued Jump).
+        public bool JumpHeld => _jump.IsPressed();
         public bool FirePressed => _fire.WasPressedThisFrame();
         // Phase 14 D7: E is down now (sent as InteractHeld in every input; the press stays the queued Interact).
         public bool InteractHeld => _interact.IsPressed();

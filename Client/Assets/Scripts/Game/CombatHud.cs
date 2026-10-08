@@ -19,6 +19,9 @@ namespace ProjectH.Client.Game
         // Phase 12 D14: the energy bar above the vitals line (full width = full energy).
         private const float EnergyBarWidth = 220f;
         private const float EnergyBarHeight = 8f;
+        // Phase 19 D11: the vehicle line at the bottom centre while seated: the speed and the vehicle health bar.
+        private const float VehicleBarWidth = 260f;
+        private const float VehicleBarHeight = 10f;
 
         private readonly GameObject _root;
         private readonly Text _vitals;
@@ -31,6 +34,10 @@ namespace ProjectH.Client.Game
         private readonly GameObject _hitMarker;
         private readonly Image[] _hitBars = new Image[4];
         private readonly RectTransform _damageIndicator;
+        private readonly GameObject _vehicleRoot;
+        private readonly Text _vehicleSpeed;
+        private readonly RectTransform _vehicleFill;
+        private readonly Image _vehicleFillImage;
 
         private bool _visible;
         private int _health = -1;
@@ -48,7 +55,13 @@ namespace ProjectH.Client.Game
         private string _hintText;
         private int _energyPixels = -1;
         private bool _energyExhausted;
+        private int _vehicleKmh = -1;
+        private int _vehiclePixels = -1;
+        private bool _vehicleLow;
 
+        // 기능: HUD 캔버스와 줄·막대·표시를 만든다(Phase 19: 차량 속도·체력 줄 포함, 모두 숨긴 채).
+        // 입력: 없음.
+        // 출력: 숨겨진 HUD(Dispose가 캔버스를 파괴한다).
         public CombatHud()
         {
             _root = new GameObject("CombatHud");
@@ -100,7 +113,64 @@ namespace ProjectH.Client.Game
             _damageIndicator.anchorMax = new Vector2(0.5f, 0.5f);
             _damageIndicator.gameObject.SetActive(false);
 
+            // Phase 19 D11: the vehicle line (hidden until seated).
+            _vehicleRoot = new GameObject("Vehicle", typeof(RectTransform));
+            var vehicleRect = (RectTransform)_vehicleRoot.transform;
+            vehicleRect.SetParent(_root.transform, false);
+            vehicleRect.anchorMin = new Vector2(0.5f, 0f);
+            vehicleRect.anchorMax = new Vector2(0.5f, 0f);
+            vehicleRect.pivot = new Vector2(0.5f, 0f);
+            vehicleRect.anchoredPosition = new Vector2(0f, 60f);
+            vehicleRect.sizeDelta = new Vector2(VehicleBarWidth, 50f);
+            _vehicleSpeed = CreateText("Speed", font, new Vector2(0.5f, 0.5f), new Vector2(0f, 14f), TextAnchor.MiddleCenter);
+            _vehicleSpeed.rectTransform.SetParent(vehicleRect, false);
+            Image vehicleBack = CreateBar(vehicleRect, Vector2.zero, new Vector2(VehicleBarWidth, VehicleBarHeight), 0f);
+            vehicleBack.color = new Color(0f, 0f, 0f, 0.5f);
+            var vehicleBackRect = vehicleBack.rectTransform;
+            vehicleBackRect.anchorMin = new Vector2(0f, 0f);
+            vehicleBackRect.anchorMax = new Vector2(0f, 0f);
+            vehicleBackRect.pivot = Vector2.zero;
+            vehicleBackRect.anchoredPosition = Vector2.zero;
+            _vehicleFillImage = CreateBar(vehicleBackRect, Vector2.zero, new Vector2(VehicleBarWidth, VehicleBarHeight), 0f);
+            _vehicleFill = _vehicleFillImage.rectTransform;
+            _vehicleFill.anchorMin = Vector2.zero;
+            _vehicleFill.anchorMax = Vector2.zero;
+            _vehicleFill.pivot = Vector2.zero;
+            _vehicleFill.anchoredPosition = Vector2.zero;
+            _vehicleFillImage.color = new Color(0.45f, 0.9f, 0.45f);
+            _vehicleRoot.SetActive(false);
+
             _root.SetActive(false);
+        }
+
+        // 기능: 탄 동안의 차량 줄을 보이거나 숨긴다(Phase 19 D11: 속도 km/h와 차량 체력 막대, 30 % 아래면 빨강). 보이는 값이 바뀔 때만
+        //   문자열·크기를 고친다.
+        // 입력: visible - 앉아 있는지, speed - 차량 속도(m/s, 부호 무시), healthFraction - 체력 비율(0..1).
+        // 출력: 반환값 없음.
+        public void SetVehicle(bool visible, float speed, float healthFraction)
+        {
+            if (_root == null) return;
+            if (_vehicleRoot.activeSelf != visible) _vehicleRoot.SetActive(visible);
+            if (!visible) return;
+            int kmh = Mathf.RoundToInt(Mathf.Abs(speed) * 3.6f);
+            if (kmh != _vehicleKmh)
+            {
+                _vehicleKmh = kmh;
+                _vehicleSpeed.text = UiText.VehicleSpeed(kmh);
+            }
+            float fraction = Mathf.Clamp01(healthFraction);
+            int pixels = Mathf.RoundToInt(fraction * VehicleBarWidth);
+            if (pixels != _vehiclePixels)
+            {
+                _vehiclePixels = pixels;
+                _vehicleFill.sizeDelta = new Vector2(pixels, VehicleBarHeight);
+            }
+            bool low = fraction < VehicleViews.SmokeHealthFraction;
+            if (low != _vehicleLow)
+            {
+                _vehicleLow = low;
+                _vehicleFillImage.color = low ? new Color(1f, 0.3f, 0.25f) : new Color(0.45f, 0.9f, 0.45f);
+            }
         }
 
         public void SetVisible(bool visible)

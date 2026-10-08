@@ -46,6 +46,8 @@
     <Compile Include="..\..\..\Client\Assets\Scripts\Game\Build\BuildStore.cs" Link="ClientCopies\BuildStore.cs" />
     <!-- Phase 16 D4: the client's copy of the container rule, compared with the server's ContainerRules (ContainerRulesTests). -->
     <Compile Include="..\..\..\Client\Assets\Scripts\Game\ContainerRule.cs" Link="ClientCopies\ContainerRule.cs" />
+    <!-- Phase 19 D6, D15: the client's copy of the vehicle enter rule and maxHealth, compared with the server's (VehicleMatchTests). -->
+    <Compile Include="..\..\..\Client\Assets\Scripts\Game\VehiclePrompt.cs" Link="ClientCopies\VehiclePrompt.cs" />
   </ItemGroup>
 
 </Project>

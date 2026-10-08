@@ -4,6 +4,7 @@ using LiteNetLib;
 using ProjectH.Server.Game.Build;
 using ProjectH.Server.Game.Combat;
 using ProjectH.Server.Game.Items;
+using ProjectH.Server.Game.Vehicles;
 using ProjectH.Shared.Protocol;
 using ProjectH.Shared.Simulation;
 
@@ -171,7 +172,7 @@ public sealed partial class Match
     private void ClearProjectiles() => _projectiles.Clear();
 
     // 기능: 한 Tick의 투사체 갱신(D6): 퓨즈·수명이 끝난 것은 폭발, 나머지는 정확한 등가속 적분 후 이번 이동 선분을 맵 상자·닫힌 문·
-    //   서 있는 채집 대상·지형(+바닥면), 건설 조각, (로켓만) 플레이어 현재 위치와 판정한다. 로켓은 맞으면 폭발, 수류탄은 맞은 면 법선으로
+    //   서 있는 채집 대상·지형(+바닥면), 건설 조각, (로켓만) 플레이어 현재 위치(Phase 19: 탄 사람 제외)와 Active 차량 발자국과 판정한다. 로켓은 맞으면 폭발, 수류탄은 맞은 면 법선으로
     //   튕기고(위를 향한 면(법선 Y ≥ RestNormalY)에서 속도 < RestSpeed면 정지) ProjectileState를 보낸다. 이번 Tick에 생긴 투사체는 다음 Tick부터 움직인다(Tick 앞에서 부른다).
     // 입력: now - 마지막으로 끝난 Tick(이번에 now + 1을 시뮬레이션한다).
     // 출력: 반환값 없음. 투사체가 움직이거나 폭발하고 사건이 방송된다.
@@ -225,11 +226,18 @@ public sealed partial class Match
             hit = true;
         }
         // D6: only a rocket meets players, where they are now (no rewind); its owner and the owner's team are passed through.
+        // Phase 19 D7: and the vehicles (any vehicle: it hits the car its target sits in); a seated player is not hit itself.
         if (definition.ExplodesOnImpact)
         {
+            if (TraceVehicles(from, direction, hit ? nearest : length, -1, out float vehicleDistance) != null)
+            {
+                nearest = vehicleDistance;
+                normal = -direction;
+                hit = true;
+            }
             foreach (var other in _players)
             {
-                if (!other.Alive || other.State.Mode == MovementMode.Transport || IsOwnerOrTeammate(p, other)) continue;
+                if (!other.Alive || other.InVehicle || other.State.Mode == MovementMode.Transport || IsOwnerOrTeammate(p, other)) continue;
                 if (HitScan.TracePlayer(from, direction, nearest, other.State.Position, MovementSimulation.CollisionHeight(other.State.Mode),
                         out float distance) && (!hit || distance < nearest))
                 {
@@ -281,7 +289,7 @@ public sealed partial class Match
         target.JoinOrder == p.OwnerJoinOrder || (p.OwnerTeam != 0 && target.TeamId == p.OwnerTeam);
 
     // 기능: 투사체를 터뜨린다(D8): 칸을 먼저 비우고 모두에게 ProjectileExploded를 보낸 뒤, 피해가 허용될 때만 플레이어(시선 검사)와
-    //   조각(시선 없이 경계까지 거리)에 감쇠 피해를 준다. 처치 = 아직 경기에 살아 있는 주인, 없으면 처치 없음.
+    //   조각(시선 없이 경계까지 거리), (Phase 19) 차량(시선 검사)에 감쇠 피해를 준다. 처치 = 아직 경기에 살아 있는 주인, 없으면 처치 없음.
     // 입력: slot - 투사체 칸, position - 폭발 위치, tick - 시뮬레이션 중인 Tick.
     // 출력: 반환값 없음.
     private void Explode(int slot, Vector3 position, uint tick)
@@ -300,13 +308,14 @@ public sealed partial class Match
         {
             players = ExplodePlayers(p, position);
             pieces = ExplodePieces(p.Definition, position);
+            ExplodeVehicles(p, position);   // Phase 19 D7
         }
         _explosionLog[_explosionLogNext] = new ExplosionRecord(p.Id, p.Definition.Kind, position, tick, p.OwnerEntityId, players, pieces);
         _explosionLogNext = (_explosionLogNext + 1) % ExplosionLogSize;
     }
 
-    // 기능: 폭발의 플레이어 피해(D8): 반지름 안(몸 상자까지 거리), 주인·주인 팀이 아님, 폭발점 → 몸 중심 시선이 맵·문·지형·조각에
-    //   막히지 않음. 피해 = 중심 피해 × 선형 감쇠 × 등급 배율.
+    // 기능: 폭발의 플레이어 피해(D8): 반지름 안(몸 상자까지 거리), 주인·주인 팀이 아님, (Phase 19) 차량에 타지 않음, 폭발점 → 몸 중심 시선이
+    //   맵·문·지형·조각에 막히지 않음. 피해 = 중심 피해 × 선형 감쇠 × 등급 배율.
     // 입력: p - 터진 투사체(칸은 이미 비었다), position - 폭발 위치.
     // 출력: 피해를 받은 플레이어 수.
     private int ExplodePlayers(in Projectile p, Vector3 position)
@@ -317,7 +326,7 @@ public sealed partial class Match
         int hits = 0;
         foreach (var target in _players)
         {
-            if (!target.Alive || target.State.Mode == MovementMode.Transport || IsOwnerOrTeammate(p, target)) continue;
+            if (!target.Alive || target.InVehicle || target.State.Mode == MovementMode.Transport || IsOwnerOrTeammate(p, target)) continue;
             Vector3 feet = target.State.Position;
             float height = MovementSimulation.CollisionHeight(target.State.Mode);
             var min = new Vector3(feet.X - MoveSettings.HalfWidth, feet.Y, feet.Z - MoveSettings.HalfWidth);

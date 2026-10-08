@@ -66,6 +66,12 @@ namespace ProjectH.Client.Game.Audio
         MapOpen,
         MapClose,
 
+        // Phase 19 D11: added after the Phase 18 kinds so the earlier values (clip seeds, QA indices) stay the same. Getting in
+        // and out reuse the door sounds' recipes; a wreck plays Explosion.
+        VehicleEnter,
+        VehicleExit,
+        VehicleImpact,
+
         Count,
     }
 
@@ -131,6 +137,8 @@ namespace ProjectH.Client.Game.Audio
         public const float HarvestDistance = 30f;
         public const float LootDistance = 15f;
         public const float DoorDistance = 20f;
+        // Phase 19 D11: a vehicle hitting something is heard as far as building.
+        public const float VehicleImpactDistance = 40f;
         // D5: footsteps are computed only for players within this distance of the listener (the farthest footstep, a sprint).
         public const float FootstepComputeDistance = SprintDistance;
         // Own footsteps are 2D and quieter than another player's at the same distance (they would mask the others otherwise).
@@ -201,7 +209,7 @@ namespace ProjectH.Client.Game.Audio
             }
         }
 
-        // 기능: 표를 만든다(D3의 우선순위·거리, D2의 중복 간격). 시작 때 한 번.
+        // 기능: 표를 만든다(D3의 우선순위·거리, D2의 중복 간격, Phase 19 차량 타기·내리기·충돌). 시작 때 한 번.
         // 입력: 없음.
         // 출력: SoundKind.Count칸 배열.
         private static SoundInfo[] BuildTable()
@@ -262,6 +270,11 @@ namespace ProjectH.Client.Game.Audio
             t[(int)SoundKind.UiClick] = new SoundInfo(7, 0f, 0.05f, 0.5f, 1);
             t[(int)SoundKind.MapOpen] = new SoundInfo(7, 0f, 0.1f, 0.5f, 1);
             t[(int)SoundKind.MapClose] = new SoundInfo(7, 0f, 0.1f, 0.5f, 1);
+            // Phase 19 D11: getting in and out like a door (5, 20 m); an impact like building damage (3, 40 m), at most one per
+            // vehicle every 0.3 s.
+            t[(int)SoundKind.VehicleEnter] = new SoundInfo(5, DoorDistance, 0.15f, 0.7f, 1);
+            t[(int)SoundKind.VehicleExit] = new SoundInfo(5, DoorDistance, 0.15f, 0.7f, 1);
+            t[(int)SoundKind.VehicleImpact] = new SoundInfo(3, VehicleImpactDistance, 0.3f, 0.9f, 2);
             return t;
         }
     }

@@ -68,13 +68,15 @@ namespace ProjectH.Client.CameraControl
 
         // Call from LateUpdate with the rendered feet position, and the mode of whoever is followed (D14).
         // 기능: 카메라를 따라갈 발 위치에 놓는다(조준 줌, 모드별 거리, 벽 충돌). Phase 17 D3: 반동을 프레임 시간만큼 되돌리고 반동이 더해진
-        //   AimPitch로 회전과 조준 광선을 정한다.
-        // 입력: targetFeet - 따라갈 발 위치, aiming - 조준 중, deltaTime - 프레임 시간, mode - 따라가는 사람의 이동 모드, sprinting - 달리기 중.
+        //   AimPitch로 회전과 조준 광선을 정한다. Phase 19 D11: 차량에 앉아 있으면 차량 카메라(8 m 뒤, 2.5 m 위)로 부드럽게 바뀐다.
+        // 입력: targetFeet - 따라갈 발 위치(차량이면 차량 중심), aiming - 조준 중, deltaTime - 프레임 시간, mode - 따라가는 사람의 이동 모드,
+        //   sprinting - 달리기 중, vehicle - 차량 카메라를 쓸지.
         // 출력: 반환값 없음. 카메라 Transform·FOV와 AimRay가 바뀐다.
-        public void Follow(Vector3 targetFeet, bool aiming, float deltaTime, MovementMode mode = MovementMode.Ground, bool sprinting = false)
+        public void Follow(Vector3 targetFeet, bool aiming, float deltaTime, MovementMode mode = MovementMode.Ground, bool sprinting = false,
+            bool vehicle = false)
         {
-            _aimBlend = ShoulderCameraMath.Approach(_aimBlend, aiming ? 1f : 0f, AimBlendSharpness, deltaTime);
-            _hip = ShoulderCameraMath.Approach(_hip, ShoulderCameraMath.TargetsFor(mode, sprinting), deltaTime);
+            _aimBlend = ShoulderCameraMath.Approach(_aimBlend, aiming && !vehicle ? 1f : 0f, AimBlendSharpness, deltaTime);
+            _hip = ShoulderCameraMath.Approach(_hip, vehicle ? ShoulderCameraMath.Vehicle : ShoulderCameraMath.TargetsFor(mode, sprinting), deltaTime);
             _recoil.Step(deltaTime);
             float pitch = AimPitch;
             ShoulderPose pose = ShoulderCameraMath.Solve(targetFeet, Yaw, pitch, _aimBlend, _distance, deltaTime, _caster, _hip);

@@ -54,8 +54,15 @@ namespace ProjectH.Client.CameraControl
         public const float AirFov = 70f;
         public const float TransportDistance = 12f;
         public const float ModeSharpness = 5f;
+        // Phase 19 D11: seated in a vehicle, a third-person camera 8 m back and 2.5 m above the vehicle's centre.
+        public const float VehicleDistance = 8f;
+        public const float VehiclePivotHeight = 2.5f;
+        public const float VehicleFov = 66f;
 
         public static CameraTargets Hip => new CameraTargets { PivotHeight = PivotHeight, Distance = HipDistance, FieldOfView = HipFov };
+        // Phase 19 D11: the vehicle camera (its feet are the vehicle's centre on the ground).
+        public static CameraTargets Vehicle =>
+            new CameraTargets { PivotHeight = VehiclePivotHeight, Distance = VehicleDistance, FieldOfView = VehicleFov };
 
         // 기능: 모드가 원하는 허리 카메라 값을 고른다(D14: 질주는 넓게, 웅크리기·슬라이드는 낮게, 낙하·글라이드는 멀고 넓게,
         //   탑승은 더 멀리. Phase 14: 기절은 더 낮게).
