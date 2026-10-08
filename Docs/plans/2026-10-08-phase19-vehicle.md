@@ -30,14 +30,14 @@
 
 ## 측정
 
-- `stress-quick` 5/5 PASS(직전 Phase 18 실행과 비교해 50 % 넘게 나빠진 지표 없음).
+- `stress-quick` 5/5 PASS. Baseline(대기 플레이어)이 경고를 냈다: 서버 CPU(steady) 0.103 → 0.165 %(+61 %). 값이 1 % 아래이고 같은 코드에서도 크게 흔들린다(요약 CPU: Phase 18 0.042 %, 경고 실행 0.089 %, 같은 설정 재실행 0.052 %·0.073 %, 재실행 비교는 50 % 넘게 나빠진 지표 없음). 잡음으로 판단했다. 나머지 4개는 Phase 18 실행 대비 50 % 넘게 나빠진 지표가 없다.
 - `stress-gameplay` 10/10 PASS. Combat 하나가 경고를 냈다: `server.tickP99Ms` 0.068 → 0.104 ms(+54 %, 기준선은 2026-10-02 실행). 같은 시나리오를 두 번 다시 돌리니 0.044·0.042 ms로 기준선보다 낮았다. 경고 실행의 값은 4 ms 표본 하나 때문이다(잡음). 나머지 9개는 50 % 넘게 나빠진 지표가 없다.
 - 차량 Tick 경로는 할당이 없다(`DrivingTicks_WithVehicleStates_AllocateNothing`).
 
-## 간헐 실패 (Phase 19 코드와 무관)
+## 간헐 실패
 
 - 할당 측정 테스트 `SnapshotSplitTests.SendingASplitSnapshot_AllocatesNothing`, `BotBrainTests.ALootOrWanderTick_AllocatesNothing`가 전체 실행에서 가끔 한 번 실패하고 다시 돌리면 통과한다(따로 10번 모두 통과). Phase 17의 `WorldItemsTests`와 같은 첫 호출 JIT 할당 종류로 보인다. 봇 변경은 필드 읽기와 입력 비트뿐이다.
-- Unity `audio_footstep`의 순간이동 검사가 약 7번에 1번 발소리 하나를 더 센다(Phase 18 시나리오, 발소리 코드는 탄 사람 무음만 더함).
+- Unity `audio_footstep`의 순간이동 검사가 발소리 하나를 더 센 적이 있다(Phase 19 실행 4번 중 1번, Phase 18 실행 2번 중 0번). **원인은 확인하지 못했다.** Phase 19가 원격 플레이어 표본(`RemotePlayers`)과 발소리 공급(`GameClient`)을 바꿨으므로 Phase 19와 무관하다고 단정하지 않는다. 발소리 순간이동 보호 코드 자체는 바뀌지 않았다.
 
 ## Known Issues
 
