@@ -3,7 +3,7 @@ using ProjectH.Bots;
 // Phase 7: headless bots for match and load tests (Docs/LoadTest.md).
 // Example: dotnet run -c Release --project Server/src/ProjectH.Bots -- --count 16 --port 7777
 const string Usage = "Options: --host 127.0.0.1 --port 7777 --count 1-50 --seed 1 --duration 0 (s, 0 = until Ctrl+C) " +
-                     "--connect-interval-ms 100 --name-prefix bot --stats-interval 10 --reconnect false";
+                     "--connect-interval-ms 100 --name-prefix bot --stats-interval 10 --reconnect false --server-public-key <path> (default: the development key)";
 
 if (!BotOptions.TryParse(args, out BotOptions options, out string? error))
 {

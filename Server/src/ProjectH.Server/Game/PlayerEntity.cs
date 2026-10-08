@@ -52,6 +52,17 @@ public sealed class PlayerEntity
     // (0 = still in, or not a participant); kills count only during the match.
     public bool Participant;
     public byte Placement;
+    // Review fix B4 (game loop thread only): the resume key of the connection this player joined or resumed with
+    // (HMAC(K, "resume"), null = none: such a player can never be resumed), and the highest resume nonce taken with it. A
+    // graced player is resumed only by a proof made with this key (or PrevResumeKey) and a larger nonce; Ok and Resumed set the new
+    // connection's key.
+    public byte[]? ResumeKey;
+    public uint LastResumeNonce;
+    // Review B round 1 (game loop thread only): the key the last Resumed request proved with, and the nonce it used. The client
+    // takes ResumeKey only when JoinMatchResponse arrives, so until then this one (the client's) keeps resuming with a larger
+    // nonce. Set at every Resumed (null at Ok), cleared when the connection's first input is accepted (Match.EnqueueInput).
+    public byte[]? PrevResumeKey;
+    public uint PrevResumeNonce;
     public int Kills;
     // Phase 9 (§37): damage this player dealt to others during the match (shield and health actually removed, no
     // overkill), and the tick it was eliminated (0 = still in). Reset when a match starts.

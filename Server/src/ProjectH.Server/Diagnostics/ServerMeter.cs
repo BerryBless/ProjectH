@@ -18,7 +18,7 @@ public sealed class ServerMeter : IDisposable
     private readonly Meter _meter = new(Name);
 
     // 기능: Health 수치를 읽는 관찰형 계측기를 모두 등록한다(Phase 15: 지도 표시 사건과 MapMarker 드롭, Phase 16: Loot 사건,
-    //   리뷰 수정 A2–A4·A6: 새 거절 이유, 쿠키 응답, 벌점, Seq 창 드롭 포함).
+    //   리뷰 수정 A2–A4·A6: 새 거절 이유, 쿠키 응답, 벌점, Seq 창 드롭, B3: 인증 꼬리 드롭 포함).
     // 입력: h - 시작부터의 합계.
     // 출력: 등록이 끝난 ServerMeter(Dispose가 해제한다).
     public ServerMeter(HealthCounters h)
@@ -57,6 +57,13 @@ public sealed class ServerMeter : IDisposable
         _meter.CreateObservableCounter("projecth.penalties", () => h.Penalties, description: "Addresses penalized for repeated player failures");
         // Review fix A4.
         _meter.CreateObservableCounter("projecth.input_seq_drops", () => h.InputSeqDrops, description: "Inputs dropped for a Seq too far ahead of the last one taken");
+        // Review fix B3. Review B round 2: where=live (a connected endpoint, 0 in a normal run) and where=retired (an endpoint
+        // whose connection closed within the retire window).
+        _meter.CreateObservableCounter("projecth.auth_drops", () => new[]
+        {
+            new Measurement<long>(h.AuthDrops, Tag("where", "live")),
+            new Measurement<long>(h.AuthDropsRetired, Tag("where", "retired")),
+        }, description: "Datagrams from a keyed endpoint whose authentication tail failed");
         _meter.CreateObservableCounter("projecth.kicks", () => ByCode(h));
         _meter.CreateObservableCounter("projecth.bad_packets", () => ByReason(h));
         _meter.CreateObservableCounter("projecth.tick_failures", () => h.TickFailures);

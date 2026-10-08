@@ -24,10 +24,17 @@ public sealed class BotOptions
     public int BuildSpam { get; set; }
     // Phase 13: false = no building at all (load scenario A, comparable with Phase 12: not even defence walls).
     public bool Build { get; set; } = true;
+    // Review fix B1: the server's public key (RSA.ToXmlString(false) text) the bots encrypt their session keys with.
+    // --server-public-key <path> reads it from a file; the default is the development key (DevServerPublicKey.Xml).
+    public string ServerPublicKeyXml { get; set; } = DevServerPublicKey.Xml;
 
+    // 기능: 설정을 검사한다(리뷰 수정 B1: 서버 공개키가 RSA-2048 XML인지 포함).
+    // 입력: 없음.
+    // 출력: 맞으면 null, 틀리면 이유.
     public string? Validate()
     {
         if (string.IsNullOrWhiteSpace(Host)) return "--host must not be empty.";
+        if (!IsPublicKey(ServerPublicKeyXml)) return "--server-public-key must be an RSA-2048 public key in RSA.ToXmlString form.";
         if (Port < 1 || Port > 65535) return "--port must be 1-65535.";
         if (Count < 1 || Count > MaxCount) return $"--count must be 1-{MaxCount} (a match holds at most {MaxCount} players).";
         if (Seed < 0) return "--seed must be 0 or more.";
@@ -46,6 +53,9 @@ public sealed class BotOptions
         return null;
     }
 
+    // 기능: 명령줄을 읽는다(리뷰 수정 B1: --server-public-key 파일 포함).
+    // 입력: args - 명령줄, options·error - 결과를 받을 곳.
+    // 출력: 맞으면 true와 설정, 아니면 false와 이유.
     // "--name value" pairs. Unknown names and malformed numbers are errors, so a typo never runs a different test.
     public static bool TryParse(string[] args, out BotOptions options, out string? error)
     {
@@ -74,6 +84,7 @@ public sealed class BotOptions
                 "--reconnect" => SetBool(value, v => parsed.Reconnect = v),
                 "--build-spam" => SetInt(value, v => parsed.BuildSpam = v),
                 "--build" => SetBool(value, v => parsed.Build = v),
+                "--server-public-key" => SetFile(value, v => parsed.ServerPublicKeyXml = v),
                 _ => false,
             };
             if (!ok)
@@ -92,6 +103,26 @@ public sealed class BotOptions
         return true;
     }
 
+    // 기능: 파일 내용을 읽어 넘긴다(--server-public-key). 파일이 없거나 읽지 못하면 false.
+    // 입력: path - 파일 경로, set - 받을 곳.
+    // 출력: 읽었으면 true.
+    private static bool SetFile(string path, Action<string> set)
+    {
+        try
+        {
+            set(File.ReadAllText(path).Trim());
+            return true;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     private static bool SetBool(string value, Action<bool> set)
     {
         if (!bool.TryParse(value, out bool parsed)) return false;
@@ -104,6 +135,23 @@ public sealed class BotOptions
         if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed)) return false;
         set(parsed);
         return true;
+    }
+
+    // 기능: 문자열이 RSA-2048 공개키 XML인지 본다.
+    // 입력: xml - 검사할 문자열.
+    // 출력: 읽히고 2048비트면 true.
+    private static bool IsPublicKey(string xml)
+    {
+        try
+        {
+            using var rsa = System.Security.Cryptography.RSA.Create();
+            rsa.FromXmlString(xml);
+            return rsa.KeySize == 2048;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     // DevPlayerId of bot i (0-based): "bot-001". Within ProtocolConstants.MaxDevPlayerIdBytes.

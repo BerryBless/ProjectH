@@ -30,87 +30,134 @@ public class PacketTests
         ViewTick = 1000.25f + seq,
     };
 
+    // Review fix B2: every request carries the session key blob (RsaBlobBytes).
+    private static readonly byte[] Blob = MakeBlob();
+
+    // 기능: 시험용 세션 키 blob(256 B, 값은 상관없다)을 만든다.
+    // 입력: 없음.
+    // 출력: RsaBlobBytes 크기 배열.
+    private static byte[] MakeBlob()
+    {
+        var blob = new byte[ProtocolLimits.RsaBlobBytes];
+        for (int i = 0; i < blob.Length; i++) blob[i] = (byte)(i * 3);
+        return blob;
+    }
+
     [Fact]
     public void ConnectRequestData_RoundTrip()
     {
         var writer = new PacketWriter(_buffer);
-        ConnectRequestData.Write(ref writer, new ConnectRequestData { ProtocolVersion = 1, DevPlayerId = "abc" });
+        ConnectRequestData.Write(ref writer, new ConnectRequestData { ProtocolVersion = 1, SessionKeyBlob = Blob, DevPlayerId = "abc" });
         var reader = new PacketReader(_buffer.AsSpan(0, writer.Length));
         Assert.True(ConnectRequestData.TryRead(ref reader, out var data));
         Assert.Equal((ushort)1, data.ProtocolVersion);
         Assert.Equal("abc", data.DevPlayerId);
+        Assert.Equal(Blob, data.SessionKeyBlob);
     }
 
     [Fact]
     public void ConnectRequestData_EmptyId_IsRejected()
     {
         var writer = new PacketWriter(_buffer);
-        ConnectRequestData.Write(ref writer, new ConnectRequestData { ProtocolVersion = 1, DevPlayerId = "" });
+        ConnectRequestData.Write(ref writer, new ConnectRequestData { ProtocolVersion = 1, SessionKeyBlob = Blob, DevPlayerId = "" });
         var reader = new PacketReader(_buffer.AsSpan(0, writer.Length));
         Assert.False(ConnectRequestData.TryRead(ref reader, out _));
     }
 
-    // Review fix A3 (v19): version, flags, the cookie when flags say so, then the name.
+    // Review fixes A3, B2 (v19): version, flags, the cookie when flags say so, the blob, the name, the resume proof when
+    // flags say so.
     [Fact]
-    public void ConnectRequestData_WithACookie_RoundTrips()
+    public void ConnectRequestData_WithACookieAndAResume_RoundTrips_IntoTheCallersBuffers()
     {
         var cookie = new byte[ProtocolLimits.CookieBytes];
         for (int i = 0; i < cookie.Length; i++) cookie[i] = (byte)(200 + i);
-        var writer = new PacketWriter(_buffer);
+        var proof = new byte[ProtocolLimits.ResumeProofBytes];
+        for (int i = 0; i < proof.Length; i++) proof[i] = (byte)(100 + i);
+        var buffer = new byte[ProtocolConstants.MaxPacketSize];
+        var writer = new PacketWriter(buffer);
         ConnectRequestData.Write(ref writer, new ConnectRequestData
         {
-            ProtocolVersion = ProtocolConstants.ProtocolVersion, Flags = ConnectFlags.HasCookie, Cookie = cookie, DevPlayerId = "abc",
+            ProtocolVersion = ProtocolConstants.ProtocolVersion, Flags = ConnectFlags.HasCookie | ConnectFlags.HasResume, Cookie = cookie,
+            SessionKeyBlob = Blob, DevPlayerId = "abc", ResumeNonce = 7, ResumeProof = proof,
         });
-        Assert.Equal(2 + 1 + ProtocolLimits.CookieBytes + 1 + 3, writer.Length);
+        Assert.Equal(2 + 1 + ProtocolLimits.CookieBytes + 2 + ProtocolLimits.RsaBlobBytes + 1 + 3 + 4 + ProtocolLimits.ResumeProofBytes, writer.Length);
 
-        var into = new byte[ProtocolLimits.CookieBytes];
-        var reader = new PacketReader(_buffer.AsSpan(0, writer.Length));
-        Assert.True(ConnectRequestData.TryRead(ref reader, out var data, into));
-        Assert.Equal(ConnectFlags.HasCookie, data.Flags);
-        Assert.Same(into, data.Cookie);   // the caller's buffer: no allocation per request on the server
-        Assert.Equal(cookie, into);
+        var cookieInto = new byte[ProtocolLimits.CookieBytes];
+        var blobInto = new byte[ProtocolLimits.RsaBlobBytes];
+        var proofInto = new byte[ProtocolLimits.ResumeProofBytes];
+        var reader = new PacketReader(buffer.AsSpan(0, writer.Length));
+        Assert.True(ConnectRequestData.TryRead(ref reader, out var data, cookieInto, blobInto, proofInto));
+        Assert.Equal(ConnectFlags.HasCookie | ConnectFlags.HasResume, data.Flags);
+        Assert.Same(cookieInto, data.Cookie);   // the caller's buffers: no allocation per request on the server
+        Assert.Same(blobInto, data.SessionKeyBlob);
+        Assert.Same(proofInto, data.ResumeProof);
+        Assert.Equal(cookie, cookieInto);
+        Assert.Equal(Blob, blobInto);
+        Assert.Equal(proof, proofInto);
+        Assert.Equal(7u, data.ResumeNonce);
         Assert.Equal("abc", data.DevPlayerId);
         Assert.Equal(0, reader.Remaining);
     }
 
     [Fact]
-    public void ConnectRequestData_WithoutACookie_HasNoCookie()
+    public void ConnectRequestData_WithoutACookieOrResume_HasNeither()
     {
         var writer = new PacketWriter(_buffer);
-        ConnectRequestData.Write(ref writer, new ConnectRequestData { ProtocolVersion = 19, DevPlayerId = "abc" });
-        Assert.Equal(2 + 1 + 1 + 3, writer.Length);
+        ConnectRequestData.Write(ref writer, new ConnectRequestData { ProtocolVersion = 19, SessionKeyBlob = Blob, DevPlayerId = "abc" });
+        Assert.Equal(2 + 1 + 2 + ProtocolLimits.RsaBlobBytes + 1 + 3, writer.Length);
         var reader = new PacketReader(_buffer.AsSpan(0, writer.Length));
         Assert.True(ConnectRequestData.TryRead(ref reader, out var data));
         Assert.Equal(ConnectFlags.None, data.Flags);
         Assert.Null(data.Cookie);
+        Assert.Null(data.ResumeProof);
     }
 
     [Fact]
-    public void ConnectRequestData_ACutCookie_UnknownFlags_AndTrailingBytes_AreRejected()
+    public void ConnectRequestData_ACutCookie_UnknownFlags_NoBlob_ACutProof_AndTrailingBytes_AreRejected()
     {
-        // HasCookie with only 15 cookie bytes (the name length byte would be read as the 16th).
+        // HasCookie with only 15 cookie bytes.
         var cut = new byte[] { 19, 0, (byte)ConnectFlags.HasCookie, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
         var reader = new PacketReader(cut);
         Assert.False(ConnectRequestData.TryRead(ref reader, out _));
 
-        var unknown = new byte[] { 19, 0, 0x80, 1, (byte)'a' };
-        reader = new PacketReader(unknown);
-        Assert.False(ConnectRequestData.TryRead(ref reader, out _));
-
-        var trailing = new byte[] { 19, 0, 0, 1, (byte)'a', 0 };
-        reader = new PacketReader(trailing);
-        Assert.False(ConnectRequestData.TryRead(ref reader, out _));
+        Assert.False(TryReadLayout(0x80, Blob, "a", 0));                    // unknown flag
+        Assert.False(TryReadLayout(0, null, "a", 0));                       // no blob (length 0)
+        Assert.False(TryReadLayout(0, new byte[128], "a", 0));              // a blob of another size
+        Assert.False(TryReadLayout(0, Blob, "a", 1));                       // a byte after the name
+        Assert.False(TryReadLayout((byte)ConnectFlags.HasResume, Blob, "a", 19));   // HasResume with a cut proof (4 + 15)
+        Assert.True(TryReadLayout((byte)ConnectFlags.HasResume, Blob, "a", 20));    // nonce 4 + proof 16
     }
 
-    // Phase 11: the raw name bytes of a connect request (version 1; v19 layout: flags 0, no cookie).
+    // 기능: 손으로 v19 배치를 만들어 읽어 본다(쿠키 없음).
+    // 입력: flags - 플래그 바이트, blob - blob(null = 길이 0), name - 이름, after - 이름 뒤에 붙일 0 바이트 수.
+    // 출력: TryRead 결과.
+    private bool TryReadLayout(byte flags, byte[]? blob, string name, int after)
+    {
+        byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(name);
+        var bytes = new byte[2 + 1 + 2 + (blob?.Length ?? 0) + 1 + nameBytes.Length + after];
+        int at = 0;
+        bytes[at++] = 19;
+        bytes[at++] = 0;
+        bytes[at++] = flags;
+        bytes[at++] = (byte)((blob?.Length ?? 0) & 0xFF);
+        bytes[at++] = (byte)((blob?.Length ?? 0) >> 8);
+        if (blob != null) { blob.CopyTo(bytes, at); at += blob.Length; }
+        bytes[at++] = (byte)nameBytes.Length;
+        nameBytes.CopyTo(bytes, at);
+        var reader = new PacketReader(bytes);
+        return ConnectRequestData.TryRead(ref reader, out _);
+    }
+
+    // Phase 11: the raw name bytes of a connect request (version 1; v19 layout: flags 0, no cookie, a 256-byte blob).
     private bool TryReadConnectName(byte[] name, out string id)
     {
-        _buffer[0] = 1;
-        _buffer[1] = 0;
-        _buffer[2] = 0;
-        _buffer[3] = (byte)name.Length;
-        name.CopyTo(_buffer, 4);
-        var reader = new PacketReader(_buffer.AsSpan(0, 4 + name.Length));
+        var bytes = new byte[2 + 1 + 2 + ProtocolLimits.RsaBlobBytes + 1 + name.Length];
+        bytes[0] = 1;
+        bytes[3] = ProtocolLimits.RsaBlobBytes & 0xFF;
+        bytes[4] = ProtocolLimits.RsaBlobBytes >> 8;
+        bytes[5 + ProtocolLimits.RsaBlobBytes] = (byte)name.Length;
+        name.CopyTo(bytes, 6 + ProtocolLimits.RsaBlobBytes);
+        var reader = new PacketReader(bytes);
         bool ok = ConnectRequestData.TryRead(ref reader, out var data);
         id = data.DevPlayerId;
         return ok;
@@ -281,6 +328,10 @@ public class PacketTests
         };
         foreach (int size in largest) Assert.True(size <= ProtocolConstants.MaxPacketSize, $"{size} B");
         Assert.True(ProtocolConstants.MaxPacketSize + ProtocolLimits.TransportHeaderBytes + ProtocolLimits.AuthTagBytes <= ProtocolConstants.Mtu);
+        // Review fix B3: LiteNetLib's MtuOverride is the user MTU (it does not count the layer's tail), so every packet with
+        // its transport header must fit UserMtu.
+        Assert.Equal(ProtocolConstants.Mtu - ProtocolLimits.AuthTagBytes, ProtocolLimits.UserMtu);
+        Assert.True(ProtocolConstants.MaxPacketSize + ProtocolLimits.TransportHeaderBytes <= ProtocolLimits.UserMtu);
     }
 
     [Fact]

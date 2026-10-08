@@ -45,6 +45,41 @@ public sealed class ReconnectIntegrationTests
         }
     }
 
+    // Review fix B4 (SEC-2): another client with the same name (no resume key) cannot take the graced character, and holding
+    // the name does not keep the owner out: the owner's client resumes with its proof while the impostor is connected.
+    [Fact]
+    public void AnotherClient_WithTheSameName_CannotTakeTheGracedCharacter()
+    {
+        using GameLoop server = StartServer(countdown: 1);
+        var a = Join(server, "a");
+        try
+        {
+            using var b = Join(server, "b");
+            Assert.True(Pump.Until(() => InMatch(a) && InMatch(b), 5000, a, b), "match running");
+            ushort entity = a.MyEntityId;
+            a.Kill();
+            Assert.True(Pump.Until(() => server.Health.GraceStarts == 1, 4000, b), "graced");
+
+            using var impostor = new HeadlessClient();
+            impostor.Connect(server.LocalPort, "a", resume: false);
+            Assert.True(Pump.Until(() => impostor.Connected, 3000, impostor), "impostor connected");
+            impostor.SendJoin();
+            Assert.True(Pump.Until(() => impostor.JoinResponse.HasValue, 3000, impostor), "impostor joined");
+            Assert.Equal(JoinResult.Ok, impostor.JoinResponse?.Result);
+            Assert.NotEqual(entity, impostor.MyEntityId);
+            Assert.Equal(0, server.Health.Resumes);
+
+            using var back = Join(server, "a", expected: JoinResult.Resumed);
+            Assert.True(back.SentResumeProof);
+            Assert.Equal(entity, back.MyEntityId);
+            Assert.Equal(1, server.Health.Resumes);
+        }
+        finally
+        {
+            a.Dispose();
+        }
+    }
+
     // Phase 12 D16: a client that crashes while riding the drop transport comes back to the same route, and its next
     // snapshot shows where the server's own steps (empty input) took it meanwhile.
     [Fact]

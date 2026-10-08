@@ -116,6 +116,9 @@ public class MonitoringTests
         h.AddCookieReject();
         for (int i = 0; i < 3; i++) h.AddCookieChallenge();
         h.AddPenalty();
+        h.AddAuthDrop();   // review fix B3
+        h.AddAuthDropRetired();   // review B round 2
+        h.AddAuthDropRetired();
         loop.RunTickGuarded();
         loop.LogPeriodic();
 
@@ -123,7 +126,7 @@ public class MonitoringTests
         foreach (string item in new[]
                  {
                      "connectRate=1 perIp=2 penalized=1 accept=1 cookie=1 cookieChallenges=3",
-                     "inputSeqDrops=0", "penalties=1",
+                     "inputSeqDrops=0 authDrops=1 authDropsRetired=2", "penalties=1",
                  })
         {
             Assert.Contains(item, line);
@@ -147,6 +150,8 @@ public class MonitoringTests
         Assert.Contains(("projecth.cookie_challenges", 3L, ""), seen);
         Assert.Contains(("projecth.penalties", 1L, ""), seen);
         Assert.Contains(("projecth.input_seq_drops", 0L, ""), seen);
+        Assert.Contains(("projecth.auth_drops", 1L, "where=live"), seen);
+        Assert.Contains(("projecth.auth_drops", 2L, "where=retired"), seen);
     }
 
     [Fact]

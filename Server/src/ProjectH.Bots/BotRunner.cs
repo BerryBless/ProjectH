@@ -47,6 +47,9 @@ public sealed class BotRunner : IDisposable
     private long _lastBytes;
     private double _lastStatsAt;
 
+    // 기능: 봇 실행기를 만든다(봇마다 연결·두뇌·건축기, 리뷰 수정 B4: 봇마다 Resume 표 하나, B1: 서버 공개키).
+    // 입력: options - 봇 설정, log - 로그 함수.
+    // 출력: 아직 접속하지 않은 BotRunner.
     public BotRunner(BotOptions options, Action<string> log)
     {
         string? error = options.Validate();
@@ -62,13 +65,18 @@ public sealed class BotRunner : IDisposable
         _dropAt = new double[options.Count];
         _attempts = new int[options.Count];
         _established = new bool[options.Count];
+        _tickets = new ResumeTicket[options.Count];
         for (int i = 0; i < options.Count; i++)
         {
-            _connections[i] = new BotConnection();
+            _tickets[i] = new ResumeTicket();
+            _connections[i] = new BotConnection(serverPublicKeyXml: options.ServerPublicKeyXml);
             _brains[i] = new BotBrain(unchecked(options.Seed + i));
             _builders[i] = new BotBuilder(unchecked(options.Seed + 7919 * (i + 1)), options.BuildSpam);
         }
     }
+
+    // Review fix B4: each bot's resume key across its connections (made once per bot, lives with the runner).
+    private readonly ResumeTicket[] _tickets;
 
     public int Count => _connections.Length;
     public long Reconnects => _reconnects;
@@ -76,6 +84,9 @@ public sealed class BotRunner : IDisposable
     public BotBrain Brain(int index) => _brains[index];
     public BotBuilder Builder(int index) => _builders[index];
 
+    // 기능: 한 걸음: 접속 간격에 맞춰 봇을 접속시키고(리뷰 수정 B4: 봇의 Resume 표와 함께), 재접속 시각이면 재접속하고, 각 봇을 갱신해 입력을 보낸다.
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void Step()
     {
         double start = _clock.Elapsed.TotalSeconds;
@@ -84,7 +95,7 @@ public sealed class BotRunner : IDisposable
 
         while (_started < _connections.Length && start * 1000.0 >= (double)_started * _options.ConnectIntervalMs)
         {
-            _connections[_started].Connect(_options.Host, _options.Port, _options.BotName(_started));
+            _connections[_started].Connect(_options.Host, _options.Port, _options.BotName(_started), _tickets[_started]);
             _started++;
         }
 
@@ -139,6 +150,9 @@ public sealed class BotRunner : IDisposable
         _reconnectAt[i] = _dropAt[i] + DisconnectCodes.ReconnectOffsetSeconds(_attempts[i] + 1);
     }
 
+    // 기능: 봇 하나를 새 연결로 다시 접속시킨다(리뷰 수정 B4: Resume 표의 키로 만든 증명을 실어 자기 캐릭터를 되찾는다).
+    // 입력: i - 봇 번호.
+    // 출력: 반환값 없음.
     // A fresh connection (its own Seq from 1, as the server expects after a resume) and a fresh brain, same name. The
     // previous connection, still connecting or already failed, is closed. The next slot is armed at once, so an attempt
     // that has not connected by then is replaced.
@@ -153,14 +167,14 @@ public sealed class BotRunner : IDisposable
         _retiredPackets += old.PacketsIn;
         _retiredBytes += old.BytesIn;
         old.Dispose();
-        _connections[i] = new BotConnection(reconnect: true);
+        _connections[i] = new BotConnection(reconnect: true, _options.ServerPublicKeyXml);
         _brains[i] = new BotBrain(unchecked(_options.Seed + i));
         _builders[i] = new BotBuilder(unchecked(_options.Seed + 7919 * (i + 1)), _options.BuildSpam);
         _disconnectLogged[i] = false;
         _established[i] = false;
         _reconnects++;
         _log($"{_options.BotName(i)} reconnecting (attempt {_attempts[i]}/{DisconnectCodes.MaxReconnectAttempts})");
-        _connections[i].Connect(_options.Host, _options.Port, _options.BotName(i));
+        _connections[i].Connect(_options.Host, _options.Port, _options.BotName(i), _tickets[i]);   // review fix B4: resume with the proof
     }
 
     public void Run(CancellationToken token)

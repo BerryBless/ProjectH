@@ -32,7 +32,10 @@ public enum ConnectRefusal
 //     LiteNetLib thread (review A round 1). Interlocked.Increment and a CompareExchange loop (never below 0) change it;
 //     TryAcquire reads it with Volatile.Read. Only the receive thread raises it, so the check-then-count in
 //     TryAcquire/Acquired cannot admit past the limit; a concurrent Release only lowers it.
-//   - PenaltyUntilMs: the game loop calls Penalize (Interlocked), the receive thread reads it with Volatile.Read.
+//   - PenaltyUntilMs: the game loop calls Penalize (Interlocked), and so does the receive thread for the third session key
+//     blob that does not decrypt within a minute (review B rounds 1 and 2); the receive thread reads it with Volatile.Read.
+//     Both writers set about now + 60 s, so whichever Exchange lands last is a correct penalty.
+//   DecryptFailures and DecryptWindowStartMs (review B round 2) are the receive thread's only, like Used, Tokens and LastMs.
 public sealed class ConnectRateLimiter
 {
     public const int Slots = 1024;   // a power of two (SlotOf)
@@ -47,7 +50,16 @@ public sealed class ConnectRateLimiter
         public long LastMs;
         public int Active;    // connections accepted and not yet disconnected (Interlocked: see the class comment)
         public long PenaltyUntilMs;   // refused until this time (Environment.TickCount64); written by Penalize
+        // Review B round 2: session key blobs that did not decrypt in the window from DecryptWindowStartMs (receive thread only,
+        // RecordDecryptFailure).
+        public int DecryptFailures;
+        public long DecryptWindowStartMs;
     }
+
+    // Review B round 2: the third session key blob that does not decrypt from one slot within the window asks for the penalty.
+    // Fewer are only BadRequest, so one misconfigured client behind a NAT address does not shut out the others at its first try.
+    public const int DecryptFailureLimit = 3;
+    public const long DecryptFailureWindowMs = 60_000;
 
     private readonly Slot[] _slots = new Slot[Slots];
     private readonly long _capacity;
@@ -153,10 +165,27 @@ public sealed class ConnectRateLimiter
     // 출력: 그 칸에 세어진 연결 수.
     internal int ActiveOf(int slot) => Volatile.Read(ref _slots[slot].Active);
 
-    // 기능: 칸 하나를 untilMs까지 거절하게 한다(리뷰 수정 A6: 같은 출처의 반복 플레이어 실패). 어느 스레드에서 불러도 된다(Game Loop).
+    // 기능: 칸 하나를 untilMs까지 거절하게 한다(리뷰 수정 A6: 같은 출처의 반복 플레이어 실패, 리뷰 B 1·2차: 1분 안 세 번째 복호되지 않는 세션 키 blob).
+    //   어느 스레드에서 불러도 된다(Game Loop, 수신 스레드).
     // 입력: slot - SlotOf(주소), untilMs - 거절이 끝나는 시각(Environment.TickCount64 기준).
     // 출력: 반환값 없음. 그 칸의 다음 요청은 untilMs 전까지 Penalty로 거절된다.
     public void Penalize(int slot, long untilMs) => Interlocked.Exchange(ref _slots[slot].PenaltyUntilMs, untilMs);
+
+    // 기능: 칸 하나의 세션 키 복호 실패를 센다(리뷰 B 2차). 첫 실패부터 DecryptFailureWindowMs 동안의 고정 창이고, 창이 지나면 1부터 다시 센다.
+    //   수신 스레드 전용(OnConnectionRequest. 칸의 다른 빈도 필드와 같은 스레드라 동기화가 없다).
+    // 입력: slot - SlotOf(주소), nowMs - 단조 증가 ms 시계(Environment.TickCount64).
+    // 출력: 창 안 실패가 DecryptFailureLimit번 이상이면 true(호출자가 Penalize한다), 아니면 false.
+    public bool RecordDecryptFailure(int slot, long nowMs)
+    {
+        ref Slot s = ref _slots[slot];
+        if (s.DecryptFailures == 0 || nowMs - s.DecryptWindowStartMs >= DecryptFailureWindowMs)
+        {
+            s.DecryptFailures = 0;
+            s.DecryptWindowStartMs = nowMs;
+        }
+        if (s.DecryptFailures < DecryptFailureLimit) s.DecryptFailures++;   // capped: the count only has to reach the limit
+        return s.DecryptFailures >= DecryptFailureLimit;
+    }
 
     // 기능: 이 표에서 주소가 쓰는 칸 번호(salt 포함)를 구한다.
     // 입력: address - 원격 주소.

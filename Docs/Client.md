@@ -197,6 +197,42 @@ stateDiagram-v2
 - 다시 접속·타이틀로·접속 끊기를 누르면 재접속을 멈춘다(다시 접속은 새로 접속한다). 재접속 취소는 진행 중인 시도(연결 중, 또는 연결됐지만 Join 답 전)를 끊김 이벤트 없이 버려서 화면의 이유가 그대로다(`GameClient.StopReconnecting`, `NetClient.CancelConnect`). `GameClient.Connect`는 연결이 끊긴 상태에서만 받는다. 연결 중·연결됨이면 무시하고 주소와 id도 바꾸지 않는다.
 - Resumed는 Join과 같다. 서버가 전체 상태를 다시 보낸다. 끊길 때 매치 상태를 지우므로 예측기는 자기 `PlayerSpawned` 위치에서 새로 시작하고 Seq는 1부터다(서버도 Resume 때 그 캐릭터의 입력 상태를 비운다).
 
+## 접속 인증 (리뷰 수정 A3·B)
+
+설계 근거: `Docs/specs/2026-10-08-review-fixes-design.md`의 A3, B1–B4. 규칙 코드는 Shared `SessionAuth`이고, Client에는 얇은 어댑터만 있다.
+
+- **쿠키:** 첫 접속 요청은 서버가 `ConnectionRejected` + 16 B 쿠키로 거절한다(`NetClient.ClassifyReject`).
+  - `NetClient`는 같은 호출 안에서 거절한 peer의 IP:port로 쿠키를 넣어 한 번 다시 보낸다. 재접속 사이클과 화면에는 보이지 않는다.
+  - 두 번째도 쿠키면 `LastError = "cookie challenge loop"`로 실패한다.
+  - 1 B 거절 데이터는 지금처럼 `RejectReason`이다.
+- **세션 키:** 접속 요청마다(쿠키 재시도 포함) 새 32 B 세션 키를 만든다(`RandomNumberGenerator`).
+  - 서버 공개키로 RSA-OAEP-SHA1 암호화한 256 B blob을 요청에 싣는다(`NetClient.EncryptSessionKey`). Mono가 `RSAEncryptionPadding.OaepSHA1`을 거부하면 `RSACryptoServiceProvider.Encrypt(key, true)`로 대체한다(같은 OAEP-SHA1).
+  - 같은 키로 `SessionKeys`를 만들어, 요청을 보내기 **전에** `AuthPacketLayer`에 등록한다.
+- **서명:** `AuthPacketLayer`(`PacketLayerBase`, 꼬리 20 B)가 모든 데이터그램에 꼬리를 붙인다. LiteNetLib의 Ack·Ping·끊기 패킷도 포함된다.
+  - 보낼 때: 키가 있으면 `Seal`(counter + HMAC 16 B), 없으면 0 꼬리를 붙인다.
+  - 받을 때: 지금 키로 열리면 통과하고, 그 키를 검증됨으로 표시한다.
+  - 지금 키로 아직 아무것도 열리지 않았으면 검증 없이 꼬리를 벗겨 통과시킨다. 서버의 쿠키 거절은 키가 없는 서버가 0 꼬리로 보내기 때문이다.
+  - 검증된 뒤 실패한 데이터그램은 버리고 `AuthDrops`를 센다. F1 줄의 "인증 버림 n"이 그 수다. 끊지는 않는다.
+  - 새 접속이 키를 바꾸면 검증 표시도 자동으로 초기화된다. "검증됨"은 마지막으로 열린 키 객체가 지금 키와 같다는 뜻이기 때문이다.
+  - 끊긴 뒤에도 키는 다음 Connect까지 남긴다. LiteNetLib이 뒤늦게 받은 서버의 끊기 패킷을 검증해야 `DisconnectCode`를 잃지 않는다.
+  - MTU는 `ProtocolLimits.UserMtu`(1212, 꼬리를 뺀 값)이고 서버와 같다.
+- **Resume 키:** Join이 Ok 또는 Resumed로 성공할 때마다 그 연결의 `SessionKeys.ResumeKey`와 이름을 보관하고 nonce를 0으로 되돌린다.
+  - 같은 이름으로 다시 접속하면(자동 재접속, 끊김 화면의 다시 접속) 요청에 `HasResume`을 싣는다. nonce는 요청마다 1씩 오르고, 증명은 `SessionAuth.ComputeResumeProof(resumeKey, nonce, 이번 세션 키, 이름)`이다.
+  - 증명이 맞으면 서버가 유예 중인 캐릭터를 돌려준다(Resumed). 아니면 새 플레이어로 들어간다.
+  - 사용자가 직접 끊으면(메뉴의 접속 끊기, 타이틀로, 연결 중 취소: `GameClient.Disconnect`) 키를 버린다(`NetClient.ForgetResume`). 다른 주소·포트·이름으로 접속할 때도 버린다.
+- **서버 공개키 파일:** `Client/Assets/Resources/ServerPublicKey.txt`(`RSA.ToXmlString` 형식 XML)를 `GameClient`가 `Resources.Load<TextAsset>`으로 읽어 `NetClient`에 넘긴다. 공개키는 생성자에서 한 번 읽는다.
+  - 파일이 없거나 읽을 수 없으면 접속이 그 이유로 실패한다. 개발 키로 대신하지 않는다.
+  - 저장소의 파일은 개발 서버 키(Shared `DevServerPublicKey.Xml`)와 같다. EditMode `NetClientConnectDataTests`가 같은지 확인한다.
+  - **운영 키로 바꾸는 절차:**
+    1. 운영 서버의 개인키로 공개키 XML을 만든다(`RSA.ToXmlString(false)`).
+    2. 이 파일 내용을 그 XML로 바꾼다. 서버 시작 로그의 키 지문으로 같은 키인지 확인한다.
+    3. 빌드한다.
+    4. 위 EditMode 고정 테스트는 개발 키를 기대하므로 운영 빌드 브랜치에서는 그 단언을 운영 키로 바꾼다.
+  - 키가 서버와 다르면 서버가 복호화에 실패해 BadRequest로 거절한다("서버가 접속 요청을 받지 않았습니다."). 같은 주소에서 60초 안에 3번 실패하면 서버가 그 주소에 벌점을 주어, 그 뒤 60초 동안은 ServerFull로 거절한다("서버가 가득 찼습니다.").
+- **Lifetime:** `NetClient.Dispose`가 `NetManager.Stop` 뒤에 키를 해제한다(`AuthPacketLayer.DisposeKeys`). LiteNetLib 스레드가 더는 키를 쓰지 않을 때다. RSA 객체와 난수 생성기도 이때 해제한다.
+  - 접속마다 밀려난 키는 한 번 더 교체될 때 해제한다. 수신 스레드가 교체 직후에도 잠금 없이 `TryOpen`을 쓰고 있을 수 있기 때문이다.
+  - 할당은 접속 시점에만 생긴다(blob, 키, peer). 데이터그램마다 할당하지 않는다.
+
 ## 실행과 두 Client 확인
 
 1. 서버: `dotnet run --project Server/src/ProjectH.Server`

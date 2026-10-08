@@ -418,6 +418,15 @@ namespace ProjectH.Client.UI
         public static string DebugLine(string state, int roundTripMs, ushort entityId) =>
             "상태 " + state + "   RTT " + Int(roundTripMs) + " ms   Entity " + Int(entityId) + "   (F1)";
 
+        // 기능: F1 줄에 인증 계층이 버린 데이터그램 수를 더한다(리뷰 B3). 0이면 3인자 줄과 같다.
+        // 입력: state·roundTripMs·entityId - 3인자 줄과 같다, authDrops - 서명이 맞지 않아 버린 데이터그램 수.
+        // 출력: 한 줄 문자열.
+        public static string DebugLine(string state, int roundTripMs, ushort entityId, long authDrops) =>
+            authDrops <= 0
+                ? DebugLine(state, roundTripMs, entityId)
+                : "상태 " + state + "   RTT " + Int(roundTripMs) + " ms   Entity " + Int(entityId) + "   인증 버림 " +
+                  Int(authDrops) + "   (F1)";
+
         // Phase 12 D14: the movement line. Speeds and the correction in tenths and hundredths, so the caller can rebuild it
         // only when a shown digit changes (DebugOverlay).
         public static string MovementLine(string mode, int horizontalTenths, int verticalTenths, int energy, int correctionCentimetres) =>

@@ -181,6 +181,12 @@ Phase 10(spec D12)에서 "개발용 LAN 서버"라는 이유로 미룬 항목이
 | G5 | Anti-cheat 통계·Hit 기록 없음 | 비정상 명중률 봇을 돌린다 | 사후 판정에 쓸 기록이 남는다 |
 | G6 | DB 자격 증명이 `appsettings.json`에 평문(개발용) | 배포 산출물에 비밀번호가 있는지 검사한다 | 환경 변수나 비밀 저장소로만 주입 |
 
+상태(2026-10-08 리뷰 수정, `Docs/specs/2026-10-08-review-fixes-design.md`):
+
+- G1: **세션 토큰 구현(외부 인증은 다음).** 유예 캐릭터는 이전 연결의 Resume 키로 만든 증명(새 세션 키에 묶임)이 있어야 재개된다(묶음 B4, `ReconnectGraceTests`, `ReconnectIntegrationTests.AnotherClient_WithTheSameName_CannotTakeTheGracedCharacter`, `BotIntegrationTests.ABot_ThatAbortsAndReconnects_ResumesWithItsProof_AndAnotherBotCannotTakeIt`). 전적 계정은 아직 자기 신고 DevPlayerId다.
+- G2: IP당 동시 연결 수·전역 수락 빈도·쿠키 단계 구현(묶음 A).
+- G4: **HMAC·재전송 창 구현(암호화 없음).** 모든 데이터그램에 counter + HMAC 꼬리, 64칸 재전송 창, 서버 RSA 공개키 핀으로 세션 키 교환(묶음 B3, `SessionAuthTests`, `AuthPacketLayerTests`). 경로 위 변조·재전송은 버려지고 `authDrops`로 센다. 내용은 평문이다.
+
 ## 8. 필요한 도구 (별도 Phase로 구현)
 
 | ID | 도구 | 하는 일 | 쓰는 시나리오 |

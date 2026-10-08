@@ -2,45 +2,66 @@ using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Shared.Protocol
 {
-    // Review fix A3 (v19): what a connection request carries besides the version and the name.
+    // Review fixes A3, B2 (v19): what a connection request carries besides the version, the session key and the name.
     [System.Flags]
     public enum ConnectFlags : byte
     {
         None = 0,
         HasCookie = 1,   // the request repeats the cookie of the server's RejectForce (ProtocolLimits.CookieBytes)
-        HasResume = 2,   // review fix B4: a resume proof follows (the layout is completed in package B)
+        HasResume = 2,   // review fix B4: a resume nonce and proof follow the name
     }
 
     // Payload of LiteNetLib's connection request (no PacketId: it is not a regular packet).
-    // v19: version u16, flags u8, [cookie 16 when HasCookie], name (1-byte length + UTF-8). The version stays first in every
-    // layout, so a server can tell an older client VersionMismatch before reading the rest.
+    // v19: version u16, flags u8, [cookie 16 when HasCookie], session key blob (u16 length = ProtocolLimits.RsaBlobBytes,
+    // then the blob: the client's 32-byte session key RSA-OAEP-SHA1 encrypted with the server's public key), name (1-byte
+    // length + UTF-8), [resume nonce u32 + proof 16 when HasResume]. Every request carries the blob, the cookieless first one
+    // too. The version stays first in every layout, so a server can tell an older client VersionMismatch before reading the
+    // rest.
     public struct ConnectRequestData
     {
         public ushort ProtocolVersion;
         public ConnectFlags Flags;
         // ProtocolLimits.CookieBytes; read and written only when Flags has HasCookie.
         public byte[] Cookie;
+        // ProtocolLimits.RsaBlobBytes: the encrypted session key (always present).
+        public byte[] SessionKeyBlob;
         public string DevPlayerId;
+        // Review fix B4: read and written only when Flags has HasResume. The nonce the client raises for each resume attempt
+        // with one resume key, and the proof (SessionAuth.ComputeResumeProof, ProtocolLimits.ResumeProofBytes).
+        public uint ResumeNonce;
+        public byte[] ResumeProof;
 
-        // 기능: 연결 요청 데이터를 쓴다. HasCookie인데 쿠키가 없거나 짧으면 HasCookie를 빼고 쓴다.
-        // 입력: writer - 쓸 곳, data - 버전·플래그·쿠키·이름.
+        // 기능: 연결 요청 데이터를 쓴다. HasCookie인데 쿠키가 없거나 짧으면 HasCookie를, HasResume인데 증명이 없거나 짧으면
+        //   HasResume을 빼고 쓴다. 세션 키 blob이 RsaBlobBytes가 아니면 길이 0으로 쓴다(서버가 BadRequest로 거절한다).
+        // 입력: writer - 쓸 곳, data - 버전·플래그·쿠키·blob·이름·Resume 증명.
         // 출력: 반환값 없음. 이름이 길면 writer가 Overflowed가 된다.
         public static void Write(ref PacketWriter writer, in ConnectRequestData data)
         {
             ConnectFlags flags = data.Flags;
             bool cookie = (flags & ConnectFlags.HasCookie) != 0 && data.Cookie != null && data.Cookie.Length >= ProtocolLimits.CookieBytes;
             if (!cookie) flags &= ~ConnectFlags.HasCookie;
+            bool resume = (flags & ConnectFlags.HasResume) != 0 && data.ResumeProof != null && data.ResumeProof.Length >= ProtocolLimits.ResumeProofBytes;
+            if (!resume) flags &= ~ConnectFlags.HasResume;
+            bool blob = data.SessionKeyBlob != null && data.SessionKeyBlob.Length == ProtocolLimits.RsaBlobBytes;
             writer.WriteUInt16(data.ProtocolVersion);
             writer.WriteByte((byte)flags);
             if (cookie) writer.WriteBytes(new System.ReadOnlySpan<byte>(data.Cookie, 0, ProtocolLimits.CookieBytes));
+            writer.WriteUInt16(blob ? (ushort)ProtocolLimits.RsaBlobBytes : (ushort)0);
+            if (blob) writer.WriteBytes(data.SessionKeyBlob);
             writer.WriteString(data.DevPlayerId, ProtocolConstants.MaxDevPlayerIdBytes);
+            if (resume)
+            {
+                writer.WriteUInt32(data.ResumeNonce);
+                writer.WriteBytes(new System.ReadOnlySpan<byte>(data.ResumeProof, 0, ProtocolLimits.ResumeProofBytes));
+            }
         }
 
-        // 기능: 연결 요청 데이터를 읽는다(모르는 플래그·잘린 쿠키·이름 규칙 위반·남는 바이트는 거절).
-        // 입력: reader - 요청 데이터, cookieBuffer - 쿠키를 받을 16 B 이상 버퍼(null이면 쿠키가 있을 때 새로 만든다. 서버는
-        //   수신 스레드의 재사용 버퍼를 넘겨 요청마다 할당하지 않는다).
-        // 출력: 맞으면 true와 데이터(HasCookie면 data.Cookie = 쿠키가 든 버퍼), 아니면 false.
-        public static bool TryRead(ref PacketReader reader, out ConnectRequestData data, byte[] cookieBuffer = null)
+        // 기능: 연결 요청 데이터를 읽는다(모르는 플래그·잘린 쿠키·blob 길이가 RsaBlobBytes가 아님·이름 규칙 위반·잘린 증명·남는 바이트는 거절).
+        // 입력: reader - 요청 데이터, cookieBuffer·blobBuffer·proofBuffer - 쿠키 16 B·blob 256 B·증명 16 B를 받을 버퍼(null이면
+        //   필요할 때 새로 만든다. 서버는 수신 스레드의 재사용 버퍼를 넘겨 요청마다 할당하지 않는다).
+        // 출력: 맞으면 true와 데이터(Cookie·SessionKeyBlob·ResumeProof는 받은 버퍼), 아니면 false.
+        public static bool TryRead(ref PacketReader reader, out ConnectRequestData data, byte[] cookieBuffer = null,
+            byte[] blobBuffer = null, byte[] proofBuffer = null)
         {
             data = default;
             if (!reader.TryReadUInt16(out data.ProtocolVersion)) return false;
@@ -49,18 +70,32 @@ namespace ProjectH.Shared.Protocol
             if ((flags & ~(byte)(ConnectFlags.HasCookie | ConnectFlags.HasResume)) != 0) return false;
             if ((data.Flags & ConnectFlags.HasCookie) != 0)
             {
-                byte[] cookie = cookieBuffer != null && cookieBuffer.Length >= ProtocolLimits.CookieBytes
-                    ? cookieBuffer : new byte[ProtocolLimits.CookieBytes];
+                byte[] cookie = Buffer(cookieBuffer, ProtocolLimits.CookieBytes);
                 if (!reader.TryReadBytes(new System.Span<byte>(cookie, 0, ProtocolLimits.CookieBytes))) return false;
                 data.Cookie = cookie;
             }
+            if (!reader.TryReadUInt16(out ushort blobLength) || blobLength != ProtocolLimits.RsaBlobBytes) return false;
+            byte[] keyBlob = Buffer(blobBuffer, ProtocolLimits.RsaBlobBytes);
+            if (!reader.TryReadBytes(new System.Span<byte>(keyBlob, 0, ProtocolLimits.RsaBlobBytes))) return false;
+            data.SessionKeyBlob = keyBlob;
             if (!reader.TryReadString(ProtocolConstants.MaxDevPlayerIdBytes, out string id)) return false;
             // Phase 11: valid UTF-8 without control characters, so the name always fits PlayerSpawned (see the rule).
             if (!ProtocolConstants.IsValidPlayerName(id)) return false;
-            if (reader.Remaining != 0) return false;
             data.DevPlayerId = id;
-            return true;
+            if ((data.Flags & ConnectFlags.HasResume) != 0)
+            {
+                if (!reader.TryReadUInt32(out data.ResumeNonce)) return false;
+                byte[] proof = Buffer(proofBuffer, ProtocolLimits.ResumeProofBytes);
+                if (!reader.TryReadBytes(new System.Span<byte>(proof, 0, ProtocolLimits.ResumeProofBytes))) return false;
+                data.ResumeProof = proof;
+            }
+            return reader.Remaining == 0;
         }
+
+        // 기능: 넘겨받은 버퍼가 충분하면 그것을, 아니면 새 배열을 돌려준다.
+        // 입력: given - 호출자 버퍼(null 가능), size - 필요한 크기.
+        // 출력: size 이상인 배열.
+        private static byte[] Buffer(byte[] given, int size) => given != null && given.Length >= size ? given : new byte[size];
     }
 
     public static class JoinMatchRequest

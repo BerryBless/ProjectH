@@ -52,8 +52,12 @@ public sealed class NetworkListener : INetEventListener
     // Server review M2, review fixes A2 and A6: connection requests, connections held and penalties per remote IP (fixed
     // table). The request bucket is used by OnConnectionRequest only (LiteNetLib's receive thread). The connection count is
     // raised at Accept by the receive thread and lowered by whatever thread runs OnPeerDisconnected (the game loop's Close,
-    // a LiteNetLib thread), with Interlocked (review A round 1). The game loop also calls the Interlocked Penalize.
+    // a LiteNetLib thread), with Interlocked (review A round 1). The game loop also calls the Interlocked Penalize, and so does
+    // the receive thread at the third session key blob from one slot that does not decrypt within a minute (review B rounds
+    // 1 and 2; the failure count is the receive thread's own).
     private readonly ConnectRateLimiter _connectRate;
+    // Review B round 1: how long a source whose session key blobs did not decrypt is refused (as GameLoop.PenaltySeconds).
+    private const long DecryptFailurePenaltyMs = 60_000;
     // Review fix A2: accepts per second over all addresses (receive thread only).
     private readonly AcceptRateLimiter _accept;
     // Review fix A3: the stateless connect cookie, and two 16-byte buffers made once and used on the receive thread only
@@ -61,6 +65,13 @@ public sealed class NetworkListener : INetEventListener
     private readonly ConnectCookie _cookie;
     private readonly byte[] _cookieIn = new byte[ProtocolLimits.CookieBytes];
     private readonly byte[] _cookieReply = new byte[ProtocolLimits.CookieBytes];
+    // Review fixes B2, B3: the server key (decrypts each request's session key blob, receive thread only), the datagram
+    // authentication layer the session keys are registered in, and two buffers made once for the request's blob and resume
+    // proof (receive thread only; the proof is copied into the PeerState of an accepted request).
+    private readonly ServerIdentity _identity;
+    private readonly AuthPacketLayer _auth;
+    private readonly byte[] _blobIn = new byte[ProtocolLimits.RsaBlobBytes];
+    private readonly byte[] _proofIn = new byte[ProtocolLimits.ResumeProofBytes];
 
     // Phase 13 D8: build requests a peer may send per second (building.json); more are invalid packets.
     private readonly int _maxBuildRequestsPerSecond;
@@ -71,13 +82,17 @@ public sealed class NetworkListener : INetEventListener
     private readonly int _maxMarkerPacketsPerSecond;
 
     // 기능: 수신 처리기를 만든다(Phase 15: MapMarker 속도 제한 수치를 map.json에서 받는다. 리뷰 수정 A2·A3: IP별 표의 salt,
-    //   전역 수락 Bucket, 쿠키 비밀을 시작 때 난수로 만든다).
+    //   전역 수락 Bucket, 쿠키 비밀을 시작 때 난수로 만든다. 리뷰 수정 B2·B3: 서버 키와 인증 계층을 받는다).
     // 입력: options - 서버 설정, channels - Game Loop로 넘길 채널, stats·health - 수치, statsQueries - 통계 요청 큐, logger - 로그,
-    //   maxBuildRequestsPerSecond - 건설 요청 초당 상한, map - Ping 수치(null = 배포 기본값).
+    //   identity - 서버 RSA 키, auth - 세션 키를 등록할 인증 계층, maxBuildRequestsPerSecond - 건설 요청 초당 상한,
+    //   map - Ping 수치(null = 배포 기본값).
     // 출력: 연결을 받을 준비가 된 NetworkListener(Manager는 GameLoop가 정한다).
     public NetworkListener(ServerOptions options, InboundChannels channels, ServerStats stats, HealthCounters health,
-        StatsQueryQueue statsQueries, ILogger logger, int maxBuildRequestsPerSecond = 20, MapCatalog? map = null)
+        StatsQueryQueue statsQueries, ILogger logger, ServerIdentity identity, AuthPacketLayer auth,
+        int maxBuildRequestsPerSecond = 20, MapCatalog? map = null)
     {
+        _identity = identity;
+        _auth = auth;
         _maxBuildRequestsPerSecond = maxBuildRequestsPerSecond;
         map ??= MapCatalog.Default(options.SimHz);
         _pingsPerSecond = map.PingsPerSecond;
@@ -151,9 +166,10 @@ public sealed class NetworkListener : INetEventListener
     {
         NetPeer? accepted = null;
         int countedSlot = -1;
+        SessionKeys? registered = null;
         try
         {
-            HandleConnectionRequest(request, ref accepted, ref countedSlot);
+            HandleConnectionRequest(request, ref accepted, ref countedSlot, ref registered);
         }
         catch (Exception ex)
         {
@@ -163,6 +179,9 @@ public sealed class NetworkListener : INetEventListener
                 // Review A round 1: counted but not yet handed to a PeerState (the disconnect below cannot find the slot
                 // through peer.Tag), so it is given back here, once.
                 if (countedSlot >= 0) _connectRate.Release(countedSlot);
+                // Review fix B3: keys registered but not handed to a PeerState are retired here (once; still sealing any
+                // close below until they expire).
+                if (registered != null) _auth.Retire(request.RemoteEndPoint, registered, Environment.TickCount64);
                 if (accepted != null)
                 {
                     _health.AddKick(DisconnectCode.ServerError);
@@ -180,13 +199,17 @@ public sealed class NetworkListener : INetEventListener
         }
     }
 
-    // 기능: 연결 요청 하나를 받거나 거절한다. 순서(리뷰 수정 A2·A3): 정지·꽉 참 → 버전(첫 필드) → 형식·이름 → 쿠키(없으면 쿠키를
-    //   돌려주고, 틀리면 거절) → IP별 빈도·벌점·동시 연결 → 전역 수락 → Accept. 토큰·연결 수는 쿠키를 통과한 요청만 쓴다.
-    //   모든 거절은 RejectForce(16 B 쿠키 또는 1 B RejectReason)라 서버에 임시 peer가 없다.
+    // 기능: 연결 요청 하나를 받거나 거절한다. 순서(리뷰 수정 A2·A3·B2): 정지·꽉 참 → 버전(첫 필드) → 형식·이름 → 쿠키(없으면 쿠키를
+    //   돌려주고, 틀리면 거절) → IP별 빈도·벌점·동시 연결 → 전역 수락 → 세션 키 복호(실패 BadRequest, 리뷰 B 1·2차: 같은 칸의 60초 안
+    //   세 번째 실패부터 그 칸에 60초 벌점)
+    //   → 키 등록 → Accept.
+    //   토큰·연결 수는 쿠키를 통과한 요청만, RSA 복호는 빈도 검사를 통과한 요청만 쓴다. 모든 거절은 RejectForce(16 B 쿠키 또는
+    //   1 B RejectReason)라 서버에 임시 peer가 없다.
     // 입력: request - LiteNetLib 연결 요청, accepted - Accept한 peer를 받을 곳(예외 경로가 닫는다), countedSlot - 세었지만 아직
-    //   PeerState에 넘기지 않은 IP 칸(예외 경로가 반환한다. PeerState에 넘긴 뒤에는 -1, 끊길 때 HandleDisconnect가 반환한다).
-    // 출력: 반환값 없음. 받으면 PeerState가 붙고 그 IP 칸에 연결이 세어지며 Control 채널에 Connected가 들어간다.
-    private void HandleConnectionRequest(ConnectionRequest request, ref NetPeer? accepted, ref int countedSlot)
+    //   PeerState에 넘기지 않은 IP 칸(예외 경로가 반환한다. PeerState에 넘긴 뒤에는 -1, 끊길 때 HandleDisconnect가 반환한다),
+    //   registered - 등록했지만 아직 PeerState에 넘기지 않은 세션 키(예외 경로가 은퇴시킨다).
+    // 출력: 반환값 없음. 받으면 PeerState(세션 키·Resume 정보 포함)가 붙고 그 IP 칸에 연결이 세어지며 Control 채널에 Connected가 들어간다.
+    private void HandleConnectionRequest(ConnectionRequest request, ref NetPeer? accepted, ref int countedSlot, ref SessionKeys? registered)
     {
         CallbackFaultHook?.Invoke("request");
         if (_stopping || Manager.ConnectedPeersCount >= _options.MaxPlayers)
@@ -216,7 +239,7 @@ public sealed class NetworkListener : INetEventListener
             Reject(request, RejectReason.VersionMismatch, RejectVersionMismatch);
             return;
         }
-        if (!ConnectRequestData.TryRead(ref reader, out var connect, _cookieIn))
+        if (!ConnectRequestData.TryRead(ref reader, out var connect, _cookieIn, _blobIn, _proofIn))
         {
             Reject(request, RejectReason.BadRequest, RejectBadRequest);
             return;
@@ -267,6 +290,28 @@ public sealed class NetworkListener : INetEventListener
             return;
         }
 
+        // Review fix B2: the RSA decrypt (about a millisecond) only for a request that passed the cookie and every rate, so
+        // forged or flooding sources cannot spend it. A blob for another key or garbage is a BadRequest. Review B rounds 1 and 2:
+        // from the third such request from one slot within a minute the slot is penalized (Interlocked, as the game loop's
+        // Penalize), so one address cannot keep this thread decrypting garbage at its request rate, while one misconfigured
+        // client does not shut out a whole NAT address at its first try. An honest client does not retry a BadRequest.
+        if (!_identity.TryDecryptSessionKey(connect.SessionKeyBlob, out byte[] sessionKey))
+        {
+            int failedSlot = _connectRate.SlotOf(remote.Address);
+            if (_connectRate.RecordDecryptFailure(failedSlot, now))
+            {
+                _connectRate.Penalize(failedSlot, now + DecryptFailurePenaltyMs);
+                _health.AddPenalty();
+            }
+            Reject(request, RejectReason.BadRequest, RejectBadRequest);
+            return;
+        }
+        // Registered before Accept, so LiteNetLib's accept answer already goes out sealed.
+        var keys = new SessionKeys(sessionKey, isServer: true);
+        _auth.Register(remote, keys, now);
+        registered = keys;
+        byte[]? resumeProof = (connect.Flags & ConnectFlags.HasResume) != 0 ? (byte[])connect.ResumeProof.Clone() : null;
+
         int slot = _connectRate.SlotOf(remote.Address);
         NetPeer peer = request.Accept();
         accepted = peer;
@@ -276,8 +321,12 @@ public sealed class NetworkListener : INetEventListener
         // this thread, and the game loop does not know it before the Connected message below.
         _connectRate.Acquired(slot);
         countedSlot = slot;
-        peer.Tag = new PeerState(connect.DevPlayerId, slot);
+        peer.Tag = new PeerState(connect.DevPlayerId, slot)
+        {
+            Keys = keys, SessionKey = sessionKey, ResumeNonce = connect.ResumeNonce, ResumeProof = resumeProof,
+        };
         countedSlot = -1;
+        registered = null;
         CallbackFaultHook?.Invoke("accepted");
         _health.AddConnection();
         // Server review M1: Debug, like every per-connection event (the Health line counts them).
@@ -327,7 +376,7 @@ public sealed class NetworkListener : INetEventListener
         }
     }
 
-    // 기능: 끊긴 연결을 처리한다: 그 IP 칸의 연결 수를 내리고(리뷰 수정 A2), 세고, Game Loop에 Disconnected를 알린다.
+    // 기능: 끊긴 연결을 처리한다: 그 IP 칸의 연결 수를 내리고(리뷰 수정 A2), 세션 키를 은퇴시키고(리뷰 수정 B3), 세고, Game Loop에 Disconnected를 알린다.
     // 입력: peer - 끊긴 연결, disconnectInfo - LiteNetLib 끊김 정보.
     // 출력: 반환값 없음. Control 채널에 Disconnected가 들어간다(가득 차면 stale-peer 정리가 대신한다).
     private void HandleDisconnect(NetPeer peer, DisconnectInfo disconnectInfo)
@@ -335,6 +384,9 @@ public sealed class NetworkListener : INetEventListener
         // Review fix A2: the connection counted at accept leaves its address's count (first, so nothing below can keep it
         // counted; once: every accepted peer gets one disconnect).
         if (peer.Tag is PeerState counted && counted.ConnectSlot >= 0) _connectRate.Release(counted.ConnectSlot);
+        // Review fix B3: the session keys are retired, not removed: LiteNetLib resends the disconnect packet after this
+        // event, and the resends must stay sealed (AuthPacketLayer removes them after the retire time).
+        if (peer.Tag is PeerState keyed && keyed.Keys != null) _auth.Retire(peer, keyed.Keys, Environment.TickCount64);
         CallbackFaultHook?.Invoke("disconnected");
         _health.AddDisconnect(disconnectInfo.Reason == DisconnectReason.Timeout);
         if (peer.Tag is PeerState state)

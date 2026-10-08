@@ -20,6 +20,7 @@ namespace ProjectH.Client.UI
         private ClientState _state = (ClientState)(-1);
         private int _rtt = -1;
         private ushort _entity;
+        private long _authDrops = -1;
         // Phase 12 D14: the shown movement digits; the line is rebuilt when one changes, at most 10 times a second. Two
         // values outside MovementMode stand for "nothing shown yet" (rebuild on the next tick) and "dead" (the line empty).
         private const MovementMode ModeUnknown = (MovementMode)255;
@@ -75,14 +76,18 @@ namespace ProjectH.Client.UI
             _rateFrom = -1f;
         }
 
-        public void Tick(ClientState state, int roundTripMs, ushort entityId)
+        // 기능: 연결 상태 줄을 갱신한다. 보이는 값(상태·RTT·Entity·인증 버림 수)이 바뀐 때만 문자열을 다시 만든다.
+        // 입력: state - 연결 상태, roundTripMs - RTT, entityId - 내 Entity, authDrops - 인증 계층이 버린 데이터그램 수(리뷰 B3).
+        // 출력: 반환값 없음. 숨겨져 있으면 아무것도 하지 않는다.
+        public void Tick(ClientState state, int roundTripMs, ushort entityId, long authDrops)
         {
             if (_root == null || !_visible) return;
-            if (state == _state && roundTripMs == _rtt && entityId == _entity) return;
+            if (state == _state && roundTripMs == _rtt && entityId == _entity && authDrops == _authDrops) return;
             _state = state;
             _rtt = roundTripMs;
             _entity = entityId;
-            _text.text = UiText.DebugLine(state.ToString(), roundTripMs, entityId);
+            _authDrops = authDrops;
+            _text.text = UiText.DebugLine(state.ToString(), roundTripMs, entityId, authDrops);
         }
 
         // Phase 12 D14: the local player's mode, speeds, energy and the last prediction correction, and the transport route.

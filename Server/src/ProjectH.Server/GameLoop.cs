@@ -144,13 +144,16 @@ public sealed class GameLoop : IDisposable
     // the host with exit code 1. time: the clock of the reset window (tests pass a manual one).
     // statsQueries: Phase 11 D8, the statistics path shared with StatsQueryService; null = a queue nobody answers (tests
     // that do not need answers), so requests wait there and, once it is full, are answered Busy.
+    // identity: review fix B1, the server key (GameServerService loads it with the environment); null = the development key
+    // next to the server (tests). The loop owns it and disposes it.
     // 기능: Game Loop와 NetManager·채널·수신 처리기·첫 경기를 만든다(Phase 15: Marker 채널과 map.json 속도 제한 수치를 넘긴다.
-    //   리뷰 수정 A1: 조각 상한 MaxFragments, A5: Build 채널에 building.json 초당 요청 수, A6: 출처를 적는 실패 Ring).
+    //   리뷰 수정 A1: 조각 상한 MaxFragments, A5: Build 채널에 building.json 초당 요청 수, A6: 출처를 적는 실패 Ring,
+    //   B1·B3: 서버 키와 데이터그램 인증 계층, MtuOverride = UserMtu).
     // 입력: options - 서버 설정, data - 게임 데이터, logger - 로그, 나머지 - 위 설명의 테스트용·선택 인자.
     // 출력: Start 전의 GameLoop.
     public GameLoop(ServerOptions options, GameData data, ILogger logger, StartingLoadout? loadout = null,
         System.Numerics.Vector3[]? dropPoints = null, Action<Persistence.MatchRecord>? matchSink = null,
-        Action? onFatal = null, TimeProvider? time = null, StatsQueryQueue? statsQueries = null)
+        Action? onFatal = null, TimeProvider? time = null, StatsQueryQueue? statsQueries = null, ServerIdentity? identity = null)
     {
         string? error = options.Validate();
         if (error != null) throw new ArgumentException(error, nameof(options));
@@ -175,8 +178,13 @@ public sealed class GameLoop : IDisposable
         _playerFailed = OnPlayerFailed;
         _statsQueries = statsQueries ?? new StatsQueryQueue();
         _health.StatsQueries = () => _statsQueries.Counts;
-        _listener = new NetworkListener(options, _channels, _stats, _health, _statsQueries, logger, data.Building.MaxRequestsPerSecond, data.Map);
-        _net = new NetManager(_listener, null)
+        _identity = identity ?? ServerIdentity.Load(options, isProduction: false, AppContext.BaseDirectory);
+        // Review fix B3: keys of a closed connection stay DisconnectTimeout + 1 s (its disconnect resends stay sealed). Review B
+        // round 1: the cap holds every connection the accept buckets can let in within that window (ServerOptions.MaxRetiredAuthKeys).
+        _auth = new AuthPacketLayer(_health, options.AuthKeyRetireMs, options.MaxRetiredAuthKeys);
+        _listener = new NetworkListener(options, _channels, _stats, _health, _statsQueries, logger, _identity, _auth,
+            data.Building.MaxRequestsPerSecond, data.Map);
+        _net = new NetManager(_listener, _auth)
         {
             UnsyncedEvents = true,
             AutoRecycle = true,
@@ -185,8 +193,9 @@ public sealed class GameLoop : IDisposable
             // a menu) sends little besides pongs to our pings, so ping at least 4 times per timeout;
             // with LiteNetLib's default 1000 ms and a short timeout, live clients were timed out.
             PingInterval = Math.Min(1000, options.DisconnectTimeoutMs / 4),
-            // Snapshots are sent Sequenced (never fragmented) and can be MaxPacketSize bytes.
-            MtuOverride = ProtocolConstants.Mtu,
+            // Snapshots are sent Sequenced (never fragmented) and can be MaxPacketSize bytes. Review fix B3: LiteNetLib does not
+            // count the layer's 20-byte tail in the MTU, so the user MTU leaves room for it (ProtocolLimits.UserMtu).
+            MtuOverride = ProtocolLimits.UserMtu,
             // Phase 13 D13: channel 0 as before, channel 1 the building stream.
             ChannelsCount = ProtocolConstants.ChannelCount,
             UnconnectedMessagesEnabled = false,
@@ -199,6 +208,12 @@ public sealed class GameLoop : IDisposable
         _match = NewMatch();
         _buildRejects = code => _match.BuildResults(code);
     }
+
+    // Review fixes B1, B3: the server key and the datagram authentication layer (see the constructor).
+    private readonly ServerIdentity _identity;
+    private readonly AuthPacketLayer _auth;
+    internal AuthPacketLayer Auth => _auth;
+    internal ServerIdentity Identity => _identity;
 
     // Server review M7: made once (NewMatch runs again on every reset).
     private readonly Action<int, Exception> _playerFailed;
@@ -383,12 +398,16 @@ public sealed class GameLoop : IDisposable
         _net.Stop(true);
     }
 
+    // 기능: 멈추고 자원을 해제한다(리뷰 수정 B1: 서버 키 포함).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
         Stop();
         _stop.Dispose();
+        _identity.Dispose();
     }
 
     private void Run()
@@ -684,13 +703,28 @@ public sealed class GameLoop : IDisposable
         }
     }
 
+    // 기능: Join 요청을 경기에 넘긴다(리뷰 수정 B4: 이 연결의 Resume 키와 요청의 Resume 증명을 함께. 연결 중인 캐릭터를 넘겨받았으면 옛 연결을
+    //   1초 뒤 코드 없이 닫는다). Ok·Resumed면 입력 시간을 시작하고 센다.
+    // 입력: peerId - 연결 id, state - 연결 상태(이름, 세션 키, Resume 증명).
+    // 출력: 반환값 없음. 연결 상태가 Joined 또는 JoinRefused가 된다.
     // Only Ok and Resumed make a joined peer (input timeout from now). A refused Join (MatchFull; AlreadyJoined cannot
     // happen, the listener forwards one Join per connection) already got its JoinMatchResponse from Match. The
     // connection has nothing left to do, so SweepPeers closes it SimHz ticks later, after the response went out;
     // until then the join timeout does not apply to it.
     private void Join(int peerId, PeerState state)
     {
-        JoinResult result = _match.TryJoin(peerId, state.DevPlayerId);
+        // Review fix B4: the connection's resume key (kept by the player for a later resume) and its resume claim.
+        JoinResult result = _match.TryJoin(peerId, state.DevPlayerId, state.ResumeKey, state.SessionKey, state.ResumeNonce, state.ResumeProof,
+            out int takenOverPeer);
+        // Review fix B4: the character was taken over from a connection the server had not yet seen drop (its client crashed
+        // and came back). That connection is closed a second later without a code, like a refused join: no grace (Match no
+        // longer maps it to a player), and a client that is somehow still there does not retry a close without a code.
+        if (takenOverPeer != PlayerEntity.NoPeer && _peers.TryGetValue(takenOverPeer, out NetPeer? oldPeer) && oldPeer.Tag is PeerState oldState)
+        {
+            oldState.JoinRefused = true;
+            oldState.RefusedTick = _loopTick;
+            _logger.LogDebug("Peer {PeerId} ({DevPlayerId}) took its character over from peer {OldPeerId}", peerId, state.DevPlayerId, takenOverPeer);
+        }
         if (result == JoinResult.Ok || result == JoinResult.Resumed)
         {
             state.Joined = true;
@@ -914,7 +948,7 @@ public sealed class GameLoop : IDisposable
             "kicks kicked={KickBad} joinTimeout={KickJoin} inputTimeout={KickInput} serverError={KickError} congested={KickCongested} " +
             "badPackets unknownId={BadUnknown} malformed={BadMalformed} beforeJoin={BadBeforeJoin} duplicateJoin={BadDuplicate} " +
             "inputRate={BadRate} wrongDirection={BadDirection} handlerException={BadHandler} buildRate={BadBuildRate} markerRate={BadMarkerRate} " +
-            "inputSeqDrops={InputSeqDrops} " +
+            "inputSeqDrops={InputSeqDrops} authDrops={AuthDrops} authDropsRetired={AuthDropsRetired} " +
             "tickFailures={TickFailures} loopFailures={LoopFailures} matchResets={Resets} stalls={Stalls} movementAnomalies={MovementAnomalies} " +
             "networkErrors={NetworkErrors} playerFailures={PlayerFailures} penalties={Penalties} stallExits={StallExits} callbackErrors={CallbackErrors} " +
             "build pieces={BuildPieces} cells={BuildCells} requests={BuildRequests} accepted={BuildAccepted} destroyed={BuildDestroyed} " +
@@ -942,7 +976,7 @@ public sealed class GameLoop : IDisposable
             h.BadPackets(BadPacketReason.UnknownId), h.BadPackets(BadPacketReason.Malformed), h.BadPackets(BadPacketReason.InputBeforeJoin),
             h.BadPackets(BadPacketReason.DuplicateJoin), h.BadPackets(BadPacketReason.InputRate), h.BadPackets(BadPacketReason.WrongDirection),
             h.BadPackets(BadPacketReason.HandlerException), h.BadPackets(BadPacketReason.BuildRate), h.BadPackets(BadPacketReason.MarkerRate),
-            h.InputSeqDrops,
+            h.InputSeqDrops, h.AuthDrops, h.AuthDropsRetired,
             h.TickFailures, h.LoopFailures, h.MatchResets, h.Stalls, h.MovementAnomalies,
             h.NetworkErrors, h.PlayerFailures, h.Penalties, h.StallExits, h.CallbackErrors,
             b.Pieces, b.Cells, b.Requests, b.Accepted, b.Destroyed, b.Collapsed, b.Duplicates, b.Edits, b.EventPackets, b.SyncPackets,

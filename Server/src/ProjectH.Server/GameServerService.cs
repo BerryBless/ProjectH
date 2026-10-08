@@ -21,10 +21,21 @@ public sealed class GameServerService : IHostedService, System.IDisposable
     private readonly IHostApplicationLifetime _lifetime;
     private readonly TimeSpan _fatalStall;   // server review M8 (Zero = off)
 
+    // 기능: 게임 서버를 만든다(데이터 파일, 리뷰 수정 B1: 서버 키 — Production에서 개발용 키면 예외로 시작을 막는다, GameLoop, Meter).
+    // 입력: options - 서버 설정, logger - 로그, matchHistory·writer - 경기 기록, statsQueries - 전적 요청 큐, lifetime - 호스트 수명,
+    //   environment - 호스트 환경(Production 판단), qa - QA 모드일 때만.
+    // 출력: 시작 전의 GameServerService.
     public GameServerService(IOptions<ServerOptions> options, ILogger<GameLoop> logger, MatchHistoryQueue matchHistory,
-        MatchHistoryWriter writer, StatsQueryQueue statsQueries, IHostApplicationLifetime lifetime, Qa.QaControl? qa = null)
+        MatchHistoryWriter writer, StatsQueryQueue statsQueries, IHostApplicationLifetime lifetime, IHostEnvironment environment,
+        Qa.QaControl? qa = null)
     {
         _logger = logger;
+        // Review fix B1: a missing or invalid key, or the development key in Production, throws here: the host refuses to start.
+        var identity = Net.ServerIdentity.Load(options.Value, environment.IsProduction(), AppContext.BaseDirectory);
+        if (identity.IsDevKey)
+            logger.LogWarning("Server identity: DEV KEY (fingerprint {Fingerprint}, {Source}); never use it on a public server", identity.Fingerprint, identity.Source);
+        else
+            logger.LogInformation("Server identity: fingerprint {Fingerprint} ({Source})", identity.Fingerprint, identity.Source);
         // The data files are copied next to appsettings.json. A missing or invalid file throws here, so the
         // host refuses to start, the same as an invalid ServerOptions value (Phase 3 D4, Phase 4 D2).
         var data = GameData.LoadDirectory(AppContext.BaseDirectory, options.Value.SimHz);
@@ -36,7 +47,7 @@ public sealed class GameServerService : IHostedService, System.IDisposable
         _loop = new GameLoop(options.Value, data, logger, matchSink: record => matchHistory.TryEnqueue(record),
             onFatal: StopWithError,
             // Phase 11 D8: statistics requests go to StatsQueryService through this queue; the loop sends the answers.
-            statsQueries: statsQueries);
+            statsQueries: statsQueries, identity: identity);
         // Phase 10 D9: the writer's totals go into the Health line and the Meter.
         _loop.Health.Persistence = () => writer.Counts;
         // QA-1 D2: registered only in QA mode (Program.cs); otherwise null and the loop pays one null check per tick.

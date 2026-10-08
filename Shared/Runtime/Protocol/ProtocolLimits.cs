@@ -16,6 +16,11 @@ namespace ProjectH.Shared.Protocol
         public const int TransportHeaderBytes = 4;
         // B3: the datagram tail of the authentication layer: counter 4 + MAC 16.
         public const int AuthTagBytes = 20;
+        // B3: NetManager.MtuOverride on every side. LiteNetLib does not count the layer's tail in the MTU (measured: with
+        // MtuOverride 1232 and a 20-byte layer a Sequenced packet could still be 1228 bytes), so the user MTU is the wire
+        // budget minus the tail: a datagram on the wire stays within ProtocolConstants.Mtu, and a Sequenced packet still has
+        // 1212 - 4 = 1208 >= MaxPacketSize bytes.
+        public const int UserMtu = ProtocolConstants.Mtu - AuthTagBytes;
         public const int MacBytes = 16;
         // A3: the connect cookie the server sends back in a RejectForce and the client repeats in its next request.
         public const int CookieBytes = 16;

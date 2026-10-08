@@ -120,6 +120,10 @@ public sealed class HeadlessActor : IQaActor
         _state = new ActorState { Alias = alias, DevPlayerId = DevPlayerId, Status = ActorStatus.Idle };
     }
 
+    // Review fix B4: this actor's resume key across its connections (QA servers run the development key, the default of
+    // BotConnection).
+    private readonly ProjectH.Bots.ResumeTicket _ticket = new();
+
     public string Alias { get; }
     public string DevPlayerId { get; }
     public ActorState State => Volatile.Read(ref _state);
@@ -148,7 +152,7 @@ public sealed class HeadlessActor : IQaActor
                 _closed = false;
                 _closeReason = string.Empty;
                 _connections++;
-                _connection.Connect(c.Host, c.Port, DevPlayerId);
+                _connection.Connect(c.Host, c.Port, DevPlayerId, _ticket);   // review fix B4: a reconnect resumes with the proof
                 break;
             case DisconnectCommand d:
                 CloseConnection(d.Graceful, d.Graceful ? "Closed by QA (graceful)" : "Aborted by QA (network loss)");

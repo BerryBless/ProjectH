@@ -27,7 +27,7 @@
 dotnet build Server/ProjectH.Server.slnx -c Release
 
 # 1. 서버 (N = 10, 20, 32, 50)
-dotnet Server/src/ProjectH.Server/bin/Release/net10.0/ProjectH.Server.dll --Server:Port=7790 --Server:MaxPlayers=50 --Server:DevRespawn=true --Server:ConnectBurstPerIp=200 --Server:MaxConnectionsPerIp=200 > load-server-N.log 2>&1 &
+dotnet Server/src/ProjectH.Server/bin/Release/net10.0/ProjectH.Server.dll --Server:Port=7790 --Server:MaxPlayers=50 --Server:DevRespawn=true --Server:ConnectBurstPerIp=200 --Server:MaxConnectionsPerIp=200 --environment Development > load-server-N.log 2>&1 &
 
 # 2. 4초 뒤 봇을 2분 돌린다
 dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 7790 --count N --duration 120 --connect-interval-ms 50 > load-bots-N.log 2>&1

@@ -410,22 +410,48 @@ namespace ProjectH.Client.Game
             }
         }
 
-        // A manual connect: stops any automatic reconnect and starts over. Ignored while a connection (or an automatic
-        // attempt) is in progress, like NetClient.Connect, so the address of the running connection is kept.
+        // 기능: 직접 접속한다(타이틀의 접속, 끊김 화면의 다시 접속). 자동 재접속을 멈추고 새로 시작한다.
+        //   다른 서버나 다른 이름이면 보관한 Resume 키를 버린다(같은 주소·이름의 다시 접속은 그 캐릭터로 돌아가기를 시도한다).
+        // 입력: host·port - 서버 주소, devPlayerId - 이름.
+        // 출력: 반환값 없음. 연결 중·연결됨이면 무시하고 주소와 이름도 바꾸지 않는다(NetClient.Connect와 같다).
         public void Connect(string host, int port, string devPlayerId)
         {
             if (_net.State != ClientState.Disconnected) return;
             CancelReconnect();
+            if (host != _host || port != _port || devPlayerId != _devPlayerId) _net.ForgetResume();
             _host = host;
             _port = port;
             _devPlayerId = devPlayerId;
             _net.Connect(host, port, devPlayerId);
         }
 
+        // 기능: 사용자가 접속을 끊는다(메뉴의 접속 끊기, 끊김 화면의 타이틀로, 연결 중 취소). 자동 재접속을 멈추고 Resume 키를 버린다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 다음 접속은 새 캐릭터로 들어간다.
         public void Disconnect()
         {
             CancelReconnect();
+            _net.ForgetResume();
             _net.Disconnect();
+        }
+
+        // Review fix B3: datagrams dropped by the authentication layer on this client (F1 line).
+        public long AuthDrops => _net.AuthDrops;
+
+        // 기능: Resources/ServerPublicKey.txt(서버 RSA 공개키 XML)를 읽는다. 배포할 때 이 파일을 운영 서버의 공개키로 바꾼다.
+        // 입력: 없음.
+        // 출력: 키 문장. 파일이 없으면 null(오류 로그, 접속이 그 이유로 실패한다. 개발 키로 대신하지 않는다).
+        private static string LoadServerPublicKey()
+        {
+            var asset = Resources.Load<TextAsset>("ServerPublicKey");
+            if (asset == null)
+            {
+                Debug.LogError("Resources/ServerPublicKey.txt is missing: connecting will fail.");
+                return null;
+            }
+            string xml = asset.text;
+            Resources.UnloadAsset(asset);
+            return xml;
         }
 
         private void CancelReconnect()
@@ -491,7 +517,7 @@ namespace ProjectH.Client.Game
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             _qaRecorder = Qa.QaInputRecorder.FromLaunch();
 #endif
-            _net = new NetClient();
+            _net = new NetClient(LoadServerPublicKey());
             _build = new BuildController(request => _net.SendBuild(request), _buildCounter);
             _edit = new BuildEditController(request => _net.SendBuildEdit(request), _buildCounter);
             _net.Connected += OnConnected;

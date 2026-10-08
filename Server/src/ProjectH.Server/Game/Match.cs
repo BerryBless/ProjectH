@@ -329,17 +329,49 @@ public sealed partial class Match
         return error;
     }
 
-    // 기능: 연결을 경기에 넣는다(유예 중인 같은 DevPlayerId면 Resume). 새 플레이어는 JoinOrder를 받고(Phase 14 D1, 개발 모드면 팀도), 입장 패킷 묶음
-    //   (Phase 16: 채집 상태 뒤에 ContainerStates·SupplyDrops, Phase 17: 살아 있는 투사체)과 끝에 분대 상태, (Phase 15, 팀이 있으면) 팀 지도 표시를 받는다.
-    // 입력: peerId - 연결 id, devPlayerId - 검증된 플레이어 이름.
+    // 기능: 연결을 경기에 넣는다. 리뷰 수정 B4: 유예 중인 같은 DevPlayerId 캐릭터는 그 캐릭터의 Resume 키로 만든 증명(새 세션 키에 묶임,
+    //   nonce > 지난 nonce)이 맞을 때만 Resume한다. 증명이 없거나 틀리면 새 플레이어다. 새 플레이어는 JoinOrder를 받고(Phase 14 D1, 개발
+    //   모드면 팀도), 입장 패킷 묶음(Phase 16: 채집 상태 뒤에 ContainerStates·SupplyDrops, Phase 17: 살아 있는 투사체)과 끝에 분대 상태,
+    //   (Phase 15, 팀이 있으면) 팀 지도 표시를 받는다. Ok·Resumed면 플레이어의 Resume 키를 이 연결의 것으로 바꾼다(nonce는 0부터).
+    //   Resumed면 증명에 쓰인 키를 PrevResumeKey(그 nonce와 함께)로 남긴다: Client는 JoinMatchResponse를 받아야 새 키를 쓰므로, 이 연결의
+    //   첫 입력이 수락될 때(EnqueueInput)까지 그 키로도 되찾을 수 있다(리뷰 B 1차).
+    //   유예 캐릭터가 없고 증명이 아직 연결 중인 같은 이름 캐릭터와 맞으면(서버가 옛 연결의 끊김을 아직 모르는 경우) 그 캐릭터를 넘겨받고
+    //   옛 연결 id를 takenOverPeer로 알린다(GameLoop가 유예 없이 닫는다).
+    // 입력: peerId - 연결 id, devPlayerId - 검증된 플레이어 이름, connectionResumeKey - 이 연결의 Resume 키(다음 Resume의 기준, null = 없음),
+    //   sessionKey - 이 연결의 세션 키(증명이 묶인 값), resumeNonce·resumeProof - 요청의 Resume 증명(proof null = 시도 없음),
+    //   takenOverPeer - 넘겨받은 캐릭터의 옛 연결 id를 받을 곳(없으면 PlayerEntity.NoPeer).
     // 출력: Ok, Resumed, AlreadyJoined 또는 MatchFull.
-    public JoinResult TryJoin(int peerId, string devPlayerId)
+    public JoinResult TryJoin(int peerId, string devPlayerId, byte[]? connectionResumeKey, byte[]? sessionKey, uint resumeNonce,
+        byte[]? resumeProof, out int takenOverPeer)
     {
+        takenOverPeer = PlayerEntity.NoPeer;
         if (_playersByPeer.ContainsKey(peerId)) return JoinResult.AlreadyJoined;
         // Phase 10 D2: before the full check, because a graced player's slot is its own.
-        PlayerEntity? graced = FindGraced(devPlayerId);
+        byte[]? provedKey = null;
+        PlayerEntity? graced = resumeProof != null && sessionKey != null
+            ? FindGraced(devPlayerId, sessionKey, resumeNonce, resumeProof, out provedKey) : null;
+        // Review fix B4: the owner's client came back before the server noticed its old connection was gone (a crash, then a
+        // reconnect within DisconnectTimeoutMs). Its proof is its identity, so it takes the character over from the old
+        // connection instead of joining as a spectator and losing it.
+        PlayerEntity? connected = graced == null && resumeProof != null && sessionKey != null
+            ? FindConnectedByProof(devPlayerId, sessionKey, resumeNonce, resumeProof, out provedKey) : null;
+        if (connected != null)
+        {
+            takenOverPeer = connected.PeerId;
+            _playersByPeer.Remove(connected.PeerId);
+            // As at a drop to the grace (Disconnect): out of a seat, and no held input carried over to the new connection.
+            if (ForceExit(connected)) connected.LastInput = new InputCommand { Seq = connected.LastInput.Seq, Yaw = connected.LastInput.Yaw };
+            graced = connected;
+        }
         if (graced != null)
         {
+            // Review B round 1: the client takes connectionResumeKey only when JoinMatchResponse arrives. The key this request
+            // proved with (the one the client holds) stays valid with its nonce until this connection's first accepted input,
+            // so a response lost to another drop, even more than once, does not strand the character.
+            graced.PrevResumeKey = provedKey;
+            graced.PrevResumeNonce = resumeNonce;
+            graced.ResumeKey = connectionResumeKey;
+            graced.LastResumeNonce = 0;
             Resume(peerId, graced);
             return JoinResult.Resumed;
         }
@@ -350,6 +382,7 @@ public sealed partial class Match
         }
 
         var player = new PlayerEntity(AllocateEntityId(), peerId, devPlayerId, _inputCapacity, _inputSeqWindow);
+        player.ResumeKey = connectionResumeKey;   // review fix B4
         player.JoinOrder = ++_joinCounter;   // Phase 14 D1
         if (_flow.DevRespawn) AssignDevTeam(player);
         player.State.Position = SpawnPosition(player.EntityId);
@@ -472,6 +505,7 @@ public sealed partial class Match
     // 입력: peerId - 연결 id, packet - 입력 1–3개.
     // 출력: 리뷰 수정 A4: 하나라도 버퍼에 들어갔으면 true, 플레이어가 있는데 모두 거절됐으면(이미 받은 Seq, Seq 창 밖) false.
     //   그 연결의 플레이어가 없으면 true(전과 같이 GameLoop가 입력 시간을 갱신한다: 판단할 버퍼가 없다).
+    //   리뷰 B 1차: 하나라도 들어가면 PrevResumeKey를 비운다(Client는 Join된 뒤에만 입력을 보내므로 새 Resume 키를 이미 갖고 있다).
     public bool EnqueueInput(int peerId, in PlayerInputPacket packet)
     {
         if (!_playersByPeer.TryGetValue(peerId, out var player)) return true;
@@ -482,6 +516,7 @@ public sealed partial class Match
             if (player.Inputs.Add(packet.Get(i))) accepted = true;
             InputSeqDrops += player.Inputs.SeqAheadDrops - dropsBefore;
         }
+        if (accepted) player.PrevResumeKey = null;
         return accepted;
     }
 
@@ -2551,15 +2586,59 @@ public sealed partial class Match
         _graceExpired?.Invoke(player.DevPlayerId);
     }
 
-    // D2: the oldest graced, living player with this DevPlayerId, unless a connected player already uses the id (then
-    // the newcomer joins as a new player and takes nothing over).
-    private PlayerEntity? FindGraced(string devPlayerId)
+    // 기능: 이 요청이 되찾을 유예 캐릭터를 찾는다(D2, 리뷰 수정 B4): 같은 DevPlayerId, 살아 있음, 증명이 그 캐릭터의 Resume 키 또는
+    //   이전 Resume 키(리뷰 B 1차, ProvedKey)로 맞음. 이름이 같아도 증명이 맞지 않는 캐릭터는 건너뛴다(먼저 끊긴 것부터).
+    //   같은 이름으로 연결된 다른 플레이어가 있어도 찾는다: 증명이 신원이므로, 이름을 먼저 차지한 사람이 Resume을 막지 못한다(SEC-2 변형).
+    // 입력: devPlayerId - 이름, sessionKey - 새 연결의 세션 키, nonce·proof - 요청의 증명, provedKey - 맞은 키를 받을 곳.
+    // 출력: 되찾을 플레이어와 증명이 맞은 키, 없으면 null(provedKey도 null). 상태는 바꾸지 않는다(키 교체는 TryJoin).
+    private PlayerEntity? FindGraced(string devPlayerId, byte[] sessionKey, uint nonce, byte[] proof, out byte[]? provedKey)
     {
+        provedKey = null;
         if (_graced.Count == 0) return null;
+        foreach (var player in _graced)
+        {
+            if (!player.Alive || player.DevPlayerId != devPlayerId) continue;
+            provedKey = ProvedKey(player, sessionKey, nonce, proof);
+            if (provedKey != null) return player;
+        }
+        return null;
+    }
+
+    // 기능: 아직 연결 중인 같은 이름 캐릭터 중 이 증명이 맞는 것을 찾는다(리뷰 수정 B4: 서버가 끊김을 알기 전에 주인이 다시 접속한 경우).
+    //   살아 있지 않아도(관전·사망) 넘겨받는다: 그 캐릭터의 상태 그대로다(Resume이 사망을 알린다). 증명은 Resume 키 또는 이전 Resume 키로 맞으면 된다.
+    // 입력: devPlayerId - 이름, sessionKey - 새 연결의 세션 키, nonce·proof - 요청의 증명, provedKey - 맞은 키를 받을 곳.
+    // 출력: 넘겨받을 플레이어와 증명이 맞은 키, 없으면 null(provedKey도 null). 상태는 바꾸지 않는다(키 교체는 TryJoin).
+    private PlayerEntity? FindConnectedByProof(string devPlayerId, byte[] sessionKey, uint nonce, byte[] proof, out byte[]? provedKey)
+    {
+        provedKey = null;
         foreach (var player in _playersByPeer.Values)
         {
-            if (player.DevPlayerId == devPlayerId) return null;
+            if (player.DevPlayerId != devPlayerId) continue;
+            provedKey = ProvedKey(player, sessionKey, nonce, proof);
+            if (provedKey != null) return player;
         }
+        return null;
+    }
+
+    // 기능: Resume 증명이 플레이어의 지금 Resume 키 또는 이전 Resume 키(리뷰 B 1차: 교체된 뒤 Client가 아직 새 키를 받지 못했을 수 있다)로
+    //   맞는지 본다. nonce는 키마다 따로 단조 증가해야 한다(지금 키는 LastResumeNonce, 이전 키는 PrevResumeNonce보다 커야 한다).
+    // 입력: player - 후보 캐릭터(이름은 호출자가 확인), sessionKey - 새 연결의 세션 키, nonce·proof - 요청의 증명.
+    // 출력: 맞은 키(ResumeKey 또는 PrevResumeKey), 둘 다 아니면 null.
+    private static byte[]? ProvedKey(PlayerEntity player, byte[] sessionKey, uint nonce, byte[] proof)
+    {
+        string name = player.DevPlayerId;
+        if (player.ResumeKey != null && nonce > player.LastResumeNonce
+            && SessionAuth.VerifyResumeProof(player.ResumeKey, nonce, sessionKey, name, proof)) return player.ResumeKey;
+        if (player.PrevResumeKey != null && nonce > player.PrevResumeNonce
+            && SessionAuth.VerifyResumeProof(player.PrevResumeKey, nonce, sessionKey, name, proof)) return player.PrevResumeKey;
+        return null;
+    }
+
+    // 기능: 이름이 같은 유예 캐릭터 중 가장 먼저 끊긴 것을 돌려준다(시험이 정직한 Client의 Resume 증명을 만들 때 쓴다).
+    // 입력: devPlayerId - 이름.
+    // 출력: 살아 있는 유예 캐릭터, 없으면 null.
+    internal PlayerEntity? GracedNamed(string devPlayerId)
+    {
         foreach (var player in _graced)
         {
             if (player.Alive && player.DevPlayerId == devPlayerId) return player;
@@ -2567,10 +2646,11 @@ public sealed partial class Match
         return null;
     }
 
-    // 기능: 유예 중인 캐릭터를 새 연결로 넘기고 입장 패킷 묶음을 다시 보낸다(Phase 16: Container·Supply Drop 상태, Phase 17: 살아 있는 투사체 포함). Phase 14 D13: 끝에
-    //   팀 상태·스테이션·진행 중인 팀 채널도. Phase 15 D10: 그리고 팀 지도 표시. 입력 상태와 하차 Jump 래치는 새로 시작한다.
-    // 입력: peerId - 새 연결 id, player - 유예 중인 플레이어.
-    // 출력: 반환값 없음.
+    // 기능: 유예 중인(또는 리뷰 수정 B4로 넘겨받는) 캐릭터를 새 연결로 넘기고 입장 패킷 묶음을 다시 보낸다(Phase 16: Container·Supply Drop 상태,
+    //   Phase 17: 살아 있는 투사체 포함). Phase 14 D13: 끝에 팀 상태·스테이션·진행 중인 팀 채널도. Phase 15 D10: 그리고 팀 지도 표시.
+    //   리뷰 B 1차: 살아 있지 않은 캐릭터(넘겨받은 관전·사망)면 자기 Spawned 뒤에 PlayerDied를 보낸다. 입력 상태와 하차 Jump 래치는 새로 시작한다.
+    // 입력: peerId - 새 연결 id, player - 유예 중이거나 넘겨받는 플레이어(옛 연결은 이미 _playersByPeer에서 빠졌다).
+    // 출력: 반환값 없음. 새 연결에 입장 패킷 묶음이 전송된다.
     // D2: the character goes to the new connection with everything it has (position, health, inventory, placement
     // state). The new client numbers its inputs from 1, so the input state starts over. It gets what a late joiner
     // gets; the others never saw it leave, so they are told nothing.
@@ -2611,6 +2691,9 @@ public sealed partial class Match
         StartBuildSync(player);      // Phase 13 D14: the client's old pieces are not trusted
         // The match ended while it was away: FinishMatch sent its result to no connection, so it gets it now.
         if (_flow.State == MatchFlowState.Finished && player.Participant) SendMatchResult(player);
+        // Review B round 1: a dead or spectating character taken over from a live connection. As on the Ok path, after its own
+        // spawn: the client learns its own death only from PlayerDied (the snapshot flag does not set it).
+        if (!player.Alive) SendDied(peerId, new PlayerDied { VictimId = player.EntityId });
         SendSquadStateTo(player);   // Phase 14 D13: the team, the stations and the team's channels in progress
         SendMarkersTo(player);      // Phase 15 D10
     }

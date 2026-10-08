@@ -125,6 +125,62 @@ public sealed class BotIntegrationTests
         Assert.Equal(4, server.Health.Joins);   // two joins before the reset, two after
     }
 
+    // Review fix B4 (D0-5): a bot that drops mid-match resumes its character with the proof its ResumeTicket makes; a bot of
+    // the same name without the ticket joins as a new player.
+    [Fact]
+    public void ABot_ThatAbortsAndReconnects_ResumesWithItsProof_AndAnotherBotCannotTakeIt()
+    {
+        using GameLoop server = StartServer(new ServerOptions { MaxPlayers = 4, StartCountdownSeconds = 1, AirDrop = false }, TestGameData.Create());
+        var ticket = new ResumeTicket();
+        var a = new BotConnection();
+        using var b = new BotConnection();
+        BotConnection? impostor = null, back = null;
+        void Pump(Func<bool> until, int timeoutMs, string what)
+        {
+            var clock = Stopwatch.StartNew();
+            while (!until() && clock.ElapsedMilliseconds < timeoutMs)
+            {
+                foreach (BotConnection? c in new[] { a, b, impostor, back })
+                {
+                    if (c != null && !c.Disconnected) c.Update(15f);
+                }
+                Thread.Sleep(15);
+            }
+            Assert.True(until(), what);
+        }
+        try
+        {
+            a.Connect("127.0.0.1", server.LocalPort, "resumer", ticket);
+            b.Connect("127.0.0.1", server.LocalPort, "other");
+            Pump(() => a.View.Joined && b.View.Joined && server.Health.MatchState is MatchFlowState.Playing or MatchFlowState.FinalPhase, 10000, "match running");
+            Assert.NotNull(ticket.ResumeKey);
+            ushort entity = a.View.MyId;
+
+            a.Abort();
+            Pump(() => server.Health.GraceStarts == 1, 8000, "graced");
+
+            impostor = new BotConnection(reconnect: true);
+            impostor.Connect("127.0.0.1", server.LocalPort, "resumer");   // same name, no ticket
+            Pump(() => impostor.View.Joined, 5000, "impostor joined");
+            Assert.NotEqual(entity, impostor.View.MyId);
+            Assert.Equal(0, server.Health.Resumes);
+
+            back = new BotConnection(reconnect: true);
+            back.Connect("127.0.0.1", server.LocalPort, "resumer", ticket);
+            Pump(() => back.View.Joined, 5000, "resumed");
+            Assert.Equal(entity, back.View.MyId);
+            Assert.Equal(1, server.Health.Resumes);
+            Assert.Equal(0, back.AuthDrops);
+            Assert.Equal(0, server.Health.AuthDrops);
+        }
+        finally
+        {
+            a.Dispose();
+            impostor?.Dispose();
+            back?.Dispose();
+        }
+    }
+
     // D11: a kick is not retried, even with --reconnect true.
     [Fact]
     public void ABotClosedWithANonRetryableCode_StaysOut()

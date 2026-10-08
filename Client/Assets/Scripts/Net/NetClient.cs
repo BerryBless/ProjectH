@@ -3,6 +3,7 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using LiteNetLib;
 using LiteNetLib.Utils;
 using ProjectH.Shared.Protocol;
@@ -67,24 +68,71 @@ namespace ProjectH.Client.Net
         private readonly byte[] _cookie = new byte[ProtocolLimits.CookieBytes];
         private bool _hasCookie;
         private bool _cookieRetried;
+        // Review fix B3: the datagram tail (AuthPacketLayer). It owns the SessionKeys of each request; NetClient keeps a
+        // reference to the newest (_connectKeys) for the resume key at join.
+        private readonly AuthPacketLayer _authLayer = new AuthPacketLayer();
+        private SessionKeys _connectKeys;
+        // Review fix B1, B3-1: the pinned server public key (parsed once; null with _publicKeyError when the text is missing or
+        // not an RSA key: every Connect then fails with that error, there is no fallback key), the session key generator and
+        // the 32-byte session key buffer (filled per request, cleared once the request and its keys are made).
+        private readonly RSA _serverKey;
+        private readonly string _publicKeyError;
+        private readonly RandomNumberGenerator _rng = RandomNumberGenerator.Create();
+        private readonly byte[] _sessionKey = new byte[ProtocolLimits.SessionKeyBytes];
+        // Review fix B4: the resume key of the last joined connection, the name it was earned under and the nonce of its last
+        // use. Replaced at every join (Ok or Resumed), dropped by ForgetResume (leaving, another server or name).
+        private byte[] _resumeKey;
+        private string _resumeName;
+        private uint _resumeNonce;
+        private readonly byte[] _resumeProof = new byte[ProtocolLimits.ResumeProofBytes];
 
-        // 기능: LiteNetLib 클라이언트를 서버와 같은 MTU·채널 수·조각 상한으로 만든다(소켓은 첫 Connect가 연다).
-        // 입력: 없음.
+        // 기능: LiteNetLib 클라이언트를 인증 계층과 서버와 같은 MTU·채널 수·조각 상한으로 만들고 서버 공개키를 읽는다(소켓은 첫 Connect가 연다).
+        // 입력: serverPublicKeyXml - 서버 RSA-2048 공개키(RSA.ToXmlString 형식, Unity는 Resources/ServerPublicKey.txt). null이거나
+        //   읽을 수 없으면 Connect가 그 이유로 실패한다.
         // 출력: Disconnected 상태의 NetClient. LiteNetLib의 기본 연결 예산을 기억해 둔다(직접 Connect가 되돌릴 값).
-        public NetClient()
+        public NetClient(string serverPublicKeyXml)
         {
-            _net = new NetManager(this, null)
+            _net = new NetManager(this, _authLayer)
             {
                 UnsyncedEvents = false,
                 AutoRecycle = true,
                 DisconnectTimeout = 5000,   // default PingInterval (1000 ms) stays below a quarter of this
-                IPv6Enabled = false,
-                MtuOverride = ProtocolConstants.Mtu,   // same value as the server so both sides agree on datagram size
+                IPv6Enabled = false,   // also keeps one receive thread, which AuthPacketLayer's unlocked TryOpen relies on
+                // Review fix B3: the wire budget minus the layer's tail (LiteNetLib does not count it), same as the server.
+                MtuOverride = ProtocolLimits.UserMtu,
                 ChannelsCount = ProtocolConstants.ChannelCount,   // Phase 13 D13: channel 1 is the building stream
                 MaxFragmentsCount = ProtocolLimits.MaxFragments,  // review fix A1: same cap as the server; no packet needs fragments
             };
             _defaultReconnectDelay = _net.ReconnectDelay;
             _defaultMaxConnectAttempts = _net.MaxConnectAttempts;
+            _serverKey = ParseServerKey(serverPublicKeyXml, out _publicKeyError);
+        }
+
+        // 기능: 서버 공개키 XML을 읽는다(한 번, 생성자에서).
+        // 입력: xml - RSA.ToXmlString 형식의 공개키, error - 실패 이유를 받을 곳.
+        // 출력: 읽었으면 RSA(NetClient가 Dispose에서 해제)와 error null, 아니면 null과 이유 문장.
+        private static RSA ParseServerKey(string xml, out string error)
+        {
+            error = null;
+            if (string.IsNullOrWhiteSpace(xml))
+            {
+                error = "No server public key (Resources/ServerPublicKey.txt).";
+                return null;
+            }
+            RSA rsa = RSA.Create();
+            try
+            {
+                rsa.FromXmlString(xml);
+                return rsa;
+            }
+            catch (Exception ex)
+            {
+                // Once, at startup, on a configuration file: Mono and .NET throw different types for bad XML
+                // (CryptographicException, XmlSyntaxException, FormatException), and all of them mean the same thing here.
+                rsa.Dispose();
+                error = "The server public key cannot be read: " + ex.Message;
+                return null;
+            }
         }
 
         public event Action Connected;
@@ -172,7 +220,8 @@ namespace ProjectH.Client.Net
         public bool LastConnectStartFailed { get; private set; }
         public int RoundTripMs => _server != null ? _server.RoundTripTime : 0;
 
-        // 기능: 서버에 새로 접속을 시작한다(쿠키 없이 보내고, 서버가 쿠키로 거절하면 OnPeerDisconnected가 한 번 다시 보낸다).
+        // 기능: 서버에 새로 접속을 시작한다. 요청마다 새 세션 키(RSA로 감싼 blob)를 싣고, 같은 이름으로 얻은 Resume 키가 있으면
+        //   Resume 증명도 싣는다. 쿠키 없이 보내고, 서버가 쿠키로 거절하면 OnPeerDisconnected가 한 번 다시 보낸다.
         // 입력: host·port - 서버 주소, devPlayerId - 이름, reconnectAttempt - 자동 재접속 시도면 true(짧은 연결 예산).
         // 출력: 반환값 없음. 시작되면 State가 Connecting이고 LastError가 null, 못 하면 Disconnected와 LastError·LastConnectStartFailed.
         // reconnectAttempt (Phase 10 D10): an automatic attempt gets the short connect budget of DisconnectCodes, so it
@@ -208,28 +257,50 @@ namespace ProjectH.Client.Net
             LastConnectStartFailed = _server == null;
         }
 
-        // 기능: 접속 요청 데이터(쿠키를 갖고 있으면 HasCookie와 쿠키)를 쓰고 LiteNetLib 접속을 시작한다. Connect와 쿠키 재시도가 쓴다.
+        // 기능: 새 세션 키로 접속 요청 하나를 만들어(쿠키가 있으면 HasCookie, 같은 이름의 Resume 키가 있으면 HasResume과 증명)
+        //   그 키를 인증 계층에 등록한 뒤 LiteNetLib 접속을 시작한다. Connect와 쿠키 재시도가 쓴다(재시도도 새 세션 키).
         // 입력: endPoint - 보낼 주소(쿠키 재시도는 거절한 peer의 주소, null이면 _host·_port의 이름을 푼다).
         // 출력: 시작되면 null(_server가 새 peer, State Connecting), 못 하면 오류 문장(LiteNetLib이 peer를 주지 않으면 null)과
-        //   State Disconnected. Last* 필드는 바꾸지 않는다(부르는 쪽이 정한다).
+        //   State Disconnected. Last* 필드는 바꾸지 않는다(부르는 쪽이 정한다). 연결 시점에만 할당한다(blob·키·peer).
         private string StartConnect(IPEndPoint endPoint)
         {
-            var writer = new PacketWriter(_sendBuffer);
-            ConnectRequestData.Write(ref writer, new ConnectRequestData
+            if (_serverKey == null) return FailStart(_publicKeyError);
+            _rng.GetBytes(_sessionKey);
+            byte[] blob;
+            try
             {
-                ProtocolVersion = ProtocolConstants.ProtocolVersion,
-                Flags = _hasCookie ? ConnectFlags.HasCookie : ConnectFlags.None,
-                Cookie = _hasCookie ? _cookie : null,
-                DevPlayerId = _devPlayerId,
-            });
+                blob = EncryptSessionKey(_serverKey, _sessionKey);
+            }
+            catch (Exception ex) when (ex is CryptographicException || ex is NotSupportedException)
+            {
+                Array.Clear(_sessionKey, 0, _sessionKey.Length);
+                return FailStart("Could not encrypt the session key: " + ex.Message);
+            }
+            if (blob == null || blob.Length != ProtocolLimits.RsaBlobBytes)
+            {
+                // ConnectRequestData.Write would send a 0-length blob, which the server refuses as BadRequest: say why here.
+                Array.Clear(_sessionKey, 0, _sessionKey.Length);
+                return FailStart("The server public key is not an RSA-2048 key.");
+            }
+
+            bool resume = _resumeKey != null && _resumeName == _devPlayerId;
+            uint nonce = resume ? ++_resumeNonce : 0u;   // every request a new nonce, the cookie retry too
+            ConnectRequestData request = BuildConnectRequest(_devPlayerId, blob, _hasCookie ? _cookie : null,
+                resume ? _resumeKey : null, nonce, _sessionKey, _resumeProof);
+            var writer = new PacketWriter(_sendBuffer);
+            ConnectRequestData.Write(ref writer, request);
             if (writer.Overflowed)
             {
-                _server = null;
-                State = ClientState.Disconnected;
-                return "DevPlayerId is longer than 32 bytes.";
+                Array.Clear(_sessionKey, 0, _sessionKey.Length);
+                return FailStart("DevPlayerId is longer than 32 bytes.");
             }
             _connectData.Reset();
             _connectData.Put(_sendBuffer, 0, writer.Length);
+
+            // Registered before Connect: LiteNetLib sends the request at once, and the server's accept is signed with these keys.
+            _connectKeys = new SessionKeys(_sessionKey, isServer: false);
+            Array.Clear(_sessionKey, 0, _sessionKey.Length);
+            _authLayer.SetKeys(_connectKeys);
 
             try
             {
@@ -245,6 +316,79 @@ namespace ProjectH.Client.Net
             State = _server != null ? ClientState.Connecting : ClientState.Disconnected;
             return null;
         }
+
+        // 기능: 접속을 시작하지 못한 상태로 둔다.
+        // 입력: error - 이유 문장.
+        // 출력: error 그대로. _server는 null, State는 Disconnected.
+        private string FailStart(string error)
+        {
+            _server = null;
+            State = ClientState.Disconnected;
+            return error;
+        }
+
+        // 기능: 세션 키를 서버 공개키로 RSA-OAEP-SHA1 암호화한다(설계 B3-1). Unity Mono가 RSAEncryptionPadding.OaepSHA1을 받지
+        //   않으면 RSACryptoServiceProvider의 OAEP(같은 SHA-1)로 다시 한다.
+        // 입력: serverKey - 서버 공개키, sessionKey - 32 B 세션 키.
+        // 출력: 암호문(RSA-2048이면 ProtocolLimits.RsaBlobBytes = 256 B). 둘 다 실패하면 CryptographicException·NotSupportedException.
+        public static byte[] EncryptSessionKey(RSA serverKey, byte[] sessionKey)
+        {
+            try
+            {
+                return serverKey.Encrypt(sessionKey, RSAEncryptionPadding.OaepSHA1);
+            }
+            catch (Exception ex) when (ex is CryptographicException || ex is NotSupportedException)
+            {
+                using (var csp = new RSACryptoServiceProvider())
+                {
+                    csp.ImportParameters(serverKey.ExportParameters(false));
+                    return csp.Encrypt(sessionKey, true);
+                }
+            }
+        }
+
+        // 기능: 접속 요청 하나의 데이터를 만든다(설계 B2·B4). 쿠키가 있으면 HasCookie, Resume 키가 있으면 HasResume과 증명
+        //   (HMAC(resumeKey, nonce ‖ 이번 세션 키 ‖ 이름)[0..16]).
+        // 입력: devPlayerId - 이름, sessionKeyBlob - 암호화한 세션 키(256 B), cookie - 서버 쿠키(없으면 null), resumeKey - 이전 연결의
+        //   Resume 키(없으면 null), resumeNonce - 이 요청의 nonce, sessionKey - 이번 요청의 세션 키 32 B, proofBuffer - 증명을 받을 16 B.
+        // 출력: ProtocolVersion·Flags·쿠키·blob·이름·Resume 필드가 채워진 ConnectRequestData(배열은 넘겨받은 것을 그대로 가리킨다).
+        public static ConnectRequestData BuildConnectRequest(string devPlayerId, byte[] sessionKeyBlob, byte[] cookie, byte[] resumeKey,
+            uint resumeNonce, byte[] sessionKey, byte[] proofBuffer)
+        {
+            var data = new ConnectRequestData
+            {
+                ProtocolVersion = ProtocolConstants.ProtocolVersion,
+                Flags = ConnectFlags.None,
+                SessionKeyBlob = sessionKeyBlob,
+                DevPlayerId = devPlayerId,
+            };
+            if (cookie != null)
+            {
+                data.Flags |= ConnectFlags.HasCookie;
+                data.Cookie = cookie;
+            }
+            if (resumeKey != null)
+            {
+                SessionAuth.ComputeResumeProof(resumeKey, resumeNonce, sessionKey, devPlayerId, proofBuffer);
+                data.Flags |= ConnectFlags.HasResume;
+                data.ResumeNonce = resumeNonce;
+                data.ResumeProof = proofBuffer;
+            }
+            return data;
+        }
+
+        // 기능: 보관한 Resume 키를 버린다(사용자가 나가거나 다른 서버·이름으로 접속할 때). 다음 접속은 새 캐릭터로 들어간다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 다음 접속 요청에 HasResume이 없다.
+        public void ForgetResume()
+        {
+            _resumeKey = null;
+            _resumeName = null;
+            _resumeNonce = 0;
+        }
+
+        // Review fix B3: datagrams the layer dropped after this connect's keys verified one (forged, tampered or replayed).
+        public long AuthDrops => _authLayer.AuthDrops;
 
         // 기능: 거절 데이터가 쿠키인지 RejectReason인지 가른다(설계 A3·B5의 데이터 규약).
         // 입력: data - ConnectionRejected의 추가 데이터(없으면 빈 Span).
@@ -345,11 +489,20 @@ namespace ProjectH.Client.Net
             _net.DisconnectPeer(abandoned);
         }
 
+        // 기능: 접속을 끊고 소켓·스레드를 멈춘 뒤 키·RSA·난수 생성기를 해제한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 다시 쓸 수 없는 NetClient가 된다.
         public void Dispose()
         {
             if (_disposed) return;
             _disposed = true;
             if (_net.IsRunning) _net.Stop(true);
+            // After Stop: LiteNetLib's threads no longer seal or open with the keys.
+            _authLayer.DisposeKeys();
+            _connectKeys = null;
+            _serverKey?.Dispose();
+            _rng.Dispose();
+            ForgetResume();
             _server = null;
             State = ClientState.Disconnected;
         }
@@ -452,7 +605,7 @@ namespace ProjectH.Client.Net
         // 기능: 받은 패킷 하나를 읽어 해당 이벤트를 올린다(Phase 13.5: BuildEvents의 Edited 기록 포함, Phase 14: 분대 패킷 4종,
         //   Phase 15: TeamMarkers, Phase 16: ContainerStates·SupplyDrops, Phase 17: 투사체 카탈로그와 투사체 패킷 3종,
         //   Phase 18: 사건 Placed 기록은 BuildPlacedEventReceived도 올리고(Sync는 아님), Destroyed 기록은 이유와 함께, WorldSound.
-        //   Phase 19: VehicleStates).
+        //   Phase 19: VehicleStates. 리뷰 B4: 참가 성공(Ok·Resumed)이면 이 연결의 Resume 키를 보관한다).
         //   메인 스레드에서 Poll이 부른다.
         // 입력: peer - 보낸 쪽(지금 연결이 아니면 무시), reader - 패킷, channelNumber·deliveryMethod - 쓰지 않는다.
         // 출력: 반환값 없음. 읽기에 실패한 기록이 있으면 그 패킷의 나머지는 버린다.
@@ -469,7 +622,14 @@ namespace ProjectH.Client.Net
                     {
                         LastJoinResult = response.Result;
                         // Phase 10 D2: Resumed is a join into our own character; the server resends the full state.
-                        if (response.Result == JoinResult.Ok || response.Result == JoinResult.Resumed) State = ClientState.Joined;
+                        if (response.Result == JoinResult.Ok || response.Result == JoinResult.Resumed)
+                        {
+                            State = ClientState.Joined;
+                            // Review fix B4: this connection's resume key is what the server now holds for our character.
+                            _resumeKey = _connectKeys.ResumeKey;
+                            _resumeName = _devPlayerId;
+                            _resumeNonce = 0;
+                        }
                         Joined?.Invoke(response);
                     }
                     break;

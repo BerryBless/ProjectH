@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.Threading;
 using LiteNetLib;
 using LiteNetLib.Utils;
+using ProjectH.Bots;
+using System.Collections.Concurrent;
 using ProjectH.Shared.Protocol;
 using ProjectH.Shared.Simulation;
 
@@ -19,15 +21,18 @@ public sealed class HeadlessClient : IDisposable
     private NetPeer _peer = null!;   // set by Connect(); tests always connect first
     private uint _nextSeq = 1;
 
-    // 기능: 시험용 Client를 만들고 소켓을 연다(조각 상한 리뷰 수정 A1, 거절·끊김 기록과 쿠키 재시도 리뷰 수정 A3).
+    // 기능: 시험용 Client를 만들고 소켓을 연다(조각 상한 리뷰 수정 A1, 거절·끊김 기록과 쿠키 재시도 리뷰 수정 A3, 봇과 같은 인증 계층·
+    //   UserMtu 리뷰 수정 B3).
     // 입력: 없음.
     // 출력: Connect 전의 HeadlessClient(Dispose가 닫는다).
     public HeadlessClient()
     {
-        // Review fix A1: the same fragment limit as the server and the Unity client.
-        _net = new NetManager(_listener, null)
+        // Review fix A1: the same fragment limit as the server and the Unity client. Review fix B3: the bots' authentication
+        // layer (the Unity client's rule) and the user MTU that leaves room for its tail.
+        _net = new NetManager(_listener, _auth)
         {
             UnsyncedEvents = false, ChannelsCount = ProtocolConstants.ChannelCount, MaxFragmentsCount = ProtocolLimits.MaxFragments,
+            MtuOverride = ProtocolLimits.UserMtu,
         };
         _listener.PeerConnectedEvent += _ => Connected = true;
         _listener.PeerDisconnectedEvent += (_, info) =>
@@ -62,6 +67,25 @@ public sealed class HeadlessClient : IDisposable
     private string _devPlayerId = string.Empty;
     private ushort _protocolVersion;
     private bool _retryCookie = true;
+
+    // Review fixes B2-B4: the authentication layer, this connect's session key, blob and keys (the cookie retry repeats them),
+    // its resume proof, and the ticket that keeps the resume key. Like an honest client that keeps its keys, the ticket is
+    // remembered per (server port, name) across HeadlessClient objects, so a test that reconnects with a new client of the
+    // same name resumes as the Unity client would; Connect(..., resume: false) makes a client without it (an impostor).
+    private static readonly ConcurrentDictionary<(int Port, string Name), ResumeTicket> Tickets = new();
+    private readonly ProjectH.Bots.AuthPacketLayer _auth = new();
+    private byte[] _keyBlob = Array.Empty<byte>();
+    private string _serverPublicKeyXml = DevServerPublicKey.Xml;
+    private SessionKeys? _keys;
+    private ResumeTicket? _ticket;
+    private readonly byte[] _resumeProof = new byte[ProtocolLimits.ResumeProofBytes];
+    private bool _hasResume;
+    private uint _resumeNonce;
+    // Review fix B3: datagrams this client dropped for a failed tail after the first verified one (should stay 0).
+    public long AuthDrops => _auth.AuthDrops;
+    public bool SentResumeProof => _hasResume;
+    // Review fix B3: a datagram from the server has opened with this connection's keys.
+    public bool Verified => _auth.Verified;
 
     // Review fix A3: cookie retries made (1 for a normal connect), and the length of the last reject's data (16 = a cookie,
     // 1 = a RejectReason).
@@ -124,16 +148,37 @@ public sealed class HeadlessClient : IDisposable
     public MarkerPing[] LastPings { get; } = new MarkerPing[MapMarkerConstants.MaxTeamPings];
     public MarkerWaypoint[] LastWaypoints { get; } = new MarkerWaypoint[MapMarkerConstants.MaxWaypoints];
 
-    // 기능: 서버에 접속을 요청한다. 쿠키가 돌아오면(리뷰 수정 A3) 한 번 바로 쿠키를 넣어 다시 요청한다.
-    // 입력: port - 서버 포트, devPlayerId - 이름, protocolVersion - 보낼 버전(기본 현재 버전).
+    // 기능: 서버에 접속을 요청한다. 세션 키를 만들어 개발용 공개키로 암호화하고(리뷰 수정 B2), 이 서버·이름의 Resume 키가 있으면 증명을
+    //   넣는다(B4). 쿠키가 돌아오면(리뷰 수정 A3) 같은 요청을 쿠키와 함께 한 번 바로 다시 보낸다.
+    // 입력: port - 서버 포트, devPlayerId - 이름, protocolVersion - 보낼 버전(기본 현재 버전), resume - false면 Resume 키를 쓰지도
+    //   남기지도 않는다(같은 이름을 쓰는 다른 사람), serverPublicKeyXml - 세션 키를 암호화할 공개키(null = 개발용 키). 같은 객체로 다시
+    //   부르면(같은 로컬 포트) 연결 상태를 처음으로 돌린다.
     // 출력: 반환값 없음. 접속이 시작된다.
-    public void Connect(int port, string devPlayerId, ushort protocolVersion = ProtocolConstants.ProtocolVersion)
+    public void Connect(int port, string devPlayerId, ushort protocolVersion = ProtocolConstants.ProtocolVersion, bool resume = true,
+        string? serverPublicKeyXml = null)
     {
+        Connected = false;
+        Disconnected = false;
+        JoinResponse = null;
+        _serverPublicKeyXml = serverPublicKeyXml ?? DevServerPublicKey.Xml;
         _port = port;
         _devPlayerId = devPlayerId;
         _protocolVersion = protocolVersion;
         CookieRetries = 0;   // one cookie retry per Connect
+        PrepareKeys(resume);
         SendConnect(null);
+    }
+
+    // 기능: 이번 접속의 세션 키·blob·키를 만들고, Resume 키가 있으면 증명을 만든다.
+    // 입력: resume - Resume 표를 쓸지.
+    // 출력: 반환값 없음.
+    private void PrepareKeys(bool resume)
+    {
+        byte[] sessionKey;
+        (sessionKey, _keyBlob) = SessionKeyExchange.Create(_serverPublicKeyXml);
+        _keys = new SessionKeys(sessionKey, isServer: false);
+        _ticket = resume ? Tickets.GetOrAdd((_port, _devPlayerId), _ => new ResumeTicket()) : null;
+        _hasResume = _ticket != null && _ticket.TryMakeProof(sessionKey, _devPlayerId, _resumeProof, out _resumeNonce);
     }
 
     // 기능: 주어진 쿠키로 한 번만 접속을 요청한다(리뷰 수정 A3 시험: 틀린 쿠키). 쿠키가 돌아와도 다시 요청하지 않는다.
@@ -145,10 +190,12 @@ public sealed class HeadlessClient : IDisposable
         _devPlayerId = devPlayerId;
         _protocolVersion = ProtocolConstants.ProtocolVersion;
         _retryCookie = false;
+        PrepareKeys(resume: false);
         SendConnect(cookie);
     }
 
-    // 기능: 저장한 포트·이름·버전으로 접속 요청 하나를 보낸다(cookie가 있으면 HasCookie와 쿠키).
+    // 기능: 저장한 포트·이름·버전으로 접속 요청 하나를 보낸다(cookie가 있으면 HasCookie와 쿠키, 리뷰 수정 B2·B4: 세션 키 blob과 Resume 증명.
+    //   B3: Connect 직전에 이 키를 인증 계층에 넣는다).
     // 입력: cookie - 보낼 쿠키(null = 없음).
     // 출력: 반환값 없음. _peer가 새 연결이 된다.
     private void SendConnect(byte[]? cookie)
@@ -157,12 +204,16 @@ public sealed class HeadlessClient : IDisposable
         ConnectRequestData.Write(ref writer, new ConnectRequestData
         {
             ProtocolVersion = _protocolVersion,
-            Flags = cookie != null ? ConnectFlags.HasCookie : ConnectFlags.None,
+            Flags = (cookie != null ? ConnectFlags.HasCookie : ConnectFlags.None) | (_hasResume ? ConnectFlags.HasResume : ConnectFlags.None),
             Cookie = cookie,
+            SessionKeyBlob = _keyBlob,
             DevPlayerId = _devPlayerId,
+            ResumeNonce = _resumeNonce,
+            ResumeProof = _hasResume ? _resumeProof : null,
         });
         var data = new NetDataWriter();
         data.Put(_buffer, 0, writer.Length);
+        _auth.Use(_keys!);   // review fix B3: before Connect, so the request goes out sealed with this request's keys
         _peer = _net.Connect("127.0.0.1", _port, data);
     }
 
@@ -254,12 +305,17 @@ public sealed class HeadlessClient : IDisposable
 
     public void Poll() => _net.PollEvents();
 
+    // 기능: 서버에 끊는다고 알리고 연결을 닫는다(소켓은 열어 둔 채, 같은 로컬 포트로 다시 Connect할 수 있다).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void Leave() => _peer.Disconnect();
+
     // Simulates a crash: the socket closes without telling the server.
     public void Kill() => _net.Stop(false);
 
     public void Dispose() => _net.Stop();
 
-    // 기능: 받은 서버 패킷을 테스트가 보는 목록에 기록한다(Phase 16: ContainerStates, SupplyDrops).
+    // 기능: 받은 서버 패킷을 테스트가 보는 목록에 기록한다(리뷰 수정 B4: Join 성공이면 이 서버·이름의 Resume 키를 바꾼다)(Phase 16: ContainerStates, SupplyDrops).
     // 입력: peer·reader·channel·method - LiteNetLib 수신 정보.
     // 출력: 반환값 없음.
     private void OnReceive(NetPeer peer, NetPacketReader reader, byte channel, DeliveryMethod method)
@@ -269,7 +325,12 @@ public sealed class HeadlessClient : IDisposable
         switch (id)
         {
             case PacketId.JoinMatchResponse:
-                if (JoinMatchResponse.TryRead(ref r, out var response)) JoinResponse = response;
+                if (JoinMatchResponse.TryRead(ref r, out var response))
+                {
+                    JoinResponse = response;
+                    // Review fix B4: this connection's resume key is the one the next connection with this name must prove.
+                    if ((response.Result == JoinResult.Ok || response.Result == JoinResult.Resumed) && _keys != null) _ticket?.Joined(_keys.ResumeKey);
+                }
                 break;
             case PacketId.PlayerSpawned:
                 if (PlayerSpawned.TryRead(ref r, out var spawned))

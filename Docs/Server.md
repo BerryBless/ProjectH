@@ -3,7 +3,8 @@
 ## 실행
 
 ```bash
-dotnet run --project Server/src/ProjectH.Server
+dotnet run --project Server/src/ProjectH.Server   # Properties/launchSettings.json: Development (리뷰 수정 B1: 개발용 키는 Production에서 거부)
+dotnet Server/src/ProjectH.Server/bin/Release/net10.0/ProjectH.Server.dll --environment Development   # 빌드한 dll을 직접 띄울 때
 dotnet run --project Server/src/ProjectH.Server -- --Server:AirDrop=false   # Phase 12: 수송기 없이 땅에서 시작(비교용)
 dotnet run --project Server/src/ProjectH.Server -- --Server:BuildInfiniteResources=true   # Phase 13: 건설 비용 0(부하 테스트)
 dotnet run --project Server/src/ProjectH.Server -- --Server:ConnectBurstPerIp=200 --Server:MaxConnectionsPerIp=200   # 서버 리뷰 M2·리뷰 수정 A2: 한 PC에서 봇 4명 넘게 붙일 때
@@ -42,6 +43,8 @@ MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 �
 | ConnectsPerIpPerSecond | 5 | 0 = 끔, 아니면 1–1000. 위 Bucket이 초당 채워지는 수 |
 | MaxConnectionsPerIp | 4 | 0 = 끔, 아니면 1–10000. 리뷰 수정 A2(SEC-3): 한 IP가 동시에 가질 수 있는 연결 수. 넘으면 `ServerFull`로 거절하고 `rejects perIp`로 센다. 한 PC에서 봇 여러 명을 붙이는 부하 테스트는 200, QA 도구는 1000을 준다. PC방·CGNAT처럼 한 주소에 사람이 많으면 올린다 |
 | AcceptsPerSecond | 20 | 1–10000. 리뷰 수정 A2: 모든 주소를 합친 초당 수락 수(Token Bucket, 한 번에 `AcceptBurst` = MaxPlayers개). 넘으면 `ServerFull`, `rejects accept`. Control 채널 크기가 이 값으로 정해진다("Queue") |
+| PrivateKeyPem | (없음) | 리뷰 수정 B1: 서버 RSA-2048 개인키의 `RSA.ToXmlString(true)` 텍스트(이름은 배포 관례, 형식은 XML: Unity Mono에 PEM 가져오기가 없다). 환경 변수 `Server__PrivateKeyPem`으로 준다. 연결마다 Client가 보낸 세션 키를 복호한다 |
+| PrivateKeyPath | (없음) | 위 텍스트가 든 파일. 둘 다 없으면 서버 옆 `keys/dev-server-key.xml`(저장소의 개발용 키, 시작 로그 `DEV KEY` Warning). **Production 환경에서 개발용 키면 시작을 거부한다.** 환경을 정하지 않으면 Generic Host는 Production이므로, 개발 서버는 `--environment Development`(또는 `DOTNET_ENVIRONMENT=Development`)로 띄운다. `dotnet run`은 `Properties/launchSettings.json`이 Development를 준다. QA 도구가 띄우는 서버도 Development다. 시작 로그에 공개키 지문(SHA-256 앞 8B)을 남긴다(`keys/README.md`) |
 | FatalStallSeconds | 30 | 0 = 끔, 아니면 5–3600. 서버 리뷰 M8: Game Loop가 이 시간보다 오래 멈추면 새 연결을 막고 종료 코드 1로 끝낸다("예외 복구") |
 | InputTimeoutSeconds | 10 | 0 = 끔, 아니면 2–300이고 `InputTimeoutSeconds × 1000 ≥ DisconnectTimeoutMs + 2000`(기본 5000이면 7 이상, 최솟값 500이면 3 이상). Join한 peer가 입력을 보내야 하는 간격. 넘으면 `InputTimeout`으로 끊는다. LiteNetLib Timeout보다 먼저 오면 네트워크 끊김이 서버 끊기로 보여 유예를 잃으므로 이 조건을 둔다 |
 
@@ -68,7 +71,8 @@ MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 �
 
 | 스레드 | 하는 일 | 접근하는 상태 |
 |---|---|---|
-| LiteNetLib 스레드 | `NetworkListener`: 연결 요청 검사(쿠키·IP별·전역 제한), 패킷 검증·파싱 | `InboundChannels`(쓰기), `PeerState`, IP별 표(`ConnectRateLimiter`: 빈도 Token Bucket·동시 연결 수, 서버 리뷰 M2·리뷰 수정 A2. 빈도 Bucket은 `OnConnectionRequest`만 쓰므로 수신 스레드 하나만 접근한다. 칸의 동시 연결 수 `Active`는 Accept 때 수신 스레드가, 끊길 때 `OnPeerDisconnected`를 부른 스레드(Game Loop의 `Close` — `UnsyncedEvents`라 `peer.Disconnect` 안에서 바로 불린다 — 또는 LiteNetLib 스레드)가 `Interlocked`로 바꾸고(0 하한은 CompareExchange 반복) `Volatile.Read`로 읽는다(리뷰 A 1차). 칸마다 `PenaltyUntilMs`는 Game Loop가 `Interlocked.Exchange`로 쓰고 수신 스레드가 `Volatile.Read`로 읽는다, 리뷰 수정 A6), 전역 수락 Bucket(`AcceptRateLimiter`), 쿠키(`ConnectCookie`: 읽기 전용 비밀 + 정적 `HMACSHA256.HashData`)와 16B 재사용 버퍼 2개(수신 스레드 전용) |
+| LiteNetLib 스레드 | `NetworkListener`: 연결 요청 검사(쿠키·IP별·전역 제한), 패킷 검증·파싱 | `InboundChannels`(쓰기), `PeerState`, IP별 표(`ConnectRateLimiter`: 빈도 Token Bucket·동시 연결 수, 서버 리뷰 M2·리뷰 수정 A2. 빈도 Bucket은 `OnConnectionRequest`만 쓰므로 수신 스레드 하나만 접근한다. 칸의 동시 연결 수 `Active`는 Accept 때 수신 스레드가, 끊길 때 `OnPeerDisconnected`를 부른 스레드(Game Loop의 `Close` — `UnsyncedEvents`라 `peer.Disconnect` 안에서 바로 불린다 — 또는 LiteNetLib 스레드)가 `Interlocked`로 바꾸고(0 하한은 CompareExchange 반복) `Volatile.Read`로 읽는다(리뷰 A 1차). 칸마다 `PenaltyUntilMs`는 Game Loop와 수신 스레드(리뷰 B 1·2차: 60초 안 세 번째 세션 키 복호 실패. 실패 횟수·창 시작은 수신 스레드 전용)가 `Interlocked.Exchange`로 쓰고 수신 스레드가 `Volatile.Read`로 읽는다, 리뷰 수정 A6), 전역 수락 Bucket(`AcceptRateLimiter`), 쿠키(`ConnectCookie`: 읽기 전용 비밀 + 정적 `HMACSHA256.HashData`)와 16B 재사용 버퍼 2개(수신 스레드 전용), 서버 키(`ServerIdentity`, RSA 복호는 수신 스레드만), 연결 요청의 blob·증명 재사용 버퍼(수신 스레드 전용) |
+| LiteNetLib의 모든 송신·수신 스레드(리뷰 수정 B3) | `AuthPacketLayer`: 데이터그램마다 꼬리 20B를 붙이고(송신) 검증해 벗긴다(수신). LiteNetLib는 송신을 수신 스레드(Ack), logic 스레드(재전송·Ping), Game Loop의 Send에서 부른다 | endpoint별 키 표(`ConcurrentDictionary<IPEndPoint, Entry>`, 주소·포트 비교자): 수신 스레드가 등록·청소, 끊김을 처리한 스레드가 은퇴 표시(`Interlocked`), 모든 송신 스레드가 읽는다. 키마다 `SessionKeys`: 송신 counter·HMAC은 leaf lock `_sendLock` 하나 안, 수신 창·HMAC은 수신 스레드 전용 |
 | `GameLoop` 전용 스레드(Background) | 채널 소비, Timeout 검사, `Match.Tick`, Snapshot 송신, 통계·Health 로그. 멈춰도 프로세스 종료를 막지 않는다(종료의 Join 5초 제한이 의미가 있도록) | `Match`, `_peers` 단독 소유(경기 초기화로 `Match`를 바꾸는 것도 이 스레드) |
 | `StallWatchdog` Timer 스레드(Phase 10) | 1초마다 Game Loop의 마지막 Tick 시각을 `Volatile`로 읽기만 한다. Timer 콜백이 겹치면 뒤의 것은 바로 돌아간다(`Interlocked` 플래그, Lock 없음). 서버 리뷰 M8: 멈춤이 `FatalStallSeconds`를 넘으면 한 번만 `NetworkListener.BeginStopping`(volatile)과 종료 경로(`StopApplication`을 Thread Pool로)를 부른다. 그 1회 플래그와 예외 로그 시각은 겹침 방지 플래그 안에서만 읽고 쓴다 | `GameLoop.LastTickTimestamp`(읽기), `HealthCounters`(`Interlocked`) |
 | `MatchHistoryWriter`(Hosted Service, async, Game Loop 밖) | `MatchHistoryQueue`에서 경기 기록을 읽어 MySQL에 저장(Phase 9). Game Loop는 큐에 넣기만 하고 DB를 기다리지 않는다 | `MatchHistoryQueue`(읽기), `MatchStore`, 카운터(`Interlocked`) |
@@ -78,7 +82,7 @@ MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 �
 
 Phase 12: 문 상태(`DoorSet`, 열린 문 마스크와 충돌 세계 배열)와 수송기 경로(`Match`의 `_route`)는 `Match`가 소유하고 Game Loop 스레드만 읽고 쓴다. 새 Lock은 없다.
 
-우리 코드는 Lock을 쓰지 않는다. 스레드 간 전달은 `System.Threading.Channels`, 카운터는 `Interlocked`. 따라서 Lock Ordering·Deadlock 대상이 없다.
+우리 코드의 Lock은 하나다: Shared `SessionKeys._sendLock`(리뷰 수정 B3, 연결마다 하나). 데이터그램 하나의 송신 counter를 올리고 HMAC을 계산하는 동안만 잡는다. 안에서 콜백·I/O·다른 Lock을 부르지 않으므로 **leaf lock**이고 중첩되지 않는다. LiteNetLib가 자기 Lock을 잡은 채 계층을 부를 수 있지만, `_sendLock` 안에서 LiteNetLib로 돌아가는 호출이 없어 역순 획득이 생기지 않는다(Deadlock 불가). 키 표 청소는 `_sendLock`을 잡고 LiteNetLib를 부르지 않는다(`Dispose`만 `_sendLock` 안에서 HMAC을 해제). Lock Ordering: 단일 leaf lock, 중첩 없음. 그 밖의 스레드 간 전달은 `System.Threading.Channels`, 카운터는 `Interlocked`, 키 표는 `ConcurrentDictionary`다.
 Lock을 추가하게 되면 이 문서에 순서를 적는다.
 
 Tick 루프: `DrainControl` → `DrainInput` → `SweepPeers`(stale peer 정리 + Join·Input Timeout + Join 거절된 peer 끊기) → `SendStatsReplies`(전적 답 최대 32개) → `Match.Tick`(맨 앞에서 `ExpireGrace`). Tick이 5 Tick 이상 밀리면 밀린 분을 건너뛴다(`lateTicksSkipped`). Tick 예외는 "예외 복구"를 본다.
@@ -130,6 +134,7 @@ Game Loop는 Tick당 입력 메시지를 최대 `MaxInputMessagesPerTick`개만 
 |---|---|---|
 | `ConnectRateLimiter` 표(M2, 리뷰 수정 A2·A6) | 1024칸 고정, 언제나 만든다(빈도 제한이 꺼져도 동시 연결 수·벌점에 쓴다). 칸 = 해시(IP ^ 시작 때 난수 salt) | 지우지 않는다. 같은 칸에 오는 IP들이 그 칸의 Bucket·연결 수·벌점을 나눠 쓴다(빈 칸만 가득 찬 Bucket으로 시작). 연결 수는 Accept 때 +1(수신 스레드), 끊길 때 −1(끊김을 처리한 스레드, 0 아래로 가지 않는다). 둘 다 `Interlocked`. 벌점은 시각이 지나면 효력이 없다 |
 | `AcceptRateLimiter`(리뷰 수정 A2) | Bucket 하나 | 없음(값만 바뀐다) |
+| `AuthPacketLayer` 키 표(리뷰 수정 B3) | 열린 연결(≤ MaxPlayers) + 은퇴 항목 ≤ `MaxRetiredAuthKeys` = `MaxPlayers + AcceptBurst + AcceptsPerSecond × ⌈(DisconnectTimeoutMs + 1000) / 1000⌉`(리뷰 B 1차: 은퇴 시간 안에 받을 수 있는 연결 전부. 기본 16 + 16 + 20 × 6 = 152, 항목마다 HMAC 2개) | 연결을 받을 때 등록(같은 endpoint면 바꾼다). 끊길 때 지우지 않고 은퇴 표시만 한다(LiteNetLib가 끊기 패킷을 다시 보내는 동안 봉인하려고). `DisconnectTimeoutMs + 1000` ms가 지난 은퇴 항목은 다음 등록 때 수신 스레드가 지운다. 상한을 넘으면 오래된 은퇴 항목부터 지운다. 지울 때 키(HMAC)를 해제한다 |
 | `GameLoop._playerFailureMarks`(리뷰 1차, 리뷰 수정 A6) | max(`MaxPlayers`, 3)칸 Ring(Tick, IP 칸), 한 번 만든다 | 가장 오래된 칸을 덮어쓴다. 경기 초기화가 비운다 |
 | `GameLoop._allFailedTicks`(리뷰 2차) | 5칸 Ring, 한 번 만든다 | 가장 오래된 칸을 덮어쓴다. 경기 초기화가 비운다 |
 | `Match._failedPlayers`(M7) | `MaxPlayers` 용량으로 한 번 만든다 | 플레이어 루프 시작과 실패한 플레이어 처리 뒤에 비운다 |
@@ -164,7 +169,7 @@ Health peers players graced match=<State>#<Round>
   rejects full badRequest version connectRate perIp penalized accept cookie cookieChallenges
   kicks kicked joinTimeout inputTimeout serverError congested
   badPackets unknownId malformed beforeJoin duplicateJoin inputRate wrongDirection handlerException buildRate markerRate
-  inputSeqDrops
+  inputSeqDrops authDrops authDropsRetired
   tickFailures loopFailures matchResets stalls movementAnomalies networkErrors playerFailures penalties stallExits callbackErrors
   build pieces cells requests accepted destroyed collapsed duplicates eventPackets syncPackets
   buildRejects noResource outOfRange blocked unsupported occupied rateLimited invalidState invalidRequest budgetFull
@@ -185,7 +190,7 @@ Health peers players graced match=<State>#<Round>
 - `badPackets` 9개 항목(Phase 13 `buildRate`, Phase 15 `markerRate` 포함): 잘못된 패킷(이유별, `Networking.md` "Validation").
 - `tickFailures`·`loopFailures`·`matchResets`: 예외 복구 카운터. `stalls`: Watchdog이 센 멈춤.
 - 서버 리뷰: `rejects connectRate`(M2)는 IP별 연결 빈도를 넘어 거절한 요청(Client에는 `ServerFull`로 가지만 `full`에는 세지 않는다). `networkErrors`(M1)는 LiteNetLib가 알린 소켓 오류. `playerFailures`(M7)는 자기 Tick 부분이 던져 경기에서 빠지고 `ServerError`로 끊긴 플레이어. `stallExits`(M8)는 `FatalStallSeconds`를 넘은 멈춤으로 서버를 멈춘 수(프로세스당 최대 1). `callbackErrors`(L9)는 콜백 경계에서 잡은 예외. 정상이면 `networkErrors` 밖은 모두 0이다.
-- 리뷰 수정 A(네트워크 진입): `rejects perIp`는 IP당 동시 연결 수(`MaxConnectionsPerIp`), `penalized`는 벌점 중인 IP, `accept`는 전역 수락 빈도(`AcceptsPerSecond`)로 거절한 요청이다(셋 다 Client에는 `ServerFull`, `full`에는 세지 않는다). `cookie`는 틀리거나 낡은 쿠키를 가진 요청(새 쿠키를 돌려준다). `cookieChallenges`는 쿠키 없는 첫 요청에 쿠키를 돌려준 수로, 정상 접속마다 1씩 오른다(거절이 아니다). `inputSeqDrops`는 Seq 창(`InputSeqWindow`)을 넘어 버린 입력(정상 Client는 0, 경기 초기화를 넘어 합계가 이어진다). `penalties`는 같은 IP 칸의 플레이어 실패가 60초에 3번이 되어 그 칸에 60초 벌점을 준 횟수다(`Networking.md` "Validation"). LiteNetLib 자체 메시지(예: 조각 상한을 넘은 메시지마다 "Invalid FragmentsTotal")는 `Program`이 시작 때 단 `NetDebug.Logger`(`LiteNetLogBridge`)가 ILogger 카테고리 `LiteNetLib`의 Debug로 보낸다. 설정하지 않으면 LiteNetLib가 수신 스레드에서 콘솔에 바로 쓴다.
+- 리뷰 수정 A(네트워크 진입): `rejects perIp`는 IP당 동시 연결 수(`MaxConnectionsPerIp`), `penalized`는 벌점 중인 IP, `accept`는 전역 수락 빈도(`AcceptsPerSecond`)로 거절한 요청이다(셋 다 Client에는 `ServerFull`, `full`에는 세지 않는다). `cookie`는 틀리거나 낡은 쿠키를 가진 요청(새 쿠키를 돌려준다). `cookieChallenges`는 쿠키 없는 첫 요청에 쿠키를 돌려준 수로, 정상 접속마다 1씩 오른다(거절이 아니다). `inputSeqDrops`는 Seq 창(`InputSeqWindow`)을 넘어 버린 입력(정상 Client는 0, 경기 초기화를 넘어 합계가 이어진다). `penalties`는 같은 IP 칸의 플레이어 실패가 60초에 3번이 되어, 또는(리뷰 B 1·2차) 세션 키 blob 복호 실패가 60초에 3번이 되어 그 칸에 60초 벌점을 준 횟수다(`Networking.md` "Validation"). 리뷰 수정 B3: `authDrops`는 키가 있는 연결에서 온 데이터그램 중 인증 꼬리가 틀린 것(위조·변조·재전송·창 밖)이다. 끊지 않고 버리기만 한다. 정상이면 0이다. 리뷰 B 2차: 은퇴 키(끊긴 지 `DisconnectTimeoutMs + 1000` ms 안)에서 버린 것은 `authDropsRetired`로 따로 센다. 그 시간 안에 같은 주소·포트로 다시 접속하면 쿠키 거절에 대한 Client의 `ShutdownOk` 하나가 여기서 1 오르므로 정상에서도 0이 아닐 수 있다. LiteNetLib 자체 메시지(예: 조각 상한을 넘은 메시지마다 "Invalid FragmentsTotal")는 `Program`이 시작 때 단 `NetDebug.Logger`(`LiteNetLogBridge`)가 ILogger 카테고리 `LiteNetLib`의 Debug로 보낸다. 설정하지 않으면 LiteNetLib가 수신 스레드에서 콘솔에 바로 쓴다.
 - `movementAnomalies`(Phase 12 D12): 한 Tick의 이동이 그 모드의 최대 속도 × dt × 1.5를 넘은 수(`MovementLimits`, `Movement.md` "이동 이상 검사"). 서버가 이동을 입력만으로 직접 계산하므로 치트가 아니라 시뮬레이션 버그를 알리는 값이다. 정상이면 언제나 0이다. Phase 13: 건설 조각 안에서 시작한 이동(머리를 가로질러 지은 경사로가 한 번에 2 m 넘게 들어 올리는 경우 등)은 조각이 민 것이라 세지 않는다. 맵 상자·문·채집 대상 안에서 시작한 이동은 그대로 센다.
 - `build`(Phase 13): `pieces`·`cells`는 지금 서 있는 조각 수와 조각이 있는 건설 칸 수(공간 색인), 나머지는 누적이다. `requests`는 Game Loop가 처리한 요청, `accepted`는 지어진 수, `destroyed`는 부서진 조각(붕괴 포함), `collapsed`는 그중 지지를 잃어 무너진 수, `duplicates`는 이미 본 번호라 버린 요청, `eventPackets`·`syncPackets`는 보낸 건설 패킷 수다. `buildRejects`는 거절 코드별 수다. `badPackets`에는 `buildRate`(연결당 초당 상한 초과)가 더해졌다.
 - `harvest`(Phase 13): 채집 타격 수(`hits`)와 부서진 채집 대상 수(`envDestroyed`). `syncDeferred`: 건설 채널이 밀려 Sync를 건너뛴 (연결, Tick) 수. Meter는 `projecth.build.sync_deferred`.
@@ -212,6 +217,7 @@ dotnet-counters monitor -n ProjectH.Server --counters ProjectH.Server
 | `projecth.disconnects` | Counter | `reason` = `timeout` / `other` |
 | `projecth.rejects` | Counter | `reason` = `ServerFull` / `BadRequest` / `VersionMismatch` / `ConnectRate`(서버 리뷰 M2) / `PerIp` / `Penalized` / `AcceptRate` / `Cookie`(리뷰 수정 A2·A3·A6) |
 | `projecth.cookie_challenges`, `projecth.penalties`, `projecth.input_seq_drops` | Counter | 리뷰 수정 A3, A6, A4 |
+| `projecth.auth_drops` | Counter | 리뷰 수정 B3. `where` = `live`(열린 연결의 키, 정상이면 0) / `retired`(은퇴 키, 리뷰 B 2차) |
 | `projecth.kicks` | Counter | `code` = `Kicked` / `JoinTimeout` / `InputTimeout` / `ServerError`(종료는 Kick이 아니라 `ServerShutdown` 계열이 없다) |
 | `projecth.bad_packets` | Counter | `reason` = `BadPacketReason` 7가지 |
 | `projecth.tick_failures`, `projecth.loop_failures`, `projecth.match_resets`, `projecth.stalls` | Counter | |

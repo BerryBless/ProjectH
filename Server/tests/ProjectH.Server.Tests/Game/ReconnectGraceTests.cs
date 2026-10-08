@@ -198,12 +198,15 @@ public class ReconnectGraceTests
         Assert.True(h.Match.TryGetPlayer(11, out PlayerEntity newcomer));
         Assert.False(newcomer.Alive);
 
-        // A second p1 joins while p1 plays (a spectator copy). p1 drops: with that copy connected, a third p1 is a new
-        // player as well, and the graced character stays where it is.
-        Assert.Equal(JoinResult.Ok, h.Match.TryJoin(12, "p1"));
+        // A second p1 joins while p1 plays (a spectator copy). p1 drops: a third p1 without the resume proof is a new player
+        // as well, and the graced character stays where it is. Review fix B4 (SEC-2): the proof, not the name, decides, so
+        // the copy that holds the name cannot keep the owner out: p1 with its proof gets its character back.
+        Assert.Equal(JoinResult.Ok, h.Match.JoinWithoutProof(12, "p1"));
         Assert.True(h.Match.Disconnect(1, allowGrace: true));
-        Assert.Equal(JoinResult.Ok, h.Match.TryJoin(13, "p1"));
+        Assert.Equal(JoinResult.Ok, h.Match.JoinWithoutProof(13, "p1"));
         Assert.True(a.IsGraced);
+        Assert.Equal(JoinResult.Resumed, h.Match.TryJoin(14, "p1"));
+        Assert.Equal(14, a.PeerId);
     }
 
     [Fact]
@@ -222,9 +225,203 @@ public class ReconnectGraceTests
         Assert.Equal(JoinResult.Resumed, h.Match.TryJoin(11, "same"));
         Assert.Equal(11, second.PeerId);   // dropped first
         Assert.True(first.IsGraced);
-        // Now a "same" is connected, so the other copy is not handed out.
-        Assert.Equal(JoinResult.Ok, h.Match.TryJoin(12, "same"));
+        // A "same" without a proof is a new player: the other copy is not handed out. Review fix B4: with a "same" connected,
+        // the other copy's owner still resumes it with its own proof.
+        Assert.Equal(JoinResult.Ok, h.Match.JoinWithoutProof(12, "same"));
         Assert.True(first.IsGraced);
+        Assert.Equal(JoinResult.Resumed, h.Match.TryJoin(13, "same"));
+        Assert.Equal(13, first.PeerId);
+    }
+
+    // Review fix B4 (SEC-2): the same name alone no longer resumes; a graced character comes back only to a proof made with
+    // the resume key of the connection it last joined with, bound to the new connection's session key, with a fresh nonce.
+    [Fact]
+    public void AJoin_WithTheSameName_ButNoProof_BecomesANewPlayer_AndTheGracedCharacterStays()
+    {
+        var (h, a, _, _) = InMatch();
+        h.Match.Disconnect(1, allowGrace: true);
+        Assert.Equal(JoinResult.Ok, h.Match.JoinWithoutProof(11, "p1"));
+        Assert.True(a.IsGraced);
+        Assert.True(h.Match.TryGetPlayer(11, out PlayerEntity newcomer));
+        Assert.NotSame(a, newcomer);
+        Assert.False(newcomer.Alive);   // a spectator, as any newcomer during the match
+    }
+
+    [Fact]
+    public void AJoin_WithAValidProof_Resumes_AndTakesTheNewConnectionsKey()
+    {
+        var (h, a, _, _) = InMatch();
+        byte[] oldKey = a.ResumeKey!;
+        h.Match.Disconnect(1, allowGrace: true);
+        byte[] session = NewSession(1);
+        byte[] proof = Proof(oldKey, 1, session, "p1");
+        byte[] newKey = SessionAuth.DeriveResumeKey(session);
+        Assert.Equal(JoinResult.Resumed, h.Match.TryJoin(11, "p1", newKey, session, 1, proof, out _));
+        Assert.Same(newKey, a.ResumeKey);
+        Assert.Equal(0u, a.LastResumeNonce);
+    }
+
+    [Fact]
+    public void AJoin_WithAProofFromAnotherKey_OrForAnotherSession_BecomesANewPlayer()
+    {
+        var (h, a, _, _) = InMatch();
+        h.Match.Disconnect(1, allowGrace: true);
+        byte[] session = NewSession(2);
+        byte[] wrongKey = Proof(SessionAuth.DeriveResumeKey(NewSession(3)), 1, session, "p1");
+        Assert.Equal(JoinResult.Ok, h.Match.TryJoin(11, "p1", SessionAuth.DeriveResumeKey(session), session, 1, wrongKey, out _));
+        // A proof seen on the wire, sent with another session key (another connection), fails too.
+        byte[] seen = Proof(a.ResumeKey!, 1, NewSession(4), "p1");
+        Assert.Equal(JoinResult.Ok, h.Match.TryJoin(12, "p1", SessionAuth.DeriveResumeKey(session), session, 1, seen, out _));
+        Assert.True(a.IsGraced);
+    }
+
+    [Fact]
+    public void AResumeProof_WithAReusedNonce_IsRefused()
+    {
+        var (h, a, _, _) = InMatch();
+        h.Match.Disconnect(1, allowGrace: true);
+        a.LastResumeNonce = 3;   // the client already tried nonces up to 3 with this key
+        byte[] session = NewSession(5);
+        byte[] key = SessionAuth.DeriveResumeKey(session);
+        Assert.Equal(JoinResult.Ok, h.Match.TryJoin(11, "p1", key, session, 3, Proof(a.ResumeKey!, 3, session, "p1"), out _));
+        Assert.True(a.IsGraced);
+        Assert.Equal(JoinResult.Resumed, h.Match.TryJoin(12, "p1", key, session, 4, Proof(a.ResumeKey!, 4, session, "p1"), out _));
+    }
+
+    // Review fix B4: the owner came back before the server noticed its old connection drop (still connected here). Its proof
+    // takes the character over from the old connection, which the match no longer maps; no grace starts.
+    [Fact]
+    public void AValidProof_TakesOverACharacterStillConnected_AndNamesTheOldConnection()
+    {
+        var (h, a, _, _) = InMatch();
+        ushort entity = a.EntityId;
+        byte[] session = NewSession(6);
+        int before = h.Match.PlayerCount;
+        Assert.Equal(JoinResult.Resumed, h.Match.TryJoin(11, "p1", SessionAuth.DeriveResumeKey(session), session, 1,
+            Proof(a.ResumeKey!, 1, session, "p1"), out int takenOver));
+        Assert.Equal(1, takenOver);
+        Assert.Equal(11, a.PeerId);
+        Assert.Equal(entity, a.EntityId);
+        Assert.False(h.Match.TryGetPlayer(1, out _));
+        Assert.True(h.Match.TryGetPlayer(11, out PlayerEntity now));
+        Assert.Same(a, now);
+        Assert.Equal(before, h.Match.PlayerCount);
+        Assert.Equal(0, h.Match.GracedCount);
+        Assert.False(h.Match.Disconnect(1, allowGrace: true));   // the old connection's close later finds nothing to grace
+        Assert.Equal(0, h.Match.GracedCount);
+        Assert.Empty(h.SentTo(11, PacketId.PlayerDied));   // alive: nothing tells it otherwise
+    }
+
+    // Review B round 1: a dead (spectating) character taken over from a connection the server still holds is told it is
+    // dead after its own spawn, as a spectating newcomer is. The client learns its own death only from PlayerDied.
+    [Fact]
+    public void TakingOverADeadCharacter_SendsPlayerDied_AfterItsSpawn()
+    {
+        var (h, a, b, _) = InMatch();
+        h.Place(a, new Vector3(0f, 0f, 3f));
+        h.Place(b, new Vector3(0f, 0f, -3f));
+        h.ShootUntilDead(b, a);
+        h.Packets.Clear();
+        byte[] session = NewSession(30);
+        Assert.Equal(JoinResult.Resumed, h.Match.TryJoin(11, "p1", SessionAuth.DeriveResumeKey(session), session, 1,
+            Proof(a.ResumeKey!, 1, session, "p1"), out int takenOver));
+        Assert.Equal(1, takenOver);
+        int died = h.Packets.FindIndex(p => p.PeerId == 11 && p.Id == PacketId.PlayerDied);
+        Assert.True(died >= 0, "PlayerDied to the new connection");
+        Assert.Equal(a.EntityId, RoyaleHarness.ReadDied(h.Packets[died]).VictimId);
+        Assert.True(died > h.Packets.FindLastIndex(p => p.PeerId == 11 && p.Id == PacketId.PlayerSpawned), "after the spawns");
+    }
+
+    // Review B round 1: the server rotates the resume key at the Join, but the client takes the new key only when
+    // JoinMatchResponse arrives. Until the new connection's first input is accepted, the key the client proved with keeps
+    // resuming (with its own nonce), so a response lost to another drop, even twice, does not strand the character.
+    [Fact]
+    public void AResponseLostBeforeTheFirstInput_TheProvingKeyStillResumes_EvenTwice()
+    {
+        var (h, a, _, _) = InMatch();
+        byte[] k0 = a.ResumeKey!;
+        h.Match.Disconnect(1, allowGrace: true);
+        byte[] s1 = NewSession(10);
+        Assert.Equal(JoinResult.Resumed, h.Match.TryJoin(11, "p1", SessionAuth.DeriveResumeKey(s1), s1, 1, Proof(k0, 1, s1, "p1"), out _));
+
+        // Lost: the link drops before the response, so the client still holds k0 (its nonce at 1).
+        Assert.True(h.Match.Disconnect(11, allowGrace: true));
+        byte[] s2 = NewSession(11);
+        Assert.Equal(JoinResult.Ok, h.Match.TryJoin(12, "p1", SessionAuth.DeriveResumeKey(s2), s2, 1, Proof(k0, 1, s2, "p1"), out _));   // nonce 1 taken
+        Assert.True(a.IsGraced);
+        byte[] s3 = NewSession(12);
+        Assert.Equal(JoinResult.Resumed, h.Match.TryJoin(13, "p1", SessionAuth.DeriveResumeKey(s3), s3, 2, Proof(k0, 2, s3, "p1"), out _));
+        Assert.Equal(13, a.PeerId);
+
+        // Lost again: k0 is still the client's key and still resumes.
+        Assert.True(h.Match.Disconnect(13, allowGrace: true));
+        byte[] s4 = NewSession(13);
+        Assert.Equal(JoinResult.Resumed, h.Match.TryJoin(14, "p1", SessionAuth.DeriveResumeKey(s4), s4, 3, Proof(k0, 3, s4, "p1"), out _));
+        Assert.Equal(14, a.PeerId);
+
+        // And before the server notices that drop (still connected): the takeover takes k0 as well.
+        byte[] s5 = NewSession(14);
+        Assert.Equal(JoinResult.Resumed, h.Match.TryJoin(15, "p1", SessionAuth.DeriveResumeKey(s5), s5, 4, Proof(k0, 4, s5, "p1"),
+            out int takenOver));
+        Assert.Equal(14, takenOver);
+        Assert.Equal(15, a.PeerId);
+    }
+
+    // The first accepted input proves the client had the response (it sends input only once joined): from then on only the
+    // new key resumes.
+    [Fact]
+    public void AfterTheFirstAcceptedInput_TheOldKeyNoLongerResumes_AndTheNewOneDoes()
+    {
+        var (h, a, _, _) = InMatch();
+        byte[] k0 = a.ResumeKey!;
+        h.Match.Disconnect(1, allowGrace: true);
+        byte[] s1 = NewSession(20);
+        byte[] k1 = SessionAuth.DeriveResumeKey(s1);
+        Assert.Equal(JoinResult.Resumed, h.Match.TryJoin(11, "p1", k1, s1, 1, Proof(k0, 1, s1, "p1"), out _));
+        Assert.NotNull(a.PrevResumeKey);
+        var packet = new PlayerInputPacket { Count = 1 };
+        packet.Set(0, new InputCommand { Seq = 1 });
+        Assert.True(h.Match.EnqueueInput(11, packet));
+        Assert.Null(a.PrevResumeKey);
+
+        Assert.True(h.Match.Disconnect(11, allowGrace: true));
+        byte[] s2 = NewSession(21);
+        Assert.Equal(JoinResult.Ok, h.Match.TryJoin(12, "p1", SessionAuth.DeriveResumeKey(s2), s2, 2, Proof(k0, 2, s2, "p1"), out _));
+        Assert.True(a.IsGraced);
+        byte[] s3 = NewSession(22);
+        Assert.Equal(JoinResult.Resumed, h.Match.TryJoin(13, "p1", SessionAuth.DeriveResumeKey(s3), s3, 1, Proof(k1, 1, s3, "p1"), out _));
+        Assert.Equal(13, a.PeerId);
+    }
+
+    [Fact]
+    public void AWrongProof_ForACharacterStillConnected_BecomesANewPlayer()
+    {
+        var (h, a, _, _) = InMatch();
+        byte[] session = NewSession(7);
+        byte[] wrong = Proof(SessionAuth.DeriveResumeKey(NewSession(8)), 1, session, "p1");
+        Assert.Equal(JoinResult.Ok, h.Match.TryJoin(11, "p1", SessionAuth.DeriveResumeKey(session), session, 1, wrong, out int takenOver));
+        Assert.Equal(PlayerEntity.NoPeer, takenOver);
+        Assert.Equal(1, a.PeerId);
+    }
+
+    // 기능: 시험용 세션 키 32 B를 만든다.
+    // 입력: seed - 값 시작.
+    // 출력: 32 B.
+    private static byte[] NewSession(byte seed)
+    {
+        var key = new byte[ProtocolLimits.SessionKeyBytes];
+        for (int i = 0; i < key.Length; i++) key[i] = (byte)(seed * 31 + i);
+        return key;
+    }
+
+    // 기능: Resume 증명 16 B를 만든다.
+    // 입력: resumeKey·nonce·session·name - 증명 입력.
+    // 출력: 16 B 증명.
+    private static byte[] Proof(byte[] resumeKey, uint nonce, byte[] session, string name)
+    {
+        var proof = new byte[ProtocolLimits.ResumeProofBytes];
+        SessionAuth.ComputeResumeProof(resumeKey, nonce, session, name, proof);
+        return proof;
     }
 
     // D2: a match that ends while a participant is away ranks it with the others still in; the round reset then

@@ -62,6 +62,21 @@ public sealed class ServerOptions
     // once. More are refused as ServerFull before Accept (counted as accept). It bounds the Control channel below.
     public int AcceptsPerSecond { get; set; } = 20;
     public int AcceptBurst => MaxPlayers;
+    // Review fix B3: how long the AuthPacketLayer keeps a closed connection's keys (LiteNetLib resends the disconnect packet
+    // within DisconnectTimeoutMs, and those resends must stay sealed).
+    public long AuthKeyRetireMs => DisconnectTimeoutMs + 1000L;
+    // Review B round 1: the cap on retired keys waiting at once. Every accepted connection retires its keys once, and the global
+    // accept bucket lets in at most its burst plus AcceptsPerSecond for every started second of AuthKeyRetireMs; with the
+    // players already in, that is every key one retire window can hold, so accepted churn never evicts one early (defaults:
+    // 16 + 16 + 20 * 6 = 152, two HMAC objects each). Evicting the oldest stays as the last resort.
+    public int MaxRetiredAuthKeys =>
+        (int)Math.Min(int.MaxValue, (long)MaxPlayers + AcceptBurst + (long)AcceptsPerSecond * ((AuthKeyRetireMs + 999) / 1000));
+    // Review fix B1: the server's RSA-2048 private key as RSA.ToXmlString(true) text (the names say Pem for the deployment
+    // convention; Unity's Mono has no PEM import, so the key format is XML). PrivateKeyPem holds the text itself (environment
+    // variable Server__PrivateKeyPem), PrivateKeyPath a file with it. Neither = the development key next to the server
+    // (keys/dev-server-key.xml), refused in Production. See Net/ServerIdentity.
+    public string? PrivateKeyPem { get; set; }
+    public string? PrivateKeyPath { get; set; }
 
     // Server review M8: a game loop stalled this long is taken as hung for good: the server stops taking connections and
     // stops with exit code 1, so a supervisor restarts it instead of it holding its port as a zombie. 0 = off.

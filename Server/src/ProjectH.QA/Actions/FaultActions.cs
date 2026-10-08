@@ -246,8 +246,8 @@ public static class FaultActions
             case "oversized":
             {
                 // Larger than any valid packet (MaxPacketSize) and with an impossible input count. Review fix A1: the server
-                // refuses it by size before parsing (Malformed). At most 2 fragments at LiteNetLib's default MTU (1024), the
-                // bots' MaxFragmentsCount (ProtocolLimits.MaxFragments): a larger one could not be sent at all.
+                // refuses it by size before parsing (Malformed). At most 2 fragments at the bots' user MTU (ProtocolLimits.UserMtu,
+                // review fix B3), their MaxFragmentsCount (ProtocolLimits.MaxFragments): a larger one could not be sent at all.
                 var b = new byte[ProtocolConstants.MaxPacketSize + 400];
                 rng.NextBytes(b);
                 b[0] = (byte)PacketId.PlayerInput;

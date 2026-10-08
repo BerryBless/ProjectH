@@ -254,4 +254,112 @@ public sealed class HardeningIntegrationTests
         Assert.Equal(1, server.Health.Rejects(RejectReason.VersionMismatch));
         Assert.Equal(0, server.Health.CookieChallenges);
     }
+
+    // Review fixes B2, B3: the client's session key goes RSA-encrypted in the request; from the accept on, every datagram both
+    // ways is sealed and opens (the client is verified, no side drops anything), and the game runs over it.
+    [Fact]
+    public void AClient_WithTheSessionKeyAndCookie_Joins_AndTheSnapshotArrives_WithNoAuthDrops()
+    {
+        using GameLoop server = StartServer();
+        using var client = Join(server, "sealed");
+        Assert.True(SendInputsUntil(client, () => client.SnapshotsReceived > 5 && client.LastAckInputSeq > 3, 3000), "snapshots and acks");
+        Assert.True(client.Verified);
+        Assert.Equal(0, client.AuthDrops);
+        Assert.Equal(0, server.Health.AuthDrops);
+    }
+
+    // A blob encrypted with another public key (a client configured for another server) is refused as BadRequest after the
+    // cookie step, with no peer.
+    [Fact]
+    public void ARequest_ForAnotherServerKey_IsRefusedAsBadRequest()
+    {
+        using GameLoop server = StartServer();
+        using var rsa = System.Security.Cryptography.RSA.Create(2048);
+        using var other = new HeadlessClient();
+        other.Connect(server.LocalPort, "other", serverPublicKeyXml: rsa.ToXmlString(false));
+        Assert.True(Pump.Until(() => other.Disconnected, 3000, other), "refused");
+        Assert.Equal(DisconnectReason.ConnectionRejected, other.DisconnectReason);
+        Assert.Equal(RejectReason.BadRequest, other.RejectReason);
+        Assert.Equal(1, server.Health.Rejects(RejectReason.BadRequest));
+        Assert.Equal(0, server.Health.Connections);
+    }
+
+    // Review B rounds 1 and 2: blobs that do not decrypt penalize their source from the third within 60 s, so one address cannot
+    // keep making the receive thread run the RSA decrypt with garbage, while one misconfigured client does not shut out every
+    // client behind the same NAT address at its first try. Two are BadRequest only (a good client still gets in); the third is
+    // a BadRequest too, and the next request from that address, a good one, is refused as Penalized.
+    [Fact]
+    public void TheThirdBlobThatDoesNotDecrypt_PenalizesTheSource()
+    {
+        using GameLoop server = StartServer();
+        using var rsa = System.Security.Cryptography.RSA.Create(2048);
+        for (int i = 0; i < 2; i++) RefusedAsBadRequest(server, rsa);
+        Assert.Equal(0, server.Health.Penalties);
+        using (var first = Join(server, "first"))
+        {
+            Assert.Equal(1, server.Health.Connections);
+        }
+
+        RefusedAsBadRequest(server, rsa);
+        Assert.Equal(1, server.Health.Penalties);
+        using var good = new HeadlessClient();
+        good.Connect(server.LocalPort, "good");
+        Assert.True(Pump.Until(() => good.Disconnected, 3000, good), "refused");
+        Assert.Equal(RejectReason.ServerFull, good.RejectReason);
+        Assert.Equal(1, server.Health.PenaltyRejects);
+        Assert.Equal(3, server.Health.Rejects(RejectReason.BadRequest));
+    }
+
+    // 기능: 다른 서버 키로 암호화한 blob으로 접속해 BadRequest로 거절되는지 확인한다.
+    // 입력: server - 서버, rsa - 서버와 다른 RSA 키.
+    // 출력: 반환값 없음. 거절되지 않으면 테스트가 실패한다.
+    private static void RefusedAsBadRequest(GameLoop server, System.Security.Cryptography.RSA rsa)
+    {
+        using var other = new HeadlessClient();
+        other.Connect(server.LocalPort, "other", serverPublicKeyXml: rsa.ToXmlString(false));
+        Assert.True(Pump.Until(() => other.Disconnected, 3000, other), "refused");
+        Assert.Equal(RejectReason.BadRequest, other.RejectReason);
+    }
+
+    // The server keeps a closed connection's keys for a while (its disconnect resends stay sealed): a client that leaves and
+    // connects again from the same local port is taken as a new connection, not dropped as a forgery. Review B round 1: only
+    // its ConnectRequests pass the retired entry unverified. The cookie answer is a LiteNetLib reject (a Disconnect packet),
+    // and the client's ShutdownOk to it, sealed with the new keys, is dropped and counted there; LiteNetLib has no peer for a
+    // rejected request, so nothing waits for that ShutdownOk. Review B round 2: it is counted as authDropsRetired, apart from
+    // authDrops (drops on a live key), which stays 0 in a normal run.
+    [Fact]
+    public void AClient_ThatLeavesAndReconnectsFromTheSamePort_GetsIn()
+    {
+        using GameLoop server = StartServer();
+        using var client = Join(server, "again");
+        client.Leave();
+        Assert.True(SpinUntil(() => server.Health.DisconnectOthers == 1, 3000), "left");
+        Assert.True(Pump.Until(() => client.Disconnected, 3000, client), "closed");
+
+        client.Connect(server.LocalPort, "again");
+        Assert.True(Pump.Until(() => client.Connected, 3000, client), "connected again");
+        client.SendJoin();
+        Assert.True(Pump.Until(() => client.JoinResponse.HasValue, 3000, client), "joined again");
+        Assert.True(Pump.Until(() => client.Verified, 3000, client), "verified with the new keys");
+        Assert.Equal(1, client.CookieRetries);
+        Assert.Equal(0, server.Health.AuthDrops);          // review B round 2: the live-key signal stays at zero
+        Assert.Equal(1, server.Health.AuthDropsRetired);   // that one ShutdownOk
+        Assert.Equal(0, client.AuthDrops);
+    }
+
+    // The kick code arrives in the sealed disconnect packet (the keys are retired, not removed, at the disconnect event).
+    [Fact]
+    public void AServerClose_ReachesAVerifiedClient_WithItsCode()
+    {
+        using GameLoop server = StartServer(joinTimeout: 1);
+        using var idle = new HeadlessClient();
+        idle.Connect(server.LocalPort, "idle");
+        Assert.True(Pump.Until(() => idle.Connected && idle.Verified, 3000, idle), "connected");
+        Assert.True(Pump.Until(() => idle.Disconnected, 4000, idle), "timed out");
+        Assert.Equal(DisconnectReason.RemoteConnectionClose, idle.DisconnectReason);
+        Assert.Equal(DisconnectCode.JoinTimeout, idle.DisconnectCode);
+        Assert.Equal(0, idle.AuthDrops);
+    }
+
+    private static bool SpinUntil(Func<bool> condition, int timeoutMs) => System.Threading.SpinWait.SpinUntil(condition, timeoutMs);
 }

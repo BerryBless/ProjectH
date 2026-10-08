@@ -85,6 +85,11 @@ public sealed class HealthCounters
     private long _cookieChallenges;
     // Review fix A6: addresses penalized for repeated player failures.
     private long _penalties;
+    // Review fix B3: datagrams from a keyed endpoint whose tail failed (forged, tampered, replayed or out of the window).
+    private long _authDrops;
+    // Review B round 2: the same on a retired key (a connection closed within RetireMs). Kept apart so authDrops stays 0 in a
+    // normal run: a same-port reconnect's ShutdownOk to the cookie reject lands here, and so does a forgery in the retire window.
+    private long _authDropsRetired;
     // Review fix A4: inputs dropped for a Seq too far ahead (game loop writes the running total, see SetInputSeqDrops).
     private long _inputSeqDrops;
     private long _inputSeqDropBase;
@@ -206,10 +211,20 @@ public sealed class HealthCounters
     // 출력: 반환값 없음.
     public void AddCookieChallenge() => Interlocked.Increment(ref _cookieChallenges);
 
-    // 기능: 반복 플레이어 실패로 벌점을 준 주소 하나를 센다(리뷰 수정 A6, Game Loop).
+    // 기능: 벌점을 준 주소 하나를 센다(리뷰 수정 A6: 반복 플레이어 실패, Game Loop. 리뷰 B 1차: 복호되지 않는 세션 키 blob, 수신 스레드).
     // 입력: 없음.
     // 출력: 반환값 없음.
     public void AddPenalty() => Interlocked.Increment(ref _penalties);
+
+    // 기능: 인증 꼬리 검증에 실패해 버린 데이터그램 하나를 센다(리뷰 수정 B3, 수신 스레드).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void AddAuthDrop() => Interlocked.Increment(ref _authDrops);
+
+    // 기능: 은퇴한 키(끊긴 지 RetireMs 안의 endpoint)에서 열리지 않아 버린 데이터그램 하나를 센다(리뷰 B 2차, 수신 스레드). authDrops와 따로 센다.
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void AddAuthDropRetired() => Interlocked.Increment(ref _authDropsRetired);
 
     // 기능: 지금 경기의 Seq 창 밖 입력 드롭 합계를 시작부터의 합계로 쓴다(리셋으로 넘어온 기준값 + 이 경기 값, 리뷰 수정 A4). Game Loop만 부른다.
     // 입력: matchTotal - 지금 경기 객체의 합계(Match.InputSeqDrops).
@@ -382,6 +397,8 @@ public sealed class HealthCounters
     public long CookieRejects => Interlocked.Read(ref _cookieRejects);
     public long CookieChallenges => Interlocked.Read(ref _cookieChallenges);
     public long Penalties => Interlocked.Read(ref _penalties);
+    public long AuthDrops => Interlocked.Read(ref _authDrops);
+    public long AuthDropsRetired => Interlocked.Read(ref _authDropsRetired);
     public long InputSeqDrops => Volatile.Read(ref _inputSeqDrops);
     public long StallExits => Interlocked.Read(ref _stallExits);
     public long CallbackErrors => Interlocked.Read(ref _callbackErrors);

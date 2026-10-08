@@ -32,6 +32,15 @@ public sealed class PeerState
     // Review fixes A2, A6: the ConnectRateLimiter slot this connection was counted in (Acquired at accept, Released at the
     // disconnect), and the source the game loop charges this player's failures to. -1 = not counted (tests).
     public int ConnectSlot { get; }
+    // Review fixes B3, B4 (set once at accept, then read-only, any thread): this connection's session keys (registered in
+    // AuthPacketLayer), the raw session key (the resume proof is bound to it), and the resume claim of the request
+    // (ResumeProof null = no resume attempted). The game loop hands them to Match.TryJoin.
+    public SessionKeys? Keys { get; init; }
+    public byte[]? SessionKey { get; init; }
+    public uint ResumeNonce { get; init; }
+    public byte[]? ResumeProof { get; init; }
+    // This connection's resume key (HMAC(K, "resume")): the key a later connection must prove to resume this character.
+    public byte[]? ResumeKey => Keys?.ResumeKey;
     public int BadPackets;
     public bool Kicked;
     // Set when the first JoinMatchRequest is enqueued. Later Joins are bad packets and are not
@@ -45,7 +54,8 @@ public sealed class PeerState
     public volatile bool Joined;
     public long LastInputTick;
     // Phase 10: Match refused the Join (MatchFull). The connection is closed a second later (GameLoop.SweepPeers), so
-    // the ReliableOrdered JoinMatchResponse that says why goes out before the close.
+    // the ReliableOrdered JoinMatchResponse that says why goes out before the close. Review fix B4: also set on a connection
+    // whose character a new connection took over with its resume proof (closed the same way, without a code or a grace).
     public bool JoinRefused;
     public long RefusedTick;
     // Phase 13 final review A4: the loop tick the peer's reliable queues went over GameLoop.MaxReliableBacklog (-1 = not

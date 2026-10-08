@@ -37,6 +37,8 @@
     <None Update="squad.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="map.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="vehicles.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Review fix B1: the development server key (refused in Production; see keys/README.md). -->
+    <None Update="keys/dev-server-key.xml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

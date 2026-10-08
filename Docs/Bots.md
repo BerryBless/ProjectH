@@ -11,7 +11,9 @@ dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 779
 
 서버는 따로 띄운다(`Server.md`). 봇이 4명을 넘으면 서버에 `--Server:ConnectBurstPerIp=200 --Server:MaxConnectionsPerIp=200`을 준다. 서버는 IP마다 연결 요청을 한 번에 20개, 그 뒤 초당 5개까지만 받고(서버 리뷰 M2) 한 IP의 동시 연결을 4개까지만 받는데(리뷰 수정 A2), 봇은 모두 한 IP에서 붙기 때문이다(`Networking.md` "Validation"). 전역 수락 빈도(`AcceptsPerSecond` 20, 한 번에 MaxPlayers개)는 `--connect-interval-ms` 50 이상이면 걸리지 않는다.
 
-봇의 접속은 Unity Client와 같은 쿠키 단계를 거친다(리뷰 수정 A3, `Networking.md` "접속 순서"): 첫 연결 요청에 서버가 16B 쿠키를 `RejectForce`로 돌려주면 `BotConnection`이 같은 요청을 쿠키(`ConnectFlags.HasCookie`)와 함께 바로 한 번 다시 보낸다(`CookieRetries`). 쿠키 단계는 끊김으로 치지 않으므로 재접속 판단(`Retryable`)에 영향이 없다. `NetManager.MaxFragmentsCount`는 서버·Client와 같은 2다(리뷰 수정 A1). QA 도구의 `SendRaw`는 이보다 조각이 많은 데이터를 보내지 못하고 false를 돌려준다. 경기는 2명 이상이면 시작한다. 모양은 `--이름 값` 쌍이고, 모르는 이름이나 잘못된 숫자는 오류로 끝난다.
+봇의 접속은 Unity Client와 같은 쿠키 단계를 거친다(리뷰 수정 A3, `Networking.md` "접속 순서"): 첫 연결 요청에 서버가 16B 쿠키를 `RejectForce`로 돌려주면 `BotConnection`이 같은 요청을 쿠키(`ConnectFlags.HasCookie`)와 함께 바로 한 번 다시 보낸다(`CookieRetries`). 쿠키 단계는 끊김으로 치지 않으므로 재접속 판단(`Retryable`)에 영향이 없다. `NetManager.MaxFragmentsCount`는 서버·Client와 같은 2다(리뷰 수정 A1). QA 도구의 `SendRaw`는 이보다 조각이 많은 데이터를 보내지 못하고 false를 돌려준다.
+
+신원·무결성(리뷰 수정 B, `Networking.md` "접속 순서")도 Unity Client와 같다. 접속마다 세션 키 32B를 만들어 서버 공개키로 RSA-OAEP-SHA1 암호화해 보내고(`SessionKeyExchange`), 같은 키로 모든 데이터그램에 인증 꼬리 20B를 붙이고 검사한다(`ProjectH.Bots.AuthPacketLayer`, `MtuOverride = ProtocolLimits.UserMtu`). 첫 데이터그램이 열리기 전에는 서버의 쿠키 응답(0 꼬리)을 받아들이고, 그 뒤 열리지 않는 데이터그램은 버리고 센다(`BotConnection.AuthDrops`, 정상이면 0). Join이 Ok·Resumed면 그 연결의 Resume 키를 봇마다 하나인 `ResumeTicket`에 넣고, `--reconnect true`의 재접속은 그 키로 만든 Resume 증명을 실어 자기 캐릭터를 되찾는다(QA Actor도 같다). 서버 공개키는 `--server-public-key <path>`(RSA `ToXmlString(false)` 텍스트 파일)로 준다. 없으면 개발용 키(`DevServerPublicKey.Xml`)이고, 개발용 키로 도는 서버(`keys/dev-server-key.xml`, `--environment Development`로 띄운 서버)와만 맞는다. 경기는 2명 이상이면 시작한다. 모양은 `--이름 값` 쌍이고, 모르는 이름이나 잘못된 숫자는 오류로 끝난다.
 
 | 옵션 | 기본값 | 의미 |
 |---|---|---|
@@ -25,6 +27,7 @@ dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 779
 | `--stats-interval` | 10 | 로그 간격(초), 1 이상 |
 | `--build` | true | Phase 13. false면 건설을 전혀 하지 않는다(방어 벽·경사로도 없음. 부하 시나리오 A, Phase 12와 비교). `--build-spam`과 같이 쓸 수 없다 |
 | `--build-spam` | 0 | Phase 13. 0–20. 봇마다 초당 이만큼 건설 요청을 보낸다(부하 테스트, 건축 모드에 머문다). 0이면 보통 규칙(방어 벽, 높은 적 쪽 경사로)만 쓴다. 요청마다 한 Tick 조준하고 다음 Tick에 보내므로 30 Hz에서 실제 상한은 초당 15개다(16–20은 15로 보낸다) |
+| `--server-public-key` | (개발용 키) | 서버 RSA 공개키 XML 파일 경로(리뷰 수정 B1). 2048비트가 아니거나 읽지 못하면 오류로 끝난다 |
 | `--reconnect` | false | true면 다시 해도 되는 끊김(Client와 같은 표, `Networking.md` "끊기와 재접속")에서 같은 이름으로 다시 접속한다. 끊긴 때부터 1·3·7초 뒤(Client와 같은 `DisconnectCodes.ReconnectOffsetSeconds`), 끊김마다 최대 3번이다. 시도마다 짧은 연결 예산(250 ms × 5, 약 1.5초)을 쓰고, 다음 시각에 아직 연결 중인 시도는 새 시도로 바꾼다. 처음 접속 실패는 다시 하지 않는다 |
 
 `--stats-interval` 초마다 한 줄을 남긴다: 연결된 수, 살아 있는 수(`alive`), 경기 상태, 보낸 입력/s, 받은 패킷/s, 받은 바이트/s, 봇 루프 p95 ms, 재접속 수(`reconnects`). `--reconnect true`가 아니면 끊긴 봇은 다시 접속하지 않는다.

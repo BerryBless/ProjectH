@@ -51,6 +51,8 @@
     <!-- Review fix A3 (A-T7): the client's connection (cookie retry), compiled here so the slnx build checks it against
          Shared v19 (pure C#: LiteNetLib comes through the server reference, no UnityEngine). -->
     <Compile Include="..\..\..\Client\Assets\Scripts\Net\NetClient.cs" Link="ClientCopies\Net\NetClient.cs" />
+    <!-- Review fix B3 (B-T5): the client's authentication layer that NetClient uses. -->
+    <Compile Include="..\..\..\Client\Assets\Scripts\Net\AuthPacketLayer.cs" Link="ClientCopies\Net\AuthPacketLayer.cs" />
   </ItemGroup>
 
 </Project>

@@ -26,19 +26,22 @@ public sealed class BotConnection : IDisposable
     private int _sentCount;
     private uint _nextSeq = 1;
 
-    // 기능: 봇 연결 하나를 만든다(수동 모드 NetManager, 조각 상한 리뷰 수정 A1, 끊김·쿠키 재시도 처리 리뷰 수정 A3).
-    // 입력: reconnect - 자동 재접속 시도면 true(짧은 접속 예산).
+    // 기능: 봇 연결 하나를 만든다(수동 모드 NetManager, 조각 상한 리뷰 수정 A1, 끊김·쿠키 재시도 처리 리뷰 수정 A3,
+    //   데이터그램 인증 계층과 서버 공개키 리뷰 수정 B2·B3).
+    // 입력: reconnect - 자동 재접속 시도면 true(짧은 접속 예산), serverPublicKeyXml - 서버 공개키(null = 개발용 DevServerPublicKey.Xml).
     // 출력: Connect 전의 BotConnection(Dispose가 소켓을 닫는다).
     // reconnect: an automatic reconnect attempt (Phase 10 D11). It gets the short connect budget of DisconnectCodes, so
     // it fails within its slot instead of after LiteNetLib's default 5.5 s. Each attempt is a new BotConnection.
-    public BotConnection(bool reconnect = false)
+    public BotConnection(bool reconnect = false, string? serverPublicKeyXml = null)
     {
+        _serverPublicKeyXml = serverPublicKeyXml ?? DevServerPublicKey.Xml;
         // Phase 13 D13: the same channels as the server (channel 1: building).
         // Review fix A1: the same fragment limit as the server and the Unity client (no game packet is fragmented).
-        _net = new NetManager(_listener)
+        // Review fix B3: the same authentication layer and user MTU as the Unity client.
+        _net = new NetManager(_listener, _auth)
         {
             UnsyncedEvents = false, AutoRecycle = true, ChannelsCount = ProtocolConstants.ChannelCount,
-            MaxFragmentsCount = ProtocolLimits.MaxFragments,
+            MaxFragmentsCount = ProtocolLimits.MaxFragments, MtuOverride = ProtocolLimits.UserMtu,
         };
         if (reconnect)
         {
@@ -90,25 +93,44 @@ public sealed class BotConnection : IDisposable
 
     // Review fix A3: what Connect sent, so the cookie retry repeats it with the cookie (16 B, made once).
     private readonly byte[] _cookie = new byte[ProtocolLimits.CookieBytes];
+    // Review fixes B2-B4: the authentication layer, the server's public key, this connect's session key, encrypted blob and
+    // keys (one per Connect; the cookie retry repeats them), the resume proof made for it, and the ticket that keeps the
+    // resume key across this bot's connections (null = never resume).
+    private readonly AuthPacketLayer _auth = new();
+    private readonly string _serverPublicKeyXml;
+    private byte[] _sessionKey = Array.Empty<byte>();
+    private byte[] _keyBlob = Array.Empty<byte>();
+    private SessionKeys? _keys;
+    private ResumeTicket? _ticket;
+    private readonly byte[] _resumeProof = new byte[ProtocolLimits.ResumeProofBytes];
+    private bool _hasResume;
+    private uint _resumeNonce;
+    // Review fix B3: datagrams dropped for a failed authentication tail after the first verified one (should stay 0).
+    public long AuthDrops => _auth.AuthDrops;
     private string? _host;
     private int _port;
     private string _devPlayerId = string.Empty;
     // Review fix A3: cookie retries made by the latest Connect (1 after a normal connect; Connect sets it back to 0).
     public int CookieRetries { get; private set; }
 
-    // 기능: 서버에 접속을 요청한다. 서버가 쿠키를 돌려주면(리뷰 수정 A3) 한 번 바로 쿠키를 넣어 다시 요청한다.
-    // 입력: host·port - 서버 주소, devPlayerId - 이름.
+    // 기능: 서버에 접속을 요청한다. 새 세션 키를 만들어 서버 공개키로 암호화하고(리뷰 수정 B2), 표에 Resume 키가 있으면 Resume 증명을 넣는다
+    //   (B4). 서버가 쿠키를 돌려주면(리뷰 수정 A3) 같은 요청을 쿠키와 함께 한 번 바로 다시 보낸다.
+    // 입력: host·port - 서버 주소, devPlayerId - 이름, ticket - 이 봇의 Resume 표(null = Resume하지 않음, Join 성공 때 갱신한다).
     // 출력: 반환값 없음. 접속이 시작된다.
-    public void Connect(string host, int port, string devPlayerId)
+    public void Connect(string host, int port, string devPlayerId, ResumeTicket? ticket = null)
     {
         _host = host;
         _port = port;
         _devPlayerId = devPlayerId;
+        _ticket = ticket;
         CookieRetries = 0;   // one cookie retry per Connect
+        (_sessionKey, _keyBlob) = SessionKeyExchange.Create(_serverPublicKeyXml);
+        _keys = new SessionKeys(_sessionKey, isServer: false);
+        _hasResume = ticket != null && ticket.TryMakeProof(_sessionKey, devPlayerId, _resumeProof, out _resumeNonce);
         SendConnect(withCookie: false);
     }
 
-    // 기능: 저장한 주소·이름으로 접속 요청 하나를 보낸다.
+    // 기능: 저장한 주소·이름으로 접속 요청 하나를 보낸다(리뷰 수정 B2·B4: 세션 키 blob과, 있으면 Resume 증명. B3: Connect 직전에 이 키를 인증 계층에 넣는다).
     // 입력: withCookie - 받은 쿠키를 HasCookie로 넣을지.
     // 출력: 반환값 없음. _peer가 새 연결이 된다.
     private void SendConnect(bool withCookie)
@@ -117,12 +139,16 @@ public sealed class BotConnection : IDisposable
         ConnectRequestData.Write(ref writer, new ConnectRequestData
         {
             ProtocolVersion = ProtocolConstants.ProtocolVersion,
-            Flags = withCookie ? ConnectFlags.HasCookie : ConnectFlags.None,
+            Flags = (withCookie ? ConnectFlags.HasCookie : ConnectFlags.None) | (_hasResume ? ConnectFlags.HasResume : ConnectFlags.None),
             Cookie = withCookie ? _cookie : null,
+            SessionKeyBlob = _keyBlob,
             DevPlayerId = _devPlayerId,
+            ResumeNonce = _resumeNonce,
+            ResumeProof = _hasResume ? _resumeProof : null,
         });
         var data = new NetDataWriter();
         data.Put(_buffer, 0, writer.Length);
+        _auth.Use(_keys!);   // review fix B3: before Connect, so the request is sealed with this request's keys
         _peer = _net.Connect(_host!, _port, data);
     }
 
@@ -263,7 +289,7 @@ public sealed class BotConnection : IDisposable
 
     // 기능: 서버 패킷 하나를 BotView에 반영한다(Phase 14: TeamState, PlayerDowned, ChannelState, RebootStations, Phase 15: TeamMarkers,
     //   Phase 16: ContainerStates, SupplyDrops, Phase 17: 투사체 세 패킷은 세기만 한다, Phase 18: ShotFired·WorldSound·실드 플래그·
-    //   붕괴 이유는 QA용으로 세기만 한다, Phase 19: VehicleStates는 QA용으로 목록과 좌석만 둔다).
+    //   붕괴 이유는 QA용으로 세기만 한다, Phase 19: VehicleStates는 QA용으로 목록과 좌석만 둔다, 리뷰 수정 B4: Join 성공이면 Resume 키를 표에 넣는다).
     // 입력: peer·reader·channel·method - LiteNetLib 수신 정보.
     // 출력: 반환값 없음.
     private void OnReceive(NetPeer peer, NetPacketReader reader, byte channel, DeliveryMethod method)
@@ -282,6 +308,8 @@ public sealed class BotConnection : IDisposable
                 {
                     view.Joined = true;
                     view.MyId = response.MyEntityId;
+                    // Review fix B4: this connection's resume key is the one a later reconnect must prove.
+                    if (_keys != null) _ticket?.Joined(_keys.ResumeKey);
                     if (response.SimHz > 0) view.SimHz = response.SimHz;
                 }
                 break;

@@ -207,6 +207,50 @@ public sealed class GameLoopPeerTests
         Assert.Equal(0, loop.Health.Penalties);
     }
 
+    // Review fix B4: a client that crashed and came back before the server noticed takes its character over with its proof;
+    // the old connection is closed a second later without a code (like a refused join) and gets no grace.
+    [Fact]
+    public void ATakeOver_ClosesTheOldConnectionWithoutACode_AndWithoutAGrace()
+    {
+        using var host = new PeerHost();
+        using var loop = new GameLoop(new ServerOptions { Port = 0, MaxPlayers = 4, MinPlayers = 2, InputTimeoutSeconds = 0 },
+            TestGameData.Create(), NullLogger.Instance);
+        var control = loop.Channels.Control.Writer;
+        byte[] oldSession = System.Security.Cryptography.RandomNumberGenerator.GetBytes(ProtocolLimits.SessionKeyBytes);
+        NetPeer oldPeer = host.AcceptPeer();
+        var oldState = new PeerState("owner") { Keys = new SessionKeys(oldSession, isServer: true), SessionKey = oldSession };
+        oldPeer.Tag = oldState;
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.Connected, 1, oldPeer, "owner")));
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.JoinRequested, 1, oldPeer, null)));
+        loop.RunTickGuarded();
+        Assert.True(loop.Match.TryGetPlayer(1, out PlayerEntity owner));
+
+        byte[] newSession = System.Security.Cryptography.RandomNumberGenerator.GetBytes(ProtocolLimits.SessionKeyBytes);
+        var proof = new byte[ProtocolLimits.ResumeProofBytes];
+        SessionAuth.ComputeResumeProof(oldState.ResumeKey!, 1, newSession, "owner", proof);
+        NetPeer newPeer = host.AcceptPeer();
+        newPeer.Tag = new PeerState("owner")
+        {
+            Keys = new SessionKeys(newSession, isServer: true), SessionKey = newSession, ResumeNonce = 1, ResumeProof = proof,
+        };
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.Connected, 2, newPeer, "owner")));
+        Assert.True(control.TryWrite(new ControlMessage(ControlKind.JoinRequested, 2, newPeer, null)));
+        loop.RunTickGuarded();
+
+        Assert.True(loop.Match.TryGetPlayer(2, out PlayerEntity taken));
+        Assert.Same(owner, taken);
+        Assert.Equal(1, loop.Health.Resumes);
+        Assert.True(oldState.JoinRefused);
+        for (int i = 0; i < 31; i++) loop.RunTickGuarded();   // closed one second (SimHz ticks) later
+
+        Assert.Equal(DisconnectCode.None, oldState.CloseCode);   // no code: not a kick, the client would not retry it anyway
+        Assert.NotEqual(ConnectionState.Connected, oldPeer.ConnectionState);
+        Assert.Equal(1, loop.PeerCount);
+        Assert.Equal(0, loop.Match.GracedCount);
+        Assert.Equal(0, loop.Health.GraceStarts);
+        Assert.True(loop.Match.TryGetPlayer(2, out _));
+    }
+
     // Review fix A6: the "every player failed" path (5 such ticks within 10 s, review round 2) needs two sources as well.
     // One address alone on the server, joining and failing one connection after another (it may hold several open, so the
     // penalty on new connections does not stop it), resets nothing.

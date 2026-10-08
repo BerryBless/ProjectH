@@ -170,6 +170,27 @@ public class ConnectRateTests
         Assert.True(limiter.TryAcquire(A, 5000));
     }
 
+    // Review B round 2: session key blobs that do not decrypt are counted per slot within a fixed window from the first one.
+    // The third within DecryptFailureWindowMs (and any later one in it) asks for the penalty; a window that ran out starts over.
+    [Fact]
+    public void TheThirdDecryptFailureWithinTheWindow_AsksForThePenalty_AndAnOldWindowStartsOver()
+    {
+        var limiter = new ConnectRateLimiter(20, 5, 4, hashSalt: 0);
+        int a = limiter.SlotOf(A);
+        long window = ConnectRateLimiter.DecryptFailureWindowMs;
+        Assert.Equal(3, ConnectRateLimiter.DecryptFailureLimit);
+        Assert.False(limiter.RecordDecryptFailure(a, 1000));
+        Assert.False(limiter.RecordDecryptFailure(a, 2000));
+        Assert.False(limiter.RecordDecryptFailure(limiter.SlotOf(B), 2000));   // another slot counts apart
+        Assert.True(limiter.RecordDecryptFailure(a, 1000 + window - 1));
+        Assert.True(limiter.RecordDecryptFailure(a, 1000 + window - 1));      // still in the window
+
+        // Past the window the count starts over at one.
+        Assert.False(limiter.RecordDecryptFailure(a, 1000 + window));
+        Assert.False(limiter.RecordDecryptFailure(a, 1000 + window + 1));
+        Assert.True(limiter.RecordDecryptFailure(a, 1000 + window + 2));
+    }
+
     // Review fix A2 (SEC-4): the slot of an address depends on a salt made at startup, so which addresses share a slot
     // cannot be worked out from the code.
     [Fact]
