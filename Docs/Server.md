@@ -220,6 +220,8 @@ dotnet-counters monitor -n ProjectH.Server --counters ProjectH.Server
 
 **Stall Watchdog:** `StallWatchdog`가 1초마다 Game Loop의 마지막 Tick 끝 시각을 본다. 2초 넘게 Tick이 없으면 Critical 로그를 한 번 남기고 `stalls`를 센다. Tick이 돌아오면 걸린 시간을 Warning으로 남긴다. Deadlock이나 무한 루프처럼 예외 없이 멈추는 경우를 로그 없이 놓치지 않게 한다. 종료 중과, 일부러 쉬는 경우(서버가 끝나기를 기다리는 동안)는 멈춤으로 보지 않는다.
 
+**Monitoring Server(2026-10-08):** 같은 수치(Tick 백분위·CPU·메모리·네트워크·Health 카운터)를 5 s마다 별도 프로세스 `ProjectH.Monitoring`으로 보내 웹에서 본다. Game Loop는 용량 1 슬롯에 Snapshot을 넣기만 하고 전송은 `MonitoringSender`(BackgroundService)가 한다. Snapshot 생성 실패는 `loopFailures`로 센다(Tick 실패가 아니다). 기본은 꺼져 있다(`Monitoring:Enabled`). `Monitoring.md`.
+
 **로그:** 콘솔 로그에 시각이 붙는다(`appsettings.json`의 `Logging:Console:FormatterOptions:TimestampFormat`, `yyyy-MM-dd HH:mm:ss.fff`). 접속·Join·이탈·재접속·Join/Input Timeout으로 끊기는 연결·유예 만료마다 한 번 Information이다. Kick(잘못된 패킷)은 Warning, 거절된 연결 요청은 Debug다(`Logging:LogLevel`을 Debug로 올려야 보인다).
 
 전적 조회 로그(`StatsQueryService`): 시작할 때 Persistence가 꺼져 있으면 "Stats queries: persistence disabled; every request is answered Unavailable."(Information). DB 실패가 시작될 때 Warning 한 줄("the database failed … answering Unavailable until it recovers"), 회복될 때 Information 한 줄("the database answers again"). 실패가 계속되는 동안은 요청마다 로그하지 않는다.
