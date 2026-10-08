@@ -919,7 +919,7 @@ public sealed class HeadlessActor : IQaActor
     }
 
     // 기능: 이번 Pump Tick의 ActorState를 만들어 발행한다(Phase 14: 팀, 구성원 상태, 카드, 기절 소식, 채널, 스테이션, Phase 15: 팀 Ping·Waypoint,
-    //   Phase 16: Container 수·Supply Drop 상태).
+    //   Phase 16: Container 수·Supply Drop 상태, Phase 17: 수류탄 수와 들은 투사체 사건 수).
     // 입력: 없음.
     // 출력: 반환값 없음. State가 바뀐다.
     private void Publish()
@@ -979,6 +979,10 @@ public sealed class HeadlessActor : IQaActor
                 InputsSent = c.InputsSent,
                 HitsLanded = v.HitsLanded,
                 DamageTaken = v.DamageTakenCount,
+                Grenades = v.Inventory.Grenades,                // Phase 17
+                ProjectilesSpawned = v.ProjectilesSpawned,
+                ProjectileStates = v.ProjectileStates,
+                ProjectilesExploded = v.ProjectilesExploded,
                 MoveActive = _moveTarget != null,
                 MoveArrived = _moveArrived,
                 MoveGaveUp = _moveGaveUp,

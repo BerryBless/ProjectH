@@ -68,6 +68,55 @@ public static class CombatRules
         return (ushort)Math.Clamp(scaled, 1m, ushort.MaxValue);
     }
 
+    // 기능: 감쇠·산탄 합산 뒤의 원 피해(소수)에 등급 배율을 한 번 곱한다(Phase 17 D4, D12). 정수 원 피해면 ScaledDamage(ushort)와 같다.
+    // 입력: raw - 원 피해(0 이상), multiplier - 등급 배율.
+    // 출력: 반올림한 피해(최소 1, ushort 상한). raw가 0 이하이거나 수가 아니면 0.
+    public static ushort ScaledDamage(float raw, float multiplier)
+    {
+        if (!(raw > 0f) || !float.IsFinite(raw)) return 0;
+        decimal scaled = Math.Round((decimal)raw * (decimal)multiplier, MidpointRounding.AwayFromZero);
+        return (ushort)Math.Clamp(scaled, 1m, ushort.MaxValue);
+    }
+
+    // 기능: 거리 감쇠 비율(Phase 17 D2): start까지 1, start부터 range까지 minRatio로 선형, range 넘어서는 minRatio.
+    // 입력: distance - 맞은 거리(m), start - 감쇠 시작 거리, range - 사거리, minRatio - 사거리에서의 비율(0..1).
+    // 출력: 0..1 비율.
+    public static float FalloffMultiplier(float distance, float start, float range, float minRatio)
+    {
+        if (!(distance > start) || range <= start) return 1f;
+        if (distance >= range) return minRatio;
+        return 1f - (1f - minRatio) * ((distance - start) / (range - start));
+    }
+
+    // 기능: 폭발 피해(Phase 17 D8): 중심 피해 × (1 − 거리/반지름) × 등급 배율, 반올림. 반지름 밖이거나 0으로 반올림되면 0.
+    // 입력: centerDamage - 중심 피해, distance - 폭발점에서 대상까지 거리(m), radius - 폭발 반지름, multiplier - 등급 배율.
+    // 출력: 피해(0이면 맞지 않음).
+    public static ushort ExplosionDamage(ushort centerDamage, float distance, float radius, float multiplier)
+    {
+        if (!(radius > 0f) || !(distance < radius) || centerDamage == 0) return 0;
+        float share = 1f - MathF.Max(0f, distance) / radius;
+        decimal scaled = Math.Round((decimal)(centerDamage * share) * (decimal)multiplier, MidpointRounding.AwayFromZero);
+        return (ushort)Math.Clamp(scaled, 0m, ushort.MaxValue);
+    }
+
+    // 기능: 폭발 구조물 피해(Phase 17 D8): 중심 구조물 피해 × (1 − 거리/반지름) × 재료 배율(반올림은 DamagePiece가 한다).
+    // 입력: structureDamage - 중심 구조물 피해, distance - 조각 경계까지 거리, radius - 반지름, materialMultiplier - 재료 배율.
+    // 출력: 피해(0이면 닿지 않음).
+    public static float ExplosionStructureDamage(ushort structureDamage, float distance, float radius, float materialMultiplier)
+    {
+        if (!(radius > 0f) || !(distance < radius)) return 0f;
+        return structureDamage * (1f - MathF.Max(0f, distance) / radius) * materialMultiplier;
+    }
+
+    // 기능: 점에서 상자까지의 거리(상자 안이면 0). 폭발이 플레이어 몸·조각 경계까지 재는 거리다(Phase 17 D8).
+    // 입력: point - 점, min·max - 상자 모서리.
+    // 출력: 거리(m).
+    public static float DistanceToBox(Vector3 point, Vector3 min, Vector3 max)
+    {
+        Vector3 closest = Vector3.Clamp(point, min, max);
+        return Vector3.Distance(point, closest);
+    }
+
     // D14: non-finite angles are no shot. Pitch is clamped to +-89 degrees. Same convention as the
     // client camera (ShoulderCameraMath.Forward): yaw 0 faces +Z, yaw 90 faces +X, positive pitch looks down.
     public static bool TryAimDirection(float yawDegrees, float pitchDegrees, out Vector3 direction)

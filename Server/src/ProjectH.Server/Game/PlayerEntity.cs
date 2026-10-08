@@ -63,6 +63,8 @@ public sealed class PlayerEntity
     public bool FireHeld;
     // Phase 13 D7: the tick the harvest tool can swing again (held Fire swings at the cooldown).
     public uint NextSwingTick;
+    // Phase 17 D9: the tick the next grenade can be thrown at (one per throw interval). 0 at join and every new life.
+    public uint NextGrenadeTick;
     // Phase 13 D8: build requests waiting for the game loop (BuildRequestQueue.Capacity at most), the newest sequence
     // processed (older or equal ones are dropped: a replay or a duplicate), and the tick it may place again.
     public readonly BuildRequestQueue BuildQueue = new();

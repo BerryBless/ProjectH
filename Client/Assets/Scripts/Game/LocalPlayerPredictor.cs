@@ -30,7 +30,7 @@ namespace ProjectH.Client.Game
         private const InputButtons QueuedButtons = InputButtons.Jump | InputButtons.Reload | InputButtons.Slot1 | InputButtons.Slot2 |
                                                    InputButtons.Slot3 | InputButtons.Interact | InputButtons.Drop |
                                                    InputButtons.UseMedkit | InputButtons.UseShieldCell | InputButtons.ToolBuild |
-                                                   InputButtons.ToolHarvest;
+                                                   InputButtons.ToolHarvest | InputButtons.ThrowGrenade;   // Phase 17 D9: 6
 
         private readonly InputCommand[] _inputs = new InputCommand[HistorySize];
         private readonly MoveState[] _results = new MoveState[HistorySize];
@@ -115,10 +115,10 @@ namespace ProjectH.Client.Game
 
         // 기능: 프레임 시간만큼 고정 Tick 시뮬레이션을 돌리고 Step마다 입력 하나를 만든다(죽어 있으면 빈 입력).
         // 입력: deltaTime - 프레임 시간, move - 이동 입력, yaw - 카메라 방향, held - 누르고 있는 버튼(Sprint·Fire·Crouch·
-        //   Phase 14 InteractHeld, 모든 Step에 들어간다), queued - 누른 순간 버튼(마지막 Step에만, 쓴 비트는 지운다).
+        //   Phase 14 InteractHeld, 모든 Step에 들어간다), queued - 누른 순간 버튼(마지막 Step에만, 쓴 비트는 지운다. Phase 17: ThrowGrenade 포함).
         // 출력: 돈 Step 수(만든 입력 수).
-        // held: Sprint, Fire, Crouch and InteractHeld, applied to every step. queued: Jump, Reload, Slot1-3, Interact, Drop, UseMedkit and
-        // UseShieldCell presses; they ride on
+        // held: Sprint, Fire, Crouch and InteractHeld, applied to every step. queued: Jump, Reload, Slot1-3, Interact, Drop, UseMedkit,
+        // UseShieldCell, the tool keys and (Phase 17) ThrowGrenade presses; they ride on
         // the last step, because GameClient sends one packet per frame holding only the newest
         // MaxInputsPerPacket inputs, so on a hitch frame an earlier step may never be sent. Consumed bits are cleared.
         public int Advance(float deltaTime, Vector2 move, float yaw, InputButtons held, ref InputButtons queued)

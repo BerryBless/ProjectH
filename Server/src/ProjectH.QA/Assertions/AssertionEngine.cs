@@ -10,7 +10,7 @@ namespace ProjectH.QA;
 // One query per evaluation; waitFor repeats it at the run's poll interval (request §29, §149).
 public static class AssertionEngine
 {
-    public static readonly string[] Roots = { "player", "match", "build", "loot", "server", "network", "actor", "event", "var", "group" };
+    public static readonly string[] Roots = { "player", "match", "build", "loot", "projectiles", "server", "network", "actor", "event", "var", "group" };
 
     // Paths whose numeric values are protocol enums (the server sends names; numbers are mapped for comparisons).
     private static readonly Dictionary<string, Type> s_enumPaths = new(StringComparer.OrdinalIgnoreCase)
@@ -46,7 +46,7 @@ public static class AssertionEngine
         return null;
     }
 
-    // 기능: 검증 경로 하나를 값으로 바꾼다(Phase 16: loot.* = GET /qa/loot, at·radius 선택).
+    // 기능: 검증 경로 하나를 값으로 바꾼다(Phase 16: loot.* = GET /qa/loot, at·radius 선택. Phase 17: projectiles.* = GET /qa/projectiles).
     // 입력: path - 점으로 나눈 경로, ctx - Step 문맥, token - 취소.
     // 출력: 그 경로의 JSON 값, 없으면 null.
     public static async Task<JsonElement?> ResolveAsync(string path, StepContext ctx, CancellationToken token)
@@ -96,6 +96,12 @@ public static class AssertionEngine
                 if (radius != null && at == null) throw new QaStepException("loot.* with 'radius' needs 'at'.");
                 JsonElement loot = await run.Server.GetLootAsync(radius != null ? at?.X : null, radius != null ? at?.Z : null, radius, token).ConfigureAwait(false);
                 return JsonPath.Get(loot, rest);
+            }
+            case "projectiles":
+            {
+                // Phase 17: GET /qa/projectiles (projectiles[], explosions[] oldest first, launched, refused, explosionsTotal, grenadesThrown).
+                JsonElement projectiles = await run.Server.GetProjectilesAsync(token).ConfigureAwait(false);
+                return JsonPath.Get(projectiles, rest);
             }
             case "server":
                 return await ResolveServerAsync(rest, ctx, token).ConfigureAwait(false);

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using ProjectH.Server.Game.Items;
 using ProjectH.Shared.Protocol;
@@ -10,15 +11,33 @@ namespace ProjectH.Server.Game.Combat;
 // Weapon numbers live in data, not code (D4, request §16). Loaded and validated once at startup; a
 // bad file stops the server the same way a bad ServerOptions value does. Immutable afterwards, so the
 // game loop reads it without locks.
+// Phase 17 D2: plus the "projectiles" section (one definition per ProjectileKind, the grenade's throw included). It is
+// optional here (small test catalogs leave it out: no grenade can be thrown then); GameData.LoadDirectory requires the
+// grenade (RequireGrenade).
 public sealed class WeaponCatalog
 {
+    // Phase 17: limits of the projectile numbers. The explosion radius bounds the build columns one explosion visits
+    // (Match.ExplodePieces' fixed buffer).
+    public const float MaxProjectileSpeed = 200f;
+    public const float MaxProjectileGravity = 50f;
+    public const double MaxProjectileLifetimeSeconds = 30;
+    public const float MaxExplosionRadius = 10f;
+    public const float MaxBounce = 0.95f;
+    public const float MaxThrowUpDegrees = 45f;
+
     private readonly WeaponDefinition[] _weapons;
     // Weapon id -> index in _weapons, -1 when unknown. Ids are bytes, so 256 entries cover every id.
     private readonly int[] _indexById = new int[256];
+    // Phase 17: index = ProjectileKind (0 unused); null = not defined.
+    private readonly ProjectileDefinition?[] _projectiles;
 
-    private WeaponCatalog(WeaponDefinition[] weapons, int simHz)
+    // 기능: 검증이 끝난 무기·투사체 정의로 카탈로그를 만들고 와이어 값을 한 번 만든다.
+    // 입력: weapons - 무기들, projectiles - 종류 색인 투사체 정의(null 칸 = 없음), simHz - 변환에 쓴 Tick 속도.
+    // 출력: 바뀌지 않는 WeaponCatalog.
+    private WeaponCatalog(WeaponDefinition[] weapons, ProjectileDefinition?[] projectiles, int simHz)
     {
         _weapons = weapons;
+        _projectiles = projectiles;
         SimHz = simHz;
         Array.Fill(_indexById, -1);
         WireInfos = new WeaponInfo[weapons.Length];
@@ -27,6 +46,7 @@ public sealed class WeaponCatalog
             _indexById[weapons[i].Id] = i;
             WireInfos[i] = weapons[i].ToWire();
         }
+        WireProjectiles = projectiles.Where(p => p != null).Select(p => p!.ToWire()).ToArray();
     }
 
     public int Count => _weapons.Length;
@@ -34,6 +54,8 @@ public sealed class WeaponCatalog
     public int SimHz { get; }
     // Built once for the WeaponCatalog packet sent at every join.
     public WeaponInfo[] WireInfos { get; }
+    // Phase 17: built once for the WeaponCatalog packet (every defined kind, the grenade included).
+    public ProjectileInfo[] WireProjectiles { get; }
 
     public WeaponDefinition this[int index] => _weapons[index];
 
@@ -45,6 +67,17 @@ public sealed class WeaponCatalog
         return index >= 0;
     }
 
+    // 기능: 종류의 투사체 정의를 돌려준다.
+    // 입력: kind - 종류.
+    // 출력: 정의, 없으면 null.
+    public ProjectileDefinition? Projectile(ProjectileKind kind) => (int)kind < _projectiles.Length ? _projectiles[(int)kind] : null;
+
+    // 기능: 운영 시작 검증(Phase 17 D9): 수류탄 정의(던지기 간격 포함)가 있는지 본다.
+    // 입력: 없음.
+    // 출력: 있으면 null, 없으면 이유.
+    public string? RequireGrenade() =>
+        Projectile(ProjectileKind.Grenade) == null ? "weapons.json needs a \"Grenade\" entry in \"projectiles\" (Phase 17)." : null;
+
     public static WeaponCatalog LoadFile(string path, int simHz)
     {
         if (!File.Exists(path)) throw new InvalidOperationException($"Weapon data not found: {path}");
@@ -54,6 +87,9 @@ public sealed class WeaponCatalog
         return catalog!;
     }
 
+    // 기능: weapons.json을 읽고 검증한다(Phase 17: 새 무기 필드와 projectiles 절).
+    // 입력: json - 파일 내용, simHz - 서버 Tick 속도.
+    // 출력: 성공하면 true와 카탈로그, 실패하면 false와 이유.
     public static bool TryParse(string json, int simHz, out WeaponCatalog? catalog, out string? error)
     {
         catalog = null;
@@ -65,7 +101,26 @@ public sealed class WeaponCatalog
 
         if (!DataJson.TryDeserialize(json, out CatalogJson? root, out error)) return false;
 
-        List<WeaponJson?>? list = root!.Weapons;
+        var projectiles = new ProjectileDefinition?[(int)ProjectileKind.Rocket + 1];
+        if (root!.Projectiles != null)
+        {
+            foreach (var pair in root.Projectiles)
+            {
+                if (!TryParseProjectileKind(pair.Key, out ProjectileKind kind))
+                {
+                    error = $"projectiles: unknown kind \"{pair.Key}\" (Grenade or Rocket).";
+                    return false;
+                }
+                string? problem = ValidateProjectile(kind, pair.Value, simHz, out projectiles[(int)kind]);
+                if (problem != null)
+                {
+                    error = $"projectiles.{pair.Key}: {problem}";
+                    return false;
+                }
+            }
+        }
+
+        List<WeaponJson?>? list = root.Weapons;
         if (list == null || list.Count < 1 || list.Count > WeaponCatalogPacket.MaxWeapons)
         {
             error = $"\"weapons\" must hold 1-{WeaponCatalogPacket.MaxWeapons} entries.";
@@ -75,7 +130,7 @@ public sealed class WeaponCatalog
         var weapons = new WeaponDefinition[list.Count];
         for (int i = 0; i < list.Count; i++)
         {
-            string? problem = Validate(list[i], simHz, out WeaponDefinition? weapon);
+            string? problem = Validate(list[i], simHz, projectiles, out WeaponDefinition? weapon);
             if (problem != null)
             {
                 error = $"weapons[{i}]: {problem}";
@@ -97,12 +152,28 @@ public sealed class WeaponCatalog
             }
         }
 
-        catalog = new WeaponCatalog(weapons, simHz);
+        catalog = new WeaponCatalog(weapons, projectiles, simHz);
         error = null;
         return true;
     }
 
-    private static string? Validate(WeaponJson? w, int simHz, out WeaponDefinition? weapon)
+    // 기능: 투사체 종류 이름을 ProjectileKind로 바꾼다(enum 이름만).
+    // 입력: text - JSON의 이름.
+    // 출력: Grenade·Rocket이면 true와 종류.
+    private static bool TryParseProjectileKind(string? text, out ProjectileKind kind)
+    {
+        switch (text)
+        {
+            case "Grenade": kind = ProjectileKind.Grenade; return true;
+            case "Rocket": kind = ProjectileKind.Rocket; return true;
+            default: kind = ProjectileKind.None; return false;
+        }
+    }
+
+    // 기능: 무기 항목 하나를 검증한다(Phase 17: 산탄·퍼짐·감쇠·구조물 배율·반동·투사체, 빠지면 기본값).
+    // 입력: w - JSON 항목, simHz - Tick 속도, projectiles - 이미 읽은 투사체 정의, weapon - 결과.
+    // 출력: 맞으면 null과 무기, 틀리면 이유.
+    private static string? Validate(WeaponJson? w, int simHz, ProjectileDefinition?[] projectiles, out WeaponDefinition? weapon)
     {
         weapon = null;
         if (w == null) return "entry is null.";
@@ -116,20 +187,76 @@ public sealed class WeaponCatalog
         if (!DataJson.TryTicks(w.ReloadSeconds, simHz, out ushort reloadTicks)) return "reloadSeconds must be positive and finite (at most 65535 ticks).";
         float range = (float)w.Range;
         if (!float.IsFinite(range) || range <= 0f) return "range must be positive and finite.";
-        float spread = (float)w.Spread;
-        float recoil = (float)w.Recoil;
-        if (!float.IsFinite(spread) || spread < 0f) return "spread must be 0 or more.";
-        if (!float.IsFinite(recoil) || recoil < 0f) return "recoil must be 0 or more.";
-        if (!ItemCatalog.TryParseAmmoType(w.AmmoType, out AmmoType ammoType)) return "ammoType must be Light, Medium or Heavy.";
+        if (!ItemCatalog.TryParseAmmoType(w.AmmoType, out AmmoType ammoType)) return "ammoType must be Light, Medium, Heavy, Shells or Rockets.";
+
+        // Phase 17 D2: optional, with the old behaviour as the default (one exact ray, no falloff, structure x 1).
+        int pellets = w.Pellets ?? 1;
+        if (pellets < 1 || pellets > WeaponCatalogPacket.MaxPellets) return $"pellets must be 1-{WeaponCatalogPacket.MaxPellets}.";
+        float spread = (float)(w.SpreadDegrees ?? 0);
+        if (!float.IsFinite(spread) || spread < 0f || spread > WeaponCatalogPacket.MaxSpreadDegrees)
+            return $"spreadDegrees must be 0-{WeaponCatalogPacket.MaxSpreadDegrees}.";
+        float recoil = (float)(w.RecoilDegrees ?? 0);
+        if (!float.IsFinite(recoil) || recoil < 0f || recoil > WeaponCatalogPacket.MaxRecoilDegrees)
+            return $"recoilDegrees must be 0-{WeaponCatalogPacket.MaxRecoilDegrees}.";
+        float falloffStart = (float)(w.FalloffStart ?? range);
+        if (!float.IsFinite(falloffStart) || falloffStart < 0f || falloffStart > range) return "falloffStart must be 0 to range.";
+        float falloffMin = (float)(w.FalloffMinRatio ?? 1);
+        if (!float.IsFinite(falloffMin) || falloffMin < 0f || falloffMin > 1f) return "falloffMinRatio must be 0-1.";
+        float structure = (float)(w.StructureMultiplier ?? 1);
+        if (!float.IsFinite(structure) || structure < 0f || structure > 10f) return "structureMultiplier must be 0-10.";
+        ProjectileDefinition? projectile = null;
+        if (w.Projectile != null)
+        {
+            if (TryParseProjectileKind(w.Projectile, out ProjectileKind kind)) projectile = projectiles[(int)kind];
+            if (projectile == null) return $"projectile \"{w.Projectile}\" is not defined in \"projectiles\".";
+            if (pellets != 1) return "a projectile weapon fires one projectile (pellets 1).";
+        }
 
         weapon = new WeaponDefinition((byte)w.Id, w.Name, (ushort)w.Damage, fireTicks, (byte)w.MagazineSize,
-            reloadTicks, range, w.Automatic, spread, recoil, ammoType);
+            reloadTicks, range, w.Automatic, ammoType, (byte)pellets, spread, falloffStart, falloffMin, structure, recoil, projectile);
+        return null;
+    }
+
+    // 기능: 투사체 정의 하나를 검증한다(Phase 17 D2, D6, D9).
+    // 입력: kind - 종류, p - JSON 항목, simHz - Tick 속도, definition - 결과.
+    // 출력: 맞으면 null과 정의, 틀리면 이유.
+    private static string? ValidateProjectile(ProjectileKind kind, ProjectileJson? p, int simHz, out ProjectileDefinition? definition)
+    {
+        definition = null;
+        if (p == null) return "entry is null.";
+        float speed = (float)p.Speed;
+        if (!float.IsFinite(speed) || speed <= 0f || speed > MaxProjectileSpeed) return $"speed must be above 0 and at most {MaxProjectileSpeed}.";
+        float gravity = (float)p.Gravity;
+        if (!float.IsFinite(gravity) || gravity < 0f || gravity > MaxProjectileGravity) return $"gravity must be 0-{MaxProjectileGravity}.";
+        if (!(p.LifetimeSeconds <= MaxProjectileLifetimeSeconds) || !DataJson.TryTicks(p.LifetimeSeconds, simHz, out ushort lifetime))
+            return $"lifetimeSeconds must be above 0 and at most {MaxProjectileLifetimeSeconds}.";
+        float radius = (float)p.ExplosionRadius;
+        if (!float.IsFinite(radius) || radius <= 0f || radius > MaxExplosionRadius) return $"explosionRadius must be above 0 and at most {MaxExplosionRadius}.";
+        if (p.ExplosionDamage < 0 || p.ExplosionDamage > ushort.MaxValue) return "explosionDamage must be 0-65535.";
+        if (p.StructureDamage < 0 || p.StructureDamage > ushort.MaxValue) return "structureDamage must be 0-65535.";
+        if (p.ExplosionDamage == 0 && p.StructureDamage == 0) return "explosionDamage or structureDamage must be above 0.";
+        float bounce = (float)p.Bounce;
+        if (!float.IsFinite(bounce) || bounce < 0f || bounce > MaxBounce) return $"bounce must be 0-{MaxBounce}.";
+        ushort throwTicks = 0;
+        float throwUp = 0f;
+        if (kind == ProjectileKind.Grenade)
+        {
+            // D9: thrown by hand: an interval between throws and the slight upward angle.
+            if (!DataJson.TryTicks(p.ThrowIntervalSeconds, simHz, out throwTicks)) return "throwIntervalSeconds must be positive (the grenade's throw interval).";
+            throwUp = (float)p.ThrowUpDegrees;
+            if (!float.IsFinite(throwUp) || throwUp < -MaxThrowUpDegrees || throwUp > MaxThrowUpDegrees)
+                return $"throwUpDegrees must be {-MaxThrowUpDegrees}-{MaxThrowUpDegrees}.";
+            if (bounce <= 0f) return "a grenade must bounce (bounce above 0): it explodes by its fuse.";
+        }
+        definition = new ProjectileDefinition(kind, speed, gravity, lifetime, radius, (ushort)p.ExplosionDamage, (ushort)p.StructureDamage,
+            bounce, throwTicks, throwUp);
         return null;
     }
 
     private sealed class CatalogJson
     {
         public List<WeaponJson?>? Weapons { get; set; }
+        public Dictionary<string, ProjectileJson?>? Projectiles { get; set; }
     }
 
     // Missing numbers stay 0 and fail validation, so every required field must be written.
@@ -143,8 +270,28 @@ public sealed class WeaponCatalog
         public double ReloadSeconds { get; set; }
         public double Range { get; set; }
         public bool Automatic { get; set; }
-        public double Spread { get; set; }
-        public double Recoil { get; set; }
         public string? AmmoType { get; set; }
+        // Phase 17 D2: optional (null = the default in Validate).
+        public int? Pellets { get; set; }
+        public double? SpreadDegrees { get; set; }
+        public double? RecoilDegrees { get; set; }
+        public double? FalloffStart { get; set; }
+        public double? FalloffMinRatio { get; set; }
+        public double? StructureMultiplier { get; set; }
+        public string? Projectile { get; set; }
+    }
+
+    // Phase 17: every number is required (a missing one stays 0 and fails), except the grenade-only throw fields on a rocket.
+    private sealed class ProjectileJson
+    {
+        public double Speed { get; set; }
+        public double Gravity { get; set; }
+        public double LifetimeSeconds { get; set; }
+        public double ExplosionRadius { get; set; }
+        public int ExplosionDamage { get; set; }
+        public int StructureDamage { get; set; }
+        public double Bounce { get; set; }
+        public double ThrowIntervalSeconds { get; set; }
+        public double ThrowUpDegrees { get; set; }
     }
 }

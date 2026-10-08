@@ -76,7 +76,7 @@ public class PacketWriterReaderTests
 
     [Theory]
     [InlineData(0)]
-    [InlineData(44)]   // one above PacketId.SupplyDrops (Phase 16)
+    [InlineData(47)]   // one above PacketId.ProjectileExploded (Phase 17)
     [InlineData(255)]
     public void PacketId_OutOfRange_IsRejected(byte raw)
     {

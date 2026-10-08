@@ -24,6 +24,8 @@ namespace ProjectH.Shared.Simulation
         // Phase 14 D7: held. E is down: set in every input while it is held (a revive or a reboot goes on only while it
         // comes). Interact above stays the press (pick up, doors).
         InteractHeld = 16384,
+        // Phase 17 D9: 6, pressed: throw a grenade. The last free bit of the u16 (Phase 19 vehicles reuse existing bits).
+        ThrowGrenade = 32768,
     }
 
     // One fixed-tick input. Seq increases by one per client simulation step and is how the

@@ -9,10 +9,13 @@
   "ammo": [
     { "type": "Light", "name": "Light Rounds", "pickupAmount": 60, "max": 180 },
     { "type": "Medium", "name": "Medium Rounds", "pickupAmount": 45, "max": 150 },
-    { "type": "Heavy", "name": "Heavy Rounds", "pickupAmount": 10, "max": 30 }
+    { "type": "Heavy", "name": "Heavy Rounds", "pickupAmount": 10, "max": 30 },
+    { "type": "Shells", "name": "Shells", "pickupAmount": 10, "max": 40 },
+    { "type": "Rockets", "name": "Rockets", "pickupAmount": 2, "max": 6 }
   ],
   "consumables": [
     { "id": "Medkit", "name": "Medkit", "useSeconds": 3.0, "heal": 50, "shield": 0, "maxStack": 3 },
-    { "id": "ShieldCell", "name": "Shield Cell", "useSeconds": 2.0, "heal": 0, "shield": 25, "maxStack": 6 }
+    { "id": "ShieldCell", "name": "Shield Cell", "useSeconds": 2.0, "heal": 0, "shield": 25, "maxStack": 6 },
+    { "id": "Grenade", "name": "Grenade", "maxStack": 6 }
   ]
 }

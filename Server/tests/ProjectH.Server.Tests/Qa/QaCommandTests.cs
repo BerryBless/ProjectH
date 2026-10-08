@@ -152,7 +152,16 @@ public sealed class QaCommandTests
         Assert.Equal(200, (await h.Command("giveResource", "qa-a", new { material = "stone", amount = 120 })).Status);
         Assert.Equal(120, a.Inventory.Resource(BuildMaterialType.Stone));
 
-        Assert.Equal(400, (await h.Command("giveAmmo", "qa-a", new { type = "rockets", amount = 1 })).Status);
+        // Phase 17: rockets, shells and grenades exist now.
+        Assert.Equal(200, (await h.Command("giveAmmo", "qa-a", new { type = "rockets", amount = 99 })).Status);
+        Assert.Equal(6, a.Inventory.GetAmmo(AmmoType.Rockets));
+        Assert.Equal(200, (await h.Command("giveAmmo", "qa-a", new { type = "shells", amount = 3 })).Status);
+        Assert.Equal(3, a.Inventory.GetAmmo(AmmoType.Shells));
+        Assert.Equal(200, (await h.Command("giveGrenade", "qa-a", new { count = 50 })).Status);
+        Assert.Equal(6, a.Inventory.Grenades);
+        Assert.Equal(200, (await h.Command("giveItem", "qa-a", new { item = "medkit", count = 1 })).Status);
+        Assert.Equal(6, a.Inventory.Grenades);   // never into another stack
+        Assert.Equal(400, (await h.Command("giveAmmo", "qa-a", new { type = "plasma", amount = 1 })).Status);
         Assert.Equal(400, (await h.Command("giveAmmo", "qa-a", new { type = "light", amount = 0 })).Status);
         Assert.Equal(400, (await h.Command("giveItem", "qa-a", new { item = "bandage", count = 1 })).Status);
         Assert.Equal(400, (await h.Command("giveResource", "qa-a", new { material = "gold", amount = 1 })).Status);

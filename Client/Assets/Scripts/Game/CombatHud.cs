@@ -36,6 +36,7 @@ namespace ProjectH.Client.Game
         private int _health = -1;
         private int _shield = -1;
         private string _weaponName;
+        private string _ammoName;
         private int _ammo = -1;
         private int _reserve = -1;
         private bool _reloading;
@@ -119,15 +120,23 @@ namespace ProjectH.Client.Game
         }
 
         // Phase 4: magazine / reserve rounds of the weapon's ammo type.
-        public void SetWeapon(string name, int ammo, int reserve, bool reloading)
+        // 기능: 무기 줄("Vesper AR   30 / 120  Medium Rounds")을 보이는 값이 바뀔 때만 다시 만든다(Phase 17: 탄 종류 이름 포함).
+        // 입력: name - 카탈로그 무기 이름, ammo - 탄창, reserve - 그 탄 종류의 예비탄, reloading - 재장전 중, ammoName - 탄 종류 이름
+        //   (아이템 카탈로그 문자열, 없으면 null). 이름은 참조로 비교한다(입장 때 한 번 받는 문자열).
+        // 출력: 반환값 없음.
+        public void SetWeapon(string name, int ammo, int reserve, bool reloading, string ammoName = null)
         {
             if (_root == null) return;
-            if (ReferenceEquals(name, _weaponName) && ammo == _ammo && reserve == _reserve && reloading == _reloading) return;
+            if (ReferenceEquals(name, _weaponName) && ammo == _ammo && reserve == _reserve && reloading == _reloading &&
+                ReferenceEquals(ammoName, _ammoName))
+                return;
             _weaponName = name;
             _ammo = ammo;
             _reserve = reserve;
             _reloading = reloading;
-            _weapon.text = reloading ? name + "   재장전 중..." : name + "   " + ammo + " / " + reserve;
+            _ammoName = ammoName;
+            string line = reloading ? name + "   재장전 중..." : name + "   " + ammo + " / " + reserve;
+            _weapon.text = ammoName == null ? line : line + "  " + ammoName;
         }
 
         public void ClearWeapon()

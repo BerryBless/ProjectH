@@ -27,6 +27,8 @@ namespace ProjectH.Client.UI
         public const string ZoneName = "자기장";
         // Phase 12 D10, D14: a fall's name in the kill feed and the result, and the movement hints.
         public const string FallName = "낙하";
+        // Phase 17 D8: a grenade or a rocket (with no owner left in the match it stands where the killer's name would).
+        public const string ExplosionName = "폭발";
         public const string HintJump = "[Space] 뛰어내리기";
         public const string HintGlide = "[Space] 글라이더 펼치기";
         public const string HintDoorOpen = "[E] 문 열기";
@@ -145,7 +147,11 @@ namespace ProjectH.Client.UI
             return "나를 처치한 플레이어: " + killerName;
         }
 
-        public static string CauseName(DeathCause cause) => cause == DeathCause.Fall ? FallName : ZoneName;
+        // 기능: 처치자가 없을 때 보일 원인 이름을 고른다.
+        // 입력: cause - 사망·기절 원인.
+        // 출력: 낙하면 "낙하", 폭발(Phase 17)이면 "폭발", 그 밖에는 "자기장"(상수, 할당 없음).
+        public static string CauseName(DeathCause cause) =>
+            cause == DeathCause.Fall ? FallName : cause == DeathCause.Explosion ? ExplosionName : ZoneName;
 
         // One-slot cache like Reconnecting.
         public static string NextRound(int secondsLeft)
@@ -188,7 +194,12 @@ namespace ProjectH.Client.UI
         public static string KillLine(string killer, string victim) => KillLine(killer, victim, DeathCause.Zone);
 
         // Phase 12 D10: killer null = the zone or a fall ("낙하 ▸ 피해자").
-        public static string KillLine(string killer, string victim, DeathCause cause) => (killer ?? CauseName(cause)) + " ▸ " + victim;
+        // 기능: Kill Feed의 탈락 줄을 만든다("가해자 ▸ 피해자"). Phase 17 D8: 폭발이면 처치자가 있어도 " (폭발)"을 붙이고, 없으면 "폭발 ▸ 피해자".
+        // 입력: killer - 처치자 이름(null이면 원인 이름), victim - 피해자 이름, cause - 원인.
+        // 출력: 탈락 줄 문자열(사건마다 한 번 만든다).
+        public static string KillLine(string killer, string victim, DeathCause cause) =>
+            killer != null && cause == DeathCause.Explosion ? killer + " ▸ " + victim + " (" + ExplosionName + ")"
+                : (killer ?? CauseName(cause)) + " ▸ " + victim;
 
         // ---- Squads (Phase 14 D5, D6, D8-D10, D14) ----
 
@@ -202,11 +213,12 @@ namespace ProjectH.Client.UI
         public const string RebootCardName = "재투입 카드";
         public const string Teammate = "팀원";
 
-        // 기능: Kill Feed의 기절 줄을 만든다("가해자 ▸ 피해자 기절").
-        // 입력: attacker - 기절시킨 사람의 이름(null이면 원인 이름), victim - 기절한 사람의 이름, cause - 공격자가 없을 때의 원인.
+        // 기능: Kill Feed의 기절 줄을 만든다("가해자 ▸ 피해자 기절"). Phase 17 D8: 폭발이면 공격자가 있어도 " (폭발)"을 붙인다.
+        // 입력: attacker - 기절시킨 사람의 이름(null이면 원인 이름), victim - 기절한 사람의 이름, cause - 원인.
         // 출력: 기절 줄 문자열(기절 사건마다 한 번 만든다).
         public static string DownedLine(string attacker, string victim, DeathCause cause) =>
-            (attacker ?? CauseName(cause)) + " ▸ " + victim + " 기절";
+            attacker != null && cause == DeathCause.Explosion ? attacker + " ▸ " + victim + " 기절 (" + ExplosionName + ")"
+                : (attacker ?? CauseName(cause)) + " ▸ " + victim + " 기절";
 
         // 기능: 분대 HUD 한 줄의 상태 문구를 고른다.
         // 입력: state - TeamState의 구성원 상태, flags - 탈락한 구성원의 카드 위치.

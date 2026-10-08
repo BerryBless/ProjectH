@@ -47,7 +47,8 @@ namespace ProjectH.Shared.Protocol
                                                      InputButtons.Reload | InputButtons.Slot1 | InputButtons.Slot2 |
                                                      InputButtons.Slot3 | InputButtons.Interact | InputButtons.Drop |
                                                      InputButtons.UseMedkit | InputButtons.UseShieldCell | InputButtons.Crouch |
-                                                     InputButtons.ToolHarvest | InputButtons.ToolBuild | InputButtons.InteractHeld);
+                                                     InputButtons.ToolHarvest | InputButtons.ToolBuild | InputButtons.InteractHeld |
+                                                     InputButtons.ThrowGrenade);
 
         public byte Count;
         public InputCommand Input0;

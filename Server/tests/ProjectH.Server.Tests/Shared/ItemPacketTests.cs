@@ -32,11 +32,14 @@ public class ItemPacketTests
             new AmmoInfo { Type = AmmoType.Light, Name = name, Max = 180 },
             new AmmoInfo { Type = AmmoType.Medium, Name = name, Max = 150 },
             new AmmoInfo { Type = AmmoType.Heavy, Name = name, Max = 30 },
+            new AmmoInfo { Type = AmmoType.Shells, Name = name, Max = 40 },    // Phase 17 D13
+            new AmmoInfo { Type = AmmoType.Rockets, Name = name, Max = 6 },
         },
         Consumables = new[]
         {
             new ConsumableInfo { Type = ConsumableType.Medkit, Name = name, UseTicks = 90, Heal = 50, Shield = 0, MaxStack = 3 },
             new ConsumableInfo { Type = ConsumableType.ShieldCell, Name = name, UseTicks = 60, Heal = 0, Shield = 25, MaxStack = 6 },
+            new ConsumableInfo { Type = ConsumableType.Grenade, Name = name, MaxStack = 6 },   // Phase 17 D9: no channel, no heal
         },
     };
 
@@ -67,11 +70,14 @@ public class ItemPacketTests
         Assert.Equal(60, read.Consumables[1].UseTicks);
         Assert.Equal(25, read.Consumables[1].Shield);
         Assert.Equal(6, read.Consumables[1].MaxStack);
+        Assert.Equal(AmmoType.Rockets, read.Ammo[4].Type);
+        Assert.Equal(ConsumableType.Grenade, read.Consumables[2].Type);
+        Assert.Equal(0, read.Consumables[2].UseTicks);
         Assert.Equal(0, reader.Remaining);
     }
 
     [Fact]
-    public void ItemCatalog_WithMaximumLengthNames_Is219Bytes()
+    public void ItemCatalog_WithMaximumLengthNames_IsMaxSize()
     {
         var writer = new PacketWriter(_buffer);
         ItemCatalogPacket.Write(ref writer, Catalog(new string('n', ItemConstants.MaxNameBytes)));
@@ -142,10 +148,10 @@ public class ItemPacketTests
     [InlineData(1, ItemKind.Material, 1, 0, 0)]      // empty
     [InlineData(1, ItemKind.Weapon, 0, 0, 5)]        // weapon id 0
     [InlineData(1, ItemKind.Weapon, 1, 5, 5)]        // rarity out of range
-    [InlineData(1, ItemKind.Ammo, 4, 0, 60)]         // no such ammo type
+    [InlineData(1, ItemKind.Ammo, 6, 0, 60)]         // no such ammo type (Phase 17: 4 Shells and 5 Rockets exist)
     [InlineData(1, ItemKind.Ammo, 1, 1, 60)]         // ammo has no rarity
     [InlineData(1, ItemKind.Ammo, 1, 0, 0)]          // empty stack
-    [InlineData(1, ItemKind.Consumable, 3, 0, 1)]
+    [InlineData(1, ItemKind.Consumable, 4, 0, 1)]    // Phase 17: 3 is the grenade
     [InlineData(1, ItemKind.Consumable, 1, 0, 0)]
     public void WorldItem_InvalidValues_AreRejected(ushort id, ItemKind kind, byte defId, byte rarity, ushort amount)
     {
@@ -225,7 +231,7 @@ public class ItemPacketTests
     }
 
     [Fact]
-    public void InventoryState_RoundTrip_Is23Bytes()
+    public void InventoryState_RoundTrip_Is28Bytes()
     {
         var state = new InventoryState
         {
@@ -240,11 +246,14 @@ public class ItemPacketTests
             Using = ConsumableType.ShieldCell,
             UseRemainingTicks = 59,
             RebootCards = 2,
+            ShellsAmmo = 12,
+            RocketsAmmo = 4,
+            Grenades = 5,
         };
         var writer = new PacketWriter(_buffer);
         InventoryState.Write(ref writer, state);
         Assert.Equal(1 + InventoryState.PayloadSize, writer.Length);
-        Assert.Equal(23, writer.Length);   // Phase 14: the card count byte
+        Assert.Equal(28, writer.Length);   // Phase 14: the card count byte; Phase 17: Shells, Rockets, grenades
 
         var reader = ReaderAfterId(writer.Length, PacketId.InventoryState);
         Assert.True(InventoryState.TryRead(ref reader, out var read));
@@ -259,9 +268,12 @@ public class ItemPacketTests
         Assert.Equal(ConsumableType.ShieldCell, read.Using);
         Assert.Equal(59, read.UseRemainingTicks);
         Assert.Equal(2, read.RebootCards);
+        Assert.Equal(12, read.GetAmmo(AmmoType.Shells));
+        Assert.Equal(4, read.GetAmmo(AmmoType.Rockets));
+        Assert.Equal(5, read.Grenades);
 
-        // More cards than anyone can hold is refused.
-        _buffer[writer.Length - 1] = SquadConstants.MaxCardsHeld + 1;
+        // More cards than anyone can hold is refused (the card byte is the 23rd, before the Phase 17 fields).
+        _buffer[22] = SquadConstants.MaxCardsHeld + 1;
         reader = ReaderAfterId(writer.Length, PacketId.InventoryState);
         Assert.False(InventoryState.TryRead(ref reader, out _));
     }

@@ -67,7 +67,8 @@ namespace ProjectH.Client.Net
         public event Action<string> Disconnected;
         // Phase 3 combat (D4, D9, D11). Payloads are structs, so raising them does not allocate
         // (the catalog array is allocated once per join by its reader).
-        public event Action<WeaponInfo[]> CatalogReceived;
+        // Phase 17 D2: with the projectile kinds (their gravity, radius and lifetime; both arrays allocated once per join).
+        public event Action<WeaponInfo[], ProjectileInfo[]> CatalogReceived;
         public event Action<ShotFired> ShotReceived;
         public event Action<HitConfirmed> HitConfirmedReceived;
         public event Action<DamageTaken> DamageTakenReceived;
@@ -116,6 +117,10 @@ namespace ProjectH.Client.Net
         // Phase 16 D3, D7: which loot containers spawned and which are open (spawned, opened), and the match's supply drops.
         public event Action<ulong, ulong> ContainerStatesReceived;
         public event SupplyDropsHandler SupplyDropsReceived;
+        // Phase 17 D7: a projectile launched (or resent at a join or resume), bounced or came to rest, and exploded. Structs.
+        public event Action<ProjectileSpawned> ProjectileSpawnedReceived;
+        public event Action<ProjectileState> ProjectileStateReceived;
+        public event Action<ProjectileExploded> ProjectileExplodedReceived;
 
         public ClientState State { get; private set; } = ClientState.Disconnected;
         public string LastError { get; private set; }
@@ -317,7 +322,7 @@ namespace ProjectH.Client.Net
         }
 
         // 기능: 받은 패킷 하나를 읽어 해당 이벤트를 올린다(Phase 13.5: BuildEvents의 Edited 기록 포함, Phase 14: 분대 패킷 4종,
-        //   Phase 15: TeamMarkers, Phase 16: ContainerStates·SupplyDrops).
+        //   Phase 15: TeamMarkers, Phase 16: ContainerStates·SupplyDrops, Phase 17: 투사체 카탈로그와 투사체 패킷 3종).
         //   메인 스레드에서 Poll이 부른다.
         // 입력: peer - 보낸 쪽(지금 연결이 아니면 무시), reader - 패킷, channelNumber·deliveryMethod - 쓰지 않는다.
         // 출력: 반환값 없음. 읽기에 실패한 기록이 있으면 그 패킷의 나머지는 버린다.
@@ -359,7 +364,7 @@ namespace ProjectH.Client.Net
                     break;
 
                 case PacketId.WeaponCatalog:
-                    if (WeaponCatalogPacket.TryRead(ref packet, out var weapons)) CatalogReceived?.Invoke(weapons);
+                    if (WeaponCatalogPacket.TryRead(ref packet, out var weapons, out var projectiles)) CatalogReceived?.Invoke(weapons, projectiles);
                     break;
 
                 case PacketId.ShotFired:
@@ -522,6 +527,18 @@ namespace ProjectH.Client.Net
 
                 case PacketId.SupplyDrops:
                     if (SupplyDropsPacket.TryRead(ref packet, _supplyDrops, out int dropCount)) SupplyDropsReceived?.Invoke(_supplyDrops, dropCount);
+                    break;
+
+                case PacketId.ProjectileSpawned:
+                    if (ProjectileSpawned.TryRead(ref packet, out var projectileSpawned)) ProjectileSpawnedReceived?.Invoke(projectileSpawned);
+                    break;
+
+                case PacketId.ProjectileState:
+                    if (ProjectileState.TryRead(ref packet, out var projectileState)) ProjectileStateReceived?.Invoke(projectileState);
+                    break;
+
+                case PacketId.ProjectileExploded:
+                    if (ProjectileExploded.TryRead(ref packet, out var projectileExploded)) ProjectileExplodedReceived?.Invoke(projectileExploded);
                     break;
             }
         }

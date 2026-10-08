@@ -135,6 +135,10 @@ public sealed class FakeQaServer : IQaServerClient
     public Task<JsonElement> GetLootAsync(float? x, float? z, float? radius, CancellationToken token) =>
         Task.FromResult(JsonSerializer.SerializeToElement(new { containersSpawned = 1, items = new { count = 3, weapons = 1 } }));
 
+    // Phase 17: one exploded grenade.
+    public Task<JsonElement> GetProjectilesAsync(CancellationToken token) =>
+        Task.FromResult(JsonSerializer.SerializeToElement(new { projectiles = Array.Empty<object>(), explosionsTotal = 1, launched = 1 }));
+
     // QA-5: settable so baseline tests can make a run worse than the previous one.
     public object Metrics { get; set; } = new { tickP50Ms = 0.4, tickP95Ms = 0.9, tickP99Ms = 1.5, tickMaxMs = 3.0, workingSetMB = 80.5 };
 

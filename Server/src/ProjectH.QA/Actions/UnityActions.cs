@@ -22,6 +22,7 @@ public static partial class UnityActions
     {
         "w", "a", "s", "d", "space", "leftShift", "leftCtrl", "c", "q", "f", "z", "x", "v", "b", "t", "r", "e", "g",
         "1", "2", "3", "4", "5", "escape", "f1", "h", "m",   // Phase 15: m = the full map
+        "6",   // Phase 17: throw a grenade (index 27: the same order as the client's QaInput.KeyNames)
     };
     public static readonly string[] InputButtons = { "left", "right", "middle" };   // Phase 15: middle = ping
     public static readonly string[] InputPhases = { "down", "up" };

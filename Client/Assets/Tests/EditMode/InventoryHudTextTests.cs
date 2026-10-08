@@ -40,11 +40,12 @@ namespace ProjectH.Client.Tests
         public void Consumables_BuildOnlyOnChange()
         {
             var text = new InventoryHudText();
-            Assert.IsTrue(text.SetConsumables(2, 3));
-            Assert.AreEqual("[4] 구급상자 x2    [5] 실드 셀 x3", text.Consumables);
-            Assert.IsFalse(text.SetConsumables(2, 3));
-            Assert.IsTrue(text.SetConsumables(1, 3));
-            Assert.AreEqual(2, text.Rebuilds);
+            Assert.IsTrue(text.SetConsumables(2, 3, 1));
+            Assert.AreEqual("[4] 구급상자 x2    [5] 실드 셀 x3    [6] 수류탄 x1", text.Consumables);
+            Assert.IsFalse(text.SetConsumables(2, 3, 1));
+            Assert.IsTrue(text.SetConsumables(1, 3, 1));
+            Assert.IsTrue(text.SetConsumables(1, 3, 0));   // Phase 17: a thrown grenade rebuilds the line
+            Assert.AreEqual(3, text.Rebuilds);
         }
 
         [Test]

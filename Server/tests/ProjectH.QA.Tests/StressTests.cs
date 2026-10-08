@@ -285,6 +285,7 @@ public class StressTests : IDisposable
         public Task<JsonElement> GetMatchAsync(CancellationToken token) => _inner.GetMatchAsync(token);
         public Task<JsonElement> GetBuildAsync(float? x, float? z, float? radius, int? max, CancellationToken token) => _inner.GetBuildAsync(x, z, radius, max, token);
         public Task<JsonElement> GetLootAsync(float? x, float? z, float? radius, CancellationToken token) => _inner.GetLootAsync(x, z, radius, token);
+        public Task<JsonElement> GetProjectilesAsync(CancellationToken token) => _inner.GetProjectilesAsync(token);
         public Task<JsonElement> GetEventsAsync(long after, int max, CancellationToken token) => _inner.GetEventsAsync(after, max, token);
         public Task StopServerAsync(CancellationToken token) => _inner.StopServerAsync(token);
     }
@@ -470,6 +471,7 @@ public class StressTests : IDisposable
         public Task<JsonElement> GetMatchAsync(CancellationToken token) => _inner.GetMatchAsync(token);
         public Task<JsonElement> GetBuildAsync(float? x, float? z, float? radius, int? max, CancellationToken token) => _inner.GetBuildAsync(x, z, radius, max, token);
         public Task<JsonElement> GetLootAsync(float? x, float? z, float? radius, CancellationToken token) => _inner.GetLootAsync(x, z, radius, token);
+        public Task<JsonElement> GetProjectilesAsync(CancellationToken token) => _inner.GetProjectilesAsync(token);
         public Task<JsonElement> GetEventsAsync(long after, int max, CancellationToken token) => _inner.GetEventsAsync(after, max, token);
         public Task StopServerAsync(CancellationToken token) => _inner.StopServerAsync(token);
     }
@@ -528,6 +530,7 @@ public class StressTests : IDisposable
         public Task<JsonElement> GetMatchAsync(CancellationToken token) => _inner.GetMatchAsync(token);
         public Task<JsonElement> GetBuildAsync(float? x, float? z, float? radius, int? max, CancellationToken token) => _inner.GetBuildAsync(x, z, radius, max, token);
         public Task<JsonElement> GetLootAsync(float? x, float? z, float? radius, CancellationToken token) => _inner.GetLootAsync(x, z, radius, token);
+        public Task<JsonElement> GetProjectilesAsync(CancellationToken token) => _inner.GetProjectilesAsync(token);
         public Task<JsonElement> GetEventsAsync(long after, int max, CancellationToken token) => _inner.GetEventsAsync(after, max, token);
         public Task StopServerAsync(CancellationToken token) => _inner.StopServerAsync(token);
     }

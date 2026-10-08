@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "name": "Structure Damage",
+  "description": "Phase 17 D11 (request §76): a metal wall (material multiplier 1.0) 3 m east of A takes each weapon's damage x its structureMultiplier: Vesper AR 20 x 1.0 = 20, Kestrel LR 90 x 1.5 = 135, Brute SG 8 x 11 x 0.6 = 53 (the pellets summed first), Sparrow P 24 x 0.8 = 19: 227 in total, one shot each.",
+  "tags": ["weapons", "building"],
+  "seed": 17007,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "wall", "phase": "arrange", "action": "spawnBuildPiece", "piece": "wall", "material": "metal", "cellX": 16, "level": 0, "cellZ": 16, "rotation": 1, "saveAs": "wall" },
+    { "id": "a_place", "action": "setPosition", "actor": "playerA", "position": { "x": -3, "z": 2.5, "yaw": 90 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": -10, "z": -15, "yaw": 0 } },
+    { "id": "a_aim", "action": "aim", "actor": "playerA", "at": { "x": 0, "y": 1.5, "z": 2.5 } },
+    { "id": "built", "action": "wait", "milliseconds": 5500, "description": "the wall finishes building (5 s): 227 stays under its 360 health" },
+
+    { "id": "a_ar", "phase": "arrange", "action": "giveWeapon", "actor": "playerA", "weapon": "Vesper AR", "slot": 0, "select": true },
+    { "id": "a_ar_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerA", "equals": "Vesper AR", "timeoutMilliseconds": 3000 },
+    { "id": "a_ar_fire", "phase": "act", "action": "fire", "actor": "playerA", "count": 1 },
+    { "id": "ar_20", "phase": "assert", "action": "waitFor", "condition": "build.piece.damage", "pieceId": "${wall.pieceId}", "equals": 20, "timeoutMilliseconds": 2000 },
+
+    { "id": "a_sniper", "phase": "arrange", "action": "giveWeapon", "actor": "playerA", "weapon": "Kestrel LR", "slot": 0, "select": true },
+    { "id": "a_sniper_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerA", "equals": "Kestrel LR", "timeoutMilliseconds": 3000 },
+    { "id": "a_sniper_fire", "phase": "act", "action": "fire", "actor": "playerA", "count": 1 },
+    { "id": "sniper_135", "phase": "assert", "action": "waitFor", "condition": "build.piece.damage", "pieceId": "${wall.pieceId}", "equals": 155, "timeoutMilliseconds": 2000 },
+
+    { "id": "a_shotgun", "phase": "arrange", "action": "giveWeapon", "actor": "playerA", "weapon": "Brute SG", "slot": 0, "select": true },
+    { "id": "a_shotgun_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerA", "equals": "Brute SG", "timeoutMilliseconds": 3000 },
+    { "id": "a_shotgun_fire", "phase": "act", "action": "fire", "actor": "playerA", "count": 1 },
+    { "id": "shotgun_53", "phase": "assert", "action": "waitFor", "condition": "build.piece.damage", "pieceId": "${wall.pieceId}", "equals": 208, "timeoutMilliseconds": 2000 },
+
+    { "id": "a_pistol", "phase": "arrange", "action": "giveWeapon", "actor": "playerA", "weapon": "Sparrow P", "slot": 0, "select": true },
+    { "id": "a_pistol_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerA", "equals": "Sparrow P", "timeoutMilliseconds": 3000 },
+    { "id": "a_pistol_fire", "phase": "act", "action": "fire", "actor": "playerA", "count": 1 },
+    { "id": "pistol_19", "phase": "assert", "action": "waitFor", "condition": "build.piece.damage", "pieceId": "${wall.pieceId}", "equals": 227, "timeoutMilliseconds": 2000 },
+    { "id": "wall_stands", "assert": "build.exists", "pieceId": "${wall.pieceId}", "equals": true }
+  ]
+}

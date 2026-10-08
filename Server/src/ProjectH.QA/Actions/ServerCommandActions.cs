@@ -9,7 +9,7 @@ public static class ServerCommandActions
 {
     private const int MaxRetries = 2;   // 503 (queue full) and 504 (not executed in time) are safe to retry
 
-    // 기능: 서버 QA 명령 Action을 등록한다(Phase 16: spawnSupplyDrop, setContainer).
+    // 기능: 서버 QA 명령 Action을 등록한다(Phase 16: spawnSupplyDrop, setContainer, Phase 17: giveGrenade).
     // 입력: r - Action 목록.
     // 출력: 반환값 없음.
     public static void Register(ActionRegistry r)
@@ -41,6 +41,8 @@ public static class ServerCommandActions
         // none / closed / open for a scenario's setup.
         r.Add(Command("spawnSupplyDrop", ActorUse.None, Array.Empty<string>(), new[] { "position", "x", "z" }, positions: true));
         r.Add(Command("setContainer", ActorUse.None, new[] { "container", "state" }));
+        // Phase 17: grenades for the actor (giveItem item grenade does the same; giveAmmo takes shells and rockets).
+        r.Add(Command("giveGrenade", ActorUse.Required, Array.Empty<string>(), new[] { "count" }));
     }
 
     private static DelegateAction Command(string name, ActorUse actor, string[] required, string[]? optional = null,

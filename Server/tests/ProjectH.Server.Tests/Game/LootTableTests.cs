@@ -53,7 +53,7 @@ public class LootTableTests
     [InlineData(", \"Legendary\": 3", "")]                            // missing rarity
     [InlineData("{ \"kind\": \"Ammo\", \"weight\": 10 }", "{ \"kind\": \"Ammo\", \"weight\": 0 }")]
     [InlineData("{ \"kind\": \"Ammo\", \"weight\": 10 }", "{ \"kind\": \"Ammo\", \"weight\": -1 }")]
-    [InlineData("{ \"kind\": \"Ammo\", \"weight\": 10 }", "{ \"kind\": \"Grenade\", \"weight\": 10 }")]
+    [InlineData("{ \"kind\": \"Ammo\", \"weight\": 10 }", "{ \"kind\": \"Smoke\", \"weight\": 10 }")]   // Phase 17: Grenade is a kind now
     [InlineData("{ \"kind\": \"Ammo\", \"weight\": 10 }", "{ \"kind\": \"Weapon\", \"weight\": 10 }")]   // duplicate kind
     [InlineData("{ \"kind\": \"Ammo\", \"weight\": 10 }", "{ \"kind\": \"Ammo\", \"weight\": 1000001 }")]
     [InlineData("{ \"kind\": \"Ammo\", \"weight\": 10 }", "null")]
@@ -75,22 +75,68 @@ public class LootTableTests
         Assert.Throws<InvalidOperationException>(() => LootTable.LoadFile(path, _data.Items));
     }
 
-    // Shipped loot.json = spec §1 (same rolls as the test copy for the same seed).
+    // 기능: 운영 데이터(weapons.json·items.json·loot.json)를 묶은 GameData를 읽는다.
+    // 입력: 없음.
+    // 출력: 운영 GameData.
+    private static GameData Shipped() => GameData.LoadDirectory(AppContext.BaseDirectory, 30);
+
+    // Phase 17 D13: the shipped floor tables (Floor, Building, Tower) and the ammo box never roll the rocket launcher (6) or
+    // Rockets; they roll the other five weapons and four ammo types and grenades. The test copy (without weapon lists) rolls
+    // the same kinds, ammo and consumables for the same seed (only the weapon ids differ: the test catalog has three).
     [Fact]
-    public void ShippedLootJson_RollsLikeTheSpecTable()
+    public void ShippedLootJson_FloorTablesLeaveOutTheRocket()
     {
-        var shipped = LootTable.LoadFile(Path.Combine(AppContext.BaseDirectory, "loot.json"), _data.Items);
+        GameData shipped = Shipped();
         var a = new Random(7);
         var b = new Random(7);
+        var weapons = new bool[7];
+        var ammo = new bool[6];
         foreach (string table in new[] { "Floor", "Building", "Tower" })
         {
-            for (int i = 0; i < 200; i++)
+            for (int i = 0; i < 2000; i++)
             {
-                LootRoll x = shipped.Roll(shipped.TableIndex(table), a, _data.Weapons, _data.Items);
+                LootRoll x = shipped.Loot.Roll(shipped.Loot.TableIndex(table), a, shipped.Weapons, shipped.Items);
                 LootRoll y = Roll(table, b);
-                Assert.Equal((x.Kind, x.DefId, x.Rarity, x.Amount), (y.Kind, y.DefId, y.Rarity, y.Amount));
+                Assert.Equal(x.Kind, y.Kind);
+                if (x.Kind == ItemKind.Weapon) weapons[x.DefId] = true;
+                else Assert.Equal((x.DefId, x.Amount), (y.DefId, y.Amount));
+                if (x.Kind == ItemKind.Ammo) ammo[x.DefId] = true;
             }
         }
+        Assert.Equal(new[] { false, true, true, true, true, true, false }, weapons);
+        Assert.Equal(new[] { false, true, true, true, true, false }, ammo);
+        Assert.Equal(new byte[] { 1, 2, 3, 4, 5 }, shipped.Loot.WeaponIds(shipped.Loot.TableIndex("AmmoBox")).ToArray());
+        Assert.DoesNotContain(AmmoType.Rockets, shipped.Loot.AmmoTypes(shipped.Loot.TableIndex("AmmoBox")).ToArray());
+    }
+
+    // Phase 17 D13: chests and supply drops can hold the rocket launcher and Rockets.
+    [Fact]
+    public void ShippedLootJson_ChestsAndSupplyDropsIncludeTheRocket()
+    {
+        GameData shipped = Shipped();
+        foreach (string table in new[] { "Chest", "SupplyDrop" })
+        {
+            int t = shipped.Loot.TableIndex(table);
+            Assert.Contains((byte)6, shipped.Loot.WeaponIds(t).ToArray());
+            Assert.Contains(AmmoType.Rockets, shipped.Loot.AmmoTypes(t).ToArray());
+        }
+        var rng = new Random(11);
+        var output = new LootRoll[LootTable.MaxRolls];
+        bool rocket = false;
+        for (int i = 0; i < 500 && !rocket; i++)
+        {
+            int n = shipped.Loot.RollAll(shipped.Loot.TableIndex("SupplyDrop"), rng, shipped.Weapons, shipped.Items, output);
+            for (int k = 0; k < n; k++) rocket |= output[k].Kind == ItemKind.Weapon && output[k].DefId == 6;
+        }
+        Assert.True(rocket);
+    }
+
+    [Fact]
+    public void UnknownWeaponIdInATable_IsRejectedByGameData()
+    {
+        string json = TestGameData.LootJson.Replace("\"Floor\": { ", "\"Floor\": { \"weapons\": [ 1, 9 ], ");
+        var loot = TestGameData.Loot(_data.Items, json);
+        Assert.Contains("9", loot.ValidateWeapons(_data.Weapons));
     }
 
     // D5: the same seed gives the same loot (two Random instances, never hard-coded rolls).
@@ -112,14 +158,15 @@ public class LootTableTests
         Assert.True(differences > 0);
     }
 
-    // Spec §6: 10 000 Floor rolls roughly follow 35 / 35 / 15 / 15 and weapon rarities 50/25/15/7/3.
+    // Spec §6: 10 000 Floor rolls roughly follow the weights (Phase 17: 35 / 30 / 13 / 13 / 9 with grenades) and weapon rarities
+    // 50/25/15/7/3; the ammo is one of the table's four types.
     [Fact]
     public void Distribution_FollowsTheWeights()
     {
         var rng = new Random(2026);
-        int weapons = 0, ammo = 0, medkits = 0, cells = 0;
+        int weapons = 0, ammo = 0, medkits = 0, cells = 0, grenades = 0;
         var rarities = new int[5];
-        var ammoTypes = new int[4];
+        var ammoTypes = new int[6];
         const int rolls = 10_000;
         for (int i = 0; i < rolls; i++)
         {
@@ -140,19 +187,23 @@ public class LootTableTests
                 default:
                     Assert.Equal(ItemKind.Consumable, r.Kind);
                     Assert.Equal(1, r.Amount);
-                    if (r.DefId == (byte)ConsumableType.Medkit) medkits++; else cells++;
+                    if (r.DefId == (byte)ConsumableType.Medkit) medkits++;
+                    else if (r.DefId == (byte)ConsumableType.Grenade) grenades++;
+                    else cells++;
                     break;
             }
         }
 
         Assert.InRange(weapons, 3200, 3800);
-        Assert.InRange(ammo, 3200, 3800);
-        Assert.InRange(medkits, 1250, 1750);
-        Assert.InRange(cells, 1250, 1750);
+        Assert.InRange(ammo, 2700, 3300);
+        Assert.InRange(medkits, 1050, 1550);
+        Assert.InRange(cells, 1050, 1550);
+        Assert.InRange(grenades, 650, 1150);
         Assert.InRange(rarities[0] / (double)weapons, 0.45, 0.55);
         Assert.InRange(rarities[4] / (double)weapons, 0.01, 0.05);
         Assert.All(rarities, count => Assert.True(count > 0));   // every rarity appears
-        for (int t = 1; t <= 3; t++) Assert.InRange(ammoTypes[t] / (double)ammo, 0.28, 0.39);
+        for (int t = 1; t <= 4; t++) Assert.InRange(ammoTypes[t] / (double)ammo, 0.20, 0.30);
+        Assert.Equal(0, ammoTypes[(int)AmmoType.Rockets]);
     }
 
     [Fact]
@@ -188,7 +239,8 @@ public class LootTableTests
     [Fact]
     public void ShippedLootJson_HasTheContainerTables_SpawnChancesAndSchedule()
     {
-        var shipped = LootTable.LoadFile(Path.Combine(AppContext.BaseDirectory, "loot.json"), _data.Items);
+        GameData shippedData = Shipped();
+        LootTable shipped = shippedData.Loot;
         Assert.Null(shipped.ValidateContainerTables());
         Assert.Equal(0.7, shipped.ChestSpawnChance);
         Assert.Equal(0.8, shipped.AmmoBoxSpawnChance);
@@ -207,9 +259,14 @@ public class LootTableTests
         {
             for (int i = 0; i < 100; i++)
             {
-                int n = shipped.RollAll(shipped.TableIndex(table), a, _data.Weapons, _data.Items, x);
+                int n = shipped.RollAll(shipped.TableIndex(table), a, shippedData.Weapons, shippedData.Items, x);
                 Assert.Equal(n, _data.Loot.RollAll(_data.Loot.TableIndex(table), b, _data.Weapons, _data.Items, y));
-                for (int k = 0; k < n; k++) Assert.Equal((x[k].Kind, x[k].DefId, x[k].Rarity, x[k].Amount), (y[k].Kind, y[k].DefId, y[k].Rarity, y[k].Amount));
+                // Phase 17: the shipped tables name weapons 1-6 (the test catalog has 1-3), so a weapon matches by kind and rarity.
+                for (int k = 0; k < n; k++)
+                {
+                    Assert.Equal((x[k].Kind, x[k].Rarity), (y[k].Kind, y[k].Rarity));
+                    if (x[k].Kind != ItemKind.Weapon) Assert.Equal((x[k].DefId, x[k].Amount), (y[k].DefId, y[k].Amount));
+                }
             }
         }
     }
@@ -241,7 +298,7 @@ public class LootTableTests
     [InlineData("{ \"rolls\": 5, \"entries\": [ { \"kind\": \"Ammo\", \"weight\": 1 } ] }")]                  // above MaxRolls
     [InlineData("{ \"rolls\": 1, \"guaranteed\": [ \"Weapon\", \"Ammo\" ] }")]                                  // more guaranteed than rolls
     [InlineData("{ \"rolls\": 2, \"guaranteed\": [ \"Material\" ], \"entries\": [ { \"kind\": \"Ammo\", \"weight\": 1 } ] }")]   // Material needs an amount
-    [InlineData("{ \"rolls\": 2, \"guaranteed\": [ \"Grenade\" ], \"entries\": [ { \"kind\": \"Ammo\", \"weight\": 1 } ] }")]
+    [InlineData("{ \"rolls\": 2, \"guaranteed\": [ \"Smoke\" ], \"entries\": [ { \"kind\": \"Ammo\", \"weight\": 1 } ] }")]
     [InlineData("{ \"rolls\": 2, \"guaranteed\": [ \"Weapon\" ] }")]                                              // a weighted roll without entries
     [InlineData("{ \"entries\": [ { \"kind\": \"Material\", \"weight\": 1 } ] }")]                              // no amount
     [InlineData("{ \"entries\": [ { \"kind\": \"Material\", \"weight\": 1, \"amount\": 1001 } ] }")]
@@ -293,8 +350,9 @@ public class LootTableTests
     public void LootSpawner_RefusesAPointWhoseTableHasNoEntries()
     {
         var items = TestGameData.Items();
-        string json = TestGameData.LootJson.Replace("\"AmmoBox\": { \"rolls\": 2, \"guaranteed\": [ \"Ammo\" ], \"entries\": [ { \"kind\": \"Material\", \"weight\": 1, \"amount\": 10 } ] }",
-            "\"AmmoBox\": { \"rolls\": 1, \"guaranteed\": [ \"Ammo\" ] }");
+        // Phase 17: the ammo box keeps its ammo list; only its rolls and entries change.
+        string json = TestGameData.LootJson.Replace("\"AmmoBox\": { \"rolls\": 2,", "\"AmmoBox\": { \"rolls\": 1,")
+            .Replace("\"entries\": [ { \"kind\": \"Material\", \"weight\": 1, \"amount\": 10 } ] }", "\"entries\": [ ] }");
         Assert.NotEqual(TestGameData.LootJson, json);
         var data = new GameData(TestWeapons.Create(), items, TestGameData.Loot(items, json), TestGameData.Zones());
         Assert.Equal(0, data.Loot.EntryCount(data.Loot.TableIndex("AmmoBox")));   // a container table may hold guaranteed kinds only

@@ -75,7 +75,8 @@ public sealed partial class Match
 
     // 기능: 치명 피해 경로 하나(D6): 사격·자기장·낙하·QA damagePlayer가 체력 0을 만들면 여기로 온다. 기절한 사람은 탈락하고(처치 =
     //   마무리한 사람, 없으면 기절시킨 사람), 같은 팀에 서 있는 구성원이 있으면 기절하며, 아니면 탈락한다. 분대 전멸은 Kill이 본다.
-    // 입력: victim - 체력이 0이 된 플레이어, attacker - 공격자(null = 자기장·낙하·QA), cause - 공격자가 없을 때의 원인.
+    // 입력: victim - 체력이 0이 된 플레이어, attacker - 공격자(null = 자기장·낙하·QA), cause - 원인(Phase 17: 공격자가 있어도 그대로 전달된다.
+    //   사격은 Zone, 폭발은 Explosion).
     // 출력: 반환값 없음. 기절 또는 탈락(필요하면 분대 전멸 연쇄)이 반영되고 방송된다.
     private void ApplyFatal(PlayerEntity victim, PlayerEntity? attacker, DeathCause cause)
     {
@@ -106,7 +107,7 @@ public sealed partial class Match
 
     // 기능: 플레이어를 기절시킨다(D4, D5): Downed 모드, 체력 = downedHealth, 실드 0, 출혈 시작, 진행 중인 재장전·회복·소생 취소,
     //   PlayerDowned 방송. 자유낙하·글라이드 중이었으면 이어지는 착지의 낙하 피해를 한 번 면한다(DownedInAir).
-    // 입력: victim - 서 있던 플레이어, attacker - 기절시킨 사람(null = 없음), cause - 공격자가 없을 때의 원인.
+    // 입력: victim - 서 있던 플레이어, attacker - 기절시킨 사람(null = 없음), cause - 원인(Phase 17: 공격자가 있어도 그대로 보낸다. 사격은 Zone, 폭발은 Explosion).
     // 출력: 반환값 없음.
     private void Down(PlayerEntity victim, PlayerEntity? attacker, DeathCause cause)
     {
@@ -128,7 +129,8 @@ public sealed partial class Match
         Downs++;
 
         var writer = new PacketWriter(_sendBuffer);
-        PlayerDowned.Write(ref writer, new PlayerDowned { VictimId = victim.EntityId, AttackerId = attacker?.EntityId ?? 0, Cause = attacker == null ? cause : DeathCause.Zone });
+        // Phase 17 D8: the cause as given (a shot passes Zone, an explosion Explosion with its owner as the attacker).
+        PlayerDowned.Write(ref writer, new PlayerDowned { VictimId = victim.EntityId, AttackerId = attacker?.EntityId ?? 0, Cause = cause });
         Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
@@ -156,7 +158,8 @@ public sealed partial class Match
 
     // 기능: 한 명의 탈락을 반영한다(D9의 옛 Kill 본문 + Phase 14): 사망, 재장전·회복·소생 취소, 경기 중이면 사람 수와 배치·처치 수,
     //   PlayerDied 방송(announce), 소지품 드롭, 팀이 살아 있으면 들고 있던 카드와 자기 카드 드롭(아니면 카드는 사라진다).
-    // 입력: victim - 탈락자, killer - 처치자(null = 없음), cause - 처치자가 없을 때의 원인, placement - 보낼(잠정) 배치,
+    // 입력: victim - 탈락자, killer - 처치자(null = 없음), cause - PlayerDied의 원인(Phase 17: 처치자가 있어도 그대로. 사격 Zone, 폭발 Explosion),
+    //   placement - 보낼(잠정) 배치,
     //   announce - PlayerDied를 보낼지(경기 이탈은 보내지 않는다), teamSurvives - 팀이 아직 살아 있는지(카드를 떨어뜨린다).
     // 출력: 반환값 없음.
     private void EliminateOne(PlayerEntity victim, PlayerEntity? killer, DeathCause cause, byte placement, bool announce, bool teamSurvives)
@@ -186,7 +189,8 @@ public sealed partial class Match
             var writer = new PacketWriter(_sendBuffer);
             PlayerDied.Write(ref writer, new PlayerDied
             {
-                VictimId = victim.EntityId, KillerId = killer?.EntityId ?? 0, Placement = placement, Cause = killer == null ? cause : DeathCause.Zone,
+                // Phase 17 D8: the cause as given (shots pass Zone with their killer, explosions Explosion).
+                VictimId = victim.EntityId, KillerId = killer?.EntityId ?? 0, Placement = placement, Cause = cause,
             });
             Broadcast(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
         }
@@ -354,8 +358,10 @@ public sealed partial class Match
     }
 
     private const InputButtons ChannelInterruptHeld = InputButtons.Fire | InputButtons.UseMedkit | InputButtons.UseShieldCell;
+    // Phase 17 D9: pressing 6 (a grenade) is another action too.
     private const InputButtons ChannelInterruptEdges = InputButtons.Slot1 | InputButtons.Slot2 | InputButtons.Slot3 | InputButtons.Drop |
-                                                       InputButtons.ToolHarvest | InputButtons.ToolBuild | InputButtons.Reload;
+                                                       InputButtons.ToolHarvest | InputButtons.ToolBuild | InputButtons.Reload |
+                                                       InputButtons.ThrowGrenade;
 
     // 기능: 진행 중인 채널이 계속될 수 있는지 본다. 소생: 대상이 같은 팀의 기절 상태이고 거리 ≤ reviveRange + 0.5. 재투입: 카드가 있고
     //   스테이션 거리 ≤ rebootRange + 0.5.

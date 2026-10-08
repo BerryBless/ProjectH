@@ -167,6 +167,9 @@ internal sealed class QaEvents
     private uint _nextPieceId;
     private long _piecesDestroyed;
     private long _piecesCollapsed;
+    // Phase 17: projectiles launched and explosions seen so far (counters of the match object).
+    private long _launched;
+    private long _explosions;
 
     public long NextSeq => _nextSeq;
     public int Count => _count;
@@ -196,6 +199,7 @@ internal sealed class QaEvents
     }
 
     // 기능: 이전 Tick과 비교해 QA 사건을 만든다. Phase 14: PlayerDowned·PlayerRevived·PlayerRebooted, 기절·소생의 체력 변화와 출혈은 피해·회복 사건이 아니다.
+    //   Phase 17: ProjectileLaunched(수 차이)와 Explosion(경기의 폭발 기록에서).
     // 입력: match - 지금 경기.
     // 출력: 반환값 없음. 사건 Ring에 추가된다.
     public void Diff(Match match)
@@ -212,6 +216,8 @@ internal sealed class QaEvents
             _nextPieceId = match.Build.NextId;
             _piecesDestroyed = match.PiecesDestroyed;
             _piecesCollapsed = match.PiecesCollapsed;
+            _launched = match.ProjectilesLaunched;
+            _explosions = match.Explosions;
         }
 
         // The match start and the round reset set health and shield anew for everyone: no damage or heal event then.
@@ -318,8 +324,35 @@ internal sealed class QaEvents
             _piecesDestroyed = match.PiecesDestroyed;
             _piecesCollapsed = match.PiecesCollapsed;
         }
+
+        // Phase 17 D17: launches by counter, explosions from the match's log (the newest ExplosionLogSize; more in one tick
+        // than that are counted but not each listed).
+        if (match.ProjectilesLaunched != _launched)
+        {
+            Add(tick, "ProjectileLaunched", null, new Dictionary<string, object?> { ["count"] = match.ProjectilesLaunched - _launched, ["live"] = match.Projectiles.Count });
+            _launched = match.ProjectilesLaunched;
+        }
+        long explosions = match.Explosions;
+        if (explosions != _explosions)
+        {
+            ReadOnlySpan<ExplosionRecord> log = match.ExplosionLog;
+            long first = Math.Max(_explosions, explosions - Match.ExplosionLogSize);
+            for (long n = first; n < explosions; n++)
+            {
+                ExplosionRecord e = log[(int)(n % Match.ExplosionLogSize)];
+                Add(tick, "Explosion", null, new Dictionary<string, object?>
+                {
+                    ["id"] = (int)e.Id, ["kind"] = e.Kind.ToString(), ["x"] = e.Position.X, ["y"] = e.Position.Y, ["z"] = e.Position.Z,
+                    ["ownerId"] = (int)e.OwnerId, ["playersHit"] = e.PlayersHit, ["piecesHit"] = e.PiecesHit,
+                });
+            }
+            _explosions = explosions;
+        }
     }
 
+    // 기능: 인벤토리의 해시(InventoryChanged 사건용, Phase 17: Shells·Rockets·수류탄 포함).
+    // 입력: p - 플레이어.
+    // 출력: 해시 값.
     // What InventoryState and ResourcesState carry, without the magazines (a shot is not an inventory change, D14).
     private static int InventoryHash(PlayerEntity p)
     {
@@ -334,8 +367,11 @@ internal sealed class QaEvents
         hash.Add(inv.GetAmmo(AmmoType.Light));
         hash.Add(inv.GetAmmo(AmmoType.Medium));
         hash.Add(inv.GetAmmo(AmmoType.Heavy));
+        hash.Add(inv.GetAmmo(AmmoType.Shells));    // Phase 17 D13
+        hash.Add(inv.GetAmmo(AmmoType.Rockets));
         hash.Add(inv.Medkits);
         hash.Add(inv.ShieldCells);
+        hash.Add(inv.Grenades);                    // Phase 17 D9
         hash.Add(inv.Resource(ProjectH.Shared.Simulation.BuildMaterialType.Wood));
         hash.Add(inv.Resource(ProjectH.Shared.Simulation.BuildMaterialType.Stone));
         hash.Add(inv.Resource(ProjectH.Shared.Simulation.BuildMaterialType.Metal));

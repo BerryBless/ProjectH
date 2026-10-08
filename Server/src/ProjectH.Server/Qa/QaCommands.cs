@@ -17,21 +17,23 @@ namespace ProjectH.Server.Qa;
 internal static class QaCommands
 {
     public const int MaxMarkLength = 500;
-    private static readonly string[] AmmoNames = { "light", "medium", "heavy" };            // AmmoType - 1
-    private static readonly string[] ItemNames = { "medkit", "shieldCell" };                // ConsumableType - 1
+    private static readonly string[] AmmoNames = { "light", "medium", "heavy", "shells", "rockets" };   // AmmoType - 1 (Phase 17: + shells, rockets)
+    private static readonly string[] ItemNames = { "medkit", "shieldCell", "grenade" };                  // ConsumableType - 1 (Phase 17: + grenade)
     private static readonly string[] MaterialNames = { "wood", "stone", "metal" };          // BuildMaterialType
     private static readonly string[] PieceNames = { "wall", "floor", "ramp", "roof" };      // BuildPieceType
-    private static readonly string[] LootKinds = { "weapon", "ammo", "medkit", "shieldCell", "material" };
+    private static readonly string[] LootKinds = { "weapon", "ammo", "medkit", "shieldCell", "material", "grenade" };   // Phase 17: + grenade
 
     public static readonly string[] Names =
     {
         "mark", "setPosition", "setHealth", "setShield", "giveWeapon", "giveAmmo", "giveItem", "giveResource",
         "damagePlayer", "killPlayer", "forceMatchState", "setZone", "spawnLoot", "spawnBuildPiece", "damageBuild", "editBuild",
         "downPlayer", "giveRebootCard", "setStationCooldown", "spawnSupplyDrop", "setContainer",
+        "giveGrenade",   // Phase 17 D17
     };
     private static readonly string[] ContainerStates = { "none", "closed", "open" };   // Match.QaSetContainer state
 
-    // 기능: QA Arrange 명령 하나를 실행한다(Phase 14: downPlayer, giveRebootCard, setStationCooldown, Phase 16: spawnSupplyDrop, setContainer).
+    // 기능: QA Arrange 명령 하나를 실행한다(Phase 14: downPlayer, giveRebootCard, setStationCooldown, Phase 16: spawnSupplyDrop, setContainer,
+    //   Phase 17: giveGrenade, giveAmmo의 shells·rockets, giveItem·spawnLoot의 grenade).
     // 입력: t - QA Tick 문맥, command - 이름, player - 대상 DevPlayerId, runId - 실행 id, args - 인자, logger - 로그.
     // 출력: QaResult(200, 400, 404, 409).
     public static QaResult Execute(QaTick t, string command, string? player, string? runId, JsonElement args, ILogger logger)
@@ -70,6 +72,7 @@ internal static class QaCommands
             case "damagePlayer": return DamagePlayer(m, p, a);
             case "downPlayer": return DownPlayer(m, p);
             case "giveRebootCard": return GiveRebootCard(m, p, a);
+            case "giveGrenade": return GiveGrenade(t, p, a);
             default: return KillPlayer(m, p);
         }
     }
@@ -223,18 +226,43 @@ internal static class QaCommands
         return QaResult.Ok(new { ammo = value });
     }
 
+    // 기능: 소모품을 준다(maxStack까지. Phase 17: grenade).
+    // 입력: t - QA Tick 문맥, p - 대상, a - 인자(item, count).
+    // 출력: Ok면 새 소지 수.
     private static QaResult GiveItem(QaTick t, PlayerEntity p, QaArgs a)
     {
         int item = a.RequiredChoice("item", ItemNames);
         long count = a.RequiredInteger("count", 1, 100);
         if (a.Error != null) return Bad(a);
         if (!p.Alive) return NotAlive(p);
-        var type = (ConsumableType)(item + 1);
+        return GiveConsumable(t, p, (ConsumableType)(item + 1), count);
+    }
+
+    // 기능: Phase 17 D17 giveGrenade: 수류탄을 준다(giveItem item=grenade와 같다).
+    // 입력: t - QA Tick 문맥, p - 대상, a - 인자(count, 기본 1).
+    // 출력: Ok면 새 소지 수.
+    private static QaResult GiveGrenade(QaTick t, PlayerEntity p, QaArgs a)
+    {
+        long? count = a.Integer("count", 1, 100);
+        if (a.Error != null) return Bad(a);
+        if (!p.Alive) return NotAlive(p);
+        return GiveConsumable(t, p, ConsumableType.Grenade, count ?? 1);
+    }
+
+    // 기능: 소모품 수를 maxStack까지 늘린다.
+    // 입력: t - QA Tick 문맥, p - 대상, type - 종류, count - 더할 수.
+    // 출력: Ok와 새 소지 수.
+    private static QaResult GiveConsumable(QaTick t, PlayerEntity p, ConsumableType type, long count)
+    {
         int max = t.Loop.Data.Items.Consumable(type).MaxStack;
         Inventory inv = p.Inventory;
-        int value;
-        if (type == ConsumableType.Medkit) value = inv.Medkits = (int)Math.Min(max, inv.Medkits + count);
-        else value = inv.ShieldCells = (int)Math.Min(max, inv.ShieldCells + count);
+        int value = (int)Math.Min(max, ItemRules.ConsumableCount(inv, type) + count);
+        switch (type)
+        {
+            case ConsumableType.Medkit: inv.Medkits = value; break;
+            case ConsumableType.ShieldCell: inv.ShieldCells = value; break;
+            default: inv.Grenades = value; break;
+        }
         inv.Changed = true;
         return QaResult.Ok(new { count = value });
     }
@@ -365,6 +393,9 @@ internal static class QaCommands
         return QaResult.Ok(new { phase = m.Zone.Phase, shrinkStartTick = m.Zone.ShrinkStartTick, shrinkEndTick = m.Zone.ShrinkEndTick });
     }
 
+    // 기능: QA spawnLoot: 플레이어 없이 월드 아이템 하나를 놓는다(Phase 17: grenade 종류, 탄 shells·rockets).
+    // 입력: t - QA Tick 문맥, a - 인자(kind, 위치, id·rarity·amount 선택).
+    // 출력: Ok면 새 아이템 id, 월드가 가득이면 409.
     private static QaResult SpawnLoot(QaTick t, QaArgs a)
     {
         GameData data = t.Loop.Data;
@@ -402,6 +433,14 @@ internal static class QaCommands
                 if (a.Error != null) return Bad(a);
                 byte defId = (byte)(kind == 2 ? ConsumableType.Medkit : ConsumableType.ShieldCell);
                 roll = new LootRoll(ItemKind.Consumable, defId, 0, (ushort)(amount ?? 1));
+                break;
+            }
+            case 5:
+            {
+                // Phase 17 D9: grenades on the ground (amount = count).
+                long? amount = a.Integer("amount", 1, byte.MaxValue);
+                if (a.Error != null) return Bad(a);
+                roll = new LootRoll(ItemKind.Consumable, (byte)ConsumableType.Grenade, 0, (ushort)(amount ?? 1));
                 break;
             }
             default:

@@ -623,10 +623,16 @@ public static partial class StressActions
             JsonPath.From(new { fights = fights.Count, size, weapon, arrangeCommands = Interlocked.Read(ref group.Stats.ArrangeCommands) }));
     }
 
+    // 기능: 무기 이름이나 id의 탄 종류 이름(giveAmmo type)을 고른다(Phase 17: 산탄총·권총·로켓 포함).
+    // 입력: weapon - 무기 이름 또는 id 문자열.
+    // 출력: QA giveAmmo의 type 이름(모르는 무기는 medium).
     private static string AmmoTypeOf(string weapon) => weapon.ToLowerInvariant() switch
     {
         "kestrel lr" or "2" => "heavy",
         "wisp smg" or "3" => "light",
+        "brute sg" or "4" => "shells",
+        "sparrow p" or "5" => "light",
+        "thunder rl" or "6" => "rockets",
         _ => "medium",
     };
 

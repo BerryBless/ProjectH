@@ -43,10 +43,12 @@ namespace ProjectH.Client.Input
         private readonly InputAction _map;
         private readonly InputAction _ping;
         private readonly InputAction _point;
+        // Phase 17 D9: 6 throws a grenade (a press, queued like the heal keys).
+        private readonly InputAction _throwGrenade;
         // Phase 12 D7: C turns crouch on and off; a jump or a sprint press turns it off again.
         private bool _crouchToggled;
 
-        // 기능: 게임 입력 Action을 코드로 만들고 켠다(Phase 13.5: H 편집, Phase 15: M 지도·가운데 버튼 Ping·포인터 위치 포함).
+        // 기능: 게임 입력 Action을 코드로 만들고 켠다(Phase 13.5: H 편집, Phase 15: M 지도·가운데 버튼 Ping·포인터 위치, Phase 17: 6 수류탄 포함).
         // 입력: 없음.
         // 출력: 모든 Action이 켜진 InputReader(Dispose가 해제한다).
         public InputReader()
@@ -89,6 +91,7 @@ namespace ProjectH.Client.Input
             _map = new InputAction("Map", InputActionType.Button, "<Keyboard>/m");
             _ping = new InputAction("Ping", InputActionType.Button, "<Mouse>/middleButton");
             _point = new InputAction("Point", InputActionType.Value, "<Mouse>/position");
+            _throwGrenade = new InputAction("ThrowGrenade", InputActionType.Button, "<Keyboard>/6");
 
             _move.Enable();
             _look.Enable();
@@ -119,6 +122,7 @@ namespace ProjectH.Client.Input
             _map.Enable();
             _ping.Enable();
             _point.Enable();
+            _throwGrenade.Enable();
         }
 
         public Vector2 Move => _move.ReadValue<Vector2>();
@@ -153,14 +157,17 @@ namespace ProjectH.Client.Input
             _pieceRoof.WasPressedThisFrame() ? (int)BuildPieceType.Roof : -1;
         public bool MaterialPressed => _material.WasPressedThisFrame();
 
-        // Jump, Reload, Slot1-3, Interact, Drop and the two heal presses since the last simulation step that
-        // used them. Rendering runs
+        // Jump, Reload, Slot1-3, Interact, Drop, the two heal presses, the tool keys and (Phase 17) the grenade throw since the
+        // last simulation step that used them. Rendering runs
         // faster than the fixed simulation, so a press between two steps must be remembered, not lost;
         // LocalPlayerPredictor.Advance clears the bits it puts into an input.
         public InputButtons QueuedButtons { get; set; }
 
         // Call once per rendered frame. gameInputBlocked: a screen is up or the cursor is free; C then does not toggle the
         // crouch (Ctrl is not sent either, GameClient), so a key typed into a menu does not crouch the character.
+        // 기능: 이번 프레임의 웅크리기 토글과 누른 순간 버튼(Phase 17: 6 = ThrowGrenade 포함)을 QueuedButtons에 모은다.
+        // 입력: gameInputBlocked - 화면이 열렸거나 커서가 풀렸는지(웅크리기 토글만 막는다; 대기 버튼은 GameClient가 비운다).
+        // 출력: 반환값 없음. QueuedButtons와 웅크리기 토글이 바뀐다.
         public void Update(bool gameInputBlocked)
         {
             if (!gameInputBlocked)
@@ -179,9 +186,10 @@ namespace ProjectH.Client.Input
             if (_useShieldCell.WasPressedThisFrame()) QueuedButtons |= InputButtons.UseShieldCell;
             if (_toolBuild.WasPressedThisFrame()) QueuedButtons |= InputButtons.ToolBuild;       // Phase 13 D5
             if (_toolHarvest.WasPressedThisFrame()) QueuedButtons |= InputButtons.ToolHarvest;
+            if (_throwGrenade.WasPressedThisFrame()) QueuedButtons |= InputButtons.ThrowGrenade;   // Phase 17 D9
         }
 
-        // 기능: 만든 Input Action을 모두 해제한다(Phase 15의 지도·Ping·포인터 포함).
+        // 기능: 만든 Input Action을 모두 해제한다(Phase 15의 지도·Ping·포인터, Phase 17의 수류탄 키 포함).
         // 입력: 없음.
         // 출력: 반환값 없음.
         public void Dispose()
@@ -215,6 +223,7 @@ namespace ProjectH.Client.Input
             _map.Dispose();
             _ping.Dispose();
             _point.Dispose();
+            _throwGrenade.Dispose();
         }
     }
 }

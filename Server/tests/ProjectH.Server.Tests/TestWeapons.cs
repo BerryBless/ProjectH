@@ -9,6 +9,7 @@ namespace ProjectH.Server.Tests;
 //           id 2 "Test Semi"  = 90 damage, 15-tick interval, 2 rounds, 60-tick reload, Heavy ammo;
 //           id 3 "Test Light" = 10 damage, 3-tick interval, 10 rounds, 15-tick reload, Light ammo.
 // 30 damage makes shield 50 + health 100 exactly five hits.
+// Phase 17: plus the shipped grenade (no weapon fires a projectile here; Phase 17 tests use the shipped weapons.json).
 internal static class TestWeapons
 {
     public const byte AutoId = 1;
@@ -32,7 +33,11 @@ internal static class TestWeapons
               "reloadSeconds": 2.0, "range": 300, "automatic": false, "ammoType": "Heavy" },
             { "id": 3, "name": "Test Light", "damage": 10, "fireIntervalSeconds": 0.1, "magazineSize": 10,
               "reloadSeconds": 0.5, "range": 50, "automatic": true, "ammoType": "Light" }
-          ]
+          ],
+          "projectiles": {
+            "Grenade": { "speed": 18, "gravity": 9.81, "lifetimeSeconds": 3.0, "explosionRadius": 5, "explosionDamage": 80,
+                         "structureDamage": 120, "bounce": 0.4, "throwIntervalSeconds": 1.0, "throwUpDegrees": 8 }
+          }
         }
         """;
 

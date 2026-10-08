@@ -31,13 +31,16 @@ namespace ProjectH.Client.Game
             public long Step;
             public InputButtons Buttons;
             public bool Gated;          // Phase 12 D12: no action allowed in this step's mode
+            public bool LaunchBlocked;  // Phase 17: a projectile weapon could not launch in this step (match state)
             public int Slot;
             public int Ammo;
             public bool Reloading;
             public long NextFireStep;   // of Slot, after this step
-            public int Light;           // reserves after this step, restored before a replay
+            public int Light;           // reserves after this step (one per AmmoType), restored before a replay
             public int Medium;
             public int Heavy;
+            public int Shells;          // Phase 17 D13
+            public int Rockets;
         }
 
         private readonly WeaponInfo[] _catalog;
@@ -65,7 +68,10 @@ namespace ProjectH.Client.Game
         public int Reserve => HasWeapon ? GetReserve(Current.AmmoType) : 0;
         public int ReloadRemainingSteps => Reloading ? (int)Math.Max(0, _reloadEndStep - _step) : 0;
 
-        public int GetReserve(AmmoType type) => type == AmmoType.None ? 0 : _reserve[(int)type - 1];
+        // 기능: 탄 종류의 예측 예비탄을 읽는다(Phase 17 D13: 탄 종류 5개, 색인 = 종류 - 1).
+        // 입력: type - 탄 종류.
+        // 출력: 예비탄 수. None이나 범위 밖 값이면 0.
+        public int GetReserve(AmmoType type) => type == AmmoType.None || (int)type > _reserve.Length ? 0 : _reserve[(int)type - 1];
 
         // For the HUD: false for an empty slot.
         public bool TryGetSlot(int slot, out WeaponInfo weapon, out int rarity, out int ammo)
@@ -78,11 +84,14 @@ namespace ProjectH.Client.Game
         }
 
         // Join, death and respawn: empty-handed (D1) until the server's InventoryState says otherwise.
+        // 기능: 빈손 상태로 되돌린다(슬롯 비움, 예비탄 5종 0, 재장전·발사 버튼 상태 해제).
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void Clear()
         {
             Slot = 0;
             for (int i = 0; i < SlotCount; i++) _slots[i] = new Held { Catalog = -1 };
-            SetReserves(0, 0, 0);
+            SetReserves(0, 0, 0, 0, 0);
             Reloading = false;
             _fireHeld = false;
         }
@@ -92,6 +101,9 @@ namespace ProjectH.Client.Game
         // the current slot's magazine belongs to the snapshot, whose ack-based check would otherwise never
         // correct a value set here (the two packets arrive in any order). The current slot index also comes
         // from the snapshot.
+        // 기능: 서버 InventoryState의 슬롯 내용과 예비탄 5종(Phase 17: Shells·Rockets 포함)을 적용한다.
+        // 입력: server - 받은 인벤토리 상태.
+        // 출력: 반환값 없음. 슬롯·예비탄이 바뀌고, 지금 슬롯의 무기가 바뀌었으면 재장전이 끝난다.
         public void ApplyInventory(in InventoryState server)
         {
             for (int i = 0; i < SlotCount; i++)
@@ -109,7 +121,7 @@ namespace ProjectH.Client.Game
                     _slots[i].Ammo = s.MagAmmo;
                 }
             }
-            SetReserves(server.LightAmmo, server.MediumAmmo, server.HeavyAmmo);
+            SetReserves(server.LightAmmo, server.MediumAmmo, server.HeavyAmmo, server.ShellsAmmo, server.RocketsAmmo);
         }
 
         // New authoritative reserves (InventoryState, or 0 on Clear). The history records the reserves after each
@@ -117,35 +129,58 @@ namespace ProjectH.Client.Game
         // this change and undo it (e.g. an ammo pickup). So every record moves by the same per-type difference
         // between the new value and the current prediction: the replay then starts from the new authority, and
         // reload rounds predicted after the ack stay counted once (the difference already includes them).
-        // Records of other seqs are shifted too; they are never read unless their seq matches. 64 x 3 adds, no
+        // Records of other seqs are shifted too; they are never read unless their seq matches. 64 x 5 adds, no
         // allocation, only when the inventory changes.
-        private void SetReserves(int light, int medium, int heavy)
+        // 기능: 서버가 정한 예비탄 5종(Phase 17 D13: Shells·Rockets 포함)을 적용하고 기록의 예비탄을 같은 차이만큼 옮긴다.
+        // 입력: light·medium·heavy·shells·rockets - 탄 종류별 새 예비탄.
+        // 출력: 반환값 없음. _reserve와 모든 기록의 예비탄이 바뀐다(값이 같으면 아무것도 하지 않는다).
+        private void SetReserves(int light, int medium, int heavy, int shells, int rockets)
         {
             int dLight = light - _reserve[0];
             int dMedium = medium - _reserve[1];
             int dHeavy = heavy - _reserve[2];
-            if (dLight == 0 && dMedium == 0 && dHeavy == 0) return;
+            int dShells = shells - _reserve[3];
+            int dRockets = rockets - _reserve[4];
+            if (dLight == 0 && dMedium == 0 && dHeavy == 0 && dShells == 0 && dRockets == 0) return;
             for (int i = 0; i < HistorySize; i++)
             {
                 _history[i].Light += dLight;
                 _history[i].Medium += dMedium;
                 _history[i].Heavy += dHeavy;
+                _history[i].Shells += dShells;
+                _history[i].Rockets += dRockets;
             }
             _reserve[0] = light;
             _reserve[1] = medium;
             _reserve[2] = heavy;
+            _reserve[3] = shells;
+            _reserve[4] = rockets;
         }
+
+        // 기능: 경기 상태가 투사체 발사를 허용하는지 정한다(서버 CanLaunch의 상태 부분: WaitingForPlayers·Playing·FinalPhase만. 칸 부족은 모른다).
+        // 입력: hasMatch - MatchState를 받았는지(개발 모드는 받지 않는다), state - 지금 MatchState.
+        // 출력: 허용이면 true. MatchState가 없으면 true.
+        public static bool LaunchAllowed(bool hasMatch, MatchFlowState state) =>
+            !hasMatch || state == MatchFlowState.WaitingForPlayers || state == MatchFlowState.Playing || state == MatchFlowState.FinalPhase;
 
         // One predicted input, oldest first. Returns true when the server is expected to fire it.
         // actionsAllowed false (Phase 12 D12: riding, falling, gliding, vaulting): the input acts on nothing, but the fire
         // button's held state still follows it, like the server's FireHeld, so landing with Fire held does not fire a
         // semi-automatic weapon without a new press.
-        public bool Step(uint seq, InputButtons buttons, bool actionsAllowed = true)
+        // 기능: 예측 입력 하나를 한 Step으로 처리한다(오래된 것부터).
+        // 입력: seq - 입력 순번, buttons - 버튼, actionsAllowed - 행동 가능 모드이고 무기 도구인지, launchAllowed - Phase 17: 투사체 무기가
+        //   발사될 수 있는 경기 상태인지(서버 CanLaunch의 상태 부분. false면 투사체 무기는 탄·간격을 쓰지 않고 자동 재장전도 하지 않는다).
+        // 출력: 서버가 이 입력으로 쏠 것으로 보면 true.
+        public bool Step(uint seq, InputButtons buttons, bool actionsAllowed = true, bool launchAllowed = true)
         {
-            return Run(seq, buttons, !actionsAllowed, _step++);
+            return Run(seq, buttons, !actionsAllowed, !launchAllowed, _step++);
         }
 
-        private bool Run(uint seq, InputButtons buttons, bool gated, long now)
+        // 기능: 입력 하나를 한 Step으로 처리하고 그 결과(예비탄 5종, 투사체 발사 막힘 포함)를 기록에 남긴다.
+        // 입력: seq - 입력 순번, buttons - 버튼, gated - 행동 불가 모드(발사 버튼 상태만 따른다), launchBlocked - 투사체 무기 발사 불가
+        //   (Phase 17), now - 이 입력의 Step.
+        // 출력: 서버가 이 입력으로 쏠 것으로 보면 true.
+        private bool Run(uint seq, InputButtons buttons, bool gated, bool launchBlocked, long now)
         {
             if (Reloading && now >= _reloadEndStep)
             {
@@ -155,11 +190,12 @@ namespace ProjectH.Client.Game
 
             bool fired = false;
             if (gated) _fireHeld = (buttons & InputButtons.Fire) != 0;
-            else fired = Apply(buttons, now);
+            else fired = Apply(buttons, launchBlocked, now);
             _history[seq % HistorySize] = new Record
             {
-                Seq = seq, Step = now, Buttons = buttons, Gated = gated, Slot = Slot, Ammo = Ammo, Reloading = Reloading,
+                Seq = seq, Step = now, Buttons = buttons, Gated = gated, LaunchBlocked = launchBlocked, Slot = Slot, Ammo = Ammo, Reloading = Reloading,
                 NextFireStep = _slots[Slot].NextFireStep, Light = _reserve[0], Medium = _reserve[1], Heavy = _reserve[2],
+                Shells = _reserve[3], Rockets = _reserve[4],
             };
             return fired;
         }
@@ -169,6 +205,9 @@ namespace ProjectH.Client.Game
         // point: the state restarts from its values and the inputs after ackSeq are replayed, rewriting their
         // history, so the next snapshot compares against consistent records and ReloadRemainingTicks is
         // measured from the ack point (Phase 3 D12).
+        // 기능: 서버의 무기 상태(ackSeq 입력 뒤)와 기록을 비교하고 다르면 서버 값에서 다시 돌린다(Phase 17: 예비탄 5종을 되돌린다).
+        // 입력: server - Snapshot의 자기 정보, ackSeq - 서버가 처리한 마지막 입력 순번.
+        // 출력: 반환값 없음. 다르면 슬롯·탄창·재장전·예비탄이 서버 값에서 다시 계산된다.
         public void ApplyServer(in SnapshotSelf server, uint ackSeq)
         {
             if (ackSeq == 0) return;                                  // no input processed yet: nothing to compare
@@ -197,11 +236,14 @@ namespace ProjectH.Client.Game
             _reserve[0] = local.Light;
             _reserve[1] = local.Medium;
             _reserve[2] = local.Heavy;
+            _reserve[3] = local.Shells;
+            _reserve[4] = local.Rockets;
             _fireHeld = (local.Buttons & InputButtons.Fire) != 0;
             _history[ackSeq % HistorySize] = new Record
             {
-                Seq = ackSeq, Step = local.Step, Buttons = local.Buttons, Gated = local.Gated, Slot = Slot, Ammo = Ammo, Reloading = Reloading,
+                Seq = ackSeq, Step = local.Step, Buttons = local.Buttons, Gated = local.Gated, LaunchBlocked = local.LaunchBlocked, Slot = Slot, Ammo = Ammo, Reloading = Reloading,
                 NextFireStep = _slots[Slot].NextFireStep, Light = local.Light, Medium = local.Medium, Heavy = local.Heavy,
+                Shells = local.Shells, Rockets = local.Rockets,
             };
 
             long end = _step;
@@ -210,13 +252,17 @@ namespace ProjectH.Client.Game
             {
                 Record r = _history[seq % HistorySize];
                 if (r.Seq != seq) break;                               // cannot happen while the ack record is valid
-                Run(seq, r.Buttons, r.Gated, _step++);
+                Run(seq, r.Buttons, r.Gated, r.LaunchBlocked, _step++);
             }
             _step = end;
         }
 
         // Same order as the server: switch -> reload -> fire.
-        private bool Apply(InputButtons buttons, long now)
+        // 기능: 무기 전환 → 재장전 → 발사를 서버 순서대로 한 Step 적용한다.
+        // 입력: buttons - 버튼, launchBlocked - Phase 17: 투사체 무기 발사 불가(서버 CanLaunch false처럼 방아쇠는 소비하되 탄·간격·자동
+        //   재장전 없음), now - 이 입력의 Step.
+        // 출력: 서버가 쏠 것으로 보면 true.
+        private bool Apply(InputButtons buttons, bool launchBlocked, long now)
         {
             int target = -1;
             switch (buttons & (InputButtons.Slot1 | InputButtons.Slot2 | InputButtons.Slot3))
@@ -246,6 +292,8 @@ namespace ProjectH.Client.Game
             bool trigger = fireHeld && (weapon.Automatic || !_fireHeld);
             _fireHeld = fireHeld;
             if (!trigger || Reloading || now < held.NextFireStep) return false;
+            // Phase 17: the server's CanLaunch false is an invalid aim: the press is spent (FireHeld above), nothing else.
+            if (launchBlocked && weapon.Projectile != ProjectileKind.None) return false;
 
             if (held.Ammo == 0)
             {

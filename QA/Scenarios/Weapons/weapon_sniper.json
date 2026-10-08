@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "name": "Weapon Sniper",
+  "description": "Phase 17 D5 (request §71): the Kestrel LR stays hitscan with no spread and no falloff: one shot at 20 m takes exactly 90 (health 100 -> 10), and the next round waits its 1.25 s interval.",
+  "tags": ["weapons", "combat"],
+  "seed": 17003,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Combat_20m_A" },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": "QA_Combat_20m_B" },
+    { "id": "a_health", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "a_shield", "action": "setShield", "actor": "playerA", "value": 0 },
+    { "id": "b_sniper", "action": "giveWeapon", "actor": "playerB", "weapon": "Kestrel LR", "rarity": 0, "select": true },
+    { "id": "b_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerB", "equals": "Kestrel LR", "timeoutMilliseconds": 3000 },
+    { "id": "settle", "action": "wait", "milliseconds": 500 },
+
+    { "id": "b_fire", "phase": "act", "action": "fire", "actor": "playerB", "target": "playerA", "count": 1 },
+
+    { "id": "hit", "phase": "assert", "action": "waitFor", "condition": "actor.hitsLanded", "actor": "playerB", "equals": 1, "timeoutMilliseconds": 3000 },
+    { "id": "exact_90", "action": "waitFor", "condition": "player.health", "actor": "playerA", "equals": 10, "timeoutMilliseconds": 3000 },
+    { "id": "one_round", "assert": "player.weapon.magAmmo", "actor": "playerB", "equals": 4 }
+  ]
+}

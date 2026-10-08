@@ -54,5 +54,9 @@ namespace ProjectH.Shared.Protocol
         // Phase 16 D3, D7: loot containers and supply drops (both S->C, channel 0).
         ContainerStates = 42,
         SupplyDrops = 43,
+        // Phase 17 D7: projectiles (grenades, rockets), all S->C, channel 0, to everyone.
+        ProjectileSpawned = 44,
+        ProjectileState = 45,
+        ProjectileExploded = 46,
     }
 }

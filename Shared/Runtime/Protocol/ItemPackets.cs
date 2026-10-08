@@ -9,6 +9,8 @@ namespace ProjectH.Shared.Protocol
         Light = 1,
         Medium = 2,
         Heavy = 3,
+        Shells = 4,    // Phase 17 D13: the shotgun's
+        Rockets = 5,   // Phase 17 D13: the rocket launcher's
     }
 
     public enum ItemKind : byte
@@ -26,6 +28,9 @@ namespace ProjectH.Shared.Protocol
         None = 0,
         Medkit = 1,
         ShieldCell = 2,
+        // Phase 17 D9: thrown with 6 (InputButtons.ThrowGrenade), never "used" over a channel: its catalog entry has
+        // UseTicks, Heal and Shield 0, and InventoryState.Using is never Grenade.
+        Grenade = 3,
     }
 
     // D8: the server picks the target itself, so "too far" and "gone" are one case for the client:
@@ -40,8 +45,8 @@ namespace ProjectH.Shared.Protocol
     public static class ItemConstants
     {
         public const int RarityCount = 5;          // D4: Common, Uncommon, Rare, Epic, Legendary (index 0-4)
-        public const int AmmoTypeCount = 3;        // D3: Light, Medium, Heavy
-        public const int ConsumableTypeCount = 2;  // D10: Medkit, ShieldCell
+        public const int AmmoTypeCount = 5;        // D3: Light, Medium, Heavy; Phase 17 D13: Shells, Rockets
+        public const int ConsumableTypeCount = 3;  // D10: Medkit, ShieldCell; Phase 17 D9: Grenade
         public const int WeaponSlotCount = 3;      // D10
         public const int MaxNameBytes = 16;
     }
@@ -79,10 +84,10 @@ namespace ProjectH.Shared.Protocol
     }
 
     // S->C, ReliableOrdered, once right after the WeaponCatalog.
-    // Largest possible packet: 1 + (1 + 5 x 21) + (1 + 3 x 20) + (1 + 2 x 25) = 219 bytes.
+    // Largest possible packet: 1 + (1 + 5 x 21) + (1 + 5 x 20) + (1 + 3 x 25) = 284 bytes (Phase 17: 5 ammo types, 3 consumables).
     public static class ItemCatalogPacket
     {
-        public const int MaxSize = 219;
+        public const int MaxSize = 284;
 
         public static void Write(ref PacketWriter writer, ItemCatalogData data)
         {
@@ -113,6 +118,9 @@ namespace ProjectH.Shared.Protocol
             }
         }
 
+        // 기능: ItemCatalog 본문을 읽는다(Phase 17: 탄 5종, 소모품 3종. Grenade는 UseTicks·Heal·Shield 0, 회복은 둘 다 필요).
+        // 입력: reader - 본문(PacketId 뒤).
+        // 출력: 성공하면 true와 카탈로그, 서버가 보내지 않는 값이면 false.
         // Allocates the arrays and names: read once per join, never on the per-tick path.
         public static bool TryRead(ref PacketReader reader, out ItemCatalogData data)
         {
@@ -143,10 +151,18 @@ namespace ProjectH.Shared.Protocol
                 if (!reader.TryReadByte(out byte type) || type != i + 1) return false;
                 consumables[i].Type = (ConsumableType)type;
                 if (!reader.TryReadString(ItemConstants.MaxNameBytes, out consumables[i].Name) || consumables[i].Name.Length == 0) return false;
-                if (!reader.TryReadUInt16(out consumables[i].UseTicks) || consumables[i].UseTicks == 0) return false;
+                if (!reader.TryReadUInt16(out consumables[i].UseTicks)) return false;
                 if (!reader.TryReadUInt16(out consumables[i].Heal)) return false;
                 if (!reader.TryReadUInt16(out consumables[i].Shield)) return false;
-                if (consumables[i].Heal == 0 && consumables[i].Shield == 0) return false;
+                // Phase 17 D9: a grenade is thrown, not used: no channel and nothing healed. A heal needs both.
+                if (consumables[i].Type == ConsumableType.Grenade)
+                {
+                    if (consumables[i].UseTicks != 0 || consumables[i].Heal != 0 || consumables[i].Shield != 0) return false;
+                }
+                else if (consumables[i].UseTicks == 0 || (consumables[i].Heal == 0 && consumables[i].Shield == 0))
+                {
+                    return false;
+                }
                 if (!reader.TryReadByte(out consumables[i].MaxStack) || consumables[i].MaxStack == 0) return false;
             }
 
@@ -277,10 +293,11 @@ namespace ProjectH.Shared.Protocol
 
     // S->C, ReliableOrdered, to its owner only, at the end of a tick in which the inventory changed
     // (D14). Shots do not count as a change: the snapshot self block carries the current magazine.
-    // Phase 14 D9: plus the reboot cards held (0..SquadConstants.MaxCardsHeld), the last byte.
+    // Phase 14 D9: plus the reboot cards held (0..SquadConstants.MaxCardsHeld).
+    // Phase 17 D13: plus the Shells and Rockets reserves and the grenades held, after the cards (27 bytes).
     public struct InventoryState
     {
-        public const int PayloadSize = 22;   // 3 x 3 + 1 + 3 x 2 + 1 + 1 + 1 + 2 + 1
+        public const int PayloadSize = 27;   // 3 x 3 + 1 + 3 x 2 + 1 + 1 + 1 + 2 + 1 + 2 x 2 + 1
 
         public InventorySlotState Slot0;
         public InventorySlotState Slot1;
@@ -294,6 +311,9 @@ namespace ProjectH.Shared.Protocol
         public ConsumableType Using;        // None when no heal is being used
         public ushort UseRemainingTicks;    // 0 when Using is None
         public byte RebootCards;            // Phase 14 D9
+        public ushort ShellsAmmo;           // Phase 17 D13
+        public ushort RocketsAmmo;          // Phase 17 D13
+        public byte Grenades;               // Phase 17 D9
 
         public InventorySlotState GetSlot(int slot)
         {
@@ -315,6 +335,9 @@ namespace ProjectH.Shared.Protocol
             }
         }
 
+        // 기능: 탄 종류의 예비탄 수를 돌려준다(Phase 17: Shells·Rockets 포함).
+        // 입력: type - 탄 종류.
+        // 출력: 예비탄 수(모르는 종류는 0).
         public ushort GetAmmo(AmmoType type)
         {
             switch (type)
@@ -322,10 +345,15 @@ namespace ProjectH.Shared.Protocol
                 case AmmoType.Light: return LightAmmo;
                 case AmmoType.Medium: return MediumAmmo;
                 case AmmoType.Heavy: return HeavyAmmo;
+                case AmmoType.Shells: return ShellsAmmo;
+                case AmmoType.Rockets: return RocketsAmmo;
                 default: return 0;
             }
         }
 
+        // 기능: 탄 종류의 예비탄 수를 정한다(Phase 17: Shells·Rockets 포함, 모르는 종류는 무시).
+        // 입력: type - 탄 종류, value - 수.
+        // 출력: 반환값 없음.
         public void SetAmmo(AmmoType type, ushort value)
         {
             switch (type)
@@ -333,9 +361,14 @@ namespace ProjectH.Shared.Protocol
                 case AmmoType.Light: LightAmmo = value; break;
                 case AmmoType.Medium: MediumAmmo = value; break;
                 case AmmoType.Heavy: HeavyAmmo = value; break;
+                case AmmoType.Shells: ShellsAmmo = value; break;
+                case AmmoType.Rockets: RocketsAmmo = value; break;
             }
         }
 
+        // 기능: InventoryState 패킷을 쓴다(Phase 17: 카드 수 뒤에 Shells·Rockets·수류탄, 28B).
+        // 입력: writer - 대상, s - 인벤토리.
+        // 출력: 반환값 없음.
         public static void Write(ref PacketWriter writer, in InventoryState s)
         {
             writer.WriteByte((byte)PacketId.InventoryState);
@@ -355,8 +388,15 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte((byte)s.Using);
             writer.WriteUInt16(s.UseRemainingTicks);
             writer.WriteByte(s.RebootCards);
+            writer.WriteUInt16(s.ShellsAmmo);
+            writer.WriteUInt16(s.RocketsAmmo);
+            writer.WriteByte(s.Grenades);
         }
 
+        // 기능: InventoryState 본문(27B)을 읽는다.
+        // 입력: reader - 본문(PacketId 뒤).
+        // 출력: 성공하면 true와 인벤토리. 짧거나, 빈 칸에 등급·탄창이 있거나, 등급·현재 칸이 범위 밖이거나, 사용 중인 것이 회복이 아니거나,
+        //   카드가 너무 많으면 false.
         public static bool TryRead(ref PacketReader reader, out InventoryState s)
         {
             s = default;
@@ -380,7 +420,11 @@ namespace ProjectH.Shared.Protocol
             s.Using = (ConsumableType)usingKind;
             reader.TryReadUInt16(out s.UseRemainingTicks);
             reader.TryReadByte(out s.RebootCards);
-            return s.CurrentSlot < ItemConstants.WeaponSlotCount && usingKind <= ItemConstants.ConsumableTypeCount &&
+            reader.TryReadUInt16(out s.ShellsAmmo);
+            reader.TryReadUInt16(out s.RocketsAmmo);
+            reader.TryReadByte(out s.Grenades);
+            // Phase 17 D9: Using is a heal or None (a grenade is never used over a channel).
+            return s.CurrentSlot < ItemConstants.WeaponSlotCount && usingKind <= (byte)ConsumableType.ShieldCell &&
                    s.RebootCards <= SquadConstants.MaxCardsHeld;
         }
     }

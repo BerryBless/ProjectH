@@ -163,6 +163,10 @@ public class WorldItemsTests
     public void AddSearchRemove_AllocateNothing()
     {
         for (int i = 0; i < WorldItems.Capacity; i++) Add(new Vector3(i % 16, 0f, i / 16));
+        // Warm up the same calls first: their first run may JIT or initialise statics on this thread, which would count as
+        // allocation and failed this test now and then in full runs.
+        _items.TryAdd(ItemKind.Ammo, 1, 0, 5, new Vector3(3f, 0f, 3f), -1, out _, out _);
+        _items.RemoveAt(_items.FindNearest(new Vector3(3f, 0f, 3f), 2f, 2f));
         long start = GC.GetAllocatedBytesForCurrentThread();
         for (int i = 0; i < 1000; i++)
         {

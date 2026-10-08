@@ -19,6 +19,7 @@ namespace ProjectH.Client.Game
         private readonly string[] _slotText = new string[WeaponState.SlotCount];
         private int _medkits = -1;
         private int _shieldCells = -1;
+        private int _grenades = -1;
         private ushort _promptItem;
         private ushort _promptAmount;
 
@@ -56,12 +57,16 @@ namespace ProjectH.Client.Game
             return true;
         }
 
-        public bool SetConsumables(int medkits, int shieldCells)
+        // 기능: 소모품 줄을 바뀔 때만 만든다("[4] 구급상자 x2    [5] 실드 셀 x3    [6] 수류탄 x1", Phase 17 D9: 수류탄 수 포함).
+        // 입력: medkits·shieldCells·grenades - 가진 개수.
+        // 출력: 문자열을 새로 만들었으면 true, 값이 같아 그대로면 false.
+        public bool SetConsumables(int medkits, int shieldCells, int grenades)
         {
-            if (medkits == _medkits && shieldCells == _shieldCells) return false;
+            if (medkits == _medkits && shieldCells == _shieldCells && grenades == _grenades) return false;
             _medkits = medkits;
             _shieldCells = shieldCells;
-            Consumables = "[4] 구급상자 x" + medkits + "    [5] 실드 셀 x" + shieldCells;
+            _grenades = grenades;
+            Consumables = "[4] 구급상자 x" + medkits + "    [5] 실드 셀 x" + shieldCells + "    [6] 수류탄 x" + grenades;
             Rebuilds++;
             return true;
         }

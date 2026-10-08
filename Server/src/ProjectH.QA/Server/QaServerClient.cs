@@ -16,6 +16,8 @@ public interface IQaServerClient
     Task<JsonElement> GetBuildAsync(float? x, float? z, float? radius, int? max, CancellationToken token);
     // Phase 16: GET /qa/loot (containers, supply drops, world items within radius of x/z when given).
     Task<JsonElement> GetLootAsync(float? x, float? z, float? radius, CancellationToken token);
+    // Phase 17: GET /qa/projectiles (live projectiles, the recent explosions and the projectile counters).
+    Task<JsonElement> GetProjectilesAsync(CancellationToken token);
     Task<JsonElement> GetMetricsAsync(int? windowSeconds, CancellationToken token);
     Task<JsonElement> GetEventsAsync(long after, int max, CancellationToken token);
     Task StopServerAsync(CancellationToken token);
@@ -119,6 +121,11 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
         if (radius != null) query.Add($"radius={radius.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
         return GetAsync(query.Count == 0 ? "qa/loot" : "qa/loot?" + string.Join('&', query), token);
     }
+
+    // 기능: Phase 17: GET /qa/projectiles를 부른다.
+    // 입력: token - 취소.
+    // 출력: 응답 JSON의 data.
+    public Task<JsonElement> GetProjectilesAsync(CancellationToken token) => GetAsync("qa/projectiles", token);
 
     public Task<JsonElement> GetMetricsAsync(int? windowSeconds, CancellationToken token) =>
         GetAsync(windowSeconds == null ? "qa/metrics" : $"qa/metrics?windowSeconds={windowSeconds.Value}", token);

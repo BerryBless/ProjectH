@@ -114,12 +114,13 @@ namespace ProjectH.Client.Qa
         // ---- gameplay input (main thread only) ----
         private const int MaxHolds = 16;
 
-        // QaInput.KeyNames in the same order ("1".."5" are the top-row digits, not the numpad).
+        // QaInput.KeyNames in the same order ("1".."6" are the top-row digits, not the numpad).
         private static readonly Key[] InputKeys =
         {
             Key.W, Key.A, Key.S, Key.D, Key.Space, Key.LeftShift, Key.LeftCtrl, Key.C, Key.Q, Key.F, Key.Z, Key.X, Key.V,
             Key.B, Key.T, Key.R, Key.E, Key.G, Key.Digit1, Key.Digit2, Key.Digit3, Key.Digit4, Key.Digit5, Key.Escape, Key.F1, Key.H,
             Key.M,   // Phase 15: the full map
+            Key.Digit6,   // Phase 17 D9: throw a grenade
         };
 
         private enum HoldKind : byte

@@ -23,6 +23,8 @@ namespace ProjectH.Client.CameraControl
         private float _distance = ShoulderCameraMath.HipDistance;
         // Phase 12 D14: the hip camera, eased towards the followed character's mode.
         private CameraTargets _hip = ShoulderCameraMath.Hip;
+        // Phase 17 D3: our own shots' camera kick, added on top of Pitch (Pitch grows downwards, so the kick is subtracted).
+        private readonly RecoilKick _recoil = new RecoilKick();
 
         public ShoulderCamera(Camera camera)
         {
@@ -33,6 +35,19 @@ namespace ProjectH.Client.CameraControl
 
         public float Yaw { get; private set; }
         public float Pitch { get; private set; } = 10f;
+        // Phase 17 D3: the pitch the camera shows: Pitch kicked up by the recoil, inside the pitch limits. AimRay uses it.
+        public float AimPitch => Mathf.Clamp(Pitch - _recoil.Offset, MinPitch, MaxPitch);
+        public float RecoilOffset => _recoil.Offset;
+
+        // 기능: 내 사격 하나의 반동을 카메라에 더한다(Phase 17 D3, 표시만; 서버로 가는 조준은 다음 프레임 카메라를 따른다).
+        // 입력: degrees - 무기의 RecoilDegrees.
+        // 출력: 반환값 없음. 반동 Offset이 늘어난다.
+        public void Kick(float degrees) => _recoil.Kick(degrees);
+
+        // 기능: 반동을 없앤다(사망·부활·끊김).
+        // 입력: 없음.
+        // 출력: 반환값 없음.
+        public void ResetRecoil() => _recoil.Reset();
 
         // Screen-centre ray. It starts at the shoulder point, which lies on the camera's forward axis,
         // so geometry between the camera and the player is never picked as the aim point.
@@ -52,13 +67,19 @@ namespace ProjectH.Client.CameraControl
         }
 
         // Call from LateUpdate with the rendered feet position, and the mode of whoever is followed (D14).
+        // 기능: 카메라를 따라갈 발 위치에 놓는다(조준 줌, 모드별 거리, 벽 충돌). Phase 17 D3: 반동을 프레임 시간만큼 되돌리고 반동이 더해진
+        //   AimPitch로 회전과 조준 광선을 정한다.
+        // 입력: targetFeet - 따라갈 발 위치, aiming - 조준 중, deltaTime - 프레임 시간, mode - 따라가는 사람의 이동 모드, sprinting - 달리기 중.
+        // 출력: 반환값 없음. 카메라 Transform·FOV와 AimRay가 바뀐다.
         public void Follow(Vector3 targetFeet, bool aiming, float deltaTime, MovementMode mode = MovementMode.Ground, bool sprinting = false)
         {
             _aimBlend = ShoulderCameraMath.Approach(_aimBlend, aiming ? 1f : 0f, AimBlendSharpness, deltaTime);
             _hip = ShoulderCameraMath.Approach(_hip, ShoulderCameraMath.TargetsFor(mode, sprinting), deltaTime);
-            ShoulderPose pose = ShoulderCameraMath.Solve(targetFeet, Yaw, Pitch, _aimBlend, _distance, deltaTime, _caster, _hip);
+            _recoil.Step(deltaTime);
+            float pitch = AimPitch;
+            ShoulderPose pose = ShoulderCameraMath.Solve(targetFeet, Yaw, pitch, _aimBlend, _distance, deltaTime, _caster, _hip);
             _distance = pose.Distance;
-            _transform.SetPositionAndRotation(pose.Position, Quaternion.Euler(Pitch, Yaw, 0f));
+            _transform.SetPositionAndRotation(pose.Position, Quaternion.Euler(pitch, Yaw, 0f));
             _camera.fieldOfView = pose.FieldOfView;
             AimRay = new Ray(pose.Shoulder, pose.Forward);
         }

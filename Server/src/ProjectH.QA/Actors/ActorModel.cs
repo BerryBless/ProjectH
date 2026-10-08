@@ -62,6 +62,11 @@ public sealed record ActorState
     public long InputsSent { get; init; }
     public int HitsLanded { get; init; }
     public int DamageTaken { get; init; }
+    // Phase 17: grenades held (InventoryState) and the projectile events this client heard (spawned, bounced or rested, exploded).
+    public int Grenades { get; init; }
+    public int ProjectilesSpawned { get; init; }
+    public int ProjectileStates { get; init; }
+    public int ProjectilesExploded { get; init; }
     // Intent progress.
     public bool MoveActive { get; init; }
     public bool MoveArrived { get; init; }

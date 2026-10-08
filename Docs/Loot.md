@@ -11,12 +11,24 @@
 ## 생성과 Loot (D2, D5)
 
 - **경기 시작**(`StartMatch`)에 Container마다 생성 여부(`loot.json` `spawnChance`: Chest 0.7, Ammo Box 0.8)와 Loot(Chest·AmmoBox 표)를 미리 굴려 서버에 둔다(Container마다 4칸 고정 배열). 열기 전에는 아무것도 보내지 않는다(생성 마스크만).
-- **시드 흐름이 바닥 Loot와 따로다.** 바닥 Loot는 그대로 `LootSeed + 판 번호`의 `Random`, Container는 그 값에 상수를 섞은 시드, Supply Drop은 또 다른 상수다. 그래서 Container를 열지 않으면 바닥 Loot가 Phase 15와 바이트 단위로 같다(`FloorLootRegressionTests`: Phase 15 코드에서 잡은 해시), Container를 열어도 바닥 아이템은 바뀌지 않는다.
+- **시드 흐름이 바닥 Loot와 따로다.** 바닥 Loot는 그대로 `LootSeed + 판 번호`의 `Random`, Container는 그 값에 상수를 섞은 시드, Supply Drop은 또 다른 상수다. 그래서 Container를 열지 않으면 바닥 Loot는 바닥 표만으로 정해지고(`FloorLootRegressionTests`가 해시로 고정한다), Container를 열어도 바닥 아이템은 바뀌지 않는다. Phase 17 D13: 바닥 표에 탄 종류 목록(4종)과 수류탄이 들어가 바닥 결과가 **의도적으로** 바뀌었고, 해시는 Phase 17 코드에서 다시 잡았다(이유는 테스트 주석).
 - **개발 모드**는 서버 시작 때 같은 방식(판 번호 1)으로 정하고 다시 채우지 않는다. Supply Drop은 없다.
 - **표 규칙**(`loot.json`, 수치는 JSON만 바꾼다):
   - Chest: 3개, 무기 1개 보장 + 탄약·회복·실드·자원(나무·돌·금속 중 하나, 30) 중 가중치로 2개.
   - Ammo Box: 2개, 탄약 보장 + 자원 10.
-  - Supply Drop: 4개, 무기 1개 보장(등급 Epic·Legendary만, 표별 `rarityWeights`) + 실드·회복·탄약 가중치로 3개.
+  - Supply Drop: 4개, 무기 1개 보장(등급 Epic·Legendary만, 표별 `rarityWeights`) + 실드·회복·탄약·(Phase 17) 수류탄 가중치로 3개.
+- **표별 무기·탄 목록(Phase 17 D13):** 무기 굴림은 표의 `weapons` 목록 안에서, 탄 굴림은 `ammo` 목록 안에서 균등이다(목록이 없으면 카탈로그 전체·모든 탄 종류). 운영 `loot.json`:
+
+  | 표 | 무기 | 탄 | 가중치 항목 |
+  |---|---|---|---|
+  | Floor | 1 Vesper AR, 2 Kestrel LR, 3 Wisp SMG, 4 Brute SG, 5 Sparrow P (로켓 6 제외) | Light, Medium, Heavy, Shells (Rockets 제외) | Weapon 35, Ammo 30, Medkit 13, ShieldCell 13, Grenade 9 |
+  | Building | 1–5 | 위와 같다 | Weapon 50, Ammo 17, Medkit 13, ShieldCell 13, Grenade 7 |
+  | Tower | 1–5 | 위와 같다 | Weapon 60, Ammo 10, Medkit 13, ShieldCell 12, Grenade 5 |
+  | Chest | 1–6 (로켓 포함) | 5종 모두 | (무기 보장) Ammo 30, Medkit 20, ShieldCell 20, Material 30, Grenade 15 |
+  | AmmoBox | 1–5 | Light, Medium, Heavy, Shells | (탄 보장) Material 1 |
+  | SupplyDrop | 1–6 (로켓 포함) | 5종 모두 | (무기 보장) ShieldCell 40, Medkit 30, Ammo 30, Grenade 20 |
+
+  로켓과 로켓 탄은 Chest와 Supply Drop에서만 나온다(구조물 대응 무기라 흔하면 건설 전투가 무너진다). 수류탄 한 개 = 소모품 아이템 1개(DefId 3).
 - 열면 Loot는 Container 둘레 1 m 원 위에 월드 아이템으로 놓인다(첫 아이템은 Container가 바라보는 쪽). **떨어진 아이템과 같은 규칙**이다(256칸이 가득 차면 오래된 것부터 밀려난다. Known Issue: 나중의 사망 드롭에 밀려날 수 있다).
 
 ## 상태와 복제 (D3)

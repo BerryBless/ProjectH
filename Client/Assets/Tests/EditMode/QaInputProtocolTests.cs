@@ -98,11 +98,12 @@ namespace ProjectH.Client.Tests
         {
             foreach (string name in QaInput.KeyNames)
                 Assert.AreEqual(name, QaInput.KeyNames[Parse("{\"key\":\"" + name + "\"}").Code]);
-            Assert.AreEqual(27, QaInput.KeyNames.Length);
+            Assert.AreEqual(28, QaInput.KeyNames.Length);
             Assert.AreEqual("m", QaInput.KeyNames[26]);   // Phase 15: appended last (the receiver's key table follows the order)
+            Assert.AreEqual("6", QaInput.KeyNames[27]);   // Phase 17: the grenade key, appended after "m"
             AssertRejected("{\"key\":\"W\"}");
             AssertRejected("{\"key\":\"leftAlt\"}");
-            AssertRejected("{\"key\":\"6\"}");
+            AssertRejected("{\"key\":\"7\"}");   // Phase 17: "6" is the grenade key now
             AssertRejected("{\"key\":\"\"}");
             AssertRejected("{\"key\":5}");
             Assert.AreEqual(-1, QaInput.KeyIndex(null));
@@ -287,6 +288,12 @@ namespace ProjectH.Client.Tests
             var sb = new StringBuilder();
             QaResponses.AppendStatus(sb, "qa1", true, true, "InGame", false, false, true, 100, 60, 42, "Weapon", "none", false, map);
             StringAssert.EndsWith("\"mapZoneRadiusWorld\":null,\"mapSupplyDrops\":2,\"lootPrompt\":\"supplyDrop\"}", sb.ToString());
+
+            map.Projectiles = 3;   // Phase 17: after lootPrompt, only when set
+            sb.Clear();
+            QaResponses.AppendStatus(sb, "qa1", true, true, "InGame", false, false, true, 100, 60, 42, "Weapon", "none", false, map);
+            StringAssert.EndsWith("\"lootPrompt\":\"supplyDrop\",\"projectiles\":3}", sb.ToString());
+            map.Projectiles = null;
 
             map.LootPrompt = null;
             sb.Clear();

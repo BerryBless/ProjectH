@@ -125,7 +125,8 @@ namespace ProjectH.Shared.Protocol
     }
 
     // Phase 14 D5: S->C, ReliableOrdered, to everyone: a player was knocked down (the kill feed's "A > B downed").
-    // AttackerId 0 = nobody (the zone, a fall, a QA command): Cause says which, like PlayerDied.
+    // AttackerId 0 = nobody (the zone, a fall, a QA command): Cause says which, like PlayerDied. Phase 17: Cause Explosion may
+    // come with an attacker (the projectile's owner).
     public struct PlayerDowned
     {
         public const int Size = 6;   // with the packet id
@@ -155,7 +156,7 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadUInt16(out d.VictimId);
             reader.TryReadUInt16(out d.AttackerId);
             reader.TryReadByte(out byte cause);
-            if (d.VictimId == 0 || cause > (byte)DeathCause.Fall) return false;
+            if (d.VictimId == 0 || cause > (byte)DeathCause.Explosion) return false;   // Phase 17: a knock-down by an explosion
             d.Cause = (DeathCause)cause;
             return true;
         }

@@ -21,9 +21,9 @@ public class ProtocolConstantsTests
     }
 
     [Fact]
-    public void ProtocolVersion_IsFifteen()
+    public void ProtocolVersion_IsSixteen()
     {
-        // Phase 16 added ContainerStates and SupplyDrops; v14 clients must be rejected.
-        Assert.Equal((ushort)15, ProtocolConstants.ProtocolVersion);
+        // Phase 17 added the projectile packets, the WeaponInfo fields, the 27-byte InventoryState; v15 clients must be rejected.
+        Assert.Equal((ushort)16, ProtocolConstants.ProtocolVersion);
     }
 }

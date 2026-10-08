@@ -113,6 +113,8 @@ namespace ProjectH.Client.Qa
     //                           only inside the window). 0 while hidden.
     //   lootPrompt            - what the "[E] 열기" hint names this frame: "none", "chest", "ammoBox" or "supplyDrop" (the
     //                           client's copy of the server rule; the server also checks the line of sight).
+    //   Phase 17 (written only when Projectiles has a value, after lootPrompt):
+    //   projectiles           - grenades and rockets drawn this frame (the client's projectile views, D7).
     public struct QaMapStatus
     {
         public bool MapOpen;
@@ -131,6 +133,7 @@ namespace ProjectH.Client.Qa
         public float ZoneRadiusWorld;
         public int SupplyDrops;
         public string LootPrompt;          // null = not written
+        public int? Projectiles;           // Phase 17: null = not written
     }
 
     public enum QaJsonResult : byte
@@ -307,6 +310,7 @@ namespace ProjectH.Client.Qa
         {
             "w", "a", "s", "d", "space", "leftShift", "leftCtrl", "c", "q", "f", "z", "x", "v", "b", "t", "r", "e", "g",
             "1", "2", "3", "4", "5", "escape", "f1", "h", "m",
+            "6",   // Phase 17 D9: throw a grenade (appended last: the receiver's key table and the QA tool follow this order)
         };
 
         // Every field a body may carry; any other field is a 400, so a typo ("holdms") is not silently a press.
@@ -956,7 +960,7 @@ namespace ProjectH.Client.Qa
         }
 
         // 기능: 지도 필드를 쓴다(앞에 쉼표를 붙인다). 정규 값은 소수 넷째 자리까지, 월드 값은 둘째 자리까지(없으면 null).
-        //   Phase 16: LootPrompt가 있으면 mapSupplyDrops와 lootPrompt를 끝에 더한다.
+        //   Phase 16: LootPrompt가 있으면 mapSupplyDrops와 lootPrompt를 끝에 더한다. Phase 17: 그 뒤 Projectiles가 있으면 projectiles를 더한다.
         // 입력: sb - 이어 쓸 StringBuilder, map - 지도 필드.
         // 출력: 반환값 없음.
         private static void AppendMap(StringBuilder sb, in QaMapStatus map)
@@ -994,6 +998,9 @@ namespace ProjectH.Client.Qa
             QaJsonWriter.AppendLong(sb, map.SupplyDrops);
             sb.Append(",\"lootPrompt\":");
             QaJsonWriter.AppendString(sb, map.LootPrompt);
+            if (!map.Projectiles.HasValue) return;
+            sb.Append(",\"projectiles\":");
+            QaJsonWriter.AppendLong(sb, map.Projectiles.Value);
         }
 
         // 기능: 월드 좌표 값을 소수 둘째 자리(1 cm)까지 쓰고, NaN이면 JSON null을 쓴다.

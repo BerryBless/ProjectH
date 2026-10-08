@@ -130,6 +130,13 @@ public class ItemCatalogTests
         Assert.Equal(0, cell.Heal);
         Assert.Equal(25, cell.Shield);
         Assert.Equal(6, cell.MaxStack);
+
+        // Phase 17 D9, D13: the grenade (thrown, no channel) and the new ammo types.
+        var grenade = items.Consumable(ConsumableType.Grenade);
+        Assert.Equal(0, grenade.UseTicks);
+        Assert.Equal(6, grenade.MaxStack);
+        Assert.Equal(10, items.Ammo(AmmoType.Shells).PickupAmount);
+        Assert.Equal(2, items.Ammo(AmmoType.Rockets).PickupAmount);
     }
 
     [Fact]
@@ -137,7 +144,7 @@ public class ItemCatalogTests
     {
         var data = GameData.LoadDirectory(AppContext.BaseDirectory, 30);
         Assert.Equal(30, data.SimHz);
-        Assert.Equal(3, data.Weapons.Count);
+        Assert.Equal(6, data.Weapons.Count);   // Phase 17 D1
         Assert.Equal("Legendary", data.Items.RarityName(4));
         Assert.True(data.Loot.TableIndex("Floor") >= 0);
         Assert.True(data.Loot.TableIndex("Tower") >= 0);

@@ -109,7 +109,7 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
         _app = null;
     }
 
-    // 기능: QA HTTP 경로를 모두 등록한다(Phase 16: GET /qa/loot).
+    // 기능: QA HTTP 경로를 모두 등록한다(Phase 16: GET /qa/loot, Phase 17: GET /qa/projectiles).
     // 입력: app - Kestrel 앱.
     // 출력: 반환값 없음.
     private void Map(WebApplication app)
@@ -145,6 +145,8 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
                 return Write(ctx, QaResult.Error(400, "x, z and radius go together."));
             return Run(ctx, t => QaResult.Data(QaQueries.Loot(t.Match, (float?)x, (float?)z, (float?)radius, (int)(max ?? QaQueries.MaxLootItems))));
         });
+        // Phase 17 D17: live projectiles and the recent explosions.
+        app.MapGet("/qa/projectiles", ctx => Run(ctx, t => QaResult.Data(QaQueries.Projectiles(t.Match))));
         app.MapGet("/qa/metrics", ctx =>
         {
             if (!Query(ctx, "windowSeconds", 1, QaOptions.MetricsWindowSeconds, out double? window, out string? error))

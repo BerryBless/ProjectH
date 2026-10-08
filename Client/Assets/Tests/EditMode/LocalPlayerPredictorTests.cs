@@ -165,6 +165,25 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual(InputButtons.None, queued);
         }
 
+        // Phase 17 D9: 6 (ThrowGrenade) is a press: only on the frame's last step, never held, and dropped while dead.
+        [Test]
+        public void ThrowGrenade_RidesOnTheLastStepOnly()
+        {
+            var predictor = NewPredictor();
+            InputButtons queued = InputButtons.ThrowGrenade;
+            predictor.Advance(2 * Step + 0.0005f, Vector2.zero, 0f, InputButtons.ThrowGrenade, ref queued);
+
+            Assert.AreEqual(InputButtons.None, predictor.InputAt(1).Buttons);
+            Assert.AreEqual(InputButtons.ThrowGrenade, predictor.InputAt(2).Buttons);
+            Assert.AreEqual(InputButtons.None, queued);
+
+            predictor.SetDead();
+            queued = InputButtons.ThrowGrenade;
+            predictor.Advance(Step + 0.0005f, Vector2.zero, 0f, InputButtons.None, ref queued);
+            Assert.AreEqual(InputButtons.None, predictor.InputAt(predictor.LastSeq).Buttons);
+            Assert.AreEqual(InputButtons.None, queued);
+        }
+
         // PredictedPosition (and each step's result SetAim aims from) must be the state the server's Step
         // produces after the newest input, not the interpolated RenderPosition that trails it mid-step.
         [Test]

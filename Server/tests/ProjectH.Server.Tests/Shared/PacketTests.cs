@@ -198,8 +198,9 @@ public class PacketTests
         Assert.Equal(InputButtons.Jump | InputButtons.Sprint | InputButtons.Fire | InputButtons.Reload |
                      InputButtons.Slot1 | InputButtons.Slot2 | InputButtons.Slot3 | InputButtons.Interact |
                      InputButtons.Drop | InputButtons.UseMedkit | InputButtons.UseShieldCell | InputButtons.Crouch |
-                     InputButtons.ToolHarvest | InputButtons.ToolBuild | InputButtons.InteractHeld, read.Get(0).Buttons);
-        Assert.Equal(0x7FFF, (int)read.Get(0).Buttons);   // Phase 13: ToolHarvest (4096) and ToolBuild (8192); Phase 14: InteractHeld (16384)
+                     InputButtons.ToolHarvest | InputButtons.ToolBuild | InputButtons.InteractHeld | InputButtons.ThrowGrenade, read.Get(0).Buttons);
+        // Phase 13: ToolHarvest (4096) and ToolBuild (8192); Phase 14: InteractHeld (16384); Phase 17: ThrowGrenade (32768), every bit
+        Assert.Equal(0xFFFF, (int)read.Get(0).Buttons);
     }
 
     [Fact]

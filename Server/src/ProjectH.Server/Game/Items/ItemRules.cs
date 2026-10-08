@@ -22,7 +22,9 @@ public static class ItemRules
     public const float MaterialPickupRange = 1.5f;
     public const int MaterialPickupEveryTicks = 3;
 
-    // How many more of this ammo type or consumable the inventory can hold (D3, D9). Weapons have no stack.
+    // 기능: 이 탄 종류나 소모품을 더 넣을 수 있는 양(D3, D9, Phase 17: 수류탄). 무기는 쌓이지 않는다.
+    // 입력: inventory - 인벤토리, items - 카탈로그, kind·defId - 아이템 종류와 정의 id.
+    // 출력: 남은 칸 수(0 이상).
     public static int Room(Inventory inventory, ItemCatalog items, ItemKind kind, byte defId)
     {
         switch (kind)
@@ -32,13 +34,27 @@ public static class ItemRules
                 return Math.Max(0, items.Ammo(type).Max - inventory.GetAmmo(type));
             case ItemKind.Consumable:
                 var consumable = (ConsumableType)defId;
-                int have = consumable == ConsumableType.Medkit ? inventory.Medkits : inventory.ShieldCells;
+                int have = ConsumableCount(inventory, consumable);
                 return Math.Max(0, items.Consumable(consumable).MaxStack - have);
             default:
                 return 0;   // weapons have no stack; Material's room is the building catalog's (Match.PickUpMaterials)
         }
     }
 
+    // 기능: 소지한 소모품 수를 돌려준다(Phase 17: 수류탄 포함).
+    // 입력: inventory - 인벤토리, type - 소모품 종류.
+    // 출력: 소지 수(모르는 종류는 0).
+    public static int ConsumableCount(Inventory inventory, ConsumableType type) => type switch
+    {
+        ConsumableType.Medkit => inventory.Medkits,
+        ConsumableType.ShieldCell => inventory.ShieldCells,
+        ConsumableType.Grenade => inventory.Grenades,
+        _ => 0,
+    };
+
+    // 기능: 아이템 양을 인벤토리에 더한다(탄, 재료, 소모품. Phase 17: 수류탄은 따로 센다).
+    // 입력: inventory - 인벤토리, kind·defId - 아이템 종류와 정의 id, amount - 더할 양(Room 이하).
+    // 출력: 반환값 없음.
     public static void AddStack(Inventory inventory, ItemKind kind, byte defId, int amount)
     {
         if (kind == ItemKind.Ammo)
@@ -59,6 +75,10 @@ public static class ItemRules
         else if ((ConsumableType)defId == ConsumableType.Medkit)
         {
             inventory.Medkits += amount;
+        }
+        else if ((ConsumableType)defId == ConsumableType.Grenade)
+        {
+            inventory.Grenades += amount;   // Phase 17 D9: never into the shield cells
         }
         else
         {

@@ -88,6 +88,12 @@ namespace ProjectH.Client.Game
         private ContainerViews _containerViews;
         private SupplyDropViews _supplyDropViews;
         private LootTargetKind _lootPrompt;
+        // Phase 17 D7: the projectiles the server told us about (cleared at a disconnect, a join or resume, and a match state
+        // change to Waiting, Starting or Finished), their views and explosions, and the catalog's projectile kinds (null until
+        // the weapon catalog of this connection arrives).
+        private readonly ProjectileTracks _projectiles = new ProjectileTracks();
+        private ProjectileViews _projectileViews;
+        private ProjectileInfo[] _projectileCatalog;
         // Phase 11 D9: entity id -> name from PlayerSpawned. At most one entry per player in the match: removed on
         // despawn, cleared with the match state (disconnect).
         private readonly Dictionary<ushort, string> _names = new Dictionary<ushort, string>();
@@ -239,7 +245,7 @@ namespace ProjectH.Client.Game
         // The cursor lock as the game sees it this frame (QA assumption included).
         public bool QaCursorLocked => CursorLocked;
         // 기능: /qa/status의 지도 필드를 모은다(Phase 15 D14, 미니맵·전체 지도가 그린 값; QaMapStatus 참고. Phase 16: 미니맵의 Supply Drop
-        //   아이콘 수와 지금 "[E] 열기" 안내 대상). 월드 값은 그린 uv를
+        //   아이콘 수와 지금 "[E] 열기" 안내 대상. Phase 17: 그린 투사체 수). 월드 값은 그린 uv를
         //   MapProjection.UvToWorld로 되돌린 것이고, uv가 -1(그리지 않음)이면 NaN(JSON null)이다.
         // 입력: 없음.
         // 출력: 지도 필드.
@@ -275,6 +281,7 @@ namespace ProjectH.Client.Game
             Waypoints = _map.QaWaypoints,
             SupplyDrops = _map.QaSupplyDrops,
             LootPrompt = Qa.QaHttp.LootPromptName((byte)_lootPrompt),
+            Projectiles = _projectileViews.Drawn,   // Phase 17
         };
 #endif
 
@@ -387,7 +394,8 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 월드·입력·카메라·HUD·건설 표시(Phase 13.5: 편집 오버레이)·분대 표시(Phase 14: 분대 HUD, 팀원 표지, 스테이션 기둥)·
-        //   지도(Phase 15: 미니맵, 전체 지도, 월드 표지)·Loot 표시(Phase 16: Container, Supply Drop)·네트워크를 만들고 네트워크 이벤트를 구독한다.
+        //   지도(Phase 15: 미니맵, 전체 지도, 월드 표지)·Loot 표시(Phase 16: Container, Supply Drop)·투사체 표시(Phase 17)·네트워크를 만들고
+        //   네트워크 이벤트(Phase 17: 투사체 패킷 3종 포함)를 구독한다.
         // 입력: 없음(Unity가 한 번 부른다).
         // 출력: 반환값 없음. 만든 것은 모두 OnDestroy가 해제한다. 배치와 편집은 순번 카운터 하나를 같이 쓴다.
         private void Awake()
@@ -432,6 +440,7 @@ namespace ProjectH.Client.Game
             _map = new MapSystem(_buildSource);
             _containerViews = new ContainerViews(_buildSource);
             _supplyDropViews = new SupplyDropViews(_buildSource);
+            _projectileViews = new ProjectileViews(_buildSource);
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             _qaRecorder = Qa.QaInputRecorder.FromLaunch();
@@ -480,10 +489,14 @@ namespace ProjectH.Client.Game
             _net.TeamMarkersReceived += OnTeamMarkers;
             _net.ContainerStatesReceived += OnContainerStates;
             _net.SupplyDropsReceived += OnSupplyDrops;
+            _net.ProjectileSpawnedReceived += OnProjectileSpawned;
+            _net.ProjectileStateReceived += OnProjectileState;
+            _net.ProjectileExplodedReceived += OnProjectileExploded;
         }
 
         // 기능: 한 프레임의 Client 처리: 네트워크 Poll, 재접속, 입력·커서, 원격 플레이어 렌더, 시점과 이동 예측, 로컬 뷰 배치.
         //   Phase 14 D7: E가 눌려 있으면 이번 프레임의 모든 입력에 InteractHeld를 켠다.
+        //   Phase 17 D9: 행동할 수 없는 모드(기절·탑승·낙하 등)이거나 수류탄이 없으면 6(ThrowGrenade) 누름을 버린다(서버도 막는다).
         // 입력: 없음(Unity가 매 프레임 부른다).
         // 출력: 반환값 없음. 예측 상태와 보낼 입력 Step 수(_pendingSteps)가 갱신된다. 커서 잠금은 CursorLocked(QA 가정 포함)로 본다.
         private void Update()
@@ -517,6 +530,8 @@ namespace ProjectH.Client.Game
             if (blocked) _input.QueuedButtons = InputButtons.None;
             if (!blocked) UpdateBuildKeys();
             InputButtons queued = _input.QueuedButtons;
+            // Phase 17 D9: a throw the server would refuse is not sent (dead presses are dropped by the predictor).
+            if (!LocalPlayerPredictor.ActionsAllowed(_predictor.Mode) || _inventory.Grenades == 0) queued &= ~InputButtons.ThrowGrenade;
             _pendingSteps += _predictor.Advance(Time.deltaTime, blocked ? Vector2.zero : _input.Move, _camera.Yaw, held, ref queued);
             _input.QueuedButtons = queued;
 
@@ -527,6 +542,8 @@ namespace ProjectH.Client.Game
         //   Phase 14: 분대 관전, 분대 HUD·표지·기절 막대·진행 막대, 소생·재투입 안내(범위 안이면 문·줍기 안내보다 먼저, D7).
         //   Phase 15: Ping 입력, 전체 지도 클릭 Waypoint, 미니맵·전체 지도·월드 표지.
         //   Phase 16: Container·Supply Drop 표시(등장 전에도), "[E] 열기" 안내(소생·재투입 다음, 문과는 더 가까운 쪽, 줍기보다 먼저, D4).
+        //   Phase 17: 투사체·폭발 표시(등장 전에도, 지금 서버 Tick 추정으로 외삽), 내 예광탄의 퍼짐·산탄(로켓은 예광탄 없음)과 반동 킥, 무기 줄의
+        //   탄 종류 이름.
         // 입력: 없음(Unity가 매 프레임 부른다).
         // 출력: 반환값 없음. 예측 입력이 전송되고 화면이 갱신된다.
         private void LateUpdate()
@@ -545,6 +562,16 @@ namespace ProjectH.Client.Game
             _containerViews.Apply(_loot);
             _supplyDropViews.Apply(_loot, _renderTick);
             _supplyDropViews.Tick(_renderTick);
+            // Phase 17 D7: at the estimated current server tick, not the render tick: events arrive about when they happen on
+            // the server, so a rocket reaches its blast point as the explosion comes (the render tick would put the events
+            // ahead of the drawing). Expire drops one the server cleared without a word (a match start, a round reset).
+            double projectileTick = EstimatedServerTick();
+            if (projectileTick > 0)
+            {
+                _projectiles.Expire(projectileTick, (uint)Math.Max(1, _simHz));
+                _projectileViews.Draw(_projectiles, projectileTick, _simHz);
+            }
+            _projectileViews.Tick(Time.time);
             if (_predictor == null) _buildStore.ClearChanged();   // nothing reads the changes before the spawn: do not let them pile up
             if (_predictor == null) return;
             float now = Time.time;
@@ -581,7 +608,7 @@ namespace ProjectH.Client.Game
                 // call it once per frame in Update and never recompute it here, or the two values diverge.
                 // Never stale while _pendingSteps > 0: _predictor exists only after join, join makes the
                 // clock ready, and ClearMatchState nulls both together.
-                _predictor.SetAim(_pendingSteps, aimPoint, _camera.Yaw, _camera.Pitch, (float)_renderTick);
+                _predictor.SetAim(_pendingSteps, aimPoint, _camera.Yaw, _camera.AimPitch, (float)_renderTick);   // Phase 17: recoil included
                 shots = StepWeapons(_pendingSteps);
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                 // QA-5 D29: the steps exactly as sent (aim filled in by SetAim above).
@@ -591,7 +618,14 @@ namespace ProjectH.Client.Game
                 _pendingSteps = 0;
             }
 
-            if (alive && shots > 0) _fireEffects.FireLocal(shots, aimPoint, _predictor.RenderPosition, _camera.Yaw, now);
+            if (alive && shots > 0 && _weapons.HasWeapon)
+            {
+                // Phase 17 D3: tracers in the weapon's cone (a rocket has none: its ProjectileSpawned draws it), and the kick.
+                WeaponInfo fired = _weapons.Current;
+                if (fired.Projectile == ProjectileKind.None)
+                    _fireEffects.FireLocal(shots, fired.Pellets, fired.SpreadDegrees, fired.Range, aimPoint, _predictor.RenderPosition, _camera.Yaw, now);
+                _camera.Kick(fired.RecoilDegrees * shots);
+            }
             _fireEffects.Tick(now);
             UpdateEdit(alive, LocalPlayerPredictor.ActionsAllowed(_predictor.Mode), now, aimCollider);
             UpdateBuild(alive, LocalPlayerPredictor.ActionsAllowed(_predictor.Mode), now);
@@ -619,7 +653,8 @@ namespace ProjectH.Client.Game
             }
             _lootPrompt = LootState.KindOf(loot);
             _hud.SetHint(squadHint ?? (loot >= 0 ? LootHint(_lootPrompt) : Hint(alive, door)));
-            if (_weapons != null && _weapons.HasWeapon) _hud.SetWeapon(_weapons.Current.Name, _weapons.Ammo, _weapons.Reserve, _weapons.Reloading);
+            if (_weapons != null && _weapons.HasWeapon)
+                _hud.SetWeapon(_weapons.Current.Name, _weapons.Ammo, _weapons.Reserve, _weapons.Reloading, AmmoName(_weapons.Current.AmmoType));
             else _hud.ClearWeapon();
             _hud.Tick(_camera.Yaw, now);
 
@@ -972,7 +1007,7 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 슬롯, 회복템, 회복 막대, "[E]" 줍기 안내를 갱신한다(D15, 문자열은 바뀔 때만 InventoryHudText가 만든다).
-        //   Phase 14 D9: 재투입 카드는 "[E] 줍기: 주인 [재투입 카드]"로 안내한다.
+        //   Phase 14 D9: 재투입 카드는 "[E] 줍기: 주인 [재투입 카드]"로 안내한다. Phase 17 D9: 소모품 줄에 수류탄 수를 보인다.
         // 입력: alive - 살아 있음, prompt - 줍기 안내를 보일지(false면 안내만 숨기고 회복 막대는 남긴다, Phase 12), now - 현재 시각.
         // 출력: 반환값 없음.
         private void UpdateInventoryHud(bool alive, bool prompt, float now)
@@ -987,7 +1022,7 @@ namespace ProjectH.Client.Game
                 else
                     _inventoryHud.SetSlot(i, i == _weapons.Slot, null, null, 0, 0, 0);
             }
-            _inventoryHud.SetConsumables(_inventory.Medkits, _inventory.ShieldCells);
+            _inventoryHud.SetConsumables(_inventory.Medkits, _inventory.ShieldCells, _inventory.Grenades);
 
             bool channel = alive && _inventory.Using != ConsumableType.None && _useSeconds > 0f;
             _inventoryHud.SetUseProgress(channel ? 1f - Mathf.Clamp01((_useEndTime - now) / _useSeconds) : -1f);
@@ -1018,6 +1053,16 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 탄 종류의 이름을 아이템 카탈로그에서 찾는다(Phase 17: Shells·Rockets 포함, 무기 줄에 쓴다).
+        // 입력: type - 탄 종류.
+        // 출력: 카탈로그의 이름(입장 때 받은 문자열, 할당 없음), 카탈로그가 없거나 범위 밖이면 null.
+        private string AmmoName(AmmoType type)
+        {
+            int index = (int)type - 1;
+            if (_itemCatalog == null || index < 0 || index >= _itemCatalog.Ammo.Length) return null;
+            return _itemCatalog.Ammo[index].Name;
+        }
+
         private string WeaponName(byte weaponId)
         {
             for (int i = 0; i < _weaponCatalog.Length; i++)
@@ -1028,7 +1073,7 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 구독을 풀고 만든 것을 만든 역순으로 해제한다(편집 오버레이는 공유 Mesh보다 먼저, Phase 14 분대 표시, Phase 15 지도,
-        //   Phase 16 Loot 표시 포함).
+        //   Phase 16 Loot 표시, Phase 17 투사체 표시 포함).
         // 입력: 없음(Unity가 부른다, 종료 때도).
         // 출력: 반환값 없음.
         private void OnDestroy()
@@ -1074,6 +1119,9 @@ namespace ProjectH.Client.Game
             _net.TeamMarkersReceived -= OnTeamMarkers;
             _net.ContainerStatesReceived -= OnContainerStates;
             _net.SupplyDropsReceived -= OnSupplyDrops;
+            _net.ProjectileSpawnedReceived -= OnProjectileSpawned;
+            _net.ProjectileStateReceived -= OnProjectileState;
+            _net.ProjectileExplodedReceived -= OnProjectileExploded;
             _net.Dispose();
             ClearMatchState();
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -1081,6 +1129,7 @@ namespace ProjectH.Client.Game
             _qaRecorder = null;
 #endif
             _killFeed.Dispose();
+            _projectileViews.Dispose();
             _supplyDropViews.Dispose();
             _containerViews.Dispose();
             _map.Dispose();
@@ -1188,6 +1237,10 @@ namespace ProjectH.Client.Game
 
         // Runs the local weapon copy over this frame's new inputs, oldest first. Returns how many of them
         // the server is expected to fire.
+        // 기능: 이번 프레임의 새 입력으로 도구와 무기 복사본을 돌린다. Phase 17: 지금 경기 상태가 투사체를 만들 수 없으면(Starting·Finished·
+        //   Closing) 투사체 무기의 발사를 예측하지 않는다(탄·재장전·반동이 Snapshot 교정으로 깜빡이지 않게).
+        // 입력: steps - 이번 프레임에 만든 입력 수.
+        // 출력: 서버가 쏠 것으로 보는 발 수.
         private int StepWeapons(int steps)
         {
             int count = Math.Min(steps, LocalPlayerPredictor.HistorySize);
@@ -1203,6 +1256,7 @@ namespace ProjectH.Client.Game
             }
             uint newest = _predictor.LastSeq;
             int shots = 0;
+            bool launch = WeaponState.LaunchAllowed(_hasMatch, _match.State);
             for (int i = count - 1; i >= 0; i--)
             {
                 uint seq = newest - (uint)i;
@@ -1211,7 +1265,7 @@ namespace ProjectH.Client.Game
                 InputButtons buttons = _predictor.InputAt(seq).Buttons;
                 bool acts = _predictor.ActionsAllowedAt(seq);
                 ToolKind tool = _tools.Step(seq, buttons, acts);
-                if (_weapons.Step(seq, buttons, acts && tool == ToolKind.Weapon)) shots++;
+                if (_weapons.Step(seq, buttons, acts && tool == ToolKind.Weapon, launch)) shots++;
             }
             return shots;
         }
@@ -1250,6 +1304,7 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 참가 응답을 처리한다. 성공(또는 재개)이면 Entity·Tick 정보와 시계를 정하고 건설·편집·도구 상태를 처음으로 되돌린다.
+        //   Phase 17 D7: 투사체를 비운다(서버가 살아 있는 것을 ProjectileSpawned로 다시 보낸다).
         // 입력: response - 서버의 참가 응답.
         // 출력: 반환값 없음. 거절이면 자동 재접속을 멈춘다.
         private void OnJoined(JoinMatchResponse response)
@@ -1272,16 +1327,58 @@ namespace ProjectH.Client.Game
             _edit.Reset();
             _build.SimHz = response.SimHz;
             _tools.Reset();
+            ClearProjectiles();
             _interpolationDelaySeconds = InterpolationSnapshots / response.SnapshotHz;
             _clock = new ServerClock(response.SimHz);
             _clock.OnSnapshot(response.ServerTick, Time.unscaledTimeAsDouble);
             Debug.Log($"Joined as entity {response.MyEntityId} (SimHz {response.SimHz}, SnapshotHz {response.SnapshotHz})");
         }
 
-        private void OnCatalog(WeaponInfo[] weapons)
+        // 기능: 무기 카탈로그를 받는다(Phase 17 D2: 투사체 종류의 중력·반지름·수명 포함). 무기 상태를 새로 만든다.
+        // 입력: weapons - 무기 목록, projectiles - 투사체 종류 목록(Grenade·Rocket).
+        // 출력: 반환값 없음.
+        private void OnCatalog(WeaponInfo[] weapons, ProjectileInfo[] projectiles)
         {
             _weaponCatalog = weapons;
+            _projectileCatalog = projectiles;
             _weapons = new WeaponState(weapons);
+        }
+
+        // 기능: 투사체 생성(또는 입장·재개 때의 재전송)을 상태에 넣는다(Phase 17 D7). 종류의 중력·수명은 카탈로그에서 찾는다.
+        // 입력: spawned - 받은 생성 사건.
+        // 출력: 반환값 없음. 다음 LateUpdate가 그린다.
+        private void OnProjectileSpawned(ProjectileSpawned spawned)
+        {
+            int kind = WeaponCatalogPacket.Find(_projectileCatalog, _projectileCatalog != null ? _projectileCatalog.Length : 0, spawned.Kind);
+            // Without the catalog (never expected: it comes right after the join answer) a straight flight that the expiry ends.
+            float gravity = kind >= 0 ? _projectileCatalog[kind].Gravity : 0f;
+            uint lifetime = kind >= 0 ? _projectileCatalog[kind].LifetimeTicks : (uint)Math.Max(1, _simHz) * 10u;
+            _projectiles.Spawn(spawned, gravity, lifetime);
+        }
+
+        // 기능: 투사체 튕김·멈춤(Phase 17 D7)으로 외삽 기준을 고친다. 모르는 id는 무시한다.
+        // 입력: state - 받은 상태 사건.
+        // 출력: 반환값 없음.
+        private void OnProjectileState(ProjectileState state) => _projectiles.ApplyState(state);
+
+        // 기능: 투사체 폭발(Phase 17 D7, D8): 투사체를 지우고 그 자리에 종류의 반지름만큼 커지는 폭발 효과를 보인다(모르는 id여도 효과는 보인다).
+        // 입력: exploded - 받은 폭발 사건.
+        // 출력: 반환값 없음.
+        private void OnProjectileExploded(ProjectileExploded exploded)
+        {
+            _projectiles.Remove(exploded.Id);
+            int kind = WeaponCatalogPacket.Find(_projectileCatalog, _projectileCatalog != null ? _projectileCatalog.Length : 0, exploded.Kind);
+            float radius = kind >= 0 ? _projectileCatalog[kind].ExplosionRadius : 4f;
+            _projectileViews.Explode(exploded.Position.ToUnity(), radius, Time.time);
+        }
+
+        // 기능: 모든 투사체를 지우고 그 뷰와 폭발을 숨긴다(Phase 17 D7: 끊김, 입장·재개, 경기 상태가 Waiting·Starting·Finished로 바뀔 때).
+        // 입력: 없음.
+        // 출력: 반환값 없음.
+        private void ClearProjectiles()
+        {
+            _projectiles.Clear();
+            _projectileViews.HideAll();
         }
 
         private void OnItemCatalog(ItemCatalogData items)
@@ -1396,7 +1493,8 @@ namespace ProjectH.Client.Game
             _hud.ShowDamage(damage.FromDirection.ToUnity(), Time.time);
         }
 
-        // 기능: 사망(탈락) 사건을 처리한다: Kill Feed 줄, 내 사망이면 예측 정지·관전 시작(경기 중) 또는 부활 카운트다운(개발 모드).
+        // 기능: 사망(탈락) 사건을 처리한다: Kill Feed 줄(Phase 17: 폭발 표시), 내 사망이면 예측 정지·반동 해제·관전 시작(경기 중) 또는
+        //   부활 카운트다운(개발 모드).
         // 입력: died - 사망 사건.
         // 출력: 반환값 없음. 팀이 살아 있는 중의 Placement는 잠정 값이라 쓰지 않는다(최종 순위는 MatchResult, Phase 14 D6).
         private void OnPlayerDied(PlayerDied died)
@@ -1420,6 +1518,7 @@ namespace ProjectH.Client.Game
                 _killerName = killer;
             }
             _predictor.SetDead();
+            _camera.ResetRecoil();
             _input.ResetCrouch();
             _localView.SetAlive(false);
             // D4, D5: in a match death is permanent, so no respawn countdown: watch the killer instead. A newcomer
@@ -1434,7 +1533,8 @@ namespace ProjectH.Client.Game
             else _hud.ShowDeath(Time.time);
         }
 
-        // 기능: 부활(경기 시작·라운드 초기화 포함)을 처리한다. 남이면 순간이동만, 나면 예측·입력·도구·편집 모드·관전을 새 생명으로 되돌린다.
+        // 기능: 부활(경기 시작·라운드 초기화 포함)을 처리한다. 남이면 순간이동만, 나면 예측·입력·도구·편집 모드·관전·반동(Phase 17)을 새 생명으로
+        //   되돌린다.
         // 입력: respawned - 부활 이벤트.
         // 출력: 반환값 없음.
         private void OnPlayerRespawned(PlayerRespawned respawned)
@@ -1454,6 +1554,7 @@ namespace ProjectH.Client.Game
             _input.ResetCrouch();
             _tools.Reset();   // Phase 13: a new life starts with the weapons out
             _edit.Cancel();
+            _camera.ResetRecoil();
             _spectator.End();
             _died = false;
             _killedByZone = false;
@@ -1467,10 +1568,12 @@ namespace ProjectH.Client.Game
 
         // 기능: 경기 상태를 저장한다. 새 라운드 카운트다운(대기·시작)이면 결과·수송기 경로와 Phase 14 팀·채널, Phase 15 팀 Ping·Waypoint를 지운다.
         //   Phase 16: Container 열기 가능 조건(경기 중)을 맞춘다. Loot 상태 자체는 서버가 보내는 빈 패킷으로 비운다.
+        //   Phase 17 D6: 상태가 Waiting·Starting·Finished로 바뀔 때만 투사체를 비운다(서버가 말없이 지운다; 입장 뒤 첫 MatchState는 바뀜이 아니다).
         // 입력: state - 받은 MatchState.
         // 출력: 반환값 없음. 처음 받으면 경기 HUD를 보인다.
         private void OnMatchState(MatchState state)
         {
+            if (ProjectileTracks.ClearsOnMatchState(_hasMatch, _match.State, state.State)) ClearProjectiles();
             _match = state;
             _loot.SetMatch(true, state.State);
             if (!_hasMatch)
@@ -1701,7 +1804,8 @@ namespace ProjectH.Client.Game
         }
 
         // 기능: 경기 상태 전체를 비운다(끊김, 종료). 조각·편집 예측·편집 모드와 오버레이, Phase 14 팀·채널·스테이션·분대 표시,
-        //   Phase 15 팀 Ping·Waypoint·경로 선·지도 아이콘·월드 표지, Phase 16 Container·Supply Drop 상태와 표시도 비운다.
+        //   Phase 15 팀 Ping·Waypoint·경로 선·지도 아이콘·월드 표지, Phase 16 Container·Supply Drop 상태와 표시, Phase 17 투사체·폭발·투사체
+        //   카탈로그·카메라 반동도 비운다.
         // 입력: 없음.
         // 출력: 반환값 없음. 화면 Object는 숨기거나 풀로 돌아간다.
         private void ClearMatchState()
@@ -1779,6 +1883,9 @@ namespace ProjectH.Client.Game
             _containerViews.Apply(_loot);
             _supplyDropViews.HideAll();
             _lootPrompt = LootTargetKind.None;
+            _projectileCatalog = null;
+            ClearProjectiles();
+            _camera.ResetRecoil();
         }
     }
 }

@@ -1,0 +1,13 @@
+{
+  "name": "weapons",
+  "description": "Phase 17 weapons and throwables over the real protocol (headless, about 2 min): AR spread inside its cone and its damage before the falloff, one shotgun pull summed per target and weaker far away, the exact sniper, a grenade's throw, bounce and 3 s fuse, explosion falloff with a wall blocking the blast, a rocket breaking a wood wall, and each weapon's structure multiplier. The Unity screenshot visual_weapons (written by the lead) needs a player and belongs in unity.json.",
+  "scenarios": [
+    "Weapons/weapon_ar.json",
+    "Weapons/weapon_shotgun.json",
+    "Weapons/weapon_sniper.json",
+    "Weapons/grenade.json",
+    "Weapons/explosion_falloff.json",
+    "Weapons/rocket.json",
+    "Weapons/structure_damage.json"
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "name": "Grenade",
+  "description": "Phase 17 D9, D6, D7 (request §73): A (2 grenades) aims east and presses 6 (ThrowGrenade). The server throws one (18 m/s, 8 degrees above the aim), the count drops to 1, the grenade bounces off the plaza (ProjectileState heard by A) and explodes by its 3 s fuse: not 2 s after the throw, but within about 3.5 s.",
+  "tags": ["weapons", "projectile"],
+  "seed": 17004,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": -8, "z": 2.5, "yaw": 90 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": -8, "z": -20, "yaw": 0 } },
+    { "id": "a_grenades", "action": "giveGrenade", "actor": "playerA", "count": 2 },
+    { "id": "a_has_two", "action": "waitFor", "condition": "player.grenades", "actor": "playerA", "equals": 2, "timeoutMilliseconds": 3000 },
+    { "id": "explosions_before", "action": "save", "path": "projectiles.explosionsTotal", "saveAs": "e0" },
+    { "id": "a_aim", "action": "aim", "actor": "playerA", "at": { "x": 4, "z": 2.5 } },
+    { "id": "settle", "action": "wait", "milliseconds": 500 },
+
+    { "id": "a_throw", "phase": "act", "action": "press", "actor": "playerA", "button": "ThrowGrenade" },
+
+    { "id": "one_left", "phase": "assert", "action": "waitFor", "condition": "player.grenades", "actor": "playerA", "equals": 1, "timeoutMilliseconds": 2000 },
+    { "id": "launched", "action": "waitForEvent", "event": "ProjectileLaunched", "timeoutMilliseconds": 2000 },
+    { "id": "in_flight", "assert": "projectiles.projectiles.0.kind", "equals": "Grenade" },
+    { "id": "fuse_wait", "action": "wait", "milliseconds": 1500 },
+    { "id": "not_yet", "assert": "projectiles.explosionsTotal", "equals": "${e0}", "description": "the fuse is 3 s" },
+    { "id": "bounced", "assert": "actor.projectileStates", "actor": "playerA", "greaterThan": 0, "description": "ProjectileState for a bounce or the rest" },
+    { "id": "exploded", "action": "waitFor", "condition": "projectiles.explosionsTotal", "greaterThan": "${e0}", "timeoutMilliseconds": 2500 },
+    { "id": "explosion_event", "action": "waitForEvent", "event": "Explosion", "where": { "kind": "Grenade" }, "timeoutMilliseconds": 2000 },
+    { "id": "a_heard", "action": "waitFor", "condition": "actor.projectilesExploded", "actor": "playerA", "greaterThan": 0, "timeoutMilliseconds": 2000 },
+    { "id": "gone", "assert": "projectiles.projectiles.0", "notExists": true }
+  ]
+}

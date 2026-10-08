@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "name": "Weapon AR",
+  "description": "Phase 17 D3, D2 (request §68-§70): B fires five Vesper AR rounds at A 20 m away (QA_Combat_20m pair). The server spreads each round inside a 1 degree cone (0.35 m at 20 m), so every round still hits A's chest, and 20 m is inside the 50 m before the falloff starts: each hit takes exactly 20 (A's 100 shield goes to 0, health stays 100).",
+  "tags": ["weapons", "combat"],
+  "seed": 17001,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": "QA_Combat_20m_A" },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": "QA_Combat_20m_B" },
+    { "id": "a_health", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "a_shield", "action": "setShield", "actor": "playerA", "value": 100 },
+    { "id": "b_rifle", "action": "giveWeapon", "actor": "playerB", "weapon": "Vesper AR", "rarity": 0, "select": true },
+    { "id": "b_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerB", "equals": "Vesper AR", "timeoutMilliseconds": 3000 },
+    { "id": "settle", "action": "wait", "milliseconds": 500 },
+
+    { "id": "b_fire", "phase": "act", "action": "fire", "actor": "playerB", "target": "playerA", "count": 5, "saveAs": "shots" },
+
+    { "id": "five_hits", "phase": "assert", "action": "waitFor", "condition": "actor.hitsLanded", "actor": "playerB", "equals": 5, "timeoutMilliseconds": 3000, "description": "every spread round hit (the cone is 0.35 m wide at 20 m)" },
+    { "id": "shield_gone", "action": "waitFor", "condition": "player.shield", "actor": "playerA", "equals": 0, "timeoutMilliseconds": 3000 },
+    { "id": "health_kept", "assert": "player.health", "actor": "playerA", "equals": 100, "description": "5 x 20 = 100: no falloff before 50 m" },
+    { "id": "damage_20", "action": "waitForEvent", "event": "PlayerDamaged", "actor": "playerA", "where": { "amount": 20 }, "timeoutMilliseconds": 3000 }
+  ]
+}

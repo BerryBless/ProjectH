@@ -130,7 +130,9 @@ public sealed class ItemCatalog
         return true;
     }
 
-    // Enum names only: "1" or "None" are not ammo types.
+    // 기능: 탄 종류 이름을 AmmoType으로 바꾼다(enum 이름만: "1"이나 "None"은 탄 종류가 아니다. Phase 17: Shells, Rockets).
+    // 입력: text - JSON의 이름.
+    // 출력: 아는 이름이면 true와 종류.
     public static bool TryParseAmmoType(string? text, out AmmoType type)
     {
         type = AmmoType.None;
@@ -139,6 +141,8 @@ public sealed class ItemCatalog
             case "Light": type = AmmoType.Light; return true;
             case "Medium": type = AmmoType.Medium; return true;
             case "Heavy": type = AmmoType.Heavy; return true;
+            case "Shells": type = AmmoType.Shells; return true;
+            case "Rockets": type = AmmoType.Rockets; return true;
             default: return false;
         }
     }
@@ -170,18 +174,21 @@ public sealed class ItemCatalog
         return null;
     }
 
+    // 기능: 탄약 목록을 읽는다(Phase 17: Light·Medium·Heavy·Shells·Rockets 각 1개).
+    // 입력: list - JSON 항목들, ammo - 결과(색인 = 종류 - 1).
+    // 출력: 맞으면 null, 틀리면 이유.
     private static string? ParseAmmo(List<AmmoJson?>? list, out AmmoDefinition[]? ammo)
     {
         ammo = null;
         if (list == null || list.Count != ItemConstants.AmmoTypeCount)
-            return $"\"ammo\" must hold exactly {ItemConstants.AmmoTypeCount} entries (Light, Medium, Heavy).";
+            return $"\"ammo\" must hold exactly {ItemConstants.AmmoTypeCount} entries (Light, Medium, Heavy, Shells, Rockets).";
 
         var result = new AmmoDefinition[ItemConstants.AmmoTypeCount];
         for (int i = 0; i < list.Count; i++)
         {
             AmmoJson? a = list[i];
             if (a == null) return $"ammo[{i}]: entry is null.";
-            if (!TryParseAmmoType(a.Type, out AmmoType type)) return $"ammo[{i}]: type must be Light, Medium or Heavy.";
+            if (!TryParseAmmoType(a.Type, out AmmoType type)) return $"ammo[{i}]: type must be Light, Medium, Heavy, Shells or Rockets.";
             if (result[(int)type - 1] != null) return $"ammo[{i}]: duplicate type {type}.";
             string? nameProblem = CheckName(a.Name);
             if (nameProblem != null) return $"ammo[{i}]: {nameProblem}";
@@ -197,11 +204,14 @@ public sealed class ItemCatalog
         return null;
     }
 
+    // 기능: 소모품 목록을 읽는다(Phase 17 D9: Grenade는 채널·회복 없이 maxStack만 갖는다).
+    // 입력: list - JSON 항목들, simHz - Tick 속도, consumables - 결과(색인 = 종류 - 1).
+    // 출력: 맞으면 null, 틀리면 이유.
     private static string? ParseConsumables(List<ConsumableJson?>? list, int simHz, out ConsumableDefinition[]? consumables)
     {
         consumables = null;
         if (list == null || list.Count != ItemConstants.ConsumableTypeCount)
-            return $"\"consumables\" must hold exactly {ItemConstants.ConsumableTypeCount} entries (Medkit, ShieldCell).";
+            return $"\"consumables\" must hold exactly {ItemConstants.ConsumableTypeCount} entries (Medkit, ShieldCell, Grenade).";
 
         var result = new ConsumableDefinition[ItemConstants.ConsumableTypeCount];
         for (int i = 0; i < list.Count; i++)
@@ -212,17 +222,27 @@ public sealed class ItemCatalog
             {
                 "Medkit" => ConsumableType.Medkit,
                 "ShieldCell" => ConsumableType.ShieldCell,
+                "Grenade" => ConsumableType.Grenade,
                 _ => ConsumableType.None,
             };
-            if (type == ConsumableType.None) return $"consumables[{i}]: id must be Medkit or ShieldCell.";
+            if (type == ConsumableType.None) return $"consumables[{i}]: id must be Medkit, ShieldCell or Grenade.";
             if (result[(int)type - 1] != null) return $"consumables[{i}]: duplicate id {c.Id}.";
             string? nameProblem = CheckName(c.Name);
             if (nameProblem != null) return $"consumables[{i}]: {nameProblem}";
-            if (!DataJson.TryTicks(c.UseSeconds, simHz, out ushort useTicks))
-                return $"consumables[{i}]: useSeconds must be positive and finite (at most 65535 ticks).";
-            if (c.Heal < 0 || c.Heal > ushort.MaxValue || c.Shield < 0 || c.Shield > ushort.MaxValue)
-                return $"consumables[{i}]: heal and shield must be 0-65535.";
-            if (c.Heal == 0 && c.Shield == 0) return $"consumables[{i}]: heal or shield must be above 0.";
+            ushort useTicks = 0;
+            if (type == ConsumableType.Grenade)
+            {
+                // Phase 17 D9: thrown (6), never used over a channel: no use time, nothing healed (the wire says 0).
+                if (c.UseSeconds != 0 || c.Heal != 0 || c.Shield != 0) return $"consumables[{i}]: a Grenade has no useSeconds, heal or shield.";
+            }
+            else
+            {
+                if (!DataJson.TryTicks(c.UseSeconds, simHz, out useTicks))
+                    return $"consumables[{i}]: useSeconds must be positive and finite (at most 65535 ticks).";
+                if (c.Heal < 0 || c.Heal > ushort.MaxValue || c.Shield < 0 || c.Shield > ushort.MaxValue)
+                    return $"consumables[{i}]: heal and shield must be 0-65535.";
+                if (c.Heal == 0 && c.Shield == 0) return $"consumables[{i}]: heal or shield must be above 0.";
+            }
             if (c.MaxStack < 1 || c.MaxStack > byte.MaxValue) return $"consumables[{i}]: maxStack must be 1-255.";
             foreach (ConsumableDefinition? other in result)
             {

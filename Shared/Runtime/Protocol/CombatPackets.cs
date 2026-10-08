@@ -3,29 +3,66 @@ using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Shared.Protocol
 {
+    // Phase 17 D6: what a projectile is. Values are the wire format; 0 = none (a hitscan weapon).
+    public enum ProjectileKind : byte
+    {
+        None = 0,
+        Grenade = 1,
+        Rocket = 2,
+    }
+
     // One weapon of the server's catalog (D4). Tick values use the server's SimHz.
+    // Phase 17 D2: plus the values the client presents with: pellets per shot, the spread cone, the camera recoil and the
+    // projectile a projectile weapon fires (None = hitscan). The server decides every hit; the client only draws.
     public struct WeaponInfo
     {
         public byte WeaponId;
         public string Name;
-        public ushort Damage;
+        public ushort Damage;        // per pellet (Phase 17)
         public ushort FireIntervalTicks;
         public byte MagazineSize;
         public ushort ReloadTicks;
         public float Range;
         public bool Automatic;
-        public AmmoType AmmoType;   // Phase 4 (D3): Light, Medium or Heavy
+        public AmmoType AmmoType;   // Phase 4 (D3): Light, Medium or Heavy; Phase 17 D13: Shells, Rockets
+        public byte Pellets;                 // Phase 17 D4: 1..WeaponCatalogPacket.MaxPellets (8 for the shotgun)
+        public float SpreadDegrees;          // Phase 17 D3: the cone's half angle, 0..MaxSpreadDegrees
+        public float RecoilDegrees;          // Phase 17 D3: the client's camera kick per shot, 0..MaxRecoilDegrees
+        public ProjectileKind Projectile;    // Phase 17 D6: None = hitscan
+    }
+
+    // Phase 17 D2, D7: what the client needs of a projectile kind to extrapolate and draw it between the projectile events:
+    // the launch speed (m/s), the gravity (m/s^2, pulling down; 0 = straight flight), the explosion radius (m) and the most
+    // ticks it lives before it explodes (the fuse or the lifetime; a client may drop one it has not heard of by then).
+    public struct ProjectileInfo
+    {
+        public const int Size = 15;   // kind 1 + speed 4 + gravity 4 + radius 4 + lifetime 2
+
+        public ProjectileKind Kind;
+        public float Speed;
+        public float Gravity;
+        public float ExplosionRadius;
+        public ushort LifetimeTicks;
     }
 
     // S->C, ReliableOrdered, once right after a successful Join. Lists every weapon that can exist as an
     // item; which weapon sits in which inventory slot comes with InventoryState (Phase 4).
+    // Phase 17 D2: after the weapons, the projectile kinds. Layout: [Count 1] Count x WeaponInfo [ProjectileCount 1]
+    // ProjectileCount x ProjectileInfo. Every projectile a weapon fires is in the list.
     public static class WeaponCatalogPacket
     {
         public const int MaxWeapons = 8;
         public const int MaxNameBytes = 16;
+        // Phase 17: the limits the server validates weapons.json with and the client accepts.
+        public const int MaxPellets = 16;
+        public const float MaxSpreadDegrees = 30f;
+        public const float MaxRecoilDegrees = 30f;
+        public const int MaxProjectiles = 2;   // one per ProjectileKind
 
-        // weapons: 1-MaxWeapons entries (the server validates its catalog at startup).
-        public static void Write(ref PacketWriter writer, WeaponInfo[] weapons)
+        // 기능: WeaponCatalog 패킷을 쓴다(Phase 17: 산탄·퍼짐·반동·투사체 종류와 투사체 목록 포함).
+        // 입력: writer - 대상, weapons - 1..MaxWeapons개(서버가 시작 때 검증), projectiles - 0..MaxProjectiles개(종류마다 하나, null = 없음).
+        // 출력: 반환값 없음. writer에 패킷이 쓰인다.
+        public static void Write(ref PacketWriter writer, WeaponInfo[] weapons, ProjectileInfo[] projectiles)
         {
             writer.WriteByte((byte)PacketId.WeaponCatalog);
             writer.WriteByte((byte)weapons.Length);
@@ -41,13 +78,37 @@ namespace ProjectH.Shared.Protocol
                 writer.WriteSingle(w.Range);
                 writer.WriteByte(w.Automatic ? (byte)1 : (byte)0);
                 writer.WriteByte((byte)w.AmmoType);
+                writer.WriteByte(w.Pellets);
+                writer.WriteSingle(w.SpreadDegrees);
+                writer.WriteSingle(w.RecoilDegrees);
+                writer.WriteByte((byte)w.Projectile);
+            }
+            int projectileCount = projectiles == null ? 0 : projectiles.Length;
+            writer.WriteByte((byte)projectileCount);
+            for (int i = 0; i < projectileCount; i++)
+            {
+                ProjectileInfo p = projectiles[i];
+                writer.WriteByte((byte)p.Kind);
+                writer.WriteSingle(p.Speed);
+                writer.WriteSingle(p.Gravity);
+                writer.WriteSingle(p.ExplosionRadius);
+                writer.WriteUInt16(p.LifetimeTicks);
             }
         }
 
-        // Allocates the array and the names: read once per join, never on the per-tick path.
-        public static bool TryRead(ref PacketReader reader, out WeaponInfo[] weapons)
+        // 기능: WeaponCatalog 본문을 읽는다(투사체 목록은 검증만 하고 버린다).
+        // 입력: reader - 본문(PacketId 뒤).
+        // 출력: 성공하면 true와 무기 배열, 아니면 false. 할당한다(입장 때 한 번).
+        public static bool TryRead(ref PacketReader reader, out WeaponInfo[] weapons) => TryRead(ref reader, out weapons, out _);
+
+        // 기능: WeaponCatalog 본문을 읽는다(Phase 17: 투사체 목록 포함). 서버가 보내지 않는 값은 거절한다.
+        // 입력: reader - 본문(PacketId 뒤).
+        // 출력: 성공하면 true와 무기·투사체 배열. 범위 밖 값, 같은 투사체 종류 둘, 목록에 없는 투사체를 쏘는 무기가 있으면 false.
+        //   할당한다(입장 때 한 번, Tick 경로가 아니다).
+        public static bool TryRead(ref PacketReader reader, out WeaponInfo[] weapons, out ProjectileInfo[] projectiles)
         {
             weapons = null;
+            projectiles = null;
             if (!reader.TryReadByte(out byte count) || count == 0 || count > MaxWeapons) return false;
 
             var result = new WeaponInfo[count];
@@ -65,11 +126,52 @@ namespace ProjectH.Shared.Protocol
                 w.Automatic = automatic == 1;
                 if (!reader.TryReadByte(out byte ammoType) || ammoType == 0 || ammoType > ItemConstants.AmmoTypeCount) return false;
                 w.AmmoType = (AmmoType)ammoType;
+                if (!reader.TryReadByte(out w.Pellets) || w.Pellets == 0 || w.Pellets > MaxPellets) return false;
+                if (!reader.TryReadSingle(out w.SpreadDegrees) || !InRange(w.SpreadDegrees, MaxSpreadDegrees)) return false;
+                if (!reader.TryReadSingle(out w.RecoilDegrees) || !InRange(w.RecoilDegrees, MaxRecoilDegrees)) return false;
+                if (!reader.TryReadByte(out byte projectile) || projectile > (byte)ProjectileKind.Rocket) return false;
+                w.Projectile = (ProjectileKind)projectile;
                 result[i] = w;
             }
+
+            if (!reader.TryReadByte(out byte projectileCount) || projectileCount > MaxProjectiles) return false;
+            var kinds = new ProjectileInfo[projectileCount];
+            for (int i = 0; i < projectileCount; i++)
+            {
+                var p = new ProjectileInfo();
+                if (!reader.TryReadByte(out byte kind) || kind == 0 || kind > (byte)ProjectileKind.Rocket) return false;
+                p.Kind = (ProjectileKind)kind;
+                if (Find(kinds, i, p.Kind) >= 0) return false;
+                if (!reader.TryReadSingle(out p.Speed) || !Finite.Check(p.Speed) || p.Speed <= 0f) return false;
+                if (!reader.TryReadSingle(out p.Gravity) || !Finite.Check(p.Gravity) || p.Gravity < 0f) return false;
+                if (!reader.TryReadSingle(out p.ExplosionRadius) || !Finite.Check(p.ExplosionRadius) || p.ExplosionRadius <= 0f) return false;
+                if (!reader.TryReadUInt16(out p.LifetimeTicks) || p.LifetimeTicks == 0) return false;
+                kinds[i] = p;
+            }
+            for (int i = 0; i < count; i++)
+            {
+                if (result[i].Projectile != ProjectileKind.None && Find(kinds, kinds.Length, result[i].Projectile) < 0) return false;
+            }
             weapons = result;
+            projectiles = kinds;
             return true;
         }
+
+        // 기능: 투사체 목록의 앞 count개에서 종류를 찾는다(Client가 무기의 투사체 정보를 찾을 때도 쓴다).
+        // 입력: projectiles - 목록(null 가능), count - 볼 개수, kind - 찾을 종류.
+        // 출력: 위치, 없으면 -1.
+        public static int Find(ProjectileInfo[] projectiles, int count, ProjectileKind kind)
+        {
+            if (projectiles == null) return -1;
+            if (count > projectiles.Length) count = projectiles.Length;
+            for (int i = 0; i < count; i++)
+            {
+                if (projectiles[i].Kind == kind) return i;
+            }
+            return -1;
+        }
+
+        private static bool InRange(float value, float max) => Finite.Check(value) && value >= 0f && value <= max;
     }
 
     // S->C, Unreliable, to everyone: one processed shot, from the shooter's eye to where it stopped (D11).
@@ -160,11 +262,15 @@ namespace ProjectH.Shared.Protocol
     {
         Zone = 0,
         Fall = 1,
+        // Phase 17 D8: a grenade or a rocket. Unlike Zone and Fall it also comes with a killer (the projectile's owner while
+        // it is still in the match, else 0).
+        Explosion = 2,
     }
 
     // S->C, ReliableOrdered, to everyone. Same channel as PlayerRespawned, so a client always sees a
     // death before the matching respawn.
-    // KillerId 0 = no killer (the zone, Phase 5 D8; a fall, Phase 12 D10: Cause says which). Placement (Phase 5 D11) =
+    // KillerId 0 = no killer (the zone, Phase 5 D8; a fall, Phase 12 D10: Cause says which). Phase 17 D8: Cause Explosion with
+    // the projectile's owner as KillerId (0 when it left the match); a shot keeps Cause Zone (0) with its KillerId. Placement (Phase 5 D11) =
     // living participants left + 1 during a match, 0 outside one (dev respawn mode, or a newcomer told it is spectating).
     public struct PlayerDied
     {
@@ -182,6 +288,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte((byte)d.Cause);
         }
 
+        // 기능: PlayerDied 본문을 읽는다.
+        // 입력: reader - 본문(PacketId 뒤).
+        // 출력: 성공하면 true와 사건. 짧거나 원인이 Explosion(2)보다 크면 false.
         public static bool TryRead(ref PacketReader reader, out PlayerDied d)
         {
             d = default;
@@ -190,7 +299,7 @@ namespace ProjectH.Shared.Protocol
             reader.TryReadUInt16(out d.KillerId);
             reader.TryReadByte(out d.Placement);
             reader.TryReadByte(out byte cause);
-            if (cause > (byte)DeathCause.Fall) return false;
+            if (cause > (byte)DeathCause.Explosion) return false;   // Phase 17: the highest cause
             d.Cause = (DeathCause)cause;
             return true;
         }

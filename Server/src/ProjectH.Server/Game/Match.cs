@@ -308,7 +308,7 @@ public sealed partial class Match
     }
 
     // 기능: 연결을 경기에 넣는다(유예 중인 같은 DevPlayerId면 Resume). 새 플레이어는 JoinOrder를 받고(Phase 14 D1, 개발 모드면 팀도), 입장 패킷 묶음
-    //   (Phase 16: 채집 상태 뒤에 ContainerStates·SupplyDrops)과 끝에 분대 상태, (Phase 15, 팀이 있으면) 팀 지도 표시를 받는다.
+    //   (Phase 16: 채집 상태 뒤에 ContainerStates·SupplyDrops, Phase 17: 살아 있는 투사체)과 끝에 분대 상태, (Phase 15, 팀이 있으면) 팀 지도 표시를 받는다.
     // 입력: peerId - 연결 id, devPlayerId - 검증된 플레이어 이름.
     // 출력: Ok, Resumed, AlreadyJoined 또는 MatchFull.
     public JoinResult TryJoin(int peerId, string devPlayerId)
@@ -361,6 +361,7 @@ public sealed partial class Match
         SendHarvestStates(peerId);   // Phase 13 D6
         SendContainerStates(peerId); // Phase 16 D3
         SendSupplyDrops(peerId);     // Phase 16 D7
+        SendProjectilesTo(peerId);   // Phase 17 D7: what is still flying
         SendResources(player);       // Phase 13 D15
         SendBuildCatalog(peerId);    // Phase 13 D4, final review A3: first on the building channel
         StartBuildSync(player);      // Phase 13 D14
@@ -466,7 +467,8 @@ public sealed partial class Match
     // 출력: 반환값 없음.
     public void EnqueueEdit(int peerId, in BuildEditRequest request) => EnqueueBuild(peerId, new BuildQueueItem(request));
 
-    // 기능: 경기 한 Tick: 유예 만료, 경기 흐름, 자기장, (Phase 16) Supply Drop 일정·착지, 플레이어 Tick, 경기 끝 판정, 그리고 Tick 끝 전송
+    // 기능: 경기 한 Tick: 유예 만료, 경기 흐름, 자기장, (Phase 16) Supply Drop 일정·착지, 건설 요청, (Phase 17) 투사체 이동·폭발, 플레이어 Tick,
+    //   붕괴, 경기 끝 판정, 그리고 Tick 끝 전송
     //   (인벤토리·경기·문·채집·Container·Supply Drop·자원·팀·스테이션,
     //   Phase 15 지도 표시 만료와 TeamMarkers, 건설 사건, Snapshot).
     // 입력: 없음.
@@ -514,6 +516,10 @@ public sealed partial class Match
         // Phase 13 D8: build requests before the moves and shots, so a wall placed this tick already blocks them (the
         // fastest defence, request §117). Placement uses each player's last input (its aim) and position.
         ProcessBuildRequests(now);
+        // Phase 17 D6: projectiles move and explode before the players act (a wall placed this tick already stops them; one
+        // launched in this tick's actions first moves next tick, matching its StartTick). Explosions' destroys collapse with
+        // the rest of the tick's in CollapseUnsupported.
+        UpdateProjectiles(now);
 
         // Server review M7: each player's part is isolated. A player whose part throws (a bad state that would throw every
         // tick) is taken out after the loop, alone; the others move and the tick goes on. A failure outside this loop
@@ -1100,7 +1106,8 @@ public sealed partial class Match
     }
 
     // 기능: 살아 있는 플레이어의 실제 입력 하나를 spec §2 순서로 처리한다. Phase 14 D7: 소생·재투입 대상이 범위 안이면 E 누름은 문·줍기를 하지 않는다.
-    //   Phase 16 D4: 그 밖의 E는 Interact(문과 Container 중 가까운 쪽, 없으면 줍기)다.
+    //   Phase 16 D4: 그 밖의 E는 Interact(문과 Container 중 가까운 쪽, 없으면 줍기)다. Phase 17: 투사체 무기는 빈 칸·경기 상태를 탄 소비 전에
+    //   확인하고(D6), 발사 뒤 6 누름이 수류탄을 던진다(D9, 회복 시작 전).
     // 입력: player - 행위자, input - 받은 입력, previous - 직전 실제 입력의 버튼, now - 마지막 Tick.
     // 출력: 반환값 없음.
     // One real input of a living player, in the spec §2 order: cancel use -> tool -> slot -> drop -> pickup ->
@@ -1126,7 +1133,9 @@ public sealed partial class Match
         switch (player.Inventory.Tool)
         {
             case ToolKind.Weapon:
-                if (WeaponRules.Apply(player, buttons, aimValid, now))
+                // Phase 17 D6: a projectile weapon without a free projectile slot (or while ProjectilesAllowed is false: the start
+                // countdown or the result screen) does not fire and spends nothing, the same as an invalid aim.
+                if (WeaponRules.Apply(player, buttons, aimValid && CanLaunch(player.Inventory.Current.Weapon), now))
                     FireShot(player, direction, input.ViewTick);
                 break;
             case ToolKind.Harvest:
@@ -1138,13 +1147,17 @@ public sealed partial class Match
                 break;
         }
 
+        if ((buttons & InputButtons.ThrowGrenade) != 0) TryThrowGrenade(player, aimValid, direction, now);   // Phase 17 D9
+
         ConsumableRules.TryStart(player, _items, buttons, now);
     }
 
     // Final review A5: the keys that act once per press. Fire (held: automatic fire, harvest swings), the heals, Jump,
     // Sprint and Crouch keep their held meaning.
+    // Phase 17 D9: ThrowGrenade too (held, it throws once; the client sends each press in one input).
     internal const InputButtons EdgeButtons = InputButtons.Interact | InputButtons.Drop | InputButtons.ToolHarvest | InputButtons.ToolBuild |
-                                              InputButtons.Slot1 | InputButtons.Slot2 | InputButtons.Slot3 | InputButtons.Reload;
+                                              InputButtons.Slot1 | InputButtons.Slot2 | InputButtons.Slot3 | InputButtons.Reload |
+                                              InputButtons.ThrowGrenade;
 
     // The buttons of this input with the press keys that were already down in the previous one taken away.
     internal static InputButtons PressedOnly(InputButtons buttons, InputButtons previous) => buttons & ~(previous & EdgeButtons);
@@ -1193,9 +1206,12 @@ public sealed partial class Match
         _send(player.PeerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
-    // 기능: 한 발을 쏜다: 맵·조각·플레이어(되감은 위치) 중 가장 가까운 것에 맞는다. Phase 14 D3: 같은 팀은 건너뛴다(관통).
+    // 기능: 한 번 쏜다. 투사체 무기는 투사체를 띄운다(Phase 17 D10, ShotFired 없음). Hitscan은 산탄마다(Phase 17 D4) 서버 결정적 퍼짐(D3)으로
+    //   방향을 흔들어 맵·조각·플레이어(되감은 위치) 중 가장 가까운 것에 맞히고, 거리 감쇠(D2)를 곱한 원 피해를 대상마다 합친 뒤 등급 배율을
+    //   한 번 곱해 대상마다 ApplyHit 한 번(HitConfirmed 하나), 조각도 합쳐 한 번(× 무기 structureMultiplier × 재료 배율, D11).
+    //   ShotFired는 발사 하나에 하나: 한 발 무기는 퍼진 광선의 실제 끝점, 산탄총은 가운데 조준 광선의 끝점. Phase 14 D3: 같은 팀은 관통.
     // 입력: shooter - 사수, direction - 조준 방향(단위 벡터), viewTick - 사수가 본 Tick.
-    // 출력: 반환값 없음. ShotFired가 방송되고 맞은 대상이 피해를 받는다.
+    // 출력: 반환값 없음. ShotFired(또는 ProjectileSpawned)가 방송되고 맞은 대상이 피해를 받는다.
     // D7: from the eye along the aim, the nearest map surface (box, terrain or floor plane) or living player stops the shot. The
     // client only sent a direction; which player is hit is decided here (D12, request §17).
     // D6: other players are tested where the shooter saw them, at ViewTick (clamped to the last
@@ -1204,17 +1220,109 @@ public sealed partial class Match
     {
         ref HeldWeapon held = ref shooter.Inventory.Current;
         WeaponDefinition weapon = held.Weapon!;   // Apply only fires a filled slot
-        ushort damage = CombatRules.ScaledDamage(weapon.Damage, _items.DamageMultiplier(held.Rarity));
+        float rarity = _items.DamageMultiplier(held.Rarity);
         // Phase 12 D13: crouched or sliding the eye is lower (the client aims from the same height, AimSolver).
         Vector3 origin = shooter.State.Position + new Vector3(0f, CombatRules.EyeHeightOf(shooter.State.Mode), 0f);
-        float nearest = HitScan.TraceWorld(origin, direction, weapon.Range, Blockers, GameMap.Terrain);   // a closed door or a tree stops it
+        if (weapon.IsProjectile)
+        {
+            LaunchProjectile(shooter, weapon, origin, direction, rarity);
+            return;
+        }
+        double rewindTick = CombatRules.ClampViewTick(viewTick, ServerTick, _maxRewindTicks);
+        uint tick = ServerTick + 1;
+        int pellets = weapon.Pellets;
+        _pelletTargetCount = 0;
+        _pelletPieceCount = 0;
+        Vector3 end = origin;
+        for (int i = 0; i < pellets; i++)
+        {
+            Vector3 ray = WeaponSpread.Spread(direction, weapon.SpreadDegrees, shooter.EntityId, tick, i);
+            float distance = TraceShot(shooter, origin, ray, weapon.Range, rewindTick, out PlayerEntity? target, out int pieceSlot);
+            if (pellets == 1) end = origin + ray * distance;
+            float raw = weapon.Damage * CombatRules.FalloffMultiplier(distance, weapon.FalloffStart, weapon.Range, weapon.FalloffMinRatio);
+            if (target != null) AddPelletHit(target, raw);
+            else if (pieceSlot >= 0) AddPelletPiece(pieceSlot, raw);
+        }
+        // D4: one tracer per trigger pull, along the unspread aim.
+        if (pellets > 1) end = origin + direction * TraceShot(shooter, origin, direction, weapon.Range, rewindTick, out _, out _);
+
+        var writer = new PacketWriter(_sendBuffer);
+        ShotFired.Write(ref writer, new ShotFired { ShooterId = shooter.EntityId, Start = origin, End = end });
+        Broadcast(writer.WrittenSpan, DeliveryMethod.Unreliable);
+
+        // Phase 5 D2: before (and after) the match a shot still stops at the player it hit (the tracer shows
+        // it), but it does no damage and the shooter gets no HitConfirmed.
+        if (_flow.DamageAllowed)
+        {
+            for (int i = 0; i < _pelletTargetCount; i++)
+            {
+                // An earlier hit of this shot may have wiped the target's team (a downed teammate is eliminated with it).
+                ushort damage = CombatRules.ScaledDamage(_pelletDamage[i], rarity);
+                if (!_pelletTargets[i]!.Alive || damage == 0) continue;   // 0: a falloffMinRatio of 0 at full range
+                ApplyHit(shooter, _pelletTargets[i]!, damage);
+            }
+            // Phase 13 D11, Phase 17 D11: the piece takes the (rarity-scaled) damage x the weapon's and its material's multipliers.
+            for (int i = 0; i < _pelletPieceCount; i++)
+            {
+                int slot = _pelletPieces[i];
+                if (_build.At(slot).Id == 0) continue;   // destroyed by an earlier hit of this shot (cannot happen today: one slot each)
+                DamagePiece(slot, CombatRules.ScaledDamage(_pelletPieceDamage[i], rarity) * weapon.StructureMultiplier *
+                                  _building.Material(_build.At(slot).Material).StructureDamageMultiplier);
+            }
+        }
+        Array.Clear(_pelletTargets, 0, _pelletTargetCount);   // no reference kept past the shot
+    }
+
+    // Phase 17 D4: one shot's hits, summed per target before the rarity is applied once. At most MaxPellets entries each.
+    private readonly PlayerEntity?[] _pelletTargets = new PlayerEntity?[WeaponCatalogPacket.MaxPellets];
+    private readonly float[] _pelletDamage = new float[WeaponCatalogPacket.MaxPellets];
+    private int _pelletTargetCount;
+    private readonly int[] _pelletPieces = new int[WeaponCatalogPacket.MaxPellets];
+    private readonly float[] _pelletPieceDamage = new float[WeaponCatalogPacket.MaxPellets];
+    private int _pelletPieceCount;
+
+    // 기능: 산탄 하나의 플레이어 명중을 대상별 합계에 더한다.
+    // 입력: target - 맞은 플레이어, raw - 감쇠를 곱한 원 피해.
+    // 출력: 반환값 없음.
+    private void AddPelletHit(PlayerEntity target, float raw)
+    {
+        for (int i = 0; i < _pelletTargetCount; i++)
+        {
+            if (_pelletTargets[i] != target) continue;
+            _pelletDamage[i] += raw;
+            return;
+        }
+        _pelletTargets[_pelletTargetCount] = target;
+        _pelletDamage[_pelletTargetCount++] = raw;
+    }
+
+    // 기능: 산탄 하나의 조각 명중을 조각별 합계에 더한다.
+    // 입력: slot - 맞은 조각 slot, raw - 감쇠를 곱한 원 피해.
+    // 출력: 반환값 없음.
+    private void AddPelletPiece(int slot, float raw)
+    {
+        for (int i = 0; i < _pelletPieceCount; i++)
+        {
+            if (_pelletPieces[i] != slot) continue;
+            _pelletPieceDamage[i] += raw;
+            return;
+        }
+        _pelletPieces[_pelletPieceCount] = slot;
+        _pelletPieceDamage[_pelletPieceCount++] = raw;
+    }
+
+    // 기능: 광선 하나의 첫 명중을 찾는다(맵 상자·닫힌 문·채집 대상·지형 → 조각(같은 거리면 조각) → 되감은 다른 팀 플레이어).
+    // 입력: shooter - 사수(건너뜀), origin·ray - 광선, range - 사거리, rewindTick - 대상을 되감을 Tick, target·pieceSlot - 결과.
+    // 출력: 멈춘 거리. 플레이어에 맞으면 target(pieceSlot -1), 조각에 맞으면 pieceSlot(target null), 아니면 둘 다 없음.
+    private float TraceShot(PlayerEntity shooter, Vector3 origin, Vector3 ray, float range, double rewindTick, out PlayerEntity? target, out int pieceSlot)
+    {
+        float nearest = HitScan.TraceWorld(origin, ray, range, Blockers, GameMap.Terrain);   // a closed door or a tree stops it
         // Phase 13 D11: a piece in front stops the shot too (no rewind: pieces as they are now, like doors). Final review B7:
         // a piece level with what the world trace met wins (a level 0 floor's top is the ground plane, y 0).
-        bool hitPiece = PieceTrace.Trace(origin, direction, nearest + PieceTieTolerance, _build, out _, out int pieceSlot, out float pieceDistance);
-        if (hitPiece) nearest = pieceDistance;
-        double rewindTick = CombatRules.ClampViewTick(viewTick, ServerTick, _maxRewindTicks);
+        if (!PieceTrace.Trace(origin, ray, nearest + PieceTieTolerance, _build, out _, out pieceSlot, out float pieceDistance)) pieceSlot = -1;
+        else nearest = pieceDistance;
 
-        PlayerEntity? target = null;
+        target = null;
         foreach (var other in _players)
         {
             // Phase 14 D3: friendly fire is off: a shot passes through teammates (it can hit an enemy behind one).
@@ -1223,24 +1331,15 @@ public sealed partial class Match
             // Phase 12 D13: the hit box has the height of the mode the target was in then; a transport rider is not hit.
             Vector3 feet = other.History.Sample(rewindTick, out MovementMode mode);
             if (mode == MovementMode.Transport) continue;
-            if (HitScan.TracePlayer(origin, direction, nearest, feet, MovementSimulation.CollisionHeight(mode), out float distance) &&
+            if (HitScan.TracePlayer(origin, ray, nearest, feet, MovementSimulation.CollisionHeight(mode), out float distance) &&
                 (target == null || distance < nearest))
             {
                 nearest = distance;
                 target = other;
             }
         }
-
-        var writer = new PacketWriter(_sendBuffer);
-        ShotFired.Write(ref writer, new ShotFired { ShooterId = shooter.EntityId, Start = origin, End = origin + direction * nearest });
-        Broadcast(writer.WrittenSpan, DeliveryMethod.Unreliable);
-
-        // Phase 5 D2: before (and after) the match a shot still stops at the player it hit (the tracer shows
-        // it), but it does no damage and the shooter gets no HitConfirmed.
-        if (target != null && _flow.DamageAllowed) ApplyHit(shooter, target, damage);
-        // Phase 13 D11: the piece takes the weapon's damage times its material's structure multiplier.
-        else if (target == null && hitPiece && _flow.DamageAllowed)
-            DamagePiece(pieceSlot, damage * _building.Material(_build.At(pieceSlot).Material).StructureDamageMultiplier);
+        if (target != null) pieceSlot = -1;
+        return nearest;
     }
 
     // Phase 13 D11: damage to a piece, standing or under construction (its health is computed from the tick, D10). At 0 it
@@ -1445,12 +1544,14 @@ public sealed partial class Match
     //   마지막 팀들이 같은 Tick에 전멸했으면 나중에 처리된 팀(배치 1)이 이긴다. 우승 팀이 여럿이면(QA 강제 종료) 플레이어 순서로 마지막
     //   팀이다. WinnerId = 우승 팀에서 경기에 남은 가장 작은 Entity id(모두 나갔으면 0). Solo는 지금과 같다. 진행 중인 소생·재투입은
     //   끊는다(결과 화면에서는 출혈·채널이 돌지 않는다). Phase 15: 모든 Ping·Waypoint를 지우고 Tick 끝에 각 팀에 빈 목록을 보낸다.
+    //   Phase 17: 남은 투사체를 폭발 없이 지운다.
     // 입력: now - 마지막 Tick.
     // 출력: 반환값 없음. 결과가 보내지고 기록이 Sink로 간다.
     private void FinishMatch(uint now)
     {
         _flow.Finish(now);
         CancelAllChannels();   // Phase 14 review: no revive or reboot completes on the result screen
+        ClearProjectiles();    // Phase 17 D6: gone without an explosion (clients clear theirs when MatchState changes)
         ClearMarkersAtFinish(); // Phase 15
         byte winnerTeam = 0;
         foreach (var player in _players)
@@ -1673,6 +1774,9 @@ public sealed partial class Match
         inventory.Changed = true;
     }
 
+    // 기능: 죽은(나간) 플레이어의 소지품을 몸 둘레에 모두 떨어뜨린다(Phase 17: 다섯 탄 종류와 수류탄 포함).
+    // 입력: player - 대상.
+    // 출력: 반환값 없음. 인벤토리가 비워진다(월드가 받지 못한 것은 남는다).
     // D12 (request §21): everything the player carried goes on a circle around the body, one item per
     // weapon, per ammo type and per consumable type, so they do not lie on one point. Then the inventory
     // is empty. Dropped items are not respawn points and can be evicted when the world is full (D13).
@@ -1688,6 +1792,7 @@ public sealed partial class Match
         for (int t = 1; t <= ItemConstants.AmmoTypeCount; t++) if (inventory.GetAmmo((AmmoType)t) > 0) count++;
         if (inventory.Medkits > 0) count++;
         if (inventory.ShieldCells > 0) count++;
+        if (inventory.Grenades > 0) count++;   // Phase 17 D9
         for (int m = 0; m < BuildMaterials.Count; m++) if (inventory.Resource((BuildMaterialType)m) > 0) count++;   // Phase 13 D15
 
         int n = 0;
@@ -1710,6 +1815,9 @@ public sealed partial class Match
         if (inventory.ShieldCells > 0 &&
             DropAround(player, n++, count, new LootRoll(ItemKind.Consumable, (byte)ConsumableType.ShieldCell, 0, (ushort)inventory.ShieldCells)))
             inventory.ShieldCells = 0;
+        if (inventory.Grenades > 0 &&
+            DropAround(player, n++, count, new LootRoll(ItemKind.Consumable, (byte)ConsumableType.Grenade, 0, (ushort)inventory.Grenades)))
+            inventory.Grenades = 0;
         // Phase 13 D15: the building resources too, one item per material (DefId = material + 1).
         for (int m = 0; m < BuildMaterials.Count; m++)
         {
@@ -1905,7 +2013,7 @@ public sealed partial class Match
     }
 
     // 기능: Starting -> Playing 시작 리셋(D3). Phase 14: 분대 상태를 지우고 참가자를 입장 순서로 팀에 묶는다(D1). Phase 15: 지도 표시를 지우고
-    //   새 팀마다 Tick 끝에 빈 TeamMarkers를 보낸다. Phase 16: Container를 따로 둔 시드로 굴리고 Supply Drop 목록을 비운다.
+    //   새 팀마다 Tick 끝에 빈 TeamMarkers를 보낸다. Phase 16: Container를 따로 둔 시드로 굴리고 Supply Drop 목록을 비운다. Phase 17: 투사체를 지운다.
     // 입력: now - 마지막 Tick.
     // 출력: 반환값 없음. 경기 세계가 새로 시작된다.
     // D3: Starting -> Playing, in this one tick: everyone to a drop point (Phase 6 D9), empty-handed with Health 100 and
@@ -1917,6 +2025,7 @@ public sealed partial class Match
     private void StartMatch(uint now)
     {
         ClearWorldItems();
+        ClearProjectiles();                  // Phase 17 D6: nothing of the lobby flies into the match
         ClearMarkers();                      // Phase 15: before the teams are made again
         ResetSquadState(keepTeams: false);   // Phase 14: no channel, knock-down or station cooldown survives into the match
         _hasRoute = _airDrop;
@@ -1962,7 +2071,7 @@ public sealed partial class Match
     }
 
     // 기능: Finished -> Closing -> 다음 라운드 리셋(D13). Phase 14: 팀과 분대 상태를 지운다(대기실에는 팀이 없다). Phase 15: 남은 지도 표시를
-    //   팀이 지워지기 전에 지우고 알린다. Phase 16: Container 마스크와 Supply Drop 목록을 지운다.
+    //   팀이 지워지기 전에 지우고 알린다. Phase 16: Container 마스크와 Supply Drop 목록을 지운다. Phase 17: 투사체를 지운다.
     // 입력: now - 마지막 Tick.
     // 출력: 반환값 없음.
     // D13: Finished -> Closing -> the next round, in this one tick: everyone alive on the spawn ring with an
@@ -1972,6 +2081,7 @@ public sealed partial class Match
         // Phase 10 D2: the grace ends with the round. Before Reopen counts the players for the next countdown.
         while (_graced.Count > 0) ExpireGraced(_graced[0]);
         ClearWorldItems();
+        ClearProjectiles();   // Phase 17 D6
         _hasRoute = false;
         // Phase 13 D6, D10: the lobby gets the whole map back, without the match's pieces.
         _harvest.Reset();
@@ -2101,10 +2211,13 @@ public sealed partial class Match
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 무기 카탈로그(Phase 17: 투사체 목록 포함)와 아이템 카탈로그를 한 연결에 보낸다(입장·Resume).
+    // 입력: peerId - 받는 연결.
+    // 출력: 반환값 없음. WeaponCatalog·ItemCatalog가 전송된다.
     private void SendCatalogs(int peerId)
     {
         var writer = new PacketWriter(_sendBuffer);
-        WeaponCatalogPacket.Write(ref writer, _weapons.WireInfos);
+        WeaponCatalogPacket.Write(ref writer, _weapons.WireInfos, _weapons.WireProjectiles);
         _send(peerId, writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
 
         writer = new PacketWriter(_sendBuffer);
@@ -2277,7 +2390,7 @@ public sealed partial class Match
         return null;
     }
 
-    // 기능: 유예 중인 캐릭터를 새 연결로 넘기고 입장 패킷 묶음을 다시 보낸다(Phase 16: Container·Supply Drop 상태 포함). Phase 14 D13: 끝에
+    // 기능: 유예 중인 캐릭터를 새 연결로 넘기고 입장 패킷 묶음을 다시 보낸다(Phase 16: Container·Supply Drop 상태, Phase 17: 살아 있는 투사체 포함). Phase 14 D13: 끝에
     //   팀 상태·스테이션·진행 중인 팀 채널도. Phase 15 D10: 그리고 팀 지도 표시.
     // 입력: peerId - 새 연결 id, player - 유예 중인 플레이어.
     // 출력: 반환값 없음.
@@ -2314,6 +2427,7 @@ public sealed partial class Match
         SendHarvestStates(peerId);   // Phase 13 D6
         SendContainerStates(peerId); // Phase 16 D3
         SendSupplyDrops(peerId);     // Phase 16 D7
+        SendProjectilesTo(peerId);   // Phase 17 D7
         SendResources(player);       // Phase 13 D15
         SendBuildCatalog(peerId);    // Phase 13 D4, final review A3
         StartBuildSync(player);      // Phase 13 D14: the client's old pieces are not trusted

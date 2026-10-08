@@ -8,7 +8,8 @@ namespace ProjectH.Client.Game
     // allocates nothing and memory stays constant. Dispose destroys it all.
     public sealed class LocalFireEffects : System.IDisposable
     {
-        public const int TracerPoolSize = 16;
+        // Phase 17: 24 so one shotgun blast (8 pellets) plus the shots around it do not recycle each other's tracers.
+        public const int TracerPoolSize = 24;
         public const int ImpactPoolSize = 32;
         private const int MaxShotsPerFrame = 3;   // a hitch frame never bursts a pile of effects
         private const float TracerSeconds = 0.05f;
@@ -31,6 +32,8 @@ namespace ProjectH.Client.Game
         private readonly GameObject[] _impacts = new GameObject[ImpactPoolSize];
         private readonly RingCursor _nextTracer = new RingCursor(TracerPoolSize);
         private readonly RingCursor _nextImpact = new RingCursor(ImpactPoolSize);
+        // Phase 17 D3: our own tracers' spread (presentation only; the server's spread uses its own seed). Made once.
+        private readonly System.Random _random = new System.Random();
 
         public LocalFireEffects()
         {
@@ -73,12 +76,33 @@ namespace ProjectH.Client.Game
 
         // Own shots this frame (from WeaponState), drawn after the camera moved (LateUpdate). aimPoint is what
         // the crosshair is on; the first thing between the muzzle and it is where the shot lands (Phase 1 D13).
-        public void FireLocal(int shots, Vector3 aimPoint, Vector3 feet, float yaw, float now)
+        // 기능: 이번 프레임 내 사격의 예광탄과 착탄 표시를 그린다. Phase 17 D3: 퍼짐이 있으면 발·산탄마다 Client 난수로 원뿔 안 방향을
+        //   골라 사거리까지 Raycast한다(표시용, 서버 퍼짐과 다르다). 퍼짐 0·산탄 1이면 지금처럼 조준점으로 쏜다.
+        // 입력: shots - 이번 프레임 발 수, pellets - 한 발의 산탄 수(1 이상), spreadDegrees - 원뿔 반각, range - 무기 사거리,
+        //   aimPoint - 조준점, feet - 그린 발 위치, yaw - 카메라 Yaw, now - 현재 시각.
+        // 출력: 반환값 없음. 예광탄·착탄 풀이 쓰인다(프레임마다 예광탄 풀 크기까지). 할당 없음.
+        public void FireLocal(int shots, int pellets, float spreadDegrees, float range, Vector3 aimPoint, Vector3 feet, float yaw, float now)
         {
             if (_root == null || shots <= 0) return;   // pool destroyed externally (e.g. scene unload)
             if (shots > MaxShotsPerFrame) shots = MaxShotsPerFrame;
+            if (pellets < 1) pellets = 1;
             Vector3 muzzle = MuzzlePosition(feet, yaw);
-            for (int i = 0; i < shots; i++) FireOne(aimPoint, muzzle, now);
+            if (pellets == 1 && !(spreadDegrees > 0f))
+            {
+                for (int i = 0; i < shots; i++) FireOne(aimPoint, muzzle, now);
+                return;
+            }
+            Vector3 toAim = aimPoint - muzzle;
+            float distance = toAim.magnitude;
+            if (distance < 0.01f) return;
+            Vector3 center = toAim / distance;
+            // One frame never recycles its own tracers.
+            int tracers = Mathf.Min(shots * pellets, TracerPoolSize);
+            for (int i = 0; i < tracers; i++)
+            {
+                Vector3 direction = SpreadCone.Sample(center, spreadDegrees, (float)_random.NextDouble(), (float)_random.NextDouble());
+                FireRay(muzzle, direction, Mathf.Max(range, distance), now);
+            }
         }
 
         // D11: another player's shot as the server resolved it, from its eye to where it stopped.
@@ -142,6 +166,22 @@ namespace ProjectH.Client.Game
             else
             {
                 ShowTracer(muzzle, aimPoint, now);
+            }
+        }
+
+        // 기능: 총구에서 한 방향으로 사거리까지 Raycast해 예광탄(과 맞으면 착탄)을 그린다(Phase 17 퍼짐 표시).
+        // 입력: muzzle - 총구 위치, direction - 단위 방향, range - 광선 길이, now - 현재 시각.
+        // 출력: 반환값 없음.
+        private void FireRay(Vector3 muzzle, Vector3 direction, float range, float now)
+        {
+            if (Physics.Raycast(muzzle, direction, out RaycastHit hit, range, PlayerViewFactory.AimRaycastMask, QueryTriggerInteraction.Ignore))
+            {
+                ShowTracer(muzzle, hit.point, now);
+                ShowImpact(hit.point, hit.normal);
+            }
+            else
+            {
+                ShowTracer(muzzle, muzzle + direction * range, now);
             }
         }
 

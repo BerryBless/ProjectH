@@ -259,11 +259,26 @@ public sealed class BotView
         return null;
     }
 
-    public int Reserve(AmmoType type) => type switch
+    // 기능: 탄 종류의 예비탄 수를 돌려준다(Phase 17: 다섯 종류 모두, InventoryState.GetAmmo).
+    // 입력: type - 탄 종류.
+    // 출력: 예비탄 수(모르는 종류는 0).
+    public int Reserve(AmmoType type) => Inventory.GetAmmo(type);
+
+    // 기능: 무기 id의 카탈로그 항목을 찾는다(Phase 17: 바닥의 무기가 로켓인지 보려고).
+    // 입력: id - 무기 id.
+    // 출력: 항목, 카탈로그가 없거나 모르는 id면 null.
+    public WeaponInfo? WeaponById(byte id)
     {
-        AmmoType.Light => Inventory.LightAmmo,
-        AmmoType.Medium => Inventory.MediumAmmo,
-        AmmoType.Heavy => Inventory.HeavyAmmo,
-        _ => 0,
-    };
+        if (Weapons == null) return null;
+        foreach (WeaponInfo w in Weapons)
+        {
+            if (w.WeaponId == id) return w;
+        }
+        return null;
+    }
+
+    // Phase 17 D7: projectile events heard (bots do not draw them; counted for tests and the stress report).
+    public int ProjectilesSpawned;
+    public int ProjectileStates;
+    public int ProjectilesExploded;
 }

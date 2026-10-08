@@ -34,32 +34,43 @@ internal static class TestGameData
           "ammo": [
             { "type": "Light", "name": "Light Rounds", "pickupAmount": 60, "max": 180 },
             { "type": "Medium", "name": "Medium Rounds", "pickupAmount": 45, "max": 150 },
-            { "type": "Heavy", "name": "Heavy Rounds", "pickupAmount": 10, "max": 30 }
+            { "type": "Heavy", "name": "Heavy Rounds", "pickupAmount": 10, "max": 30 },
+            { "type": "Shells", "name": "Shells", "pickupAmount": 10, "max": 40 },
+            { "type": "Rockets", "name": "Rockets", "pickupAmount": 2, "max": 6 }
           ],
           "consumables": [
             { "id": "Medkit", "name": "Medkit", "useSeconds": 3.0, "heal": 50, "shield": 0, "maxStack": 3 },
-            { "id": "ShieldCell", "name": "Shield Cell", "useSeconds": 2.0, "heal": 0, "shield": 25, "maxStack": 6 }
+            { "id": "ShieldCell", "name": "Shield Cell", "useSeconds": 2.0, "heal": 0, "shield": 25, "maxStack": 6 },
+            { "id": "Grenade", "name": "Grenade", "maxStack": 6 }
           ]
         }
         """;
 
-    // The shipped loot.json (Phase 4 spec §1 plus the Phase 6 D10 Building table and the Phase 16 D5 container tables).
+    // The shipped loot.json (Phase 4 spec §1 plus the Phase 6 D10 Building table, the Phase 16 D5 container tables and the
+    // Phase 17 D13 ammo lists and Grenade entries) without its "weapons" lists: the test catalog has only weapons 1-3, so every
+    // table picks from all of them (LootTableTests compares the shipped file with its own weapon catalog).
     public const string LootJson = """
         {
           "rarityWeights": { "Common": 50, "Uncommon": 25, "Rare": 15, "Epic": 7, "Legendary": 3 },
           "tables": {
-            "Floor": [ { "kind": "Weapon", "weight": 35 }, { "kind": "Ammo", "weight": 35 },
-                       { "kind": "Medkit", "weight": 15 }, { "kind": "ShieldCell", "weight": 15 } ],
-            "Building": [ { "kind": "Weapon", "weight": 50 }, { "kind": "Ammo", "weight": 20 },
-                          { "kind": "Medkit", "weight": 15 }, { "kind": "ShieldCell", "weight": 15 } ],
-            "Tower": [ { "kind": "Weapon", "weight": 60 }, { "kind": "Ammo", "weight": 10 },
-                       { "kind": "Medkit", "weight": 15 }, { "kind": "ShieldCell", "weight": 15 } ],
-            "Chest": { "rolls": 3, "guaranteed": [ "Weapon" ],
+            "Floor": { "ammo": [ "Light", "Medium", "Heavy", "Shells" ],
+                       "entries": [ { "kind": "Weapon", "weight": 35 }, { "kind": "Ammo", "weight": 30 },
+                                    { "kind": "Medkit", "weight": 13 }, { "kind": "ShieldCell", "weight": 13 }, { "kind": "Grenade", "weight": 9 } ] },
+            "Building": { "ammo": [ "Light", "Medium", "Heavy", "Shells" ],
+                          "entries": [ { "kind": "Weapon", "weight": 50 }, { "kind": "Ammo", "weight": 17 },
+                                       { "kind": "Medkit", "weight": 13 }, { "kind": "ShieldCell", "weight": 13 }, { "kind": "Grenade", "weight": 7 } ] },
+            "Tower": { "ammo": [ "Light", "Medium", "Heavy", "Shells" ],
+                       "entries": [ { "kind": "Weapon", "weight": 60 }, { "kind": "Ammo", "weight": 10 },
+                                    { "kind": "Medkit", "weight": 13 }, { "kind": "ShieldCell", "weight": 12 }, { "kind": "Grenade", "weight": 5 } ] },
+            "Chest": { "rolls": 3, "guaranteed": [ "Weapon" ], "ammo": [ "Light", "Medium", "Heavy", "Shells", "Rockets" ],
                        "entries": [ { "kind": "Ammo", "weight": 30 }, { "kind": "Medkit", "weight": 20 }, { "kind": "ShieldCell", "weight": 20 },
-                                    { "kind": "Material", "weight": 30, "amount": 30 } ] },
-            "AmmoBox": { "rolls": 2, "guaranteed": [ "Ammo" ], "entries": [ { "kind": "Material", "weight": 1, "amount": 10 } ] },
+                                    { "kind": "Material", "weight": 30, "amount": 30 }, { "kind": "Grenade", "weight": 15 } ] },
+            "AmmoBox": { "rolls": 2, "guaranteed": [ "Ammo" ], "ammo": [ "Light", "Medium", "Heavy", "Shells" ],
+                         "entries": [ { "kind": "Material", "weight": 1, "amount": 10 } ] },
             "SupplyDrop": { "rolls": 4, "guaranteed": [ "Weapon" ], "rarityWeights": { "Epic": 70, "Legendary": 30 },
-                            "entries": [ { "kind": "ShieldCell", "weight": 40 }, { "kind": "Medkit", "weight": 30 }, { "kind": "Ammo", "weight": 30 } ] }
+                            "ammo": [ "Light", "Medium", "Heavy", "Shells", "Rockets" ],
+                            "entries": [ { "kind": "ShieldCell", "weight": 40 }, { "kind": "Medkit", "weight": 30 }, { "kind": "Ammo", "weight": 30 },
+                                         { "kind": "Grenade", "weight": 20 } ] }
           },
           "spawnChance": { "Chest": 0.7, "AmmoBox": 0.8 },
           "supplyDrops": { "times": [ 60, 150 ], "fallSpeed": 4 }

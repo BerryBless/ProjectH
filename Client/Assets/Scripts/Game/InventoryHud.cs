@@ -89,9 +89,12 @@ namespace ProjectH.Client.Game
             _slots[slot].color = weapon == null ? new Color(1f, 1f, 1f, 0.5f) : RarityColors[rarity];
         }
 
-        public void SetConsumables(int medkits, int shieldCells)
+        // 기능: 소모품 줄(Phase 17: 수류탄 수 포함)을 값이 바뀔 때만 화면에 쓴다.
+        // 입력: medkits·shieldCells·grenades - 가진 개수.
+        // 출력: 반환값 없음.
+        public void SetConsumables(int medkits, int shieldCells, int grenades)
         {
-            if (_root == null || !_text.SetConsumables(medkits, shieldCells)) return;
+            if (_root == null || !_text.SetConsumables(medkits, shieldCells, grenades)) return;
             _consumables.text = _text.Consumables;
         }
 

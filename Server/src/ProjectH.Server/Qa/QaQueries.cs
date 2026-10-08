@@ -12,7 +12,7 @@ namespace ProjectH.Server.Qa;
 public sealed record QaVec3(float X, float Y, float Z);
 public sealed record QaVec2(float X, float Z);
 public sealed record QaWeaponDto(int Slot, int WeaponId, string Name, int Rarity, int MagAmmo);
-public sealed record QaAmmoDto(int Light, int Medium, int Heavy);
+public sealed record QaAmmoDto(int Light, int Medium, int Heavy, int Shells = 0, int Rockets = 0);   // Phase 17: + Shells, Rockets
 public sealed record QaResourcesDto(int Wood, int Stone, int Metal);
 
 public sealed record QaPlayerDto(
@@ -25,7 +25,15 @@ public sealed record QaPlayerDto(
     int TeamId = 0, int JoinOrder = 0, bool Downed = false, string? DownedBy = null, int RebootCards = 0, QaChannelDto? Channel = null,
     string? RevivedBy = null,
     // Phase 15: this player's waypoint (null = none), and its team's active pings and waypoints as the server holds them.
-    QaVec3? Waypoint = null, int TeamPingCount = 0, QaPingDto[]? TeamPings = null, int TeamWaypointCount = 0, QaWaypointDto[]? TeamWaypoints = null);
+    QaVec3? Waypoint = null, int TeamPingCount = 0, QaPingDto[]? TeamPings = null, int TeamWaypointCount = 0, QaWaypointDto[]? TeamWaypoints = null,
+    // Phase 17: grenades held and the tick the next throw is allowed.
+    int Grenades = 0, long NextGrenadeTick = 0);
+
+// Phase 17 D17: a live projectile (kind = ProjectileKind name; owner as DevPlayerId while the owner is in the match).
+public sealed record QaProjectileDto(int Id, string Kind, int OwnerId, string? Owner, QaVec3 Position, QaVec3 Velocity, bool Resting, long ExplodeTick);
+
+// Phase 17 D17: a recent explosion (the newest Match.ExplosionLogSize), with how many players and pieces it damaged.
+public sealed record QaExplosionDto(int Id, string Kind, QaVec3 Position, long Tick, int OwnerId, int PlayersHit, int PiecesHit);
 
 // Phase 15: a team ping (kind = MapMarkerKind name; owner and target as DevPlayerIds when they are players still here).
 public sealed record QaPingDto(int Id, string Kind, int OwnerId, string? Owner, QaVec3 Position, long EndTick, int TargetId, string? Target);
@@ -177,7 +185,8 @@ internal static class QaQueries
         return players;
     }
 
-    // 기능: 플레이어 하나의 QA DTO를 만든다(Phase 14: 팀, 기절, 기절시킨 사람, 카드, 진행, 소생자, Phase 15: Waypoint와 팀 Ping·Waypoint).
+    // 기능: 플레이어 하나의 QA DTO를 만든다(Phase 14: 팀, 기절, 기절시킨 사람, 카드, 진행, 소생자, Phase 15: Waypoint와 팀 Ping·Waypoint,
+    //   Phase 17: Shells·Rockets 예비탄, 수류탄 수와 다음 던지기 Tick).
     // 입력: m - 경기, p - 플레이어.
     // 출력: QaPlayerDto.
     public static QaPlayerDto Player(Match m, PlayerEntity p)
@@ -199,7 +208,8 @@ internal static class QaQueries
             p.DevPlayerId, p.EntityId, !p.IsGraced, p.IsGraced, p.Alive, p.Participant, p.Health, p.Shield,
             new QaVec3(s.Position.X, s.Position.Y, s.Position.Z), new QaVec3(s.HorizontalVelocity.X, s.VelocityY, s.HorizontalVelocity.Y),
             s.Yaw, s.Mode, m.IsGrounded(p), inv.CurrentSlot, inv.Tool, current, weapons.ToArray(),
-            new QaAmmoDto(inv.GetAmmo(AmmoType.Light), inv.GetAmmo(AmmoType.Medium), inv.GetAmmo(AmmoType.Heavy)),
+            new QaAmmoDto(inv.GetAmmo(AmmoType.Light), inv.GetAmmo(AmmoType.Medium), inv.GetAmmo(AmmoType.Heavy), inv.GetAmmo(AmmoType.Shells),
+                inv.GetAmmo(AmmoType.Rockets)),
             inv.Medkits, inv.ShieldCells,
             new QaResourcesDto(inv.Resource(BuildMaterialType.Wood), inv.Resource(BuildMaterialType.Stone), inv.Resource(BuildMaterialType.Metal)),
             p.Kills, p.Placement, p.DamageDealt, p.LastProcessedSeq, p.Reloading,
@@ -209,7 +219,39 @@ internal static class QaQueries
             pings.Length, Array.ConvertAll(pings, ping => new QaPingDto(ping.Id, ping.Kind.ToString(), ping.OwnerId, NameOf(m, ping.OwnerId),
                 new QaVec3(ping.Position.X, ping.Position.Y, ping.Position.Z), ping.EndTick, ping.TargetId,
                 ping.Kind == MapMarkerKind.Enemy ? NameOf(m, ping.TargetId) : null)),
-            waypoints.Length, Array.ConvertAll(waypoints, w => new QaWaypointDto(w.OwnerId, NameOf(m, w.OwnerId), new QaVec3(w.Position.X, w.Position.Y, w.Position.Z))));
+            waypoints.Length, Array.ConvertAll(waypoints, w => new QaWaypointDto(w.OwnerId, NameOf(m, w.OwnerId), new QaVec3(w.Position.X, w.Position.Y, w.Position.Z))),
+            inv.Grenades, p.NextGrenadeTick);
+    }
+
+    // 기능: Phase 17 D17: 살아 있는 투사체와 최근 폭발, 투사체 수치를 보여 준다(GET /qa/projectiles).
+    // 입력: m - 경기.
+    // 출력: 익명 객체(projectiles, explosions(오래된 것부터), launched, refused, explosionsTotal, grenadesThrown).
+    public static object Projectiles(Match m)
+    {
+        var projectiles = new List<QaProjectileDto>(m.Projectiles.Count);
+        for (int i = 0; i < ProjectH.Server.Game.Combat.ProjectileSet.Capacity; i++)
+        {
+            ref ProjectH.Server.Game.Combat.Projectile p = ref m.Projectiles[i];
+            if (!p.Active) continue;
+            projectiles.Add(new QaProjectileDto(p.Id, p.Definition.Kind.ToString(), p.OwnerEntityId, NameOf(m, p.OwnerEntityId),
+                new QaVec3(p.Position.X, p.Position.Y, p.Position.Z), new QaVec3(p.Velocity.X, p.Velocity.Y, p.Velocity.Z), p.Resting, p.ExplodeTick));
+        }
+        long total = m.ExplosionLogCount;
+        int size = ProjectH.Server.Game.Match.ExplosionLogSize;
+        int filled = (int)Math.Min(total, size);
+        var explosions = new QaExplosionDto[filled];
+        ReadOnlySpan<ExplosionRecord> log = m.ExplosionLog;
+        for (int k = 0; k < filled; k++)
+        {
+            ExplosionRecord e = log[(int)((total - filled + k) % size)];
+            explosions[k] = new QaExplosionDto(e.Id, e.Kind.ToString(), new QaVec3(e.Position.X, e.Position.Y, e.Position.Z), e.Tick, e.OwnerId,
+                e.PlayersHit, e.PiecesHit);
+        }
+        return new
+        {
+            projectiles, explosions, launched = m.ProjectilesLaunched, refused = m.ProjectilesRefused, explosionsTotal = total,
+            grenadesThrown = m.GrenadesThrown,
+        };
     }
 
     // 기능: Phase 15: Entity id의 DevPlayerId를 찾는다(QA 관찰용).

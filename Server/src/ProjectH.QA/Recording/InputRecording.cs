@@ -42,6 +42,9 @@ public sealed class InputRecording
         return Read(reader);
     }
 
+    // 기능: 녹화 파일을 읽어 검증한다(모르는 버튼 비트는 지우고 센다. Phase 17: InteractHeld·ThrowGrenade는 아는 비트).
+    // 입력: reader - 녹화 텍스트.
+    // 출력: InputRecording. 형식이 틀리면 RecordingException(줄 번호 포함).
     public static InputRecording Read(TextReader reader)
     {
         string? header = ReadLine(reader, 1);
@@ -54,7 +57,8 @@ public sealed class InputRecording
         int lineNumber = 1;
         const ushort known = (ushort)(InputButtons.Jump | InputButtons.Sprint | InputButtons.Fire | InputButtons.Reload | InputButtons.Slot1
             | InputButtons.Slot2 | InputButtons.Slot3 | InputButtons.Interact | InputButtons.Drop | InputButtons.UseMedkit
-            | InputButtons.UseShieldCell | InputButtons.Crouch | InputButtons.ToolHarvest | InputButtons.ToolBuild);
+            | InputButtons.UseShieldCell | InputButtons.Crouch | InputButtons.ToolHarvest | InputButtons.ToolBuild
+            | InputButtons.InteractHeld | InputButtons.ThrowGrenade);   // Phase 14 InteractHeld, Phase 17 ThrowGrenade
         while (true)
         {
             lineNumber++;

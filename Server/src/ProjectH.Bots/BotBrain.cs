@@ -369,8 +369,12 @@ public sealed class BotBrain
         return range;
     }
 
+    // 기능: 칸의 무기가 쏠 탄을 가졌는지 본다. Phase 17 D15: 봇은 투사체 무기(로켓)를 쓰지 않으므로 그 무기는 항상 false다(고르지 않는다).
+    // 입력: view - 봇이 아는 것, slot - 칸, weapon - 그 칸의 무기.
+    // 출력: 쏠 수 있으면 true.
     private static bool HasRounds(BotView view, int slot, WeaponInfo weapon)
     {
+        if (weapon.Projectile != ProjectileKind.None) return false;
         int magazine = slot == view.Inventory.CurrentSlot ? view.Self.Ammo : view.Inventory.GetSlot(slot).MagAmmo;
         return magazine > 0 || view.Reserve(weapon.AmmoType) > 0;
     }
@@ -413,13 +417,20 @@ public sealed class BotBrain
         return itemId != 0;
     }
 
+    // 기능: 바닥 아이템이 봇에게 쓸모 있는지 본다. Phase 17 D15: 투사체 무기(로켓)와 수류탄은 줍지 않는다(봇은 쓰지 않는다).
+    // 입력: view - 봇이 아는 것, item - 바닥 아이템.
+    // 출력: 주울 것이면 true.
     public static bool IsUseful(BotView view, in WorldItemData item)
     {
         InventoryState inv = view.Inventory;
         switch (item.Kind)
         {
             case ItemKind.Weapon:
+            {
+                WeaponInfo? weapon = view.WeaponById(item.DefId);
+                if (weapon != null && weapon.Value.Projectile != ProjectileKind.None) return false;
                 return inv.Slot0.IsEmpty || inv.Slot1.IsEmpty || inv.Slot2.IsEmpty;
+            }
             case ItemKind.Ammo:
             {
                 var type = (AmmoType)item.DefId;
@@ -434,6 +445,7 @@ public sealed class BotBrain
             case ItemKind.Consumable:
             {
                 var type = (ConsumableType)item.DefId;
+                if (type == ConsumableType.Grenade) return false;
                 int have = type == ConsumableType.Medkit ? inv.Medkits : inv.ShieldCells;
                 return have < ConsumableMax(view, type);
             }

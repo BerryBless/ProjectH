@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "name": "Weapon Shotgun",
+  "description": "Phase 17 D4 (request §70): one Brute SG trigger pull fires 8 pellets of 11; the server sums them per target and applies the rarity once, so A gets one HitConfirmed and one 88 damage at 3 m (health 100 -> 12). From 20 m the pellets spread (6 degrees) and fall off: A takes less than 70 and B still gets at most one HitConfirmed.",
+  "tags": ["weapons", "combat"],
+  "seed": 17002,
+  "timeoutSeconds": 60,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "a_place", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 2, "z": 2.5, "yaw": 270 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": -1, "z": 2.5, "yaw": 90 } },
+    { "id": "a_health", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "a_shield", "action": "setShield", "actor": "playerA", "value": 0 },
+    { "id": "b_shotgun", "action": "giveWeapon", "actor": "playerB", "weapon": "Brute SG", "rarity": 0, "select": true },
+    { "id": "b_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerB", "equals": "Brute SG", "timeoutMilliseconds": 3000 },
+    { "id": "settle", "action": "wait", "milliseconds": 500 },
+
+    { "id": "b_close", "phase": "act", "action": "fire", "actor": "playerB", "target": "playerA", "count": 1, "saveAs": "close" },
+
+    { "id": "one_confirm", "phase": "assert", "action": "waitFor", "condition": "actor.hitsLanded", "actor": "playerB", "equals": 1, "timeoutMilliseconds": 3000, "description": "one HitConfirmed for eight pellets" },
+    { "id": "close_88", "action": "waitFor", "condition": "player.health", "actor": "playerA", "equals": 12, "timeoutMilliseconds": 3000, "description": "8 x 11 summed, rarity applied once" },
+    { "id": "one_shell", "assert": "player.weapon.magAmmo", "actor": "playerB", "equals": 4 },
+
+    { "id": "a_far", "phase": "arrange", "action": "setPosition", "actor": "playerA", "position": { "x": 19, "z": 2.5, "yaw": 270 } },
+    { "id": "a_full", "action": "setHealth", "actor": "playerA", "value": 100 },
+    { "id": "settle_far", "action": "wait", "milliseconds": 1200 },
+    { "id": "b_far", "phase": "act", "action": "fire", "actor": "playerB", "target": "playerA", "count": 1, "saveAs": "far" },
+    { "id": "far_less", "phase": "assert", "action": "waitFor", "condition": "player.health", "actor": "playerA", "greaterThan": 30, "timeoutMilliseconds": 2000, "description": "spread and falloff: less than 70 at 20 m" },
+    { "id": "far_one_confirm_at_most", "assert": "actor.hitsLanded", "actor": "playerB", "lessThan": 3 }
+  ]
+}

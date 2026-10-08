@@ -18,7 +18,7 @@ public struct HeldWeapon
 }
 
 // A player's inventory (D10), owned by the server: 3 weapon slots, the current slot, ammo reserves per
-// type, Medkits and Shield Cells. Utility has no slot content yet (Projectile phase). Game loop thread only;
+// type (Phase 17 D13: five types), Medkits, Shield Cells and (Phase 17 D9) grenades. Game loop thread only;
 // fixed-size arrays, so nothing here allocates after construction.
 public sealed class Inventory
 {
@@ -30,6 +30,8 @@ public sealed class Inventory
     public int CurrentSlot;
     public int Medkits;
     public int ShieldCells;
+    // Phase 17 D9: grenades held, 0..the Grenade consumable's maxStack.
+    public int Grenades;
     // The latest NextFireTick of any weapon this player dropped. A weapon picked up cannot fire before it,
     // so dropping a weapon and picking it up again (maybe into another slot) never skips its fire interval.
     public uint DroppedFireLockTick;
@@ -110,7 +112,7 @@ public sealed class Inventory
 
     public void SetAmmo(AmmoType type, int value) => _ammo[(int)type - 1] = value;
 
-    // 기능: 인벤토리를 빈 새 생명 상태로 되돌린다(Phase 14: 카드 칸도 비운다).
+    // 기능: 인벤토리를 빈 새 생명 상태로 되돌린다(Phase 14: 카드 칸도 비운다. Phase 17: 수류탄도).
     // 입력: 없음.
     // 출력: 반환값 없음. Changed·ResourcesChanged가 켜진다.
     public void Clear()
@@ -120,6 +122,7 @@ public sealed class Inventory
         CurrentSlot = 0;
         Medkits = 0;
         ShieldCells = 0;
+        Grenades = 0;
         DroppedFireLockTick = 0;
         Using = ConsumableType.None;
         UseEndTick = 0;
@@ -133,7 +136,7 @@ public sealed class Inventory
         CardCount = 0;
     }
 
-    // 기능: 주인에게 보낼 InventoryState를 만든다(Phase 14: 소지 카드 수 포함).
+    // 기능: 주인에게 보낼 InventoryState를 만든다(Phase 14: 소지 카드 수, Phase 17: Shells·Rockets 예비탄과 수류탄 수 포함).
     // 입력: now - 지금 서버 Tick(Client는 진행 중인 사용의 남은 시간을 여기서부터 센다).
     // 출력: InventoryState 값.
     public InventoryState ToWire(uint now)
@@ -150,6 +153,9 @@ public sealed class Inventory
             Medkits = (byte)Medkits,
             ShieldCells = (byte)ShieldCells,
             RebootCards = (byte)CardCount,   // Phase 14 D9
+            ShellsAmmo = (ushort)GetAmmo(AmmoType.Shells),     // Phase 17 D13
+            RocketsAmmo = (ushort)GetAmmo(AmmoType.Rockets),
+            Grenades = (byte)Math.Clamp(Grenades, 0, byte.MaxValue),   // Phase 17 D9
         };
         for (int i = 0; i < SlotCount; i++)
         {

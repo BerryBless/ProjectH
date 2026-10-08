@@ -369,5 +369,125 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual(0, state.GetReserve(AmmoType.Medium));
             Assert.IsFalse(state.Reloading);
         }
+
+        // Phase 17 D13: Shells and Rockets are reserves like the first three (index = type - 1).
+        private static WeaponInfo[] Phase17Catalog() => new[]
+        {
+            new WeaponInfo { WeaponId = 4, Name = "Test Shotgun", Damage = 11, FireIntervalTicks = 27, MagazineSize = 5, ReloadTicks = 30, Range = 35f, AmmoType = AmmoType.Shells, Pellets = 8, SpreadDegrees = 6f },
+            new WeaponInfo { WeaponId = 6, Name = "Test Rocket", Damage = 75, FireIntervalTicks = 30, MagazineSize = 1, ReloadTicks = 90, Range = 160f, AmmoType = AmmoType.Rockets, Pellets = 1, Projectile = ProjectileKind.Rocket },
+        };
+
+        [Test]
+        public void FiveAmmoTypes_ApplyInventory_TakesShellsAndRockets()
+        {
+            var state = new WeaponState(Phase17Catalog());
+            state.ApplyInventory(new InventoryState
+            {
+                Slot0 = new InventorySlotState { WeaponId = 4, MagAmmo = 5 },
+                Slot1 = new InventorySlotState { WeaponId = 6, MagAmmo = 1 },
+                LightAmmo = 1, MediumAmmo = 2, HeavyAmmo = 3, ShellsAmmo = 10, RocketsAmmo = 2,
+            });
+            Assert.AreEqual(1, state.GetReserve(AmmoType.Light));
+            Assert.AreEqual(2, state.GetReserve(AmmoType.Medium));
+            Assert.AreEqual(3, state.GetReserve(AmmoType.Heavy));
+            Assert.AreEqual(10, state.GetReserve(AmmoType.Shells));
+            Assert.AreEqual(2, state.GetReserve(AmmoType.Rockets));
+            Assert.AreEqual(10, state.Reserve);   // the shotgun in hand
+            Assert.AreEqual(0, state.GetReserve((AmmoType)6));   // outside the five
+            state.Clear();
+            Assert.AreEqual(0, state.GetReserve(AmmoType.Shells));
+            Assert.AreEqual(0, state.GetReserve(AmmoType.Rockets));
+        }
+
+        [Test]
+        public void Rockets_EmptyMagazineReloadsFromTheRocketReserve()
+        {
+            var state = new WeaponState(Phase17Catalog());
+            state.ApplyInventory(new InventoryState
+            {
+                Slot0 = new InventorySlotState { WeaponId = 6, MagAmmo = 1 },
+                RocketsAmmo = 2,
+            });
+            Assert.IsTrue(Step(state, InputButtons.Fire));    // the only rocket; the empty magazine starts the reload
+            Assert.IsTrue(state.Reloading);
+            for (int i = 0; i < 91; i++) Step(state, InputButtons.None);
+            Assert.AreEqual(1, state.Ammo);
+            Assert.AreEqual(1, state.GetReserve(AmmoType.Rockets));
+        }
+
+        // Phase 17: in a match state the server launches no projectile in (Starting, Finished, Closing), a rocket shot is not
+        // predicted: no round, no fire interval, no automatic reload; the press is spent like the server's FireHeld.
+        [Test]
+        public void Rocket_LaunchBlocked_PredictsNoShot_HitscanStillFires()
+        {
+            var state = new WeaponState(Phase17Catalog());
+            state.ApplyInventory(new InventoryState
+            {
+                Slot0 = new InventorySlotState { WeaponId = 6, MagAmmo = 1 },
+                Slot1 = new InventorySlotState { WeaponId = 4, MagAmmo = 5 },
+                RocketsAmmo = 2, ShellsAmmo = 10,
+            });
+            Assert.IsFalse(state.Step(++_seq, InputButtons.Fire, true, false));
+            Assert.AreEqual(1, state.Ammo);
+            Assert.IsFalse(state.Reloading);
+            Assert.IsFalse(state.Step(++_seq, InputButtons.Fire, true, true));   // still held: a semi-automatic needs a new press
+            Assert.IsFalse(state.Step(++_seq, InputButtons.None, true, true));
+            Assert.IsTrue(state.Step(++_seq, InputButtons.Fire, true, true));    // allowed again: fires at once (no interval spent)
+            Assert.AreEqual(0, state.Ammo);
+
+            Step(state, InputButtons.Slot2);
+            Assert.IsTrue(state.Step(++_seq, InputButtons.Fire, true, false));   // a hitscan weapon is not affected
+            Assert.AreEqual(4, state.Ammo);
+        }
+
+        // The flag is part of the history: a mismatch replay re-runs the blocked step as blocked.
+        [Test]
+        public void Rocket_LaunchBlocked_IsReplayedAsBlocked()
+        {
+            var state = new WeaponState(Phase17Catalog());
+            state.ApplyInventory(new InventoryState { Slot0 = new InventorySlotState { WeaponId = 6, MagAmmo = 1 }, RocketsAmmo = 2 });
+            Step(state, InputButtons.None);                                       // seq 1
+            state.Step(++_seq, InputButtons.Fire, true, false);                  // seq 2: blocked
+            state.ApplyServer(new SnapshotSelf { WeaponSlot = 0, Ammo = 0 }, 1);  // mismatch at ack 1 (server says 0): replay seq 2
+            Assert.AreEqual(0, state.Ammo);
+            Assert.IsFalse(state.Reloading);   // the blocked step started no automatic reload in the replay either
+        }
+
+        [Test]
+        public void LaunchAllowed_FollowsTheServersMatchStates()
+        {
+            Assert.IsTrue(WeaponState.LaunchAllowed(false, MatchFlowState.Finished));   // no MatchState: dev sandbox
+            Assert.IsTrue(WeaponState.LaunchAllowed(true, MatchFlowState.WaitingForPlayers));
+            Assert.IsTrue(WeaponState.LaunchAllowed(true, MatchFlowState.Playing));
+            Assert.IsTrue(WeaponState.LaunchAllowed(true, MatchFlowState.FinalPhase));
+            Assert.IsFalse(WeaponState.LaunchAllowed(true, MatchFlowState.Starting));
+            Assert.IsFalse(WeaponState.LaunchAllowed(true, MatchFlowState.Finished));
+            Assert.IsFalse(WeaponState.LaunchAllowed(true, MatchFlowState.Closing));
+        }
+
+        // A mismatch replay restores the Shells reserve recorded at the ack (a three-type history would leave it as is),
+        // and a pickup between the two is counted once.
+        [Test]
+        public void Shells_SurviveAMismatchReplay_AndAPickupCountsOnce()
+        {
+            var state = new WeaponState(Phase17Catalog());
+            var loadout = new InventoryState { Slot0 = new InventorySlotState { WeaponId = 4, MagAmmo = 5 }, ShellsAmmo = 10 };
+            state.ApplyInventory(loadout);
+            Step(state, InputButtons.Fire);                                 // seq 1: 4 left
+            Step(state, InputButtons.None);                                 // seq 2: trigger released
+            Step(state, InputButtons.Reload);                               // seq 3: reload until step 33
+            for (int i = 0; i < 31; i++) Step(state, InputButtons.None);    // finished locally: 5 in, shells 9
+            Assert.AreEqual(5, state.Ammo);
+            Assert.AreEqual(9, state.GetReserve(AmmoType.Shells));
+
+            loadout.ShellsAmmo = 19;                                        // picked up 10 after the reload
+            state.ApplyInventory(loadout);
+            Assert.AreEqual(19, state.GetReserve(AmmoType.Shells));
+
+            // Ack 1 with a different magazine (3): replay seq 2.. from the moved record, the reload takes 2 shells.
+            state.ApplyServer(new SnapshotSelf { WeaponSlot = 0, Ammo = 3 }, 1);
+            Assert.AreEqual(5, state.Ammo);
+            Assert.AreEqual(18, state.GetReserve(AmmoType.Shells));   // 20 at the ack (10 + 10 picked up) - 2 put in
+        }
     }
 }

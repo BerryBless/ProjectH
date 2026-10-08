@@ -244,7 +244,12 @@ public class TraversalPacketTests
         Assert.Equal(DeathCause.Fall, read.Cause);
         Assert.Equal(0, read.KillerId);
 
-        _buffer[writer.Length - 1] = 2;   // no such cause
+        _buffer[writer.Length - 1] = 2;   // Phase 17: Explosion
+        reader = ReaderAfterId(writer.Length, PacketId.PlayerDied);
+        Assert.True(PlayerDied.TryRead(ref reader, out read));
+        Assert.Equal(DeathCause.Explosion, read.Cause);
+
+        _buffer[writer.Length - 1] = 3;   // no such cause
         reader = ReaderAfterId(writer.Length, PacketId.PlayerDied);
         Assert.False(PlayerDied.TryRead(ref reader, out _));
     }
@@ -253,12 +258,13 @@ public class TraversalPacketTests
     public void TheCrouchButton_GoesThrough_AndUnknownBitsDoNot()
     {
         var packet = new PlayerInputPacket { Count = 1 };
-        packet.Set(0, new InputCommand { Seq = 1, Buttons = InputButtons.Crouch | (InputButtons)0x8000 });   // Phase 13: 0x1000 and 0x2000 are tools, Phase 14: 0x4000 InteractHeld
+        // Phase 13: 0x1000 and 0x2000 are tools, Phase 14: 0x4000 InteractHeld, Phase 17: 0x8000 ThrowGrenade (no bit is left unknown)
+        packet.Set(0, new InputCommand { Seq = 1, Buttons = InputButtons.Crouch | (InputButtons)0x8000 });
         var writer = new PacketWriter(_buffer);
         PlayerInputPacket.Write(ref writer, packet);
         var reader = ReaderAfterId(writer.Length, PacketId.PlayerInput);
         Assert.True(PlayerInputPacket.TryRead(ref reader, out PlayerInputPacket read));
-        Assert.Equal(InputButtons.Crouch, read.Get(0).Buttons);
+        Assert.Equal(InputButtons.Crouch | InputButtons.ThrowGrenade, read.Get(0).Buttons);
         Assert.Equal(2048, (int)InputButtons.Crouch);
     }
 }

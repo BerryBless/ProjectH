@@ -10,12 +10,15 @@ namespace ProjectH.Server.Game.Combat;
 // and the packets. The client copies these rules for presentation (Client WeaponState); keep the two in step.
 public static class WeaponRules
 {
-    // Nothing pending. Used at join and at respawn, after the inventory was filled.
+    // 기능: 대기 중인 것이 없는 상태로 되돌린다(입장·리스폰, 인벤토리를 채운 뒤. Phase 17: 수류탄 간격도).
+    // 입력: player - 플레이어.
+    // 출력: 반환값 없음.
     public static void ResetState(PlayerEntity player)
     {
         player.Reloading = false;
         player.ReloadEndTick = 0;
         player.FireHeld = false;
+        player.NextGrenadeTick = 0;
     }
 
     // Runs every tick for a living player, whether or not an input arrived. A finished reload moves rounds
@@ -55,9 +58,10 @@ public static class WeaponRules
         return true;
     }
 
-    // One input the client sent, in the order reload -> fire. Returns true when it fires a shot; the round
-    // and the fire interval are already spent then. aimValid false (non-finite aim) is no shot, and an empty
-    // slot never fires.
+    // 기능: Client가 보낸 입력 하나를 재장전 → 발사 순서로 처리한다. 쏘면 탄 하나(산탄총도 방아쇠 한 번에 하나)와 발사 간격을 쓴다.
+    // 입력: player - 플레이어, buttons - 눌린 버튼, aimValid - 조준이 유효하고(유한) 쏠 수 있는지(Phase 17: 투사체 무기는 빈 투사체 칸이
+    //   있고 ProjectilesAllowed가 true일 때(시작 카운트다운·결과 화면 아님)만 true. false면 탄도 간격도 쓰지 않는다), now - 마지막 Tick.
+    // 출력: 쐈으면 true. 빈 칸은 쏘지 않는다.
     public static bool Apply(PlayerEntity player, InputButtons buttons, bool aimValid, uint now)
     {
         bool fireHeld = (buttons & InputButtons.Fire) != 0;

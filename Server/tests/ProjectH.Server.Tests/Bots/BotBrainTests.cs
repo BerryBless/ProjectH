@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Numerics;
 using ProjectH.Bots;
 using ProjectH.Shared.Protocol;
@@ -159,6 +160,33 @@ public class BotBrainTests
         Assert.Equal(BotGoal.Fight, brain.Goal);
         Assert.True((c.Buttons & InputButtons.Slot2) != 0);
         Assert.Equal(0, (int)(c.Buttons & InputButtons.Fire));
+    }
+
+    // Phase 17 D15: bots never use a projectile weapon: a loaded rocket launcher is not a slot to switch to, and with only it
+    // they do not fight; they do not pick up rocket launchers or grenades either.
+    [Fact]
+    public void ARocketLauncher_IsNeverSelected_NorPickedUp_AndGrenadesAreIgnored()
+    {
+        BotView view = Armed();
+        const byte rocketId = 6;
+        view.Weapons = view.Weapons!.Append(new WeaponInfo
+        {
+            WeaponId = rocketId, Name = "Rocket", Damage = 75, FireIntervalTicks = 30, MagazineSize = 1, ReloadTicks = 90, Range = 160f,
+            AmmoType = AmmoType.Rockets, Pellets = 1, Projectile = ProjectileKind.Rocket,
+        }).ToArray();
+        view.Self.Ammo = 0;
+        view.Inventory.Slot1 = new InventorySlotState { WeaponId = rocketId, MagAmmo = 1 };
+        view.Inventory.RocketsAmmo = 4;
+        AddOther(view, 2, new Vector3(0f, 0f, 10f));
+        var brain = new BotBrain(1);
+        InputCommand c = Run(brain, view, 0f, 1)[0];
+        Assert.NotEqual(BotGoal.Fight, brain.Goal);
+        Assert.Equal(0, (int)(c.Buttons & (InputButtons.Slot2 | InputButtons.Fire | InputButtons.ThrowGrenade)));
+        view.Inventory.Slot1 = default;
+        Assert.False(BotBrain.IsUseful(view, new WorldItemData { Kind = ItemKind.Weapon, DefId = rocketId }));
+        Assert.True(BotBrain.IsUseful(view, new WorldItemData { Kind = ItemKind.Weapon, DefId = SemiId }));
+        Assert.False(BotBrain.IsUseful(view, new WorldItemData { Kind = ItemKind.Consumable, DefId = (byte)ConsumableType.Grenade }));
+        Assert.False(BotBrain.IsUseful(view, new WorldItemData { Kind = ItemKind.Ammo, DefId = (byte)AmmoType.Rockets }));
     }
 
     [Fact]

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "name": "Explosion Falloff",
+  "description": "Phase 17 D8 (request §74): A fires a Thunder RL rocket into a finished metal wall at x 0 (cell 16, 16, west edge; 296 structure damage < 360, so it stands). The blast (75 at the centre, linear to 0 at 4 m, measured to the body) hurts B 1.9 m away more (about 39) than D 3.0 m away (about 19); C stands 2.2 m away behind the wall and takes nothing; A is out of reach.",
+  "tags": ["weapons", "projectile", "explosion"],
+  "seed": 17005,
+  "timeoutSeconds": 90,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "4" } },
+  "actors": [ { "id": "playerA" }, { "id": "playerB" }, { "id": "playerC" }, { "id": "playerD" } ],
+  "steps": [
+    { "id": "a_connect", "action": "connect", "actor": "playerA" },
+    { "id": "b_connect", "action": "connect", "actor": "playerB" },
+    { "id": "c_connect", "action": "connect", "actor": "playerC" },
+    { "id": "d_connect", "action": "connect", "actor": "playerD" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+
+    { "id": "wall", "phase": "arrange", "action": "spawnBuildPiece", "piece": "wall", "material": "metal", "cellX": 16, "level": 0, "cellZ": 16, "rotation": 1, "saveAs": "wall" },
+    { "id": "a_place", "action": "setPosition", "actor": "playerA", "position": { "x": -10, "z": 2.5, "yaw": 90 } },
+    { "id": "b_place", "action": "setPosition", "actor": "playerB", "position": { "x": -1.5, "z": 4.5, "yaw": 90 } },
+    { "id": "c_place", "action": "setPosition", "actor": "playerC", "position": { "x": 2, "z": 2.5, "yaw": 270 } },
+    { "id": "d_place", "action": "setPosition", "actor": "playerD", "position": { "x": -3, "z": 0.5, "yaw": 90 } },
+    { "id": "b_health", "action": "setHealth", "actor": "playerB", "value": 100 },
+    { "id": "c_health", "action": "setHealth", "actor": "playerC", "value": 100 },
+    { "id": "d_health", "action": "setHealth", "actor": "playerD", "value": 100 },
+    { "id": "b_shield", "action": "setShield", "actor": "playerB", "value": 0 },
+    { "id": "c_shield", "action": "setShield", "actor": "playerC", "value": 0 },
+    { "id": "d_shield", "action": "setShield", "actor": "playerD", "value": 0 },
+    { "id": "a_rocket", "action": "giveWeapon", "actor": "playerA", "weapon": "Thunder RL", "rarity": 0, "select": true },
+    { "id": "a_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "playerA", "equals": "Thunder RL", "timeoutMilliseconds": 3000 },
+    { "id": "a_aim", "action": "aim", "actor": "playerA", "at": { "x": 0, "y": 1.5, "z": 2.5 } },
+    { "id": "built", "action": "wait", "milliseconds": 5500, "description": "the metal wall finishes building (5 s) and reaches 360 health" },
+
+    { "id": "a_fire", "phase": "act", "action": "fire", "actor": "playerA", "count": 1 },
+
+    { "id": "boom", "phase": "assert", "action": "waitForEvent", "event": "Explosion", "where": { "kind": "Rocket" }, "timeoutMilliseconds": 3000 },
+    { "id": "two_hit", "action": "waitFor", "condition": "projectiles.explosions.0.playersHit", "equals": 2, "timeoutMilliseconds": 1000 },
+    { "id": "b_near", "action": "waitFor", "condition": "player.health", "actor": "playerB", "between": [50, 72], "timeoutMilliseconds": 2000 },
+    { "id": "d_far", "action": "waitFor", "condition": "player.health", "actor": "playerD", "between": [72, 92], "timeoutMilliseconds": 2000 },
+    { "id": "b_health_now", "action": "save", "path": "player.health", "actor": "playerB", "saveAs": "bHealth" },
+    { "id": "farther_less", "assert": "player.health", "actor": "playerD", "greaterThan": "${bHealth}" },
+    { "id": "c_shielded", "assert": "player.health", "actor": "playerC", "equals": 100, "description": "behind the wall: no line of sight" },
+    { "id": "a_untouched", "assert": "player.health", "actor": "playerA", "equals": 100 },
+    { "id": "wall_stands", "assert": "build.exists", "pieceId": "${wall.pieceId}", "equals": true },
+    { "id": "wall_hit", "assert": "build.piece.damage", "pieceId": "${wall.pieceId}", "between": [280, 300] }
+  ]
+}

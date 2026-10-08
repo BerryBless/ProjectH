@@ -7,7 +7,7 @@ namespace ProjectH.Client.Game
     // D15: every world item as a small spinning shape: weapon = cube in its rarity color, ammo = cylinder,
     // Medkit / Shield Cell = sphere. Holds the client's item list (WorldItemList) and one view per entry,
     // in the same index order. Views come from a pool that never exceeds WorldItemList.Capacity (256) and
-    // is reused, never destroyed, until Dispose; all views share 8 materials and 3 built-in meshes
+    // is reused, never destroyed, until Dispose; all views share the materials made here and 3 built-in meshes
     // (sharedMaterial / sharedMesh only). No colliders: items never block the camera or the aim ray.
     public sealed class WorldItemViews : System.IDisposable
     {
@@ -27,10 +27,11 @@ namespace ProjectH.Client.Game
         private readonly Material _shieldCellMaterial;
         private readonly Material _resourceMaterial;
         private readonly Material _cardMaterial;   // Phase 14 D9: a teammate's reboot card (only its team is told of it)
+        private readonly Material _grenadeMaterial;   // Phase 17 D9
         private int _freeCount;
         private int _created;
 
-        // 기능: 공유 Mesh 3개와 Material(희귀도 5, 탄, 구급상자, 실드 셀, 자원, Phase 14 재투입 카드)을 만든다.
+        // 기능: 공유 Mesh 3개와 Material(희귀도 5, 탄, 구급상자, 실드 셀, 자원, Phase 14 재투입 카드, Phase 17 수류탄)을 만든다.
         // 입력: 없음.
         // 출력: 빈 아이템 목록과 풀을 가진 객체(Dispose가 해제한다).
         public WorldItemViews()
@@ -46,6 +47,7 @@ namespace ProjectH.Client.Game
             _shieldCellMaterial = new Material(template) { color = new Color(0.3f, 0.85f, 1f) };
             _resourceMaterial = new Material(template) { color = new Color(0.55f, 0.4f, 0.25f) };   // Phase 13 D15
             _cardMaterial = new Material(template) { color = new Color(0.3f, 0.95f, 0.6f) };
+            _grenadeMaterial = new Material(template) { color = new Color(0.35f, 0.45f, 0.2f) };
         }
 
         public WorldItemList Items => _items;
@@ -94,7 +96,7 @@ namespace ProjectH.Client.Game
             for (int i = 0; i < _items.Count; i++) _views[i].localRotation = spin;
         }
 
-        // 기능: 풀의 뷰(뿌리의 자식)와 만든 Material을 모두 파괴한다.
+        // 기능: 풀의 뷰(뿌리의 자식)와 만든 Material(Phase 17 수류탄 포함)을 모두 파괴한다.
         // 입력: 없음.
         // 출력: 반환값 없음.
         public void Dispose()
@@ -106,9 +108,10 @@ namespace ProjectH.Client.Game
             if (_shieldCellMaterial != null) Object.Destroy(_shieldCellMaterial);
             if (_resourceMaterial != null) Object.Destroy(_resourceMaterial);
             if (_cardMaterial != null) Object.Destroy(_cardMaterial);
+            if (_grenadeMaterial != null) Object.Destroy(_grenadeMaterial);
         }
 
-        // 기능: 아이템 종류에 맞는 공유 Mesh·Material·크기를 뷰에 입힌다(Phase 14: 재투입 카드는 납작한 초록 판).
+        // 기능: 아이템 종류에 맞는 공유 Mesh·Material·크기를 뷰에 입힌다(Phase 14: 재투입 카드는 납작한 초록 판, Phase 17: 수류탄은 올리브색 구).
         // 입력: view - 풀에서 빌린 뷰, item - 월드 아이템.
         // 출력: 반환값 없음.
         private void Dress(Transform view, in WorldItemData item)
@@ -139,7 +142,8 @@ namespace ProjectH.Client.Game
                     break;
                 default:
                     filter.sharedMesh = _sphere;
-                    renderer.sharedMaterial = item.DefId == (byte)ConsumableType.Medkit ? _medkitMaterial : _shieldCellMaterial;
+                    renderer.sharedMaterial = item.DefId == (byte)ConsumableType.Medkit ? _medkitMaterial
+                        : item.DefId == (byte)ConsumableType.Grenade ? _grenadeMaterial : _shieldCellMaterial;
                     view.localScale = new Vector3(0.3f, 0.3f, 0.3f);
                     break;
             }

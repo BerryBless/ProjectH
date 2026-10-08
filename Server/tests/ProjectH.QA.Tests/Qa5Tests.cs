@@ -367,8 +367,9 @@ public class Qa5Tests : IDisposable
         Bad(lines[0] + "\nnot json\n", "Line 2: malformed JSON");
         Bad(Recording(InputRecording.MaxInputs + 1), "More than 54000 inputs");
         Assert.Equal(InputRecording.MaxInputs, QaInputRecordFormat.MaxInputLines);
-        // Unknown button bits (a newer client) are masked, not an error.
-        Assert.Equal(1, Read(lines[0] + "\n" + Set(lines[1], "buttons", "32772") + "\n").UnknownButtonLines);
+        // Phase 17: ThrowGrenade (32768) takes the last free bit and InteractHeld (16384) is known too, so no u16 bit is unknown.
+        Assert.Equal(0, Read(lines[0] + "\n" + Set(lines[1], "buttons", "32772") + "\n").UnknownButtonLines);
+        Assert.Equal(0, Read(lines[0] + "\n" + Set(lines[1], "buttons", "16384") + "\n").UnknownButtonLines);
     }
 
     [Fact]

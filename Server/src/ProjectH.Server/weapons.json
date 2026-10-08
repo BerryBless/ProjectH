@@ -1,4 +1,7 @@
 {
+  // Phase 17 D1, D2, D10, D11 (Docs/Weapons.md). damage is per pellet; spreadDegrees is the half angle of the cone the server
+  // spreads each ray in; damage falls linearly from falloffStart to falloffMinRatio x damage at range; a piece takes
+  // damage x structureMultiplier x its material's multiplier; recoilDegrees is the client's camera kick only.
   "weapons": [
     {
       "id": 1,
@@ -9,9 +12,12 @@
       "reloadSeconds": 2.0,
       "range": 150,
       "automatic": true,
-      "spread": 0,
-      "recoil": 0,
-      "ammoType": "Medium"
+      "ammoType": "Medium",
+      "spreadDegrees": 1.0,
+      "falloffStart": 50,
+      "falloffMinRatio": 0.7,
+      "structureMultiplier": 1.0,
+      "recoilDegrees": 0.6
     },
     {
       "id": 2,
@@ -22,9 +28,10 @@
       "reloadSeconds": 2.5,
       "range": 300,
       "automatic": false,
-      "spread": 0,
-      "recoil": 0,
-      "ammoType": "Heavy"
+      "ammoType": "Heavy",
+      "spreadDegrees": 0,
+      "structureMultiplier": 1.5,
+      "recoilDegrees": 3.0
     },
     {
       "id": 3,
@@ -35,9 +42,84 @@
       "reloadSeconds": 1.6,
       "range": 80,
       "automatic": true,
-      "spread": 0,
-      "recoil": 0,
-      "ammoType": "Light"
+      "ammoType": "Light",
+      "spreadDegrees": 2.5,
+      "falloffStart": 25,
+      "falloffMinRatio": 0.6,
+      "structureMultiplier": 0.8,
+      "recoilDegrees": 0.4
+    },
+    {
+      "id": 4,
+      "name": "Brute SG",
+      "damage": 11,
+      "fireIntervalSeconds": 0.9,
+      "magazineSize": 5,
+      "reloadSeconds": 2.4,
+      "range": 35,
+      "automatic": false,
+      "ammoType": "Shells",
+      "pellets": 8,
+      "spreadDegrees": 6.0,
+      "falloffStart": 8,
+      "falloffMinRatio": 0.3,
+      "structureMultiplier": 0.6,
+      "recoilDegrees": 4.0
+    },
+    {
+      "id": 5,
+      "name": "Sparrow P",
+      "damage": 24,
+      "fireIntervalSeconds": 0.2,
+      "magazineSize": 12,
+      "reloadSeconds": 1.4,
+      "range": 80,
+      "automatic": false,
+      "ammoType": "Light",
+      "spreadDegrees": 1.5,
+      "falloffStart": 20,
+      "falloffMinRatio": 0.6,
+      "structureMultiplier": 0.8,
+      "recoilDegrees": 1.5
+    },
+    {
+      "id": 6,
+      "name": "Thunder RL",
+      "damage": 75,
+      "fireIntervalSeconds": 1.0,
+      "magazineSize": 1,
+      "reloadSeconds": 3.0,
+      "range": 160,
+      "automatic": false,
+      "ammoType": "Rockets",
+      "projectile": "Rocket",
+      "recoilDegrees": 5.0
     }
-  ]
+  ],
+  // Phase 17 D6, D9, D10: gravity pulls down in m/s^2; lifetimeSeconds is the grenade's fuse and the rocket's flight time;
+  // the explosion does explosionDamage (players) and structureDamage (pieces) at its centre, falling linearly to 0 at
+  // explosionRadius; bounce 0 explodes on impact. The grenade's throw: one per throwIntervalSeconds, aimed throwUpDegrees
+  // above the crosshair.
+  "projectiles": {
+    "Grenade": {
+      "speed": 18,
+      "gravity": 9.81,
+      "lifetimeSeconds": 3.0,
+      "explosionRadius": 5,
+      "explosionDamage": 80,
+      "structureDamage": 120,
+      "bounce": 0.4,
+      "throwIntervalSeconds": 1.0,
+      "throwUpDegrees": 8
+    },
+    "Rocket": {
+      "speed": 40,
+      "gravity": 0,
+      "lifetimeSeconds": 4.0,
+      "explosionRadius": 4,
+      "explosionDamage": 75,
+      "structureDamage": 300,
+      "bounce": 0
+    }
+  }
 }

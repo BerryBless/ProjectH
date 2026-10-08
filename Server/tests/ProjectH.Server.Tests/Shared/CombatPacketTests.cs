@@ -17,6 +17,8 @@ public class CombatPacketTests
         return reader;
     }
 
+    private static readonly ProjectileInfo[] NoProjectiles = System.Array.Empty<ProjectileInfo>();
+
     private static WeaponInfo Weapon(byte id, string name) => new WeaponInfo
     {
         WeaponId = id,
@@ -28,6 +30,7 @@ public class CombatPacketTests
         Range = 150f,
         Automatic = true,
         AmmoType = AmmoType.Medium,
+        Pellets = 1,   // Phase 17
     };
 
     [Fact]
@@ -38,7 +41,7 @@ public class CombatPacketTests
         weapons[1].Range = 300f;
 
         var writer = new PacketWriter(_buffer);
-        WeaponCatalogPacket.Write(ref writer, weapons);
+        WeaponCatalogPacket.Write(ref writer, weapons, NoProjectiles);
         Assert.False(writer.Overflowed);
         var reader = ReaderAfterId(writer.Length, PacketId.WeaponCatalog);
         Assert.True(WeaponCatalogPacket.TryRead(ref reader, out var read));
@@ -63,9 +66,9 @@ public class CombatPacketTests
         var weapons = new WeaponInfo[WeaponCatalogPacket.MaxWeapons];
         for (int i = 0; i < weapons.Length; i++) weapons[i] = Weapon((byte)(i + 1), new string('w', WeaponCatalogPacket.MaxNameBytes));
         var writer = new PacketWriter(_buffer);
-        WeaponCatalogPacket.Write(ref writer, weapons);
+        WeaponCatalogPacket.Write(ref writer, weapons, NoProjectiles);
         Assert.False(writer.Overflowed);
-        Assert.Equal(2 + 8 * 31, writer.Length);   // Phase 4: one more byte (ammo type) per weapon
+        Assert.Equal(2 + 8 * 41 + 1, writer.Length);   // Phase 4: ammo type; Phase 17: pellets, spread, recoil, projectile + the projectile count
         Assert.True(writer.Length <= ProtocolConstants.MaxPacketSize);
     }
 
@@ -84,20 +87,20 @@ public class CombatPacketTests
         var weapon = Weapon(1, "Bad");
         weapon.Range = float.NaN;
         var writer = new PacketWriter(_buffer);
-        WeaponCatalogPacket.Write(ref writer, new[] { weapon });
+        WeaponCatalogPacket.Write(ref writer, new[] { weapon }, NoProjectiles);
         var reader = ReaderAfterId(writer.Length, PacketId.WeaponCatalog);
         Assert.False(WeaponCatalogPacket.TryRead(ref reader, out _));
     }
 
     [Theory]
     [InlineData(AmmoType.None)]
-    [InlineData((AmmoType)4)]
+    [InlineData((AmmoType)6)]   // Phase 17: Shells 4 and Rockets 5 are known
     public void WeaponCatalog_UnknownAmmoType_IsRejected(AmmoType ammoType)
     {
         var weapon = Weapon(1, "Bad");
         weapon.AmmoType = ammoType;
         var writer = new PacketWriter(_buffer);
-        WeaponCatalogPacket.Write(ref writer, new[] { weapon });
+        WeaponCatalogPacket.Write(ref writer, new[] { weapon }, NoProjectiles);
         var reader = ReaderAfterId(writer.Length, PacketId.WeaponCatalog);
         Assert.False(WeaponCatalogPacket.TryRead(ref reader, out _));
     }
@@ -106,7 +109,7 @@ public class CombatPacketTests
     public void WeaponCatalog_Truncated_IsRejected()
     {
         var writer = new PacketWriter(_buffer);
-        WeaponCatalogPacket.Write(ref writer, new[] { Weapon(1, "Vesper AR") });
+        WeaponCatalogPacket.Write(ref writer, new[] { Weapon(1, "Vesper AR") }, NoProjectiles);
         var reader = ReaderAfterId(writer.Length - 1, PacketId.WeaponCatalog);
         Assert.False(WeaponCatalogPacket.TryRead(ref reader, out _));
     }

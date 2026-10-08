@@ -79,6 +79,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | GET | `/qa/match` | Match DTO(state, alive, winner, zone{phase, center, radius…}, buildPieces, worldItems…) |
 | GET | `/qa/build?x=&z=&radius=&max=` | `{count, pieces[]}` |
 | GET | `/qa/loot?x=&z=&radius=&max=` | Phase 16: `{containersSpawned, containersOpened, containers[{id, kind, position, yaw, state(none/closed/open), loot[{kind, defId, rarity, amount}]}], supplyDropCount, supplyDrops[{id, state, position, startTick, landTick, loot[], fallTicks, nearestPlayerDistance, insideTargetCircle}], items{count, truncated, weapons, ammo, consumables, materials, minWeaponRarity, maxWeaponRarity, list[{itemId, kind, defId, rarity, amount, position, dropped}]}}`. `x`·`z`·`radius`를 주면 `items`는 그 원 안의 월드 아이템만(없으면 전부, 목록은 `max`개까지) |
+| GET | `/qa/projectiles` | Phase 17: `{projectiles[{id, kind(Grenade/Rocket), ownerId, owner, position, velocity, resting, explodeTick}], explosions[{id, kind, position, tick, ownerId, playersHit, piecesHit}](최근 16개, 오래된 것부터), launched, refused, explosionsTotal, grenadesThrown}` |
 | GET | `/qa/metrics?windowSeconds=` | tick p50/p95/p99/max, workingSetMB, gc, activeSessions, health 카운터 |
 | GET | `/qa/events?after=&max=` | `{next, dropped, events[{seq,tick,utc,type,player,data}]}` |
 | POST | `/qa/server/stop` | 정상 종료 |
@@ -90,7 +91,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
   - 413: 16 KB 초과
   - 503: 큐 가득
   - 504: 실행되지 않음. 다시 해도 안전하다.
-- 이벤트 종류: PlayerJoined/Resumed/Graced/Left/Damaged/Healed/Killed/Respawned, InventoryChanged, MatchStateChanged, ZoneChanged, BuildPlaced/Destroyed, MatchReset. Phase 14: PlayerDowned(`by`, `health`), PlayerRevived(`health`, `mode`), PlayerRebooted(경기 중 참가자가 다시 살아남, 개발 모드 부활은 PlayerRespawned). 기절·소생으로 체력이 뛰는 것과 출혈(Tick당 1)은 Damaged·Healed가 아니다.
+- 이벤트 종류: PlayerJoined/Resumed/Graced/Left/Damaged/Healed/Killed/Respawned, InventoryChanged, MatchStateChanged, ZoneChanged, BuildPlaced/Destroyed, MatchReset. Phase 14: PlayerDowned(`by`, `health`), PlayerRevived(`health`, `mode`), PlayerRebooted(경기 중 참가자가 다시 살아남, 개발 모드 부활은 PlayerRespawned). 기절·소생으로 체력이 뛰는 것과 출혈(Tick당 1)은 Damaged·Healed가 아니다. Phase 17: ProjectileLaunched(`count`, `live`), Explosion(`id`, `kind`, `x`·`y`·`z`, `ownerId`, `playersHit`, `piecesHit`. 같은 Tick의 BuildDestroyed보다 뒤에 기록된다 — `waitForEvent`는 앞의 사건부터 기다린다).
   - 명령의 효과는 다음 Tick의 이벤트로 나온다.
   - `ItemPickedUp`은 없다. InventoryChanged로 대신한다.
 
@@ -250,15 +251,16 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `mark` | `text`. 서버 로그에 runId와 함께 남는다(Tool이 시작·끝에 자동으로도 남긴다) |
 | `setPosition` | actor, `position` 또는 `x`,`z`,`y?`,`yaw?`. 서 있을 몸이 박스나 문과 겹치면 409 |
 | `setHealth` / `setShield` | actor, `value`(1–100 / 0–100) |
-| `giveWeapon` | actor, `weapon`(1–3 또는 "Vesper AR"·"Kestrel LR"·"Wisp SMG"), `rarity?`, `slot?`(0–2), `select?` |
-| `giveAmmo` | actor, `type`(light/medium/heavy), `amount` |
-| `giveItem` | actor, `item`(medkit/shieldCell), `count` |
+| `giveWeapon` | actor, `weapon`(1–6 또는 "Vesper AR"·"Kestrel LR"·"Wisp SMG"·(Phase 17) "Brute SG"·"Sparrow P"·"Thunder RL"), `rarity?`, `slot?`(0–2), `select?` |
+| `giveAmmo` | actor, `type`(light/medium/heavy, Phase 17: shells/rockets), `amount` |
+| `giveItem` | actor, `item`(medkit/shieldCell, Phase 17: grenade), `count` |
+| `giveGrenade` | actor, `count?`(기본 1). Phase 17: 수류탄을 maxStack(6)까지 준다(`giveItem item grenade`와 같다) → `{count}` |
 | `giveResource` | actor, `material`(wood/stone/metal), `amount` |
 | `damagePlayer` | actor, `amount` (Arrange 전용 경고) |
 | `killPlayer` | actor (Arrange 전용 경고) |
 | `forceMatchState` | `state`: start / finish |
 | `setZone` | `zonePhase: n`(서버 `args.phase`로 보낸다. Step의 `phase`는 arrange/act/assert이기 때문이다) 또는 `advance: true` |
-| `spawnLoot` | `kind`, `position` 또는 `x`,`z`, `id?`, `rarity?`, `amount?` → `result.itemId` |
+| `spawnLoot` | `kind`(weapon/ammo/medkit/shieldCell/material, Phase 17: grenade), `position` 또는 `x`,`z`, `id?`, `rarity?`, `amount?` → `result.itemId` |
 | `spawnBuildPiece` | `piece`, `material`, `cellX`,`level`,`cellZ` 또는 `position`, `rotation?` → `result.pieceId` |
 | `damageBuild` | `pieceId`, `amount` → `{destroyed, health, standing}` |
 | `downPlayer` | actor (Arrange 전용). Phase 14: 바로 기절시킨다. 같은 팀에 서 있는 구성원이 있어야 한다(없으면 409) |
@@ -281,6 +283,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | Phase 15 `actor.*` | Actor가 받은 `TeamMarkers` | `actor.pingCount`, `actor.pings.<i>.kind`·`ownerId`·`position`·`endTick`·`targetId`, `actor.waypointCount`, `actor.waypoints.<i>.ownerId`·`position`, `actor.teamMarkersReceived`, `actor.mapMarkersSent` |
 | Phase 15 `server.health.map.*` | `/qa/health` | `pings`, `enemyConfirmed`, `enemyDemoted`, `refused`, `replaced`, `expired`, `waypoints`, `packets`, `markerDrops`(연결별 속도 제한이 버린 것), `markerInboxDrops`, `markerRateBadPackets`(1초 20개 초과) |
 | Phase 14 `actor.*` | Actor가 받은 것 | `actor.teamId`, `actor.teamIds`, `actor.teamStates`(TeamMemberState 이름), `actor.rebootCards`, `actor.downsSeen`, `actor.channelActive`, `actor.channelKind`, `actor.channelActor`, `actor.stationsCooling`(대기 마스크) |
+| Phase 17 `projectiles.*` | `GET /qa/projectiles` | `projectiles.projectiles.0.kind`·`resting`, `projectiles.explosions.0.playersHit`·`piecesHit`·`kind`, `projectiles.launched`, `projectiles.explosionsTotal`, `projectiles.grenadesThrown`. 플레이어 DTO: `player.grenades`, `player.nextGrenadeTick`, `player.ammo.shells`·`rockets`. Actor 상태: `actor.grenades`, `actor.projectilesSpawned`·`projectileStates`·`projectilesExploded`(그 Client가 들은 투사체 사건 수) |
 | Phase 16 `loot.*` | `GET /qa/loot`(`at`·`radius` 선택: `items`를 그 원 안으로) | `loot.containers.14.state`(none/closed/open), `loot.containers.14.loot.0.kind`, `loot.supplyDropCount`, `loot.supplyDrops.0.state`(Falling/Landed/Opened)·`position`·`landTick`·`fallTicks`·`nearestPlayerDistance`(지금 가장 가까운 살아 있는 플레이어까지 수평 거리)·`insideTargetCircle`(지금 목표 원 반지름 × 0.6 안), `loot.items.count`·`weapons`·`ammo`·`materials`·`minWeaponRarity` |
 | Phase 16 `match.*` | `GET /qa/match` | `match.containersSpawned`, `match.containersOpened`, `match.supplyDrops`(수) |
 | Phase 16 `server.health.loot.*` | `/qa/health` | `containersOpened`, `dropsSpawned`, `dropsLanded`, `dropsOpened`, `lootItems`, `opensBlocked`(시선에 막힌 열기), `packets` |
@@ -352,7 +355,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `captureScreenshot` | actor, `name`(`[A-Za-z0-9_-]{1,64}`) | `screenshots/<Step 번호>_<alias>_<name>.png`(64자 이내).<br>Step 번호가 있어서, 영문이 아닌 Alias가 같은 문자로 바뀌거나 잘려도 파일이 겹치지 않는다. 다시 실행한 Step은 `_2`가 붙는다.<br>Report에는 썸네일과 링크로 나온다(상대 경로). UI에서 연 Report도 `/reports/<runId>/screenshots/<file>.png`로 이미지를 보인다. 실행당 최대 200장 |
 | `uiCommand` | actor, `command`(openMenu, closeMenu, openStats, closeStats, toggleDebug, Phase 15: openMap, closeMap) | 지금 화면에 맞지 않으면(409) 실패한다. 화면 이름이 메시지에 나온다 |
 | `waitForUnity` | actor, `condition`(status 필드, 예: `joined`, `screen`, `unity.statsOpen`, `tool`, `preview`), 연산자 하나, `timeoutMilliseconds` | Player 상태를 직접 읽으며 기다린다 |
-| `unityKey` | actor, `key`(w a s d space leftShift leftCtrl c q f z x v b t r e g 1 2 3 4 5 escape f1 h m), `holdMs?`(1–10000), `state?`(down\|up), `async?` | 키 입력. 없으면 한 번 누름(이번 Frame 누르고 다음 Frame 뗌), `holdMs`면 그동안 누름, `state`면 누름·뗌만(뗌 없는 down은 Player가 10 s 뒤 뗀다). `holdMs`와 `state`는 함께 쓰지 않는다 |
+| `unityKey` | actor, `key`(w a s d space leftShift leftCtrl c q f z x v b t r e g 1 2 3 4 5 escape f1 h m 6. Phase 17: 6 = 수류탄, Client `QaInput.KeyNames`와 같은 순서로 끝에), `holdMs?`(1–10000), `state?`(down\|up), `async?` | 키 입력. 없으면 한 번 누름(이번 Frame 누르고 다음 Frame 뗌), `holdMs`면 그동안 누름, `state`면 누름·뗌만(뗌 없는 down은 Player가 10 s 뒤 뗀다). `holdMs`와 `state`는 함께 쓰지 않는다 |
 | `unityClick` | actor, `button?`(left\|right\|middle, 기본 left. Phase 15: middle = Ping, m = 전체 지도), `holdMs?`, `state?`, `async?` | 마우스 버튼. 규칙은 `unityKey`와 같다 |
 | `unityReleaseAll` | actor | 눌린 키·버튼과 진행 중인 시점 이동을 모두 뗀다(`{"releaseAll":true}`). 약 2 Frame 뒤 PASS |
 | `unityLook` | actor, `dx`·`dy`(픽셀, 하나 이상, \|값\| ≤ 20000), `ms?`(0–5000, 기본 0 = 한 Frame), `async?` | 마우스 이동량을 `ms` 동안의 Frame에 고르게 나눠 넣는다 |
@@ -418,6 +421,14 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `Loot/supply_drop_spawn.json` | 64–66 | `spawnSupplyDrop`(서버 위치 규칙) → 목록 1개, Falling, ±60 m 안, Loot 4개, 두 Client에 Falling → 10 s 뒤 아직 Falling → 15 s에 Landed(dropsLanded 1, Client도 Landed) | ~18 s |
 | `Loot/supply_drop_open.json` | 64 | (6, 26)의 Supply Drop: 떨어지는 동안 E → 그대로 Falling(dropsOpened 0) → 착지 뒤 E → Opened, 둘레에 4개, 무기 1개 Epic 이상 | ~18 s |
 | `Loot/visual_loot.json` | 59, 63, 64 | Unity Player: 닫힌 Chest·Ammo Box·열린 Chest 스크린샷, Chest 앞 `lootPrompt` = chest, 실제 E로 열기(서버 open + 바닥 Loot), Supply Drop 낙하(낙하산, 38 m 떨어져 25° 위를 봄)·미니맵 아이콘(`mapSupplyDrops` 1)·착지(빛기둥) | ~26 s |
+| `Weapons/weapon_ar.json` | 68–70 | Phase 17: 20 m에서 Vesper AR 5발 → 퍼짐 1° 안이라 5발 모두 명중(HitConfirmed 5), 감쇠 전이라 한 발 20(실드 100 → 0, 체력 100) | ~5 s |
+| `Weapons/weapon_shotgun.json` | 70 | Brute SG 한 번 = 산탄 8 × 11 합산 → HitConfirmed 1, 3 m에서 88(체력 12), 탄창 1 감소. 20 m에서는 퍼짐·감쇠로 70 미만 | ~6 s |
+| `Weapons/weapon_sniper.json` | 71 | Kestrel LR: 퍼짐·감쇠 없음, 20 m 한 발 정확히 90 | ~4 s |
+| `Weapons/grenade.json` | 72, 73 | 6(ThrowGrenade) → 수류탄 2 → 1, ProjectileLaunched, 1.5 s 뒤 아직 폭발 없음, 튕김·멈춤 ProjectileState를 Client가 들음, 3 s 퓨즈에 Explosion | ~7 s |
+| `Weapons/explosion_falloff.json` | 74 | 금속 벽에 로켓: 1.9 m의 B가 3.0 m의 D보다 많이 다침(약 39·19), 벽 뒤 C는 0, 벽은 남음(296 < 360) | ~12 s |
+| `Weapons/rocket.json` | 75, 76 | Thunder RL → B가 ProjectileSpawned·Exploded를 들음, 나무 벽 파괴(BuildDestroyed), 탄창 0, 자폭 없음 | ~5 s |
+| `Weapons/structure_damage.json` | 76 | 금속 벽에 한 발씩: AR 20, Kestrel 135, Brute SG 53(합산 뒤 0.6), Sparrow 19 = 227 | ~11 s |
+| `Weapons/visual_weapons.json` | 68, 73, 75 | Unity Player: 무기 HUD(산탄총·Shells·수류탄 수), 실제 6 → 수류탄 생성·폭발(`ProjectileLaunched`, `Explosion`), 실제 클릭(150 ms) → 로켓이 30 m 앞 나무 벽을 부숨. 기본 조준선은 바닥을 가리켜 4° 올린다 | ~14 s |
 | `Healing/medkit.json` | 121 | damagePlayer(arrange) → 실제 UseMedkit → 체력 +50 | ~6 s |
 | `Shield/shield_cell.json` | 122 | 실제 UseShieldCell → 실드 +25. 다음 피해는 실드가 먼저 받는다 | ~5 s |
 | `Zone/zone_damage.json` | 123 | Zone을 phase 3으로 → 밖에서 체력 감소 → 중심(`match.zone.center`)에서 멈춤 | ~10 s |
@@ -480,6 +491,7 @@ Stress Test 시나리오(baseline, movement, combat, building, mixed_match, reco
 | `squad` | Phase 14 분대 8개(헤드리스, TeamSize 2): duo_basic, dbno, dbno_bleedout, revive, revive_cancel, squad_elimination, reboot, reconnect_dbno. 2026-10-08 8/8 통과 | ~85 s |
 | `loot` | Phase 16 Loot 7개(헤드리스): pickup_drop, chest_open, chest_duplicate_open, chest_loot, ammo_box, supply_drop_spawn, supply_drop_open. Unity 스크린샷 visual_loot(리더가 작성)는 `unity.json`에 넣을 것 | ~50 s |
 | `map` | Phase 15 지도 표시 4개(헤드리스): map_team, ping_world, ping_enemy, ping_rate_limit. 2026-10-08 4/4 통과. Unity 지도 시나리오(minimap_position, map_zone, visual_map)는 Client `/qa/status` 지도 필드가 생긴 뒤 `unity.json`에 들어간다 | ~25 s |
+| `weapons` | Phase 17 무기·투사체 7개(헤드리스): weapon_ar, weapon_shotgun, weapon_sniper, grenade, explosion_falloff, rocket, structure_damage. 2026-10-08 7/7 통과. Unity 스크린샷 visual_weapons(리더가 작성)는 unity.json | ~70 s |
 | `full-regression` | 모든 카테고리. Stress, Persistence, ServerProcess, Recorded 포함 | ~6 min |
 | `faults` | QA-3: latency_loss_combat, lag_compensation, network_drop, invalid_packet, input_timeout, shutdown, restart, db_down | ~1 min |
 | `stress` | QA-5 D35: Load 파일 3개(bots_50, load_bots_10, load_bots_50). 같은 이름의 카테고리가 있으므로 `suite:stress`로 부른다. Stress 시나리오는 아래 `stress-*` | ~3.2 min |
@@ -1281,6 +1293,22 @@ Development Player(`phase16-loot` 작업 트리 복사본, batchmode)로 확인�
 발견한 문제:
 - **수정함(시나리오):** 낙하 중인 Supply Drop은 카메라 위쪽 한계(약 30°) 밖이라 처음에는 찍히지 않았다. 38 m 떨어져 9초 뒤(약 24 m 높이)에 25° 위를 보게 바꿨다.
 - 3인칭 카메라에서 바로 앞의 Chest는 내 몸에 가려진다(안내는 보인다).
+- Critical·High 문제는 없다.
+
+## Phase 17 Unity 검증 (2026-10-08)
+
+Development Player(`phase17-weapons` 작업 트리 복사본, batchmode)로 확인했다. 같은 복사본에서 EditMode 350/350이 통과했고 컴파일 오류는 0이다. 스크린샷은 에이전트가 직접 보고 판정했다.
+
+| 항목 | 결과 | 근거 |
+|---|---|---|
+| 무기 HUD | PASS | `visual_weapons.json`: "Brute SG 5 / 20 Shells", "[6] 수류탄 x2", "Thunder RL 재장전 중 Rockets" |
+| 수류탄(실제 키 6) | PASS | 서버 `ProjectileLaunched` → 30 m 앞 벽 근처 폭발(주황 반구), 수류탄 3 → 2 |
+| 로켓(실제 클릭) | PASS | 벽이 부서지고 폭발 반구가 보인다 |
+| 회귀 | PASS | unity 스위트 10/10 |
+
+발견한 문제:
+- **수정함(시나리오):** 서버 이벤트 이름은 `ProjectileLaunched`다(`ProjectileSpawned`는 Client 쪽 사건 수). 커서가 잠기기 전 클릭은 잠그기만 한다. QA 기본 클릭은 너무 짧아 반자동 사격이 빠졌다(150 ms 누름). 어깨 카메라의 기본 조준선이 약 24 m 앞 바닥을 가리켜 로켓이 바닥에서 터졌다(4° 올림).
+- 날아가는 수류탄·로켓은 스크린샷에 잡히지 않았다(수류탄은 내 몸에 가림, 로켓은 30 m를 0.75초). 생성·폭발 사건과 EditMode 외삽 테스트로 확인했다.
 - Critical·High 문제는 없다.
 
 ## Adding New Actions

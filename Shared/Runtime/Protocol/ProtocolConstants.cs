@@ -22,7 +22,10 @@ namespace ProjectH.Shared.Protocol
         //     InteractHeld button, the RebootCard world item, the card count in InventoryState; downed movement crawls).
         // 14: Phase 15 map pings and waypoints (MapMarker C->S, TeamMarkers S->C).
         // 15: Phase 16 loot containers and supply drops (ContainerStates, SupplyDrops; both S->C).
-        public const ushort ProtocolVersion = 15;
+        // 16: Phase 17 weapons and throwables (the WeaponInfo pellets, spread, recoil and projectile fields and the projectile
+        //     list of WeaponCatalog, the Shells and Rockets ammo types, the Grenade consumable, a 27-byte InventoryState, the
+        //     ThrowGrenade button, ProjectileSpawned/ProjectileState/ProjectileExploded, DeathCause.Explosion).
+        public const ushort ProtocolVersion = 16;
 
         public const int MaxDevPlayerIdBytes = 32;
 

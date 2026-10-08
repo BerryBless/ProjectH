@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "name": "Weapon And Throwable Visuals On A Unity Client (Screenshots)",
+  "description": "Phase 17 D14 (request §68, §73, §75): a Unity Development player shows the shotgun in the weapon HUD with its ammo type and the grenade count, really throws a grenade with key 6 (ThrowGrenade) and the report gets the grenade in flight and its explosion, then really fires a Thunder RL rocket at a wood wall 30 m ahead: the rocket in flight and the wall destroyed. Needs --unity-exe; SKIPPED without it.",
+  "tags": ["weapons", "projectile", "unity", "slow"],
+  "seed": 17101,
+  "timeoutSeconds": 240,
+  "server": { "mode": "launch", "options": { "Server:MinPlayers": "2" } },
+  "actors": [
+    { "id": "viewer", "type": "UnityClient", "unity": { "width": 1600, "height": 900 } },
+    { "id": "other", "type": "HeadlessClient" }
+  ],
+  "steps": [
+    { "id": "viewer_launch", "phase": "arrange", "action": "connect", "actor": "viewer" },
+    { "id": "viewer_joined", "action": "waitForUnity", "actor": "viewer", "condition": "joined", "equals": true, "timeoutMilliseconds": 30000 },
+    { "id": "other_connect", "action": "connect", "actor": "other" },
+    { "id": "match_playing", "action": "waitFor", "condition": "match.playing", "equals": true, "timeoutMilliseconds": 20000 },
+    { "id": "in_game", "action": "waitForUnity", "actor": "viewer", "condition": "screen", "equals": "InGame", "timeoutMilliseconds": 10000 },
+    { "id": "cursor", "action": "waitForUnity", "actor": "viewer", "condition": "cursorLocked", "equals": true, "timeoutMilliseconds": 3000, "description": "A click while the cursor is free only locks it and blocks fire until release" },
+    { "id": "other_away", "action": "setPosition", "actor": "other", "position": { "x": 60, "z": 60 } },
+
+    { "id": "viewer_place", "action": "setPosition", "actor": "viewer", "position": { "x": 2.5, "z": -40, "yaw": 0 } },
+    { "id": "wall", "action": "spawnBuildPiece", "piece": "wall", "material": "wood", "cellX": 16, "level": 0, "cellZ": 14, "rotation": 0, "saveAs": "wall" },
+    { "id": "shotgun", "action": "giveWeapon", "actor": "viewer", "weapon": "Brute SG", "rarity": 2, "select": true },
+    { "id": "shells", "action": "giveAmmo", "actor": "viewer", "type": "shells", "amount": 20 },
+    { "id": "grenades", "action": "giveGrenade", "actor": "viewer", "count": 3 },
+    { "id": "armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "viewer", "equals": "Brute SG", "timeoutMilliseconds": 3000 },
+    { "id": "place_settle", "action": "wait", "milliseconds": 900 },
+    { "id": "shot_hud", "phase": "act", "action": "captureScreenshot", "actor": "viewer", "name": "shotgun_hud_and_grenade_count" },
+
+    { "id": "look_up", "action": "unityLook", "actor": "viewer", "dy": 120, "ms": 150, "description": "Aim about 12 degrees up for a longer arc" },
+    { "id": "throw", "action": "unityKey", "actor": "viewer", "key": "6", "description": "Really press 6: the server throws a grenade" },
+    { "id": "grenade_spawned", "phase": "assert", "action": "waitForEvent", "event": "ProjectileLaunched", "timeoutMilliseconds": 2000 },
+    { "id": "flight_settle", "phase": "act", "action": "wait", "milliseconds": 350 },
+    { "id": "shot_grenade", "action": "captureScreenshot", "actor": "viewer", "name": "grenade_in_flight" },
+    { "id": "boom", "phase": "assert", "action": "waitForEvent", "event": "Explosion", "where": { "kind": "Grenade" }, "timeoutMilliseconds": 5000 },
+    { "id": "shot_boom", "phase": "act", "action": "captureScreenshot", "actor": "viewer", "name": "grenade_explosion" },
+    { "id": "grenades_left", "phase": "assert", "action": "waitFor", "condition": "player.grenades", "actor": "viewer", "equals": 2, "timeoutMilliseconds": 2000 },
+
+    { "id": "look_level", "phase": "act", "action": "unityLook", "actor": "viewer", "dy": -120, "ms": 150 },
+    { "id": "rocket", "action": "giveWeapon", "actor": "viewer", "weapon": "Thunder RL", "rarity": 0, "select": true },
+    { "id": "rocket_ammo", "action": "giveAmmo", "actor": "viewer", "type": "rockets", "amount": 2 },
+    { "id": "rocket_armed", "action": "waitFor", "condition": "player.weapon.name", "actor": "viewer", "equals": "Thunder RL", "timeoutMilliseconds": 3000 },
+    { "id": "rocket_settle", "action": "wait", "milliseconds": 500 },
+    { "id": "aim_at_wall", "action": "unityLook", "actor": "viewer", "dy": 40, "ms": 100, "description": "The shoulder camera's rest aim hits the ground about 24 m ahead: raise it 4 degrees onto the wall" },
+    { "id": "cursor_still", "action": "waitForUnity", "actor": "viewer", "condition": "cursorLocked", "equals": true, "timeoutMilliseconds": 2000 },
+    { "id": "fire_rocket", "action": "unityClick", "actor": "viewer", "holdMs": 150, "description": "Really click: the server launches a rocket at the wall 30 m ahead" },
+    { "id": "rocket_settle_flight", "action": "wait", "milliseconds": 50 },
+    { "id": "shot_rocket", "action": "captureScreenshot", "actor": "viewer", "name": "rocket_in_flight" },
+    { "id": "wall_destroyed", "phase": "assert", "action": "waitFor", "condition": "build.exists", "pieceId": "${wall.pieceId}", "equals": false, "timeoutMilliseconds": 3000 },
+    { "id": "after_settle", "phase": "act", "action": "wait", "milliseconds": 200 },
+    { "id": "shot_after", "action": "captureScreenshot", "actor": "viewer", "name": "wall_destroyed_by_rocket" }
+  ]
+}

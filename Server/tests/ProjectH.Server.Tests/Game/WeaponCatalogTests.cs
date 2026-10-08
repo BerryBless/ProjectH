@@ -34,7 +34,7 @@ public class WeaponCatalogTests
         Assert.Equal(15, catalog[1].FireIntervalTicks);
         Assert.Equal(60, catalog[1].ReloadTicks);
         Assert.False(catalog[1].Automatic);
-        Assert.Equal(0f, catalog[1].Spread);
+        Assert.Equal(0f, catalog[1].SpreadDegrees);
         Assert.Equal(3, catalog.WireInfos.Length);
         Assert.Equal("Test Semi", catalog.WireInfos[1].Name);
         Assert.Equal(AmmoType.Heavy, catalog[1].AmmoType);
@@ -90,7 +90,14 @@ public class WeaponCatalogTests
     [InlineData("\"range\": 0")]
     [InlineData("\"range\": -1")]
     [InlineData("\"range\": 1e39")]
-    [InlineData("\"spread\": -1")]
+    [InlineData("\"spreadDegrees\": -1")]
+    [InlineData("\"spreadDegrees\": 31")]
+    [InlineData("\"pellets\": 0")]
+    [InlineData("\"pellets\": 17")]
+    [InlineData("\"falloffStart\": 151")]
+    [InlineData("\"falloffMinRatio\": 1.5")]
+    [InlineData("\"structureMultiplier\": -1")]
+    [InlineData("\"projectile\": \"Rocket\"")]   // Phase 17: not defined in this catalog
     [InlineData("\"id\": 0")]
     [InlineData("\"id\": 256")]
     [InlineData("\"ammoType\": \"None\"")]
@@ -162,7 +169,7 @@ public class WeaponCatalogTests
     {
         var catalog = WeaponCatalog.LoadFile(Path.Combine(AppContext.BaseDirectory, "weapons.json"), 30);
 
-        Assert.Equal(3, catalog.Count);
+        Assert.Equal(6, catalog.Count);   // Phase 17 D1: the three below keep their numbers; + Brute SG, Sparrow P, Thunder RL
         Assert.Equal("Vesper AR", catalog[0].Name);
         Assert.Equal(20, catalog[0].Damage);
         Assert.Equal(3, catalog[0].FireIntervalTicks);    // 10 rounds/s
@@ -191,5 +198,60 @@ public class WeaponCatalogTests
         Assert.Equal(80f, catalog[2].Range);
         Assert.True(catalog[2].Automatic);
         Assert.Equal(AmmoType.Light, catalog[2].AmmoType);
+
+        // Phase 17 D1-D3, D11: spread, pellets and structure multipliers. The sniper stays exact (spread 0, no falloff).
+        Assert.Equal(1f, catalog[0].SpreadDegrees);
+        Assert.Equal(0f, catalog[1].SpreadDegrees);
+        Assert.Equal(300f, catalog[1].FalloffStart);
+        Assert.Equal(1.5f, catalog[1].StructureMultiplier);
+        Assert.Equal(2.5f, catalog[2].SpreadDegrees);
+        Assert.Equal(0.8f, catalog[2].StructureMultiplier);
+
+        Assert.Equal("Brute SG", catalog[3].Name);
+        Assert.Equal(4, catalog[3].Id);
+        Assert.Equal(8, catalog[3].Pellets);
+        Assert.Equal(11, catalog[3].Damage);
+        Assert.Equal(27, catalog[3].FireIntervalTicks);   // 0.9 s
+        Assert.Equal(5, catalog[3].MagazineSize);
+        Assert.Equal(AmmoType.Shells, catalog[3].AmmoType);
+        Assert.Equal(6f, catalog[3].SpreadDegrees);
+        Assert.Equal(35f, catalog[3].Range);
+        Assert.Equal(0.6f, catalog[3].StructureMultiplier);
+        Assert.False(catalog[3].Automatic);
+
+        Assert.Equal("Sparrow P", catalog[4].Name);
+        Assert.Equal(24, catalog[4].Damage);
+        Assert.Equal(6, catalog[4].FireIntervalTicks);    // 0.2 s
+        Assert.Equal(12, catalog[4].MagazineSize);
+        Assert.Equal(AmmoType.Light, catalog[4].AmmoType);
+        Assert.Equal(1.5f, catalog[4].SpreadDegrees);
+        Assert.False(catalog[4].Automatic);
+
+        Assert.Equal("Thunder RL", catalog[5].Name);
+        Assert.Equal(1, catalog[5].MagazineSize);
+        Assert.Equal(90, catalog[5].ReloadTicks);         // 3 s
+        Assert.Equal(AmmoType.Rockets, catalog[5].AmmoType);
+        Assert.NotNull(catalog[5].Projectile);
+        Assert.Equal(ProjectileKind.Rocket, catalog[5].Projectile!.Kind);
+
+        // D9, D10: the grenade and the rocket.
+        var grenade = catalog.Projectile(ProjectileKind.Grenade)!;
+        Assert.Equal(18f, grenade.Speed);
+        Assert.Equal(90, grenade.LifetimeTicks);          // 3 s fuse
+        Assert.Equal(5f, grenade.ExplosionRadius);
+        Assert.Equal(80, grenade.ExplosionDamage);
+        Assert.Equal(120, grenade.StructureDamage);
+        Assert.Equal(0.4f, grenade.Bounce);
+        Assert.Equal(30, grenade.ThrowIntervalTicks);     // 1 s
+        var rocket = catalog.Projectile(ProjectileKind.Rocket)!;
+        Assert.Equal(40f, rocket.Speed);
+        Assert.Equal(0f, rocket.Gravity);
+        Assert.Equal(120, rocket.LifetimeTicks);          // 4 s
+        Assert.Equal(4f, rocket.ExplosionRadius);
+        Assert.Equal(75, rocket.ExplosionDamage);
+        Assert.Equal(300, rocket.StructureDamage);
+        Assert.True(rocket.ExplodesOnImpact);
+        Assert.Equal(2, catalog.WireProjectiles.Length);
+        Assert.Null(catalog.RequireGrenade());
     }
 }
