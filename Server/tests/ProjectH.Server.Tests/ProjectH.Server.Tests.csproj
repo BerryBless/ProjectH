@@ -15,6 +15,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Monitoring Task 9: a loopback Kestrel that plays the monitoring server for MonitoringSender tests. A shared
+         framework of the .NET runtime (the server already references it), not a NuGet package. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 
