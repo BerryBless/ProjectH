@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
 using ProjectH.Monitoring.Contracts;
 using ProjectH.Monitoring.Tests.Ingest;
 
@@ -114,25 +115,16 @@ public class MonitoringAppTests : IAsyncLifetime
         Assert.Equal("[]", await _client.GetStringAsync("/api/servers"));
     }
 
+    // Request §26 (too large a payload). The handler's 413 decision and its place before the token check are pinned without
+    // a socket by IngestEndpointTests. Over the network the outcome races: Kestrel answers 413 and then aborts the
+    // connection rather than drain an over-limit body, so on Windows loopback a client sees the 413, a reset, or (once in
+    // about 60 runs under a full parallel test run) neither until its own timeout. So this pins what the real app sets:
+    // Kestrel's body limit is the contract's limit.
     [Fact]
-    public async Task OversizedBody_IsRefused()
+    public void TheRealApp_LimitsRequestBodiesToTheContractSize()
     {
-        string big = "{\"serverId\":\"dev-server-01\",\"version\":\"" + new string('x', MonitoringContract.MaxBodyBytes + 1024) + "\"}";
-        var request = new HttpRequestMessage(HttpMethod.Post, MonitoringContract.IngestPath) { Content = new StringContent(big, Encoding.UTF8, "application/json") };
-        request.Headers.Add(MonitoringContract.TokenHeader, "secret");
-        // The server answers 413 and then Kestrel aborts the connection (it will not drain an over-limit body). On Windows
-        // loopback the reset can arrive before the client has read the 413 (measured: about half the runs, with or
-        // without Expect: 100-continue), so a reset is also a refusal here. Either way nothing may be stored.
-        try
-        {
-            HttpResponseMessage response = await _client.SendAsync(request);
-            Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
-        }
-        catch (HttpRequestException ex) when (ex.InnerException is IOException)
-        {
-            // connection reset by the server after the 413
-        }
-        Assert.Equal("[]", await _client.GetStringAsync("/api/servers"));
+        var kestrel = _app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions>>().Value;
+        Assert.Equal(MonitoringContract.MaxBodyBytes, kestrel.Limits.MaxRequestBodySize);
     }
 
     [Fact]

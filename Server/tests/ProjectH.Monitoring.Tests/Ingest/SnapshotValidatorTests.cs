@@ -66,6 +66,28 @@ public class SnapshotValidatorTests
     [Fact]
     public void CpuAbove100_IsAccepted() => Assert.Null(SnapshotValidator.Validate(Valid() with { CpuPercent = 100.4 }, Now, 300));
 
+    [Theory]
+    [InlineData("1.0.0\n")]
+    [InlineData("1.0.0\r\nforged log line")]
+    [InlineData("\u001b[31mred")]
+    [InlineData("\t1.0.0")]
+    [InlineData("\u007f")]
+    [InlineData("버전")]
+    [InlineData("1.0.0é")]
+    public void ControlOrNonAsciiText_IsRejected(string text)
+    {
+        Assert.Contains("version", SnapshotValidator.Validate(Valid() with { Version = text }, Now, 300));
+        Assert.Contains("matchState", SnapshotValidator.Validate(Valid() with { MatchState = text }, Now, 300));
+    }
+
+    [Fact]
+    public void TheGameServersVersionAndMatchState_AreAccepted()
+    {
+        // AssemblyInformationalVersion as the SDK writes it, and an enum name.
+        Assert.Null(SnapshotValidator.Validate(Valid() with { Version = "1.0.0+894fb0504fa07ed3904d15e3e47deb94328eedbd", MatchState = "WaitingForPlayers" }, Now, 300));
+        Assert.Null(SnapshotValidator.Validate(Valid() with { Version = " !~", MatchState = "" }, Now, 300));   // the 0x20 and 0x7E edges, empty
+    }
+
     [Fact]
     public void LongText_IsRejected()
     {

@@ -17,6 +17,10 @@ namespace ProjectH.Server.Monitoring;
 // Lifetime: created by the host (MonitoringSetup) only when Monitoring:Enabled; owns one HttpClient, disposed with the
 // service. One post at a time (the loop awaits it), each with its own linked CancellationTokenSource, disposed after it.
 // No lock: _lost and _failuresSinceLost are written by the sender task only; Sent/Failed/Lost are read by tests.
+// Review fix 1 (request §7): only the status line of the answer is used; its body is never read (ResponseHeadersRead), so a
+// wrong endpoint that answers with a large or endless body costs no buffer here. Disposing the unread response lets
+// SocketsHttpHandler drain at most its MaxResponseDrainSize (1 MB default, 2 s, through a small fixed buffer, nothing
+// kept) to reuse the connection, else it closes it.
 public sealed class MonitoringSender : BackgroundService
 {
     private readonly MonitoringSlot _slot;
@@ -80,7 +84,8 @@ public sealed class MonitoringSender : BackgroundService
         }
     }
 
-    // 기능: Snapshot 하나를 POST한다. 어떤 실패도 예외로 나가지 않고 상태 변화 때만 로그한다(끊김 Warning 1회, 복구 Information 1회).
+    // 기능: Snapshot 하나를 JSON으로 POST하고 응답 헤더의 상태 코드만으로 성공(2xx)·실패를 정한다(응답 본문은 읽지 않는다). 어떤 실패도
+    //       예외로 나가지 않고 상태 변화 때만 로그한다(끊김 Warning 1회, 복구 Information 1회).
     // 입력: snapshot - 보낼 값, stoppingToken - 호스트 종료(진행 중 요청을 취소한다).
     // 출력: 끝나면 완료되는 Task. 성공이면 Sent, 실패면 Failed가 1 늘어난다. 종료로 취소되면 둘 다 그대로다.
     private async Task SendAsync(ServerMonitoringSnapshot snapshot, CancellationToken stoppingToken)
@@ -90,7 +95,10 @@ public sealed class MonitoringSender : BackgroundService
         string? failure = null;
         try
         {
-            using HttpResponseMessage response = await _http.PostAsJsonAsync(_ingest, snapshot, cts.Token);
+            // JsonContent serializes with JsonSerializerOptions.Web, as PostAsJsonAsync did. ResponseHeadersRead: the call
+            // returns at the headers and the body is never read (the default, ResponseContentRead, would buffer all of it).
+            using var request = new HttpRequestMessage(HttpMethod.Post, _ingest) { Content = JsonContent.Create(snapshot) };
+            using HttpResponseMessage response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
             if (!response.IsSuccessStatusCode) failure = $"HTTP {(int)response.StatusCode}";
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

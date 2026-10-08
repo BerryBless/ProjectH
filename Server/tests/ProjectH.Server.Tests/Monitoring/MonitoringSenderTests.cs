@@ -165,6 +165,35 @@ public class MonitoringSenderTests
     }
 
     [Fact]
+    public async Task AHugeSlowResponseBody_IsNeverRead_TheStatusDecides_WellWithinTheTimeout()
+    {
+        // Review fix 1 (request §7): a wrong endpoint that answers with a large, slow body (20 MB, 64 KB every 10 ms = about
+        // 3 s) must not make the game server read or buffer it. Only the status line counts: 202 is a send, 500 a failure,
+        // both long before the 300 ms timeout. A sender that read the body would time out instead.
+        await using FakeMonitoringServer fake = await FakeMonitoringServer.StartAsync();
+        fake.ResponseBodyBytes = 20 * 1024 * 1024;
+        fake.ResponseChunkDelayMs = 10;
+        var slot = new MonitoringSlot();
+        var log = new ListLogger();
+        using var sender = Sender(fake.Endpoint, slot, log);
+        await sender.StartAsync(CancellationToken.None);
+
+        slot.Publish(Snap(1));
+        await WaitUntilAsync(() => sender.Sent + sender.Failed == 1);
+        Assert.Equal(1, sender.Sent);
+        slot.Publish(Snap(2));                       // the next post works too (the unread connection was not kept stuck)
+        await WaitUntilAsync(() => sender.Sent + sender.Failed == 2);
+        Assert.Equal(2, sender.Sent);
+
+        fake.StatusCode = 500;
+        slot.Publish(Snap(3));
+        await WaitUntilAsync(() => sender.Failed == 1);
+        Assert.Equal(1, Count(log, LogLevel.Warning, "HTTP 500"));   // judged by the status, not a timeout
+        Assert.Equal(0, Count(log, LogLevel.Warning, "timeout"));
+        await sender.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task AWrongHostName_IsAFailure_NotACrash()
     {
         var slot = new MonitoringSlot();

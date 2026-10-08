@@ -7,8 +7,9 @@ using ProjectH.Monitoring.Storage;
 
 namespace ProjectH.Monitoring.Ingest;
 
-// Monitoring D8: POST /api/ingest/metrics. Order: body size (Kestrel, 413) → token (401) → JSON (400) → values (400) →
-// store (429 when a new server would exceed MaxServers) → 202. Logs happen outside the store's lock.
+// Monitoring D8: POST /api/ingest/metrics. Order: body size (Kestrel, 413) → token (401) → JSON or a body Kestrel refused
+// while reading it (its own status: 400 truncated/broken, 408 too slow, 413 over the limit) → values (400) → store (429 when a new server would exceed MaxServers) → 202. Logs happen outside the
+// store's lock, and only validated text (ServerId, Version) reaches a log line.
 public static class IngestEndpoint
 {
     // 기능: Ingest 경로를 등록한다.
@@ -21,7 +22,8 @@ public static class IngestEndpoint
 
     // 기능: Snapshot 하나를 받아 검증하고 저장한다. 어떤 입력에도 예외로 끝나지 않는다.
     // 입력: context - 요청, options·store·time·log·logger - 서비스, cancellation - 요청 취소.
-    // 출력: 202(저장), 400(JSON·값 오류), 401(Token), 413(본문 초과), 429(MaxServers 초과).
+    // 출력: 202(저장), 400(JSON·값 오류, 잘린 본문·깨진 chunked), 401(Token), 413(본문 초과), 429(MaxServers 초과).
+    //       본문을 읽다 난 BadHttpRequestException은 Kestrel이 정한 그 StatusCode로 답한다(400 잘림·깨진 chunked, 408 너무 느림, 413 초과).
     // internal: IngestEndpointTests calls it with a DefaultHttpContext to pin the 413 decision without a socket.
     internal static async Task<IResult> HandleAsync(HttpContext context, MonitoringServerOptions options, MetricStore store, TimeProvider time,
         IngestLog log, ILogger<MetricStore> logger, CancellationToken cancellation)
@@ -50,11 +52,14 @@ public static class IngestEndpoint
             log.Invalid("invalid json: " + ex.Message, null);
             return Results.BadRequest(new { error = "invalid json" });
         }
-        catch (BadHttpRequestException)
+        catch (BadHttpRequestException ex)
         {
-            // The body passed Kestrel's limit while being read: refuse it as too large.
-            log.Invalid("body too large", null);
-            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            // Kestrel's own verdict on the body: 413 when it passed the limit while being read (no Content-Length),
+            // 400 when it was shorter than Content-Length or its chunked encoding was broken, 408 when it arrived below
+            // Kestrel's minimum data rate. Answer with that status
+            // (as QaHttpService does).
+            log.Invalid(ex.StatusCode == StatusCodes.Status413PayloadTooLarge ? "body too large" : "bad request body: " + Shorten(ex.Message), null);
+            return Results.StatusCode(ex.StatusCode);
         }
         if (snapshot == null)
         {
@@ -66,7 +71,8 @@ public static class IngestEndpoint
         string? error = SnapshotValidator.Validate(snapshot, now, options.MaxClockSkewSeconds);
         if (error != null)
         {
-            log.Invalid(error, snapshot.ServerId);
+            // A rejected ServerId can be ~16 KB with CR/LF or escape codes: only a valid one goes into the log.
+            log.Invalid(error, MonitoringContract.IsValidServerId(snapshot.ServerId) ? snapshot.ServerId : null);
             return Results.BadRequest(new { error });
         }
 
@@ -85,6 +91,11 @@ public static class IngestEndpoint
         }
         return Results.Accepted();
     }
+
+    // 기능: 로그에 넣을 예외 메시지를 짧게 자른다(Kestrel 메시지는 고정 문장이지만 길이를 묶어 둔다).
+    // 입력: message - 예외 메시지.
+    // 출력: 최대 120자의 문자열.
+    private static string Shorten(string message) => message.Length <= 120 ? message : message[..120];
 
     // 기능: 헤더의 Token을 설정값과 고정 시간으로 비교한다.
     // 입력: context - 요청, expected - 설정된 Token.

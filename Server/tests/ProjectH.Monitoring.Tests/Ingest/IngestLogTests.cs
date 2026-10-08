@@ -5,8 +5,8 @@ namespace ProjectH.Monitoring.Tests.Ingest;
 
 public class IngestLogTests
 {
-    // Keeps every formatted line; IngestLog writes from request threads, so the list is locked.
-    private sealed class ListLogger : ILogger<IngestLog>
+    // Keeps every formatted line; IngestLog writes from request threads, so the list is locked. IngestEndpointTests uses it too.
+    internal sealed class ListLogger : ILogger<IngestLog>
     {
         public readonly List<string> Lines = new();
 

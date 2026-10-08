@@ -21,6 +21,10 @@ public sealed class FakeMonitoringServer : IAsyncDisposable
 
     public volatile int StatusCode = StatusCodes.Status202Accepted;
     public volatile int DelayMs;
+    // Review fix 1: a misbehaving server's answer. ResponseBodyBytes > 0 = after the headers, that many bytes of body are
+    // written in 64 KB chunks, ResponseChunkDelayMs apart (a large, slow stream), until done or the client goes away.
+    public volatile int ResponseBodyBytes;
+    public volatile int ResponseChunkDelayMs;
 
     public Uri Endpoint { get; }
     public int Received => Volatile.Read(ref _received);
@@ -37,6 +41,7 @@ public sealed class FakeMonitoringServer : IAsyncDisposable
     }
 
     // 기능: 127.0.0.1의 빈 포트에 가짜 서버를 띄운다. Ingest 경로는 받은 수·Token·본문 크기를 기록하고 DelayMs 뒤 StatusCode로 답한다.
+    //       ResponseBodyBytes가 있으면 헤더를 먼저 보내고 그만큼의 본문을 64 KB씩 ResponseChunkDelayMs 간격으로 쓴다.
     // 입력: 없음.
     // 출력: 실행 중인 FakeMonitoringServer(Endpoint = 기본 주소).
     public static async Task<FakeMonitoringServer> StartAsync()
@@ -54,7 +59,26 @@ public sealed class FakeMonitoringServer : IAsyncDisposable
             await ctx.Request.Body.CopyToAsync(ms, ctx.RequestAborted);
             s._lastBodyBytes = (int)ms.Length;
             if (s.DelayMs > 0) await Task.Delay(s.DelayMs, ctx.RequestAborted);
-            return Results.StatusCode(s.StatusCode);
+            int bodyBytes = s.ResponseBodyBytes;
+            if (bodyBytes <= 0) return Results.StatusCode(s.StatusCode);
+            ctx.Response.StatusCode = s.StatusCode;
+            ctx.Response.ContentType = "application/octet-stream";
+            await ctx.Response.StartAsync(ctx.RequestAborted);   // the headers go out before any of the body
+            byte[] chunk = new byte[64 * 1024];
+            try
+            {
+                for (int written = 0; written < bodyBytes; written += chunk.Length)
+                {
+                    await ctx.Response.Body.WriteAsync(chunk.AsMemory(0, Math.Min(chunk.Length, bodyBytes - written)), ctx.RequestAborted);
+                    await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
+                    if (s.ResponseChunkDelayMs > 0) await Task.Delay(s.ResponseChunkDelayMs, ctx.RequestAborted);
+                }
+            }
+            catch (Exception e) when (e is OperationCanceledException || e is System.IO.IOException)
+            {
+                // The client stopped reading and closed the connection: what this test wants.
+            }
+            return Results.Empty;
         });
         await app.StartAsync();
         self = new FakeMonitoringServer(app, new Uri(app.Urls.First()));
