@@ -206,8 +206,22 @@ Store와 API는 Snapshot을 그대로 통과시키므로 고칠 필요가 없다
 
 위 측정의 Working Set 최대는 73.1 MB다. 그 약 2배인 **150 MB(157,286,400 B)**를 `appsettings.json` 기본값으로 둔다(코드 기본값은 0 = 꺼짐). 이 기준은 접속만 한 50명 기준이다. 건설이 많은 경기나 100명에서는 더 클 수 있으므로, 그 측정을 한 뒤 다시 정한다.
 
-### Web UI 수동 확인 (요청 §68)
+### Web UI 확인 (요청 §68) — headless Edge 스크린샷
+
+Release 빌드로 Monitoring Server(5185)와 Game Server(7794)를 띄우고 봇 6명을 붙였다. 그 뒤 `msedge --headless=new --screenshot`으로 세 화면을 찍었다(1400 px Online, 900 px, 게임 서버 종료 18 s 뒤 Offline).
 
 | # | 확인 | 결과 |
 |---|---|---|
-| 1–11 | 서버 목록, ONLINE, Players, Tick, CPU, Memory, Network, 그래프, OFFLINE 배너, 재시작, 900 px | **미확인(브라우저 필요)**. 대신 다음을 확인했다. ① 정적 파일 6개가 200이다. ② app.js가 읽는 필드 45개가 실제 API JSON에 모두 있다(node 스크립트로 대조). ③ `node --check` 문법 통과. ④ `online`·`warning`·`offline` 상태와 경고 문장이 app.js의 분기와 맞는다 |
+| 1 | 서버 목록 | `ui-server-01`이 초록 점과 `6 players`로 나온다 |
+| 2 | ONLINE | 상단 초록 pill `ONLINE`, Status 카드 `ONLINE`, Uptime, `v1.0.0+<7자 커밋> · protocol 18` |
+| 3 | Players | `6`, Peers 6 · Graced 0. Match는 `Playing`, Round #1 |
+| 4 | Tick | P95 ms, P50·P99·Max, 150 samples |
+| 5 | CPU | `0.1 %`, "(process, all cores = 100 %)" 표기, window 5.0 s |
+| 6 | Memory | Managed `4 MB`, Working Set `58 MB`, GC 0/0/0 |
+| 7 | Network | Send 18.0 KB/s · Receive 16.2 KB/s, pkt/s |
+| 8 | 그래프 4개 | Tick P50/P95/P99, CPU, Memory(Managed·Working Set), Network(Send·Receive)가 각자 Y축으로 그려진다 |
+| 9 | Offline | 빨간 배너 "OFFLINE · last seen …", pill·목록 점·Status가 빨강 `OFFLINE`, 카드 값이 흐려진다. 마지막 값과 그래프는 남는다 |
+| 10 | 재시작 | 화면으로는 찍지 않았다. API·로그로 확인했다(장애 검증 표의 "Monitoring 재시작") |
+| 11 | 900 px | 목록이 위로 가고 카드 2열, 그래프 1열이 된다. 가로 스크롤은 없다 |
+
+처음 찍었을 때 Status 카드의 버전(40자 커밋 해시)이 카드 밖으로 넘쳤다. 그래서 해시를 7자로 줄이고 카드 보조 줄이 줄바꿈되게 고쳤다. 이 PC에서는 AdGuard가 HTML에 스크립트 한 줄을 넣는데(오른쪽 아래 방패 아이콘), 화면에는 영향이 없다.

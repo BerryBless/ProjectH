@@ -34,7 +34,7 @@ h3 { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
 .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
 .card .hint { text-transform: none; letter-spacing: 0; }
 .card .value { font-size: 26px; font-weight: 700; margin: 4px 0; font-variant-numeric: tabular-nums; }
-.card .sub { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.card .sub { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .stale .card .value, .stale .card .sub { opacity: .55; }
 .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .chart { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; min-width: 0; }

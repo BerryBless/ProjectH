@@ -86,7 +86,8 @@
 
     $('c-status').textContent = s.status.toUpperCase();
     $('c-uptime').textContent = fmt.uptime(l.uptimeSeconds);
-    $('c-version').textContent = 'v' + l.version + ' · protocol ' + l.protocolVersion;
+    // The server sends its InformationalVersion, '1.0.0+<40-hex commit>': keep 7 hex digits, as git does.
+    $('c-version').textContent = 'v' + l.version.replace(/\+([0-9a-f]{7})[0-9a-f]+$/, '+$1') + ' · protocol ' + l.protocolVersion;
     $('c-players').textContent = fmt.int(l.players);
     $('c-peers').textContent = fmt.int(l.connectedPeers);
     $('c-graced').textContent = fmt.int(l.graced);
