@@ -157,6 +157,30 @@ public class ServerOptionsTests
         Assert.Equal(valid, error == null);
     }
 
+    // Review fix A2: connections at once per IP (0 = off, else 1-10000) and accepts per second over all addresses (1-10000).
+    [Theory]
+    [InlineData(4, 20, true)]
+    [InlineData(0, 20, true)]
+    [InlineData(10000, 10000, true)]
+    [InlineData(-1, 20, false)]
+    [InlineData(10001, 20, false)]
+    [InlineData(4, 0, false)]
+    [InlineData(4, 10001, false)]
+    public void Validate_ConnectionsPerIpAndAcceptRate(int perIp, int acceptsPerSecond, bool valid)
+    {
+        string? error = new ServerOptions { MaxConnectionsPerIp = perIp, AcceptsPerSecond = acceptsPerSecond }.Validate();
+        Assert.Equal(valid, error == null);
+    }
+
+    [Fact]
+    public void TheDefaults_LimitConnectionsPerIpAndAccepts()
+    {
+        var options = new ServerOptions();
+        Assert.Equal(4, options.MaxConnectionsPerIp);
+        Assert.Equal(20, options.AcceptsPerSecond);
+        Assert.Equal(options.MaxPlayers, options.AcceptBurst);
+    }
+
     // Server review M8: 0 = off, otherwise 5-3600 (well above the watchdog's 2 s stall threshold).
     [Theory]
     [InlineData(30, true)]

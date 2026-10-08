@@ -58,6 +58,16 @@ namespace ProjectH.Shared.Protocol
             WriteSingle(value.Z);
         }
 
+        // 기능: 바이트를 그대로 쓴다(리뷰 수정 A3: 연결 요청의 쿠키). 길이 접두사 없음.
+        // 입력: value - 쓸 바이트.
+        // 출력: 반환값 없음. 자리가 모자라면 writer가 Overflowed가 된다.
+        public void WriteBytes(ReadOnlySpan<byte> value)
+        {
+            if (!Reserve(value.Length)) return;
+            value.CopyTo(_buffer.Slice(_length));
+            _length += value.Length;
+        }
+
         // 1-byte length prefix + UTF-8 bytes. Longer than maxBytes marks the writer overflowed.
         public void WriteString(string value, int maxBytes)
         {

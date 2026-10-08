@@ -1,4 +1,5 @@
 using System;
+using ProjectH.Shared.Protocol;
 using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Server.Game;
@@ -9,21 +10,43 @@ namespace ProjectH.Server.Game;
 public sealed class PlayerInputBuffer
 {
     private readonly InputCommand[] _items;
+    private readonly uint _maxSeqAhead;
     private int _count;
 
-    public PlayerInputBuffer(int capacity)
+    // 기능: 입력 버퍼를 만든다.
+    // 입력: capacity - 칸 수(1 이상), maxSeqAhead - 리뷰 수정 A4의 Seq 창(마지막으로 가져간 Seq보다 이만큼까지 앞선 입력만 받는다,
+    //   ProtocolLimits.MaxInputSeqAhead 이상으로 올린다).
+    // 출력: 빈 PlayerInputBuffer.
+    public PlayerInputBuffer(int capacity, int maxSeqAhead = ProtocolLimits.MaxInputSeqAhead)
     {
         if (capacity < 1) throw new ArgumentOutOfRangeException(nameof(capacity));
         _items = new InputCommand[capacity];
+        _maxSeqAhead = (uint)Math.Max(ProtocolLimits.MaxInputSeqAhead, maxSeqAhead);
     }
 
     public int Count => _count;
     public uint LastTakenSeq { get; private set; }
     public long DroppedCount { get; private set; }
+    // Review fix A4: inputs dropped for a Seq more than the window past LastTakenSeq (a total, like
+    // DroppedCount; Reset keeps it).
+    public long SeqAheadDrops { get; private set; }
 
+    // 기능: 입력 하나를 Seq 순서 자리에 넣는다. 가득 차면 가장 오래된 것을 버린다.
+    // 입력: command - 받은 입력.
+    // 출력: 넣었으면 true. 이미 가져간 Seq 이하·중복·가득 찬 상태에서 가장 오래된 것, 리뷰 수정 A4(SEC-7): 가져간 입력이 있는데
+    //   LastTakenSeq보다 Seq 창(생성자의 maxSeqAhead) 넘게 앞선 Seq(SeqAheadDrops를 센다)면 false.
     public bool Add(in InputCommand command)
     {
         if (command.Seq <= LastTakenSeq) return false;
+        // A client numbers one input per tick, and its inputs lost in a network outage (up to the disconnect timeout) leave
+        // a gap of that many Seqs; a Seq farther ahead is injected or corrupt, and taking it would make LastTakenSeq refuse
+        // every real input after it. The subtraction cannot wrap: Seq > LastTakenSeq here. Before the first take (a new or
+        // resumed connection) there is no reference yet.
+        if (LastTakenSeq != 0 && command.Seq - LastTakenSeq > _maxSeqAhead)
+        {
+            SeqAheadDrops++;
+            return false;
+        }
 
         int insertAt = _count;
         for (int i = 0; i < _count; i++)

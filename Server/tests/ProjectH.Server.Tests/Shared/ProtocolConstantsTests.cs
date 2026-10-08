@@ -21,9 +21,9 @@ public class ProtocolConstantsTests
     }
 
     [Fact]
-    public void ProtocolVersion_IsEighteen()
+    public void ProtocolVersion_IsNineteen()
     {
-        // Phase 19 added VehicleStates; v17 clients must be rejected.
-        Assert.Equal((ushort)18, ProtocolConstants.ProtocolVersion);
+        // Review fixes A-D changed the connect request (cookie); v18 clients must be rejected.
+        Assert.Equal((ushort)19, ProtocolConstants.ProtocolVersion);
     }
 }

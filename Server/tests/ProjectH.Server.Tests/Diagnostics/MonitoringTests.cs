@@ -86,6 +86,69 @@ public class MonitoringTests
         Assert.Single(System.Text.RegularExpressions.Regex.Matches(line, "badPackets"));
     }
 
+    // Review fix A1 follow-up: LiteNetLib's messages go to ILogger at Debug (not the console), and a bad format string
+    // never escapes into LiteNetLib's thread.
+    [Fact]
+    public void TheLiteNetLogBridge_WritesAtDebug_AndNeverThrows()
+    {
+        var log = new ListLogger();
+        var bridge = new LiteNetLogBridge(log);
+        bridge.WriteNet(LiteNetLib.NetLogLevel.Error, "Invalid FragmentsTotal: {0}", 3);
+        bridge.WriteNet(LiteNetLib.NetLogLevel.Error, "broken {0} {1}", 1);   // too few arguments
+        Assert.Single(log.Entries);
+        Assert.Equal(LogLevel.Debug, log.Entries[0].Level);
+        Assert.Contains("Invalid FragmentsTotal: 3", log.Entries[0].Message);
+    }
+
+    // Review fixes A2-A4, A6: the new refusals, the cookie challenges, the penalties and the Seq window drops on the Health
+    // line and in the Meter.
+    [Fact]
+    public void TheHealthLineAndTheMeter_CarryTheAdmissionCounters()
+    {
+        var log = new ListLogger();
+        using var loop = new GameLoop(new ServerOptions { Port = 0, MaxPlayers = 4 }, TestGameData.Create(), log);
+        HealthCounters h = loop.Health;
+        h.AddConnectRateReject();
+        h.AddPerIpReject();
+        h.AddPerIpReject();
+        h.AddPenaltyReject();
+        h.AddAcceptRateReject();
+        h.AddCookieReject();
+        for (int i = 0; i < 3; i++) h.AddCookieChallenge();
+        h.AddPenalty();
+        loop.RunTickGuarded();
+        loop.LogPeriodic();
+
+        string line = log.Entries.Select(e => e.Message).First(l => l.StartsWith("Health "));
+        foreach (string item in new[]
+                 {
+                     "connectRate=1 perIp=2 penalized=1 accept=1 cookie=1 cookieChallenges=3",
+                     "inputSeqDrops=0", "penalties=1",
+                 })
+        {
+            Assert.Contains(item, line);
+        }
+
+        using var meter = new ServerMeter(h);
+        var seen = new List<(string Name, long Value, string Tags)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == ServerMeter.Name) l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
+            seen.Add((instrument.Name, value, string.Join(",", tags.ToArray().Select(t => $"{t.Key}={t.Value}")))));
+        listener.Start();
+        listener.RecordObservableInstruments();
+        Assert.Contains(("projecth.rejects", 2L, "reason=PerIp"), seen);
+        Assert.Contains(("projecth.rejects", 1L, "reason=Penalized"), seen);
+        Assert.Contains(("projecth.rejects", 1L, "reason=AcceptRate"), seen);
+        Assert.Contains(("projecth.rejects", 1L, "reason=Cookie"), seen);
+        Assert.Contains(("projecth.cookie_challenges", 3L, ""), seen);
+        Assert.Contains(("projecth.penalties", 1L, ""), seen);
+        Assert.Contains(("projecth.input_seq_drops", 0L, ""), seen);
+    }
+
     [Fact]
     public void TheMeter_PublishesTheHealthCounters()
     {

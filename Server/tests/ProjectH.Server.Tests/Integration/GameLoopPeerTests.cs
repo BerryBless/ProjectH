@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using LiteNetLib;
 using Microsoft.Extensions.Logging.Abstractions;
+using ProjectH.Server.Game;
 using ProjectH.Server.Net;
 using ProjectH.Shared.Protocol;
 using Xunit;
@@ -161,6 +162,96 @@ public sealed class GameLoopPeerTests
         loop.Listener.CallbackFaultHook = _ => throw new InvalidOperationException("test fault");
         loop.Listener.OnPeerDisconnected(peer, default);
         Assert.Equal(1, loop.Health.CallbackErrors);
+    }
+
+    // Review fix A6 (SEC-14): player failures are charged to the address they came from. MaxPlayers failures from one
+    // address are that address's doing: no match reset, and the address is penalized (refused for 60 s).
+    [Fact]
+    public void FailuresFromOneAddress_DoNotResetTheMatch_ButPenalizeTheAddress()
+    {
+        using var host = new PeerHost();
+        using var loop = new GameLoop(new ServerOptions { Port = 0, MaxPlayers = 4, InputTimeoutSeconds = 0 }, TestGameData.Create(), NullLogger.Instance);
+        int slot = loop.Listener.ConnectRate.SlotOf(System.Net.IPAddress.Loopback);
+        Match match = loop.Match;
+        for (int round = 0; round < 2; round++)
+        {
+            JoinPeers(host, loop, round * 10, _ => slot);
+            match.FaultEntityId = -1;
+            loop.RunTickGuarded();
+            match.FaultEntityId = 0;
+        }
+
+        Assert.Equal(8, loop.Health.PlayerFailures);
+        Assert.Same(match, loop.Match);
+        Assert.Equal(0, loop.Health.MatchResets);
+        Assert.True(loop.Health.Penalties >= 1);
+        Assert.False(loop.Listener.ConnectRate.TryAcquire(System.Net.IPAddress.Loopback, Environment.TickCount64, out ConnectRefusal refusal));
+        Assert.Equal(ConnectRefusal.Penalty, refusal);
+    }
+
+    // The same failures from two addresses look like a fault in the match: it is reset as before. Two failures from one
+    // address are not yet a penalty (three within 60 s are).
+    [Fact]
+    public void FailuresFromTwoAddresses_StillReset()
+    {
+        using var host = new PeerHost();
+        using var loop = new GameLoop(new ServerOptions { Port = 0, MaxPlayers = 4, InputTimeoutSeconds = 0 }, TestGameData.Create(), NullLogger.Instance);
+        Match match = loop.Match;
+        JoinPeers(host, loop, 0, i => 100 + i % 2);
+        match.FaultEntityId = -1;
+        loop.RunTickGuarded();
+
+        Assert.Equal(4, loop.Health.PlayerFailures);
+        Assert.NotSame(match, loop.Match);
+        Assert.Equal(1, loop.Health.MatchResets);
+        Assert.Equal(0, loop.Health.Penalties);
+    }
+
+    // Review fix A6: the "every player failed" path (5 such ticks within 10 s, review round 2) needs two sources as well.
+    // One address alone on the server, joining and failing one connection after another (it may hold several open, so the
+    // penalty on new connections does not stop it), resets nothing.
+    [Fact]
+    public void ALoneAddressFailingAtEveryJoin_DoesNotResetAnEmptyMatch()
+    {
+        using var host = new PeerHost();
+        using var loop = new GameLoop(new ServerOptions { Port = 0, MaxPlayers = 16, InputTimeoutSeconds = 0 }, TestGameData.Create(), NullLogger.Instance);
+        int slot = loop.Listener.ConnectRate.SlotOf(System.Net.IPAddress.Loopback);
+        Match match = loop.Match;
+        var control = loop.Channels.Control.Writer;
+        for (int i = 0; i < 6; i++)
+        {
+            NetPeer peer = host.AcceptPeer();
+            peer.Tag = new PeerState("lone" + i, slot);
+            Assert.True(control.TryWrite(new ControlMessage(ControlKind.Connected, 50 + i, peer, "lone" + i)));
+            Assert.True(control.TryWrite(new ControlMessage(ControlKind.JoinRequested, 50 + i, peer, null)));
+            match.FaultEntityId = -1;
+            loop.RunTickGuarded();   // joins, and its only player fails in the same tick
+            match.FaultEntityId = 0;
+            loop.RunTickGuarded();
+        }
+
+        Assert.Equal(6, loop.Health.PlayerFailures);
+        Assert.Same(match, loop.Match);
+        Assert.Equal(0, loop.Health.MatchResets);
+        Assert.True(loop.Health.Penalties >= 1);
+    }
+
+    // 기능: 실제 peer 넷을 연결·Join시킨다. PeerState에 각자의 ConnectRateLimiter 칸을 적는다.
+    // 입력: host - peer를 만드는 호스트, loop - Game Loop, firstId - 첫 peer id, slotOf - i번째 peer의 칸.
+    // 출력: 반환값 없음. 경기에 플레이어 넷이 있다.
+    private static void JoinPeers(PeerHost host, GameLoop loop, int firstId, Func<int, int> slotOf)
+    {
+        var control = loop.Channels.Control.Writer;
+        for (int i = 0; i < 4; i++)
+        {
+            NetPeer peer = host.AcceptPeer();
+            peer.Tag = new PeerState("p" + (firstId + i), slotOf(i));
+            Assert.True(control.TryWrite(new ControlMessage(ControlKind.Connected, firstId + i, peer, "p" + (firstId + i))));
+            Assert.True(control.TryWrite(new ControlMessage(ControlKind.JoinRequested, firstId + i, peer, null)));
+        }
+        loop.Match.FaultEntityId = 0;
+        loop.RunTickGuarded();
+        Assert.Equal(4, loop.Match.PlayerCount);
     }
 
     [Fact]

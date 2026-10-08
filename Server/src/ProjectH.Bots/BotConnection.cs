@@ -26,12 +26,20 @@ public sealed class BotConnection : IDisposable
     private int _sentCount;
     private uint _nextSeq = 1;
 
+    // 기능: 봇 연결 하나를 만든다(수동 모드 NetManager, 조각 상한 리뷰 수정 A1, 끊김·쿠키 재시도 처리 리뷰 수정 A3).
+    // 입력: reconnect - 자동 재접속 시도면 true(짧은 접속 예산).
+    // 출력: Connect 전의 BotConnection(Dispose가 소켓을 닫는다).
     // reconnect: an automatic reconnect attempt (Phase 10 D11). It gets the short connect budget of DisconnectCodes, so
     // it fails within its slot instead of after LiteNetLib's default 5.5 s. Each attempt is a new BotConnection.
     public BotConnection(bool reconnect = false)
     {
         // Phase 13 D13: the same channels as the server (channel 1: building).
-        _net = new NetManager(_listener) { UnsyncedEvents = false, AutoRecycle = true, ChannelsCount = ProtocolConstants.ChannelCount };
+        // Review fix A1: the same fragment limit as the server and the Unity client (no game packet is fragmented).
+        _net = new NetManager(_listener)
+        {
+            UnsyncedEvents = false, AutoRecycle = true, ChannelsCount = ProtocolConstants.ChannelCount,
+            MaxFragmentsCount = ProtocolLimits.MaxFragments,
+        };
         if (reconnect)
         {
             _net.ReconnectDelay = DisconnectCodes.ReconnectRequestIntervalMs;
@@ -40,6 +48,16 @@ public sealed class BotConnection : IDisposable
         _listener.PeerConnectedEvent += _ => OnConnected();
         _listener.PeerDisconnectedEvent += (_, info) =>
         {
+            // Review fix A3: 16 bytes of reject data are the server's cookie; the same request goes again at once with it
+            // (once per Connect), like the Unity client. Nothing is marked: it is still the same connect.
+            if (info.Reason == LiteNetLib.DisconnectReason.ConnectionRejected && info.AdditionalData != null
+                && info.AdditionalData.AvailableBytes == ProtocolLimits.CookieBytes && CookieRetries == 0 && _host != null)
+            {
+                info.AdditionalData.GetBytes(_cookie, ProtocolLimits.CookieBytes);
+                CookieRetries++;
+                SendConnect(withCookie: true);
+                return;
+            }
             Disconnected = true;
             // Phase 10 D1, D11: the server's code, and the same reconnect rule as the Unity client (DisconnectCodes).
             bool remoteClose = info.Reason == LiteNetLib.DisconnectReason.RemoteConnectionClose;
@@ -70,13 +88,42 @@ public sealed class BotConnection : IDisposable
     // Phase 13.5 D4: edit requests sent (QA buildEdit).
     public long BuildEditsSent { get; private set; }
 
+    // Review fix A3: what Connect sent, so the cookie retry repeats it with the cookie (16 B, made once).
+    private readonly byte[] _cookie = new byte[ProtocolLimits.CookieBytes];
+    private string? _host;
+    private int _port;
+    private string _devPlayerId = string.Empty;
+    // Review fix A3: cookie retries made by the latest Connect (1 after a normal connect; Connect sets it back to 0).
+    public int CookieRetries { get; private set; }
+
+    // 기능: 서버에 접속을 요청한다. 서버가 쿠키를 돌려주면(리뷰 수정 A3) 한 번 바로 쿠키를 넣어 다시 요청한다.
+    // 입력: host·port - 서버 주소, devPlayerId - 이름.
+    // 출력: 반환값 없음. 접속이 시작된다.
     public void Connect(string host, int port, string devPlayerId)
     {
+        _host = host;
+        _port = port;
+        _devPlayerId = devPlayerId;
+        CookieRetries = 0;   // one cookie retry per Connect
+        SendConnect(withCookie: false);
+    }
+
+    // 기능: 저장한 주소·이름으로 접속 요청 하나를 보낸다.
+    // 입력: withCookie - 받은 쿠키를 HasCookie로 넣을지.
+    // 출력: 반환값 없음. _peer가 새 연결이 된다.
+    private void SendConnect(bool withCookie)
+    {
         var writer = new PacketWriter(_buffer);
-        ConnectRequestData.Write(ref writer, new ConnectRequestData { ProtocolVersion = ProtocolConstants.ProtocolVersion, DevPlayerId = devPlayerId });
+        ConnectRequestData.Write(ref writer, new ConnectRequestData
+        {
+            ProtocolVersion = ProtocolConstants.ProtocolVersion,
+            Flags = withCookie ? ConnectFlags.HasCookie : ConnectFlags.None,
+            Cookie = withCookie ? _cookie : null,
+            DevPlayerId = _devPlayerId,
+        });
         var data = new NetDataWriter();
         data.Put(_buffer, 0, writer.Length);
-        _peer = _net.Connect(host, port, data);
+        _peer = _net.Connect(_host!, _port, data);
     }
 
     // Receive, run LiteNetLib's timers and raise this bot's events. elapsedMs since the previous Update.
@@ -172,13 +219,21 @@ public sealed class BotConnection : IDisposable
 
     public void Dispose() => _net.Stop();
 
-    // QA tool (D14, request §127): send bytes as they are, on the reliable channel so the server receives every one
-    // (fragmented when larger than the MTU). For invalid-packet tests only; the bots never call it. Returns false when
-    // not connected.
+    // 기능: QA 도구(D14, request §127): 바이트를 그대로 신뢰 채널로 보낸다(MTU보다 크면 조각). 잘못된 패킷 시험 전용, 봇은 쓰지 않는다.
+    // 입력: data - 보낼 바이트.
+    // 출력: 보냈으면 true. 연결 전·끊긴 뒤·빈 데이터이거나, 리뷰 수정 A1의 조각 상한(ProtocolLimits.MaxFragments)을 넘어
+    //   LiteNetLib가 보내지 않으면 false.
     public bool SendRaw(ReadOnlySpan<byte> data)
     {
         if (_peer == null || !Connected || Disconnected || data.Length == 0) return false;
-        _peer.Send(data, DeliveryMethod.ReliableOrdered);
+        try
+        {
+            _peer.Send(data, DeliveryMethod.ReliableOrdered);
+        }
+        catch (TooBigPacketException)
+        {
+            return false;
+        }
         return true;
     }
 

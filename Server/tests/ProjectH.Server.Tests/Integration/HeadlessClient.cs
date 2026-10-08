@@ -19,23 +19,54 @@ public sealed class HeadlessClient : IDisposable
     private NetPeer _peer = null!;   // set by Connect(); tests always connect first
     private uint _nextSeq = 1;
 
+    // 기능: 시험용 Client를 만들고 소켓을 연다(조각 상한 리뷰 수정 A1, 거절·끊김 기록과 쿠키 재시도 리뷰 수정 A3).
+    // 입력: 없음.
+    // 출력: Connect 전의 HeadlessClient(Dispose가 닫는다).
     public HeadlessClient()
     {
-        _net = new NetManager(_listener, null) { UnsyncedEvents = false, ChannelsCount = ProtocolConstants.ChannelCount };
+        // Review fix A1: the same fragment limit as the server and the Unity client.
+        _net = new NetManager(_listener, null)
+        {
+            UnsyncedEvents = false, ChannelsCount = ProtocolConstants.ChannelCount, MaxFragmentsCount = ProtocolLimits.MaxFragments,
+        };
         _listener.PeerConnectedEvent += _ => Connected = true;
         _listener.PeerDisconnectedEvent += (_, info) =>
         {
+            int rejectBytes = info.Reason == LiteNetLib.DisconnectReason.ConnectionRejected && info.AdditionalData != null
+                ? info.AdditionalData.AvailableBytes : 0;
+            // Review fix A3: 16 bytes of reject data are the server's cookie. The request goes again at once with it
+            // (once), before anything is marked: to the test this is still one connect.
+            if (rejectBytes == ProtocolLimits.CookieBytes && _retryCookie && CookieRetries == 0)
+            {
+                info.AdditionalData!.GetBytes(_cookie, ProtocolLimits.CookieBytes);
+                CookieRetries++;
+                SendConnect(_cookie);
+                return;
+            }
             Disconnected = true;
             DisconnectReason = info.Reason;
+            RejectDataLength = rejectBytes;
             // Phase 10 D1: a reject carries a RejectReason, a server close a DisconnectCode, both as one byte.
-            if (info.Reason == LiteNetLib.DisconnectReason.ConnectionRejected && info.AdditionalData != null && info.AdditionalData.AvailableBytes > 0)
-                RejectReason = (RejectReason)info.AdditionalData.GetByte();
+            if (rejectBytes == 1)
+                RejectReason = (RejectReason)info.AdditionalData!.GetByte();
             if (info.Reason == LiteNetLib.DisconnectReason.RemoteConnectionClose && info.AdditionalData != null)
                 DisconnectCode = DisconnectCodes.Read(info.AdditionalData.GetRemainingBytesSpan());
         };
         _listener.NetworkReceiveEvent += OnReceive;
         _net.Start();
     }
+
+    // Review fix A3: what Connect sent, so the cookie retry sends the same request with the cookie.
+    private readonly byte[] _cookie = new byte[ProtocolLimits.CookieBytes];
+    private int _port;
+    private string _devPlayerId = string.Empty;
+    private ushort _protocolVersion;
+    private bool _retryCookie = true;
+
+    // Review fix A3: cookie retries made (1 for a normal connect), and the length of the last reject's data (16 = a cookie,
+    // 1 = a RejectReason).
+    public int CookieRetries { get; private set; }
+    public int RejectDataLength { get; private set; }
 
     public bool Connected { get; private set; }
     public bool Disconnected { get; private set; }
@@ -93,21 +124,59 @@ public sealed class HeadlessClient : IDisposable
     public MarkerPing[] LastPings { get; } = new MarkerPing[MapMarkerConstants.MaxTeamPings];
     public MarkerWaypoint[] LastWaypoints { get; } = new MarkerWaypoint[MapMarkerConstants.MaxWaypoints];
 
+    // 기능: 서버에 접속을 요청한다. 쿠키가 돌아오면(리뷰 수정 A3) 한 번 바로 쿠키를 넣어 다시 요청한다.
+    // 입력: port - 서버 포트, devPlayerId - 이름, protocolVersion - 보낼 버전(기본 현재 버전).
+    // 출력: 반환값 없음. 접속이 시작된다.
     public void Connect(int port, string devPlayerId, ushort protocolVersion = ProtocolConstants.ProtocolVersion)
     {
+        _port = port;
+        _devPlayerId = devPlayerId;
+        _protocolVersion = protocolVersion;
+        CookieRetries = 0;   // one cookie retry per Connect
+        SendConnect(null);
+    }
+
+    // 기능: 주어진 쿠키로 한 번만 접속을 요청한다(리뷰 수정 A3 시험: 틀린 쿠키). 쿠키가 돌아와도 다시 요청하지 않는다.
+    // 입력: port - 서버 포트, devPlayerId - 이름, cookie - 보낼 16 B.
+    // 출력: 반환값 없음. 접속이 시작된다.
+    public void ConnectWithCookie(int port, string devPlayerId, byte[] cookie)
+    {
+        _port = port;
+        _devPlayerId = devPlayerId;
+        _protocolVersion = ProtocolConstants.ProtocolVersion;
+        _retryCookie = false;
+        SendConnect(cookie);
+    }
+
+    // 기능: 저장한 포트·이름·버전으로 접속 요청 하나를 보낸다(cookie가 있으면 HasCookie와 쿠키).
+    // 입력: cookie - 보낼 쿠키(null = 없음).
+    // 출력: 반환값 없음. _peer가 새 연결이 된다.
+    private void SendConnect(byte[]? cookie)
+    {
         var writer = new PacketWriter(_buffer);
-        ConnectRequestData.Write(ref writer, new ConnectRequestData { ProtocolVersion = protocolVersion, DevPlayerId = devPlayerId });
+        ConnectRequestData.Write(ref writer, new ConnectRequestData
+        {
+            ProtocolVersion = _protocolVersion,
+            Flags = cookie != null ? ConnectFlags.HasCookie : ConnectFlags.None,
+            Cookie = cookie,
+            DevPlayerId = _devPlayerId,
+        });
         var data = new NetDataWriter();
         data.Put(_buffer, 0, writer.Length);
-        _peer = _net.Connect("127.0.0.1", port, data);
+        _peer = _net.Connect("127.0.0.1", _port, data);
     }
 
     // A connect request with arbitrary payload (Phase 10: malformed requests are rejected and counted).
     // The peer id the server gave this connection (LiteNetLib's RemoteId), for tests about reused ids.
     public int ServerPeerId => _peer.RemoteId;
 
+    // 기능: 연결 요청 데이터를 그대로 보낸다(잘못된 요청 시험). 쿠키가 돌아와도 다시 요청하지 않는다(리뷰 수정 A3).
+    // 입력: port - 서버 포트, payload - 요청 데이터.
+    // 출력: 반환값 없음. 접속이 시작된다.
     public void ConnectRaw(int port, byte[] payload)
     {
+        _retryCookie = false;   // review fix A3: a raw request is sent as it is; a cookie answer ends it
+
         var data = new NetDataWriter();
         data.Put(payload);
         _peer = _net.Connect("127.0.0.1", port, data);
@@ -129,6 +198,18 @@ public sealed class HeadlessClient : IDisposable
     public void SendInput(InputCommand command)
     {
         command.Seq = _nextSeq++;
+        var packet = new PlayerInputPacket { Count = 1 };
+        packet.Set(0, command);
+        var writer = new PacketWriter(_buffer);
+        PlayerInputPacket.Write(ref writer, packet);
+        _peer.Send(writer.WrittenSpan, DeliveryMethod.Unreliable);
+    }
+
+    // 기능: Seq를 바꾸지 않고 입력 하나를 보낸다(리뷰 수정 A4 시험: 창 밖 Seq). 다음 SendInput의 Seq는 그대로다.
+    // 입력: command - Seq까지 정한 입력.
+    // 출력: 반환값 없음. Unreliable 입력 패킷 하나가 나간다.
+    public void SendInputWithSeq(InputCommand command)
+    {
         var packet = new PlayerInputPacket { Count = 1 };
         packet.Set(0, command);
         var writer = new PacketWriter(_buffer);

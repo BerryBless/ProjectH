@@ -17,7 +17,8 @@ public sealed class ServerMeter : IDisposable
 
     private readonly Meter _meter = new(Name);
 
-    // 기능: Health 수치를 읽는 관찰형 계측기를 모두 등록한다(Phase 15: 지도 표시 사건과 MapMarker 드롭, Phase 16: Loot 사건 포함).
+    // 기능: Health 수치를 읽는 관찰형 계측기를 모두 등록한다(Phase 15: 지도 표시 사건과 MapMarker 드롭, Phase 16: Loot 사건,
+    //   리뷰 수정 A2–A4·A6: 새 거절 이유, 쿠키 응답, 벌점, Seq 창 드롭 포함).
     // 입력: h - 시작부터의 합계.
     // 출력: 등록이 끝난 ServerMeter(Dispose가 해제한다).
     public ServerMeter(HealthCounters h)
@@ -44,7 +45,18 @@ public sealed class ServerMeter : IDisposable
             new Measurement<long>(h.Rejects(RejectReason.VersionMismatch), Tag("reason", nameof(RejectReason.VersionMismatch))),
             // Server review M2: sent as ServerFull, counted apart (no RejectReason value: that enum is the protocol's).
             new Measurement<long>(h.ConnectRateRejects, Tag("reason", "ConnectRate")),
+            // Review fixes A2, A3, A6: sent as ServerFull (the cookie refusal as a fresh cookie), counted apart.
+            new Measurement<long>(h.PerIpRejects, Tag("reason", "PerIp")),
+            new Measurement<long>(h.PenaltyRejects, Tag("reason", "Penalized")),
+            new Measurement<long>(h.AcceptRateRejects, Tag("reason", "AcceptRate")),
+            new Measurement<long>(h.CookieRejects, Tag("reason", "Cookie")),
         });
+        // Review fix A3: first requests answered with a cookie (every normal connect makes one; not a refusal).
+        _meter.CreateObservableCounter("projecth.cookie_challenges", () => h.CookieChallenges, description: "Connection requests without a cookie, answered with one");
+        // Review fix A6.
+        _meter.CreateObservableCounter("projecth.penalties", () => h.Penalties, description: "Addresses penalized for repeated player failures");
+        // Review fix A4.
+        _meter.CreateObservableCounter("projecth.input_seq_drops", () => h.InputSeqDrops, description: "Inputs dropped for a Seq too far ahead of the last one taken");
         _meter.CreateObservableCounter("projecth.kicks", () => ByCode(h));
         _meter.CreateObservableCounter("projecth.bad_packets", () => ByReason(h));
         _meter.CreateObservableCounter("projecth.tick_failures", () => h.TickFailures);

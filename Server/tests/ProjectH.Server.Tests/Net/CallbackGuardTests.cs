@@ -78,4 +78,19 @@ public class CallbackGuardTests
         Assert.Equal(1, server.Health.CallbackErrors);
         Assert.True(Pump.Until(() => server.Listener.Manager.ConnectedPeersCount == 0, 3000), "no orphan");
     }
+
+    // Review A round 1: a connection closed by the exception path after Accept gives its per-IP count back exactly once
+    // (through its PeerState's disconnect), so the address is not left holding a connection it no longer has.
+    [Fact]
+    public void AConnectionThatThrowsAfterAccept_GivesItsPerIpCountBack()
+    {
+        using GameLoop server = StartServer();
+        int slot = server.Listener.ConnectRate.SlotOf(IPAddress.Loopback);
+        server.Listener.CallbackFaultHook = where => { if (where == "accepted") throw new InvalidOperationException("test fault"); };
+        using var c = new HeadlessClient();
+        c.Connect(server.LocalPort, "c");
+        Assert.True(Pump.Until(() => c.Disconnected, 3000, c), "closed");
+        Assert.True(Pump.Until(() => server.Health.DisconnectOthers + server.Health.DisconnectTimeouts == 1, 3000), "disconnect handled");
+        Assert.Equal(0, server.Listener.ConnectRate.ActiveOf(slot));
+    }
 }

@@ -5,7 +5,7 @@ using ProjectH.Shared.Protocol;
 namespace ProjectH.Server.Net;
 
 // Stored in NetPeer.Tag at accept time. Three groups of fields, each with one owner:
-//   - DevPlayerId is immutable and may be read by any thread.
+//   - DevPlayerId and ConnectSlot are immutable and may be read by any thread.
 //   - BadPackets, Kicked, JoinRequested, the input token bucket (server review M5), the build request window, the
 //     statistics request time (Phase 11) and the map marker window and token bucket (Phase 15 D7) are touched
 //     only on LiteNetLib's receive path, so
@@ -19,12 +19,19 @@ public sealed class PeerState
 {
     private int _closeCode;
 
-    public PeerState(string devPlayerId)
+    // 기능: 수락된 연결의 상태를 만든다.
+    // 입력: devPlayerId - 연결 요청의 이름, connectSlot - 이 연결을 센 ConnectRateLimiter 칸(리뷰 수정 A2·A6, -1 = 세지 않음·모름).
+    // 출력: 아무 Join도 하지 않은 PeerState.
+    public PeerState(string devPlayerId, int connectSlot = -1)
     {
         DevPlayerId = devPlayerId;
+        ConnectSlot = connectSlot;
     }
 
     public string DevPlayerId { get; }
+    // Review fixes A2, A6: the ConnectRateLimiter slot this connection was counted in (Acquired at accept, Released at the
+    // disconnect), and the source the game loop charges this player's failures to. -1 = not counted (tests).
+    public int ConnectSlot { get; }
     public int BadPackets;
     public bool Kicked;
     // Set when the first JoinMatchRequest is enqueued. Later Joins are bad packets and are not

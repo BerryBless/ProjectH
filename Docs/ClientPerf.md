@@ -11,7 +11,7 @@
 1. 서버를 띄운다.
 
 ```bash
-dotnet Server/src/ProjectH.Server/bin/Release/net10.0/ProjectH.Server.dll --Server:Port=7777 --Server:MaxPlayers=100 --Server:DevRespawn=true --Server:ConnectBurstPerIp=200
+dotnet Server/src/ProjectH.Server/bin/Release/net10.0/ProjectH.Server.dll --Server:Port=7777 --Server:MaxPlayers=100 --Server:DevRespawn=true --Server:ConnectBurstPerIp=200 --Server:MaxConnectionsPerIp=200
 ```
 
 2. 봇 99명을 붙인다(내 Client 1명 + 봇 99명 = 100명).

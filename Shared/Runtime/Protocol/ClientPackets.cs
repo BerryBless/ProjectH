@@ -2,25 +2,62 @@ using ProjectH.Shared.Simulation;
 
 namespace ProjectH.Shared.Protocol
 {
+    // Review fix A3 (v19): what a connection request carries besides the version and the name.
+    [System.Flags]
+    public enum ConnectFlags : byte
+    {
+        None = 0,
+        HasCookie = 1,   // the request repeats the cookie of the server's RejectForce (ProtocolLimits.CookieBytes)
+        HasResume = 2,   // review fix B4: a resume proof follows (the layout is completed in package B)
+    }
+
     // Payload of LiteNetLib's connection request (no PacketId: it is not a regular packet).
+    // v19: version u16, flags u8, [cookie 16 when HasCookie], name (1-byte length + UTF-8). The version stays first in every
+    // layout, so a server can tell an older client VersionMismatch before reading the rest.
     public struct ConnectRequestData
     {
         public ushort ProtocolVersion;
+        public ConnectFlags Flags;
+        // ProtocolLimits.CookieBytes; read and written only when Flags has HasCookie.
+        public byte[] Cookie;
         public string DevPlayerId;
 
+        // 기능: 연결 요청 데이터를 쓴다. HasCookie인데 쿠키가 없거나 짧으면 HasCookie를 빼고 쓴다.
+        // 입력: writer - 쓸 곳, data - 버전·플래그·쿠키·이름.
+        // 출력: 반환값 없음. 이름이 길면 writer가 Overflowed가 된다.
         public static void Write(ref PacketWriter writer, in ConnectRequestData data)
         {
+            ConnectFlags flags = data.Flags;
+            bool cookie = (flags & ConnectFlags.HasCookie) != 0 && data.Cookie != null && data.Cookie.Length >= ProtocolLimits.CookieBytes;
+            if (!cookie) flags &= ~ConnectFlags.HasCookie;
             writer.WriteUInt16(data.ProtocolVersion);
+            writer.WriteByte((byte)flags);
+            if (cookie) writer.WriteBytes(new System.ReadOnlySpan<byte>(data.Cookie, 0, ProtocolLimits.CookieBytes));
             writer.WriteString(data.DevPlayerId, ProtocolConstants.MaxDevPlayerIdBytes);
         }
 
-        public static bool TryRead(ref PacketReader reader, out ConnectRequestData data)
+        // 기능: 연결 요청 데이터를 읽는다(모르는 플래그·잘린 쿠키·이름 규칙 위반·남는 바이트는 거절).
+        // 입력: reader - 요청 데이터, cookieBuffer - 쿠키를 받을 16 B 이상 버퍼(null이면 쿠키가 있을 때 새로 만든다. 서버는
+        //   수신 스레드의 재사용 버퍼를 넘겨 요청마다 할당하지 않는다).
+        // 출력: 맞으면 true와 데이터(HasCookie면 data.Cookie = 쿠키가 든 버퍼), 아니면 false.
+        public static bool TryRead(ref PacketReader reader, out ConnectRequestData data, byte[] cookieBuffer = null)
         {
             data = default;
             if (!reader.TryReadUInt16(out data.ProtocolVersion)) return false;
+            if (!reader.TryReadByte(out byte flags)) return false;
+            data.Flags = (ConnectFlags)flags;
+            if ((flags & ~(byte)(ConnectFlags.HasCookie | ConnectFlags.HasResume)) != 0) return false;
+            if ((data.Flags & ConnectFlags.HasCookie) != 0)
+            {
+                byte[] cookie = cookieBuffer != null && cookieBuffer.Length >= ProtocolLimits.CookieBytes
+                    ? cookieBuffer : new byte[ProtocolLimits.CookieBytes];
+                if (!reader.TryReadBytes(new System.Span<byte>(cookie, 0, ProtocolLimits.CookieBytes))) return false;
+                data.Cookie = cookie;
+            }
             if (!reader.TryReadString(ProtocolConstants.MaxDevPlayerIdBytes, out string id)) return false;
             // Phase 11: valid UTF-8 without control characters, so the name always fits PlayerSpawned (see the rule).
             if (!ProtocolConstants.IsValidPlayerName(id)) return false;
+            if (reader.Remaining != 0) return false;
             data.DevPlayerId = id;
             return true;
         }
@@ -94,14 +131,17 @@ namespace ProjectH.Shared.Protocol
             }
         }
 
-        // Only the layout is checked here. Values (NaN aim, huge ViewTick, ...) are checked where they are
-        // used: MovementSimulation for movement, the server's combat code for aim and ViewTick (D14).
+        // 기능: PacketId 뒤의 입력 본문을 읽는다. 배치만 검사한다. 값(NaN 조준, 큰 ViewTick 등)은 쓰는 곳이 검사한다:
+        //   이동은 MovementSimulation, 조준과 ViewTick은 서버 전투 코드(D14).
+        // 입력: reader - PacketId 다음 위치의 읽기 도구.
+        // 출력: 개수가 1–MaxInputsPerPacket이고 본문이 정확히 count × CommandSize면 true와 입력들, 아니면 false.
+        //   리뷰 수정 A1(SEC-1): 마지막 명령 뒤에 남는 바이트가 있어도 false(앞 92 B만 맞는 큰 패킷을 처리하지 않는다).
         public static bool TryRead(ref PacketReader reader, out PlayerInputPacket packet)
         {
             packet = default;
             if (!reader.TryReadByte(out byte count)) return false;
             if (count == 0 || count > ProtocolConstants.MaxInputsPerPacket) return false;
-            if (reader.Remaining < count * CommandSize) return false;
+            if (reader.Remaining != count * CommandSize) return false;
 
             packet.Count = count;
             for (int i = 0; i < count; i++)

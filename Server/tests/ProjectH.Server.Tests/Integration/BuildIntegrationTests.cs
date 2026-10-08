@@ -62,7 +62,9 @@ public sealed class BuildIntegrationTests
         var health = new HealthCounters();
         var options = new ServerOptions { MaxPlayers = 1 };
         var channels = new ProjectH.Server.Net.InboundChannels(options, new ServerStats(), health.AddBuildInboxDrop);
-        int capacity = options.MaxPlayers * ProjectH.Server.Game.Build.BuildRequestQueue.Capacity;
+        // Review fix A5: the capacity is MaxPlayers * 2 * maxRequestsPerSecond now (was MaxPlayers * the queue capacity).
+        int capacity = channels.BuildCapacity;
+        Assert.Equal(options.MaxPlayers * 2 * 20, capacity);
         for (int i = 0; i < capacity + 3; i++)
             Assert.True(channels.Build.Writer.TryWrite(default));
         Assert.Equal(3, health.BuildInboxDrops);

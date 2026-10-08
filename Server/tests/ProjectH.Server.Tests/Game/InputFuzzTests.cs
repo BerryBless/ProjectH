@@ -102,4 +102,25 @@ public class InputFuzzTests
         // The battle royale run must really have played (damage, zone, deaths); the sandbox has no flow states.
         if (!devRespawn) Assert.True(reachedPlaying, "the match never reached Playing");
     }
+
+    // Review fix A4 (SEC-7): Match says whether a packet gave the player any input, so the game loop refreshes the input
+    // timeout only then; inputs past the Seq window are counted in InputSeqDrops. A peer with no player (not joined, or
+    // already out) is not judged here: true, as before.
+    [Fact]
+    public void EnqueueInput_SaysWhetherAnyInputWasTaken()
+    {
+        var match = new Match(new ServerOptions { MaxPlayers = 4, DevRespawn = true }, TestGameData.Create(), static (_, _, _) => { });
+        Assert.Equal(JoinResult.Ok, match.TryJoin(1, "a"));
+        Assert.True(match.EnqueueInput(1, new PlayerInputPacket { Count = 1, Input0 = new InputCommand { Seq = 1 } }));
+        match.Tick();
+        Assert.False(match.EnqueueInput(1, new PlayerInputPacket { Count = 1, Input0 = new InputCommand { Seq = 1 } }));   // already taken
+        Assert.False(match.EnqueueInput(1, new PlayerInputPacket { Count = 1, Input0 = new InputCommand { Seq = 0xFFFFFFF0 } }));
+        Assert.Equal(1, match.InputSeqDrops);
+        Assert.True(match.EnqueueInput(1, new PlayerInputPacket
+        {
+            Count = 2, Input0 = new InputCommand { Seq = 0xFFFFFFF1 }, Input1 = new InputCommand { Seq = 2 },
+        }));
+        Assert.Equal(2, match.InputSeqDrops);
+        Assert.True(match.EnqueueInput(99, new PlayerInputPacket { Count = 1, Input0 = new InputCommand { Seq = 1 } }));
+    }
 }

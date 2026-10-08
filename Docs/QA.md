@@ -560,7 +560,7 @@ dotnet run --project Server/src/ProjectH.QA -- convert-recording rec.jsonl --out
   - 여러 시나리오를 실행하면 가장 큰 값을 돌려준다. 마지막 줄에 결과별 수를 낸다: `8 scenarios: 7 passed, 0 failed, 1 skipped, 0 errors; exit code 0.`
 - **SKIPPED**(QA-3): 환경 때문에 시나리오의 나머지를 할 수 없을 때(예: Docker나 DB 컨테이너가 없음)의 결과다. 실행된 Step은 모두 통과했지만 끝까지 실행된 것은 아니므로 PASSED로 보고하지 않는다. 콘솔 요약 줄, Report 제목, Web UI 배지에 SKIPPED와 이유가 나온다.
 - **Launch 모드**는 서버를 `DOTNET_ENVIRONMENT=Development`로 띄우고, 아래 인자를 준 뒤 시나리오 `server.options`를 붙인다.
-  - `--qa-mode --Server:Port=0 --Qa:Port=0 --Persistence:Enabled=false --Server:AirDrop=false --Server:StartCountdownSeconds=1 --Server:ResultSeconds=1 --Server:LootSeed/ZoneSeed/SpawnSeed=<seed> --Server:ConnectBurstPerIp=1000`. 모든 Actor가 127.0.0.1에서 접속하므로 IP당 접속 제한(기본 20)이 stress 접속을 거절하지 않게 한다. 제한기는 켜진 채이고 `server.options`로 바꿀 수 있다.
+  - `--qa-mode --Server:Port=0 --Qa:Port=0 --Persistence:Enabled=false --Server:AirDrop=false --Server:StartCountdownSeconds=1 --Server:ResultSeconds=1 --Server:LootSeed/ZoneSeed/SpawnSeed=<seed> --Server:ConnectBurstPerIp=1000 --Server:MaxConnectionsPerIp=1000 --Server:AcceptsPerSecond=1000`. 모든 Actor가 127.0.0.1에서 접속하므로 IP당 접속 빈도 제한(기본 20), IP당 동시 연결 수(기본 4)와 전역 수락 빈도(기본 초당 20, 리뷰 수정 A2)가 stress 접속을 거절하지 않게 한다. 제한기는 켜진 채이고 `server.options`로 바꿀 수 있다.
   - Ready 조건은 `QA_READY` 줄과 `/qa/health`(20 s 이내)다. 고정 sleep을 쓰지 않는다(§81).
   - 끝나면 `/qa/server/stop` → 최대 10 s 종료 대기 → 그래도 남으면 자기 자식 프로세스만 Kill한다.
 - **Ctrl+C**: 현재 Step을 멈추고 Cleanup(Actor 종료, 서버 정지)을 한 뒤 Report를 쓴다.

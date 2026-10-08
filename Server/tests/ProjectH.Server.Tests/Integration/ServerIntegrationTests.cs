@@ -26,6 +26,8 @@ public sealed class ServerIntegrationTests : IDisposable
             JoinTimeoutSeconds = 30,
             // Server review M2: FullMatch connects 100 clients from 127.0.0.1 at once, over the per-IP connect burst.
             ConnectBurstPerIp = 0,
+            // Review fix A2: and holds them all at once, over the per-IP connection limit.
+            MaxConnectionsPerIp = 0,
         }, TestGameData.Create(), NullLogger.Instance);
         loop.Start();
         return loop;

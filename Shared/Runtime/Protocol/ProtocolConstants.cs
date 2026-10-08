@@ -28,7 +28,9 @@ namespace ProjectH.Shared.Protocol
         // 17: Phase 18 gameplay audio (the weapon id in ShotFired, the reason byte of a BuildEvents Destroyed record (5 bytes),
         //     the shield flags in DamageTaken, WorldSound).
         // 18: Phase 19 vehicles (VehicleStates S->C, Unreliable on channel 0; seated players keep their movement mode).
-        public const ushort ProtocolVersion = 18;
+        // 19: review fixes A-D (the connect request's flags and cookie, then the session key and resume proof, a uint
+        //     ViewTick, the 20-byte authentication tail of every datagram).
+        public const ushort ProtocolVersion = 19;
 
         public const int MaxDevPlayerIdBytes = 32;
 

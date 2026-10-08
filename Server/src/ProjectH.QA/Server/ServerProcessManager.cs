@@ -99,6 +99,10 @@ public sealed partial class ServerProcessManager : IDisposable
             // 50-100 player stress join. A burst larger than any scenario's joins and reconnects keeps the limiter on
             // (its path still runs) without refusing them; a scenario may still override it.
             ["Server:ConnectBurstPerIp"] = "1000",
+            // Review fix A2: the same for the connections one IP holds at once (default 4) and for the accepts per second
+            // over all addresses (default 20, burst MaxPlayers): both stay on, above any scenario's joins and reconnects.
+            ["Server:MaxConnectionsPerIp"] = "1000",
+            ["Server:AcceptsPerSecond"] = "1000",
         };
         foreach (var pair in overrides) options[pair.Key] = pair.Value;
         // Backstop for every launch path (CLI and UI): the server's QA watchdog stops it when this process is gone, so a

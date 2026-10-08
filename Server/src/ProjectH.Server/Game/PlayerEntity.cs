@@ -13,12 +13,17 @@ public sealed class PlayerEntity
     // peer ids, so a graced player must not keep its old one: the next connection with that id would get its packets.
     public const int NoPeer = -1;
 
-    public PlayerEntity(ushort entityId, int peerId, string devPlayerId, int inputCapacity)
+    // 기능: 경기에 들어온 플레이어를 만든다.
+    // 입력: entityId - 엔티티 id, peerId - 연결 id, devPlayerId - 이름, inputCapacity - 입력 버퍼 칸 수,
+    //   maxSeqAhead - 입력 Seq 창(리뷰 수정 A4, ServerOptions.InputSeqWindow).
+    // 출력: 빈 입력 버퍼를 가진 PlayerEntity.
+    public PlayerEntity(ushort entityId, int peerId, string devPlayerId, int inputCapacity,
+        int maxSeqAhead = ProjectH.Shared.Protocol.ProtocolLimits.MaxInputSeqAhead)
     {
         EntityId = entityId;
         PeerId = peerId;
         DevPlayerId = devPlayerId;
-        Inputs = new PlayerInputBuffer(inputCapacity);
+        Inputs = new PlayerInputBuffer(inputCapacity, maxSeqAhead);
     }
 
     public ushort EntityId { get; }

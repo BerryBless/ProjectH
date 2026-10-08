@@ -82,6 +82,17 @@ namespace ProjectH.Shared.Protocol
             return true;
         }
 
+        // 기능: 정해진 길이의 바이트를 호출자 버퍼로 복사해 읽는다(리뷰 수정 A3: 연결 요청의 쿠키). 할당 없음.
+        // 입력: destination - 받을 곳(길이만큼 읽는다).
+        // 출력: 남은 바이트가 충분하면 true와 채워진 destination, 아니면 false(읽기 위치는 그대로).
+        public bool TryReadBytes(Span<byte> destination)
+        {
+            if (Remaining < destination.Length) return false;
+            _data.Slice(_position, destination.Length).CopyTo(destination);
+            _position += destination.Length;
+            return true;
+        }
+
         // Allocates the string: only used at connect time, never on the per-tick path.
         public bool TryReadString(int maxBytes, out string value)
         {

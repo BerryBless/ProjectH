@@ -74,6 +74,20 @@ public sealed class HealthCounters
     private long _networkErrors;
     // Server review M2: connection requests refused by the per-IP rate (sent as ServerFull, counted apart from it).
     private long _connectRateRejects;
+    // Review fix A2: requests refused because their address held MaxConnectionsPerIp connections, because it was penalized
+    // (A6), and because the global accept bucket was empty (all sent as ServerFull, counted apart from it).
+    private long _perIpRejects;
+    private long _penaltyRejects;
+    private long _acceptRateRejects;
+    // Review fix A3: requests that carried a wrong or expired cookie (refused, no peer), and first requests without one
+    // that were answered with a cookie (the normal first step of every connect, not a refusal).
+    private long _cookieRejects;
+    private long _cookieChallenges;
+    // Review fix A6: addresses penalized for repeated player failures.
+    private long _penalties;
+    // Review fix A4: inputs dropped for a Seq too far ahead (game loop writes the running total, see SetInputSeqDrops).
+    private long _inputSeqDrops;
+    private long _inputSeqDropBase;
     // Server review M7: players whose own tick threw; each was taken out of the match and its connection closed.
     private long _playerFailures;
     // Server review M8: stalls that lasted FatalStallSeconds and stopped the server (at most 1 per process).
@@ -166,6 +180,46 @@ public sealed class HealthCounters
     public void AddNetworkError() => Interlocked.Increment(ref _networkErrors);
     public void AddConnectRateReject() => Interlocked.Increment(ref _connectRateRejects);
     public void AddPlayerFailure() => Interlocked.Increment(ref _playerFailures);
+
+    // 기능: 동시 연결 상한(리뷰 수정 A2)으로 거절한 요청 하나를 센다(수신 스레드).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void AddPerIpReject() => Interlocked.Increment(ref _perIpRejects);
+
+    // 기능: 벌점 중인 주소(리뷰 수정 A6)라 거절한 요청 하나를 센다(수신 스레드).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void AddPenaltyReject() => Interlocked.Increment(ref _penaltyRejects);
+
+    // 기능: 전역 수락 Token Bucket(리뷰 수정 A2)이 비어 거절한 요청 하나를 센다(수신 스레드).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void AddAcceptRateReject() => Interlocked.Increment(ref _acceptRateRejects);
+
+    // 기능: 틀리거나 지난 쿠키(리뷰 수정 A3)를 가진 요청 하나를 센다(수신 스레드).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void AddCookieReject() => Interlocked.Increment(ref _cookieRejects);
+
+    // 기능: 쿠키 없는 첫 요청에 쿠키를 돌려준 횟수 하나를 센다(리뷰 수정 A3, 정상 접속의 첫 단계, 수신 스레드).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void AddCookieChallenge() => Interlocked.Increment(ref _cookieChallenges);
+
+    // 기능: 반복 플레이어 실패로 벌점을 준 주소 하나를 센다(리뷰 수정 A6, Game Loop).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void AddPenalty() => Interlocked.Increment(ref _penalties);
+
+    // 기능: 지금 경기의 Seq 창 밖 입력 드롭 합계를 시작부터의 합계로 쓴다(리셋으로 넘어온 기준값 + 이 경기 값, 리뷰 수정 A4). Game Loop만 부른다.
+    // 입력: matchTotal - 지금 경기 객체의 합계(Match.InputSeqDrops).
+    // 출력: 반환값 없음.
+    public void SetInputSeqDrops(long matchTotal) => Volatile.Write(ref _inputSeqDrops, _inputSeqDropBase + matchTotal);
+
+    // 기능: 경기 리셋 때 지금까지의 Seq 창 밖 드롭 합계를 기준값으로 넘긴다(합계가 줄지 않게, CarryLootTotals와 같다).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
+    public void CarryInputSeqDrops() => _inputSeqDropBase = Volatile.Read(ref _inputSeqDrops);
     public void AddStallExit() => Interlocked.Increment(ref _stallExits);
     public void AddCallbackError() => Interlocked.Increment(ref _callbackErrors);
 
@@ -322,6 +376,13 @@ public sealed class HealthCounters
     public long NetworkErrors => Interlocked.Read(ref _networkErrors);
     public long ConnectRateRejects => Interlocked.Read(ref _connectRateRejects);
     public long PlayerFailures => Interlocked.Read(ref _playerFailures);
+    public long PerIpRejects => Interlocked.Read(ref _perIpRejects);
+    public long PenaltyRejects => Interlocked.Read(ref _penaltyRejects);
+    public long AcceptRateRejects => Interlocked.Read(ref _acceptRateRejects);
+    public long CookieRejects => Interlocked.Read(ref _cookieRejects);
+    public long CookieChallenges => Interlocked.Read(ref _cookieChallenges);
+    public long Penalties => Interlocked.Read(ref _penalties);
+    public long InputSeqDrops => Volatile.Read(ref _inputSeqDrops);
     public long StallExits => Interlocked.Read(ref _stallExits);
     public long CallbackErrors => Interlocked.Read(ref _callbackErrors);
     public int Peers => Volatile.Read(ref _peers);

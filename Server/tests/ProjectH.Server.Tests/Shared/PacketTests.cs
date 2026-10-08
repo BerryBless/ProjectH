@@ -50,14 +50,67 @@ public class PacketTests
         Assert.False(ConnectRequestData.TryRead(ref reader, out _));
     }
 
-    // Phase 11: the raw name bytes of a connect request (version 1).
+    // Review fix A3 (v19): version, flags, the cookie when flags say so, then the name.
+    [Fact]
+    public void ConnectRequestData_WithACookie_RoundTrips()
+    {
+        var cookie = new byte[ProtocolLimits.CookieBytes];
+        for (int i = 0; i < cookie.Length; i++) cookie[i] = (byte)(200 + i);
+        var writer = new PacketWriter(_buffer);
+        ConnectRequestData.Write(ref writer, new ConnectRequestData
+        {
+            ProtocolVersion = ProtocolConstants.ProtocolVersion, Flags = ConnectFlags.HasCookie, Cookie = cookie, DevPlayerId = "abc",
+        });
+        Assert.Equal(2 + 1 + ProtocolLimits.CookieBytes + 1 + 3, writer.Length);
+
+        var into = new byte[ProtocolLimits.CookieBytes];
+        var reader = new PacketReader(_buffer.AsSpan(0, writer.Length));
+        Assert.True(ConnectRequestData.TryRead(ref reader, out var data, into));
+        Assert.Equal(ConnectFlags.HasCookie, data.Flags);
+        Assert.Same(into, data.Cookie);   // the caller's buffer: no allocation per request on the server
+        Assert.Equal(cookie, into);
+        Assert.Equal("abc", data.DevPlayerId);
+        Assert.Equal(0, reader.Remaining);
+    }
+
+    [Fact]
+    public void ConnectRequestData_WithoutACookie_HasNoCookie()
+    {
+        var writer = new PacketWriter(_buffer);
+        ConnectRequestData.Write(ref writer, new ConnectRequestData { ProtocolVersion = 19, DevPlayerId = "abc" });
+        Assert.Equal(2 + 1 + 1 + 3, writer.Length);
+        var reader = new PacketReader(_buffer.AsSpan(0, writer.Length));
+        Assert.True(ConnectRequestData.TryRead(ref reader, out var data));
+        Assert.Equal(ConnectFlags.None, data.Flags);
+        Assert.Null(data.Cookie);
+    }
+
+    [Fact]
+    public void ConnectRequestData_ACutCookie_UnknownFlags_AndTrailingBytes_AreRejected()
+    {
+        // HasCookie with only 15 cookie bytes (the name length byte would be read as the 16th).
+        var cut = new byte[] { 19, 0, (byte)ConnectFlags.HasCookie, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+        var reader = new PacketReader(cut);
+        Assert.False(ConnectRequestData.TryRead(ref reader, out _));
+
+        var unknown = new byte[] { 19, 0, 0x80, 1, (byte)'a' };
+        reader = new PacketReader(unknown);
+        Assert.False(ConnectRequestData.TryRead(ref reader, out _));
+
+        var trailing = new byte[] { 19, 0, 0, 1, (byte)'a', 0 };
+        reader = new PacketReader(trailing);
+        Assert.False(ConnectRequestData.TryRead(ref reader, out _));
+    }
+
+    // Phase 11: the raw name bytes of a connect request (version 1; v19 layout: flags 0, no cookie).
     private bool TryReadConnectName(byte[] name, out string id)
     {
         _buffer[0] = 1;
         _buffer[1] = 0;
-        _buffer[2] = (byte)name.Length;
-        name.CopyTo(_buffer, 3);
-        var reader = new PacketReader(_buffer.AsSpan(0, 3 + name.Length));
+        _buffer[2] = 0;
+        _buffer[3] = (byte)name.Length;
+        name.CopyTo(_buffer, 4);
+        var reader = new PacketReader(_buffer.AsSpan(0, 4 + name.Length));
         bool ok = ConnectRequestData.TryRead(ref reader, out var data);
         id = data.DevPlayerId;
         return ok;
@@ -184,6 +237,50 @@ public class PacketTests
         var reader = new PacketReader(bytes);
         reader.TryReadPacketId(out _);
         Assert.False(PlayerInputPacket.TryRead(ref reader, out _));
+    }
+
+    // Review fix A1 (SEC-1): a PlayerInput is exactly count commands long; bytes after the last command are refused, so
+    // a 64 KB packet whose first 92 bytes are valid is Malformed instead of processed.
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public void PlayerInput_TrailingBytes_AreRejected(byte count)
+    {
+        var packet = new PlayerInputPacket { Count = count };
+        for (int i = 0; i < count; i++) packet.Set(i, FullCommand((uint)(1 + i)));
+        var writer = new PacketWriter(_buffer);
+        PlayerInputPacket.Write(ref writer, packet);
+        _buffer[writer.Length] = 0;
+        var reader = ReaderAfterId(writer.Length + 1, PacketId.PlayerInput);
+        Assert.False(PlayerInputPacket.TryRead(ref reader, out _));
+    }
+
+    // Review fix A1: every client-to-server packet fits the server's size cap, which the listener checks before parsing.
+    [Fact]
+    public void EveryClientPacket_FitsTheClientPacketCap()
+    {
+        Assert.True(PlayerInputPacket.MaxSize <= ProtocolLimits.MaxClientPacketBytes);
+        Assert.True(BuildRequest.Size <= ProtocolLimits.MaxClientPacketBytes);
+        Assert.True(BuildEditRequest.Size <= ProtocolLimits.MaxClientPacketBytes);
+        Assert.True(MapMarker.Size <= ProtocolLimits.MaxClientPacketBytes);
+        Assert.True(1 <= ProtocolLimits.MaxClientPacketBytes);   // JoinMatchRequest and StatsRequest: the id only
+    }
+
+    // Review fix A1 (and B3): a server packet is at most MaxPacketSize; with LiteNetLib's header and the authentication
+    // tail it still fits one datagram of the MTU, so nothing the server sends is ever fragmented (MaxFragments 2 is room
+    // to spare, not a need).
+    [Fact]
+    public void EveryServerPacket_FitsTheMtuWithTransportAndAuthOverhead()
+    {
+        int[] largest =
+        {
+            ItemCatalogPacket.MaxSize, WorldItemsPacket.MaxSize, SupplyDropsPacket.MaxSize, TeamMarkersPacket.MaxSize,
+            TeamState.MaxSize, StatsResponse.MaxSize, VehicleStatesPacket.MaxSize, BuildCatalogPacket.Size,
+            BuildInterestPacket.Size, BuildResult.Size,
+            WorldSnapshotHeader.Size + ProtocolConstants.MaxEntitiesPerSnapshotPacket * SnapshotEntity.Size,
+        };
+        foreach (int size in largest) Assert.True(size <= ProtocolConstants.MaxPacketSize, $"{size} B");
+        Assert.True(ProtocolConstants.MaxPacketSize + ProtocolLimits.TransportHeaderBytes + ProtocolLimits.AuthTagBytes <= ProtocolConstants.Mtu);
     }
 
     [Fact]

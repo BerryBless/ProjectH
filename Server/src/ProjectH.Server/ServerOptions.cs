@@ -55,21 +55,32 @@ public sealed class ServerOptions
     // (--Server:ConnectBurstPerIp=200).
     public int ConnectBurstPerIp { get; set; } = 20;
     public int ConnectsPerIpPerSecond { get; set; } = 5;
+    // Review fix A2 (SEC-3): connections one remote IP may hold at once (0 = off). More are refused as ServerFull before
+    // Accept (counted as perIp). A load test with many bots on one machine raises it (--Server:MaxConnectionsPerIp=200).
+    public int MaxConnectionsPerIp { get; set; } = 4;
+    // Review fix A2: connections accepted per second over all addresses, a token bucket of AcceptBurst (MaxPlayers) at
+    // once. More are refused as ServerFull before Accept (counted as accept). It bounds the Control channel below.
+    public int AcceptsPerSecond { get; set; } = 20;
+    public int AcceptBurst => MaxPlayers;
 
     // Server review M8: a game loop stalled this long is taken as hung for good: the server stops taking connections and
     // stops with exit code 1, so a supervisor restarts it instead of it holding its port as a zombie. 0 = off.
     public int FatalStallSeconds { get; set; } = 30;
 
-    // Each connection produces at most Connected + JoinRequested + Disconnected. Review rounds 1 and 2: room for every
-    // player plus one address's whole connect burst and the tokens that come back within one drain (one tick: the
-    // ceiling of ConnectsPerIpPerSecond / SimHz), since each of those connections may connect, join and leave before the
-    // next drain. So that churn cannot fill the channel and get another player's message refused (closed with
-    // ServerError). With the per-IP limit off it is 3 per player, as before (churn is then not bounded per address).
-    public int ControlChannelCapacity => 3 * (MaxPlayers + (ConnectRateEnabled
-        ? ConnectBurstPerIp + (ConnectsPerIpPerSecond + SimHz - 1) / SimHz
-        : 0));
+    // Each connection produces at most Connected + JoinRequested + Disconnected. Review rounds 1 and 2, review fix A2: room
+    // for every player plus every connection the global accept bucket can let in before the next drain (its burst,
+    // AcceptBurst, and the tokens that come back within one tick: the ceiling of AcceptsPerSecond / SimHz), since each of
+    // those may connect, join and leave before the drain. The global bucket bounds every address together, so churn from
+    // many addresses cannot fill the channel and get another player's message refused (closed with ServerError).
+    public int ControlChannelCapacity => 3 * (MaxPlayers + AcceptBurst + (AcceptsPerSecond + SimHz - 1) / SimHz);
     public bool ConnectRateEnabled => ConnectBurstPerIp > 0 && ConnectsPerIpPerSecond > 0;
-    public int InputChannelCapacity => MaxPlayers * InputBufferPerPlayer;
+    // Review fix A5 (SEC-18): every player's whole input burst at once (InputBurst per connection), so connections spending
+    // their bursts together cannot push another player's input out of the shared channel. A few KB.
+    public int InputChannelCapacity => MaxPlayers * InputBurst;
+    // Review fix A4: how far past the last taken input a Seq may be. A client keeps numbering one input per tick while its
+    // packets are lost, so the window covers an outage up to the disconnect timeout (a longer one disconnects, and a
+    // resume starts the numbering over) plus one second; never below ProtocolLimits.MaxInputSeqAhead. Defaults: 180 ticks.
+    public int InputSeqWindow => Math.Max(ProtocolLimits.MaxInputSeqAhead, (int)((long)SimHz * (DisconnectTimeoutMs + 1000) / 1000));
     public byte SnapshotHz => (byte)(SimHz / SnapshotEveryTicks);
     // The client sends at most one input packet per simulation step; 2x leaves room for bursts
     // after network jitter. Server review M5, L5: a token bucket of InputBurst (one second of input) refilled at
@@ -77,7 +88,7 @@ public sealed class ServerOptions
     public int MaxInputPacketsPerSecond => SimHz * 2;
     public int InputBurst => SimHz;
 
-    // 기능: 시작 때 설정 값을 검사한다(Phase 14: TeamSize 1-4).
+    // 기능: 시작 때 설정 값을 검사한다(Phase 14: TeamSize 1-4, 리뷰 수정 A2: MaxConnectionsPerIp 0-10000, AcceptsPerSecond 1-10000).
     // 입력: 없음.
     // 출력: 맞으면 null, 틀리면 이유.
     public string? Validate()
@@ -116,6 +127,8 @@ public sealed class ServerOptions
             return "InputTimeoutSeconds * 1000 must be at least DisconnectTimeoutMs + 2000 (or 0 = off), so a network loss keeps its reconnect grace.";
         if (ConnectBurstPerIp < 0 || ConnectBurstPerIp > 10000) return "ConnectBurstPerIp must be 0 (off) or 1-10000.";
         if (ConnectsPerIpPerSecond < 0 || ConnectsPerIpPerSecond > 1000) return "ConnectsPerIpPerSecond must be 0 (off) or 1-1000.";
+        if (MaxConnectionsPerIp < 0 || MaxConnectionsPerIp > 10000) return "MaxConnectionsPerIp must be 0 (off) or 1-10000.";
+        if (AcceptsPerSecond < 1 || AcceptsPerSecond > 10000) return "AcceptsPerSecond must be 1-10000.";
         if (FatalStallSeconds != 0 && (FatalStallSeconds < 5 || FatalStallSeconds > 3600))
             return "FatalStallSeconds must be 0 (off) or 5-3600.";
         return null;

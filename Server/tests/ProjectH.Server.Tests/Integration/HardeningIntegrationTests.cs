@@ -3,6 +3,7 @@ using LiteNetLib;
 using Microsoft.Extensions.Logging.Abstractions;
 using ProjectH.Server.Diagnostics;
 using ProjectH.Shared.Protocol;
+using ProjectH.Shared.Simulation;
 using Xunit;
 
 namespace ProjectH.Server.Tests.Integration;
@@ -81,6 +82,27 @@ public sealed class HardeningIntegrationTests
             if (Pump.Until(condition, 33, [sender, .. others])) return true;
         }
         return condition();
+    }
+
+    // Review fix A4 (SEC-7): a packet whose inputs are all refused (here: a Seq far past the window) is not input. Before,
+    // it kept refreshing the input timeout, so a player locked out by an injected Seq was never closed.
+    [Fact]
+    public void AnInputPacket_WithOnlyRejectedSeqs_DoesNotRefreshTheInputTimeout()
+    {
+        using GameLoop server = StartServer(inputTimeout: 3);
+        using var stuck = Join(server, "stuck");
+        stuck.SendMove(0f, 0f, 0f);   // Seq 1, taken: the window starts there
+        Assert.True(Pump.Until(() => stuck.LastAckInputSeq == 1, 3000, stuck), "first input taken");
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (!stuck.Disconnected && clock.ElapsedMilliseconds < 6000)
+        {
+            stuck.SendInputWithSeq(new InputCommand { Seq = 0xFFFFFFF0 });
+            Pump.Until(() => stuck.Disconnected, 33, stuck);
+        }
+        Assert.True(stuck.Disconnected, "timed out");
+        Assert.Equal(DisconnectCode.InputTimeout, stuck.DisconnectCode);
+        Assert.True(server.Health.InputSeqDrops > 0);
     }
 
     [Fact]
@@ -187,5 +209,49 @@ public sealed class HardeningIntegrationTests
         Assert.Equal(RejectReason.VersionMismatch, old.RejectReason);
         Assert.Equal(1, server.Health.Rejects(RejectReason.VersionMismatch));
         Assert.Equal(1, server.Health.Rejects(RejectReason.BadRequest));
+    }
+
+    // Review fix A3 (SEC-4): the first request has no cookie and gets one back in a RejectForce (no peer on the server);
+    // the client sends it again with the cookie at once and is accepted. A normal connect costs one more round trip only.
+    [Fact]
+    public void AConnect_WithoutACookie_GetsARejectForceCookie_AndTheRetryIsAccepted()
+    {
+        using GameLoop server = StartServer();
+        using var client = Join(server, "cookie");
+        Assert.Equal(1, client.CookieRetries);
+        Assert.False(client.Disconnected);
+        Assert.Equal(1, server.Health.CookieChallenges);
+        Assert.Equal(0, server.Health.CookieRejects);
+        Assert.Equal(1, server.Health.Connections);
+    }
+
+    // A wrong cookie (a forged or replayed one) is refused without a peer and counted; the answer is a fresh cookie, which
+    // this client does not use.
+    [Fact]
+    public void AConnect_WithAWrongCookie_IsRejectedWithoutAPeer()
+    {
+        using GameLoop server = StartServer();
+        using var forged = new HeadlessClient();
+        forged.ConnectWithCookie(server.LocalPort, "forged", new byte[ProtocolLimits.CookieBytes]);
+        Assert.True(Pump.Until(() => forged.Disconnected, 3000, forged), "refused");
+        Assert.Equal(DisconnectReason.ConnectionRejected, forged.DisconnectReason);
+        Assert.Equal(ProtocolLimits.CookieBytes, forged.RejectDataLength);
+        Assert.Equal(1, server.Health.CookieRejects);
+        Assert.Equal(0, server.Health.Connections);
+        Assert.Equal(0, server.Listener.Manager.ConnectedPeersCount);
+    }
+
+    // A client of the previous protocol (v18 layout: version, then the name) is told VersionMismatch, not BadRequest, before
+    // the cookie step (the answer is one byte, no peer).
+    [Fact]
+    public void AnOldClient_IsToldVersionMismatch_BeforeTheCookieStep()
+    {
+        using GameLoop server = StartServer();
+        using var old = new HeadlessClient();
+        old.ConnectRaw(server.LocalPort, new byte[] { 18, 0, 3, (byte)'o', (byte)'l', (byte)'d' });
+        Assert.True(Pump.Until(() => old.Disconnected, 3000, old), "refused");
+        Assert.Equal(RejectReason.VersionMismatch, old.RejectReason);
+        Assert.Equal(1, server.Health.Rejects(RejectReason.VersionMismatch));
+        Assert.Equal(0, server.Health.CookieChallenges);
     }
 }

@@ -6,7 +6,7 @@
 dotnet run --project Server/src/ProjectH.Server
 dotnet run --project Server/src/ProjectH.Server -- --Server:AirDrop=false   # Phase 12: 수송기 없이 땅에서 시작(비교용)
 dotnet run --project Server/src/ProjectH.Server -- --Server:BuildInfiniteResources=true   # Phase 13: 건설 비용 0(부하 테스트)
-dotnet run --project Server/src/ProjectH.Server -- --Server:ConnectBurstPerIp=200   # 서버 리뷰 M2: 한 PC에서 봇 20명 넘게 붙일 때
+dotnet run --project Server/src/ProjectH.Server -- --Server:ConnectBurstPerIp=200 --Server:MaxConnectionsPerIp=200   # 서버 리뷰 M2·리뷰 수정 A2: 한 PC에서 봇 4명 넘게 붙일 때
 dotnet test Server/ProjectH.Server.slnx
 ```
 
@@ -40,6 +40,8 @@ MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 �
 | JoinTimeoutSeconds | 5 | 1–60. 연결한 뒤 Join해야 하는 시간. 넘으면 `JoinTimeout`으로 끊는다 |
 | ConnectBurstPerIp | 20 | 0 = 끔, 아니면 1–10000. 서버 리뷰 M2: 한 IP가 한 번에 할 수 있는 연결 요청 수(Token Bucket 크기). 넘으면 `ServerFull`로 거절하고 `rejects connectRate`로 센다(`Networking.md` "Validation"). 봇 여러 명을 한 PC에서 붙이는 부하 테스트는 200을 준다 |
 | ConnectsPerIpPerSecond | 5 | 0 = 끔, 아니면 1–1000. 위 Bucket이 초당 채워지는 수 |
+| MaxConnectionsPerIp | 4 | 0 = 끔, 아니면 1–10000. 리뷰 수정 A2(SEC-3): 한 IP가 동시에 가질 수 있는 연결 수. 넘으면 `ServerFull`로 거절하고 `rejects perIp`로 센다. 한 PC에서 봇 여러 명을 붙이는 부하 테스트는 200, QA 도구는 1000을 준다. PC방·CGNAT처럼 한 주소에 사람이 많으면 올린다 |
+| AcceptsPerSecond | 20 | 1–10000. 리뷰 수정 A2: 모든 주소를 합친 초당 수락 수(Token Bucket, 한 번에 `AcceptBurst` = MaxPlayers개). 넘으면 `ServerFull`, `rejects accept`. Control 채널 크기가 이 값으로 정해진다("Queue") |
 | FatalStallSeconds | 30 | 0 = 끔, 아니면 5–3600. 서버 리뷰 M8: Game Loop가 이 시간보다 오래 멈추면 새 연결을 막고 종료 코드 1로 끝낸다("예외 복구") |
 | InputTimeoutSeconds | 10 | 0 = 끔, 아니면 2–300이고 `InputTimeoutSeconds × 1000 ≥ DisconnectTimeoutMs + 2000`(기본 5000이면 7 이상, 최솟값 500이면 3 이상). Join한 peer가 입력을 보내야 하는 간격. 넘으면 `InputTimeout`으로 끊는다. LiteNetLib Timeout보다 먼저 오면 네트워크 끊김이 서버 끊기로 보여 유예를 잃으므로 이 조건을 둔다 |
 
@@ -66,7 +68,7 @@ MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 �
 
 | 스레드 | 하는 일 | 접근하는 상태 |
 |---|---|---|
-| LiteNetLib 스레드 | `NetworkListener`: 연결 요청 검사, 패킷 검증·파싱 | `InboundChannels`(쓰기), `PeerState`, IP별 연결 Token Bucket 표(`ConnectRateLimiter`, 서버 리뷰 M2. `OnConnectionRequest`만 쓰므로 수신 스레드 하나만 접근한다) |
+| LiteNetLib 스레드 | `NetworkListener`: 연결 요청 검사(쿠키·IP별·전역 제한), 패킷 검증·파싱 | `InboundChannels`(쓰기), `PeerState`, IP별 표(`ConnectRateLimiter`: 빈도 Token Bucket·동시 연결 수, 서버 리뷰 M2·리뷰 수정 A2. 빈도 Bucket은 `OnConnectionRequest`만 쓰므로 수신 스레드 하나만 접근한다. 칸의 동시 연결 수 `Active`는 Accept 때 수신 스레드가, 끊길 때 `OnPeerDisconnected`를 부른 스레드(Game Loop의 `Close` — `UnsyncedEvents`라 `peer.Disconnect` 안에서 바로 불린다 — 또는 LiteNetLib 스레드)가 `Interlocked`로 바꾸고(0 하한은 CompareExchange 반복) `Volatile.Read`로 읽는다(리뷰 A 1차). 칸마다 `PenaltyUntilMs`는 Game Loop가 `Interlocked.Exchange`로 쓰고 수신 스레드가 `Volatile.Read`로 읽는다, 리뷰 수정 A6), 전역 수락 Bucket(`AcceptRateLimiter`), 쿠키(`ConnectCookie`: 읽기 전용 비밀 + 정적 `HMACSHA256.HashData`)와 16B 재사용 버퍼 2개(수신 스레드 전용) |
 | `GameLoop` 전용 스레드(Background) | 채널 소비, Timeout 검사, `Match.Tick`, Snapshot 송신, 통계·Health 로그. 멈춰도 프로세스 종료를 막지 않는다(종료의 Join 5초 제한이 의미가 있도록) | `Match`, `_peers` 단독 소유(경기 초기화로 `Match`를 바꾸는 것도 이 스레드) |
 | `StallWatchdog` Timer 스레드(Phase 10) | 1초마다 Game Loop의 마지막 Tick 시각을 `Volatile`로 읽기만 한다. Timer 콜백이 겹치면 뒤의 것은 바로 돌아간다(`Interlocked` 플래그, Lock 없음). 서버 리뷰 M8: 멈춤이 `FatalStallSeconds`를 넘으면 한 번만 `NetworkListener.BeginStopping`(volatile)과 종료 경로(`StopApplication`을 Thread Pool로)를 부른다. 그 1회 플래그와 예외 로그 시각은 겹침 방지 플래그 안에서만 읽고 쓴다 | `GameLoop.LastTickTimestamp`(읽기), `HealthCounters`(`Interlocked`) |
 | `MatchHistoryWriter`(Hosted Service, async, Game Loop 밖) | `MatchHistoryQueue`에서 경기 기록을 읽어 MySQL에 저장(Phase 9). Game Loop는 큐에 넣기만 하고 DB를 기다리지 않는다 | `MatchHistoryQueue`(읽기), `MatchStore`, 카운터(`Interlocked`) |
@@ -103,7 +105,7 @@ Snapshot 송신(Phase 8): `Match.SendSnapshots`가 플레이어 목록을 90명�
 - 10분 안에 초기화가 3번이면(3번째로 쳐야 할 때) 코드의 문제로 보고 Critical 로그를 남기고 서버를 끝낸다(`StopApplication`, 종료 코드 1). 이 경우는 초기화가 일어나지 않으므로 `matchResets`로 세지 않는다. 이때는 peer를 먼저 `ServerError`로 끊지 않는다(다시 접속해 올 수 있으므로). 새 연결 요청은 이때부터 `ServerFull`로 거절한다. Game Loop는 Tick을 멈추고 Stop을 기다리며, Stop이 `ServerShutdown`으로 끊는다.
 - 경기 기록 sink 예외는 구간마다 첫 하나를 Error 로그로 남긴다(`matchSinkFailures`는 그대로 센다).
 - `PlayerSpawned`를 쓰다 넘치면(이름이 32바이트를 넘음. 연결 요청 검사 뒤라 일어나지 않아야 한다) `Match`는 반쯤 쓴 패킷을 보내지 않고 `SpawnEncodeFailures`로 센다. `GameLoop`는 Stats 때 처음 한 번만 Error 로그를 남긴다(Phase 11). 초기화가 버리는 `Match`에 아직 로그하지 않은 sink 예외가 있으면 `GameLoop`가 넘겨받아 다음 Stats 때 로그한다.
-- Player 단위 격리(서버 리뷰 M7): `Match.Tick`의 플레이어 루프는 플레이어마다(`TickPlayer`: 입력·이동·재장전·행동·회복 완료) try/catch로 감싼다. 던진 플레이어는 목록(최대 `MaxPlayers`, 미리 만든 버퍼)에 적고, 루프가 끝난 뒤(붕괴·종료 판정 전) 그 플레이어만 경기에서 내보낸다(이탈과 같다. 유예 중이면 바로 지운다). 그 뒤 `GameLoop`가 `playerFailures`로 세고(구간당 첫 하나만 Error 로그) 그 연결을 `ServerError`로 끊고(`kicks serverError`) `_peers`에서 뺀다. 다른 플레이어와 Tick, Snapshot은 그대로 이어진다. 경기 초기화는 플레이어 루프 밖 단계(흐름·Zone·건설·송신)의 실패에 쓴다. 리뷰 1차: 경기 상태가 깨져 모든 플레이어가 매 Tick 실패하면 Tick은 성공으로 끝나므로, `GameLoop`가 플레이어 실패의 Tick 번호를 `MaxPlayers`칸 Ring에 적는다. 10초 안에 `MaxPlayers`번이 되면 경기 전체의 결함으로 보고 그 Tick 뒤에 같은 초기화를 한다(초기화 횟수와 fatal 판정도 같다). 리뷰 2차: 접속한 Client가 적으면 `MaxPlayers`번에 닿지 않으므로(1명이 재접속마다 실패하면 10초에 약 9번), 한 Tick에 루프를 돈 플레이어가 모두 실패한 Tick(`Match.EveryPlayerFailed`)도 5칸 Ring에 적는다. 10초 안에 5번이면 같은 초기화를 한다. 플레이어 자신의 상태는 그 플레이어와 함께 사라지므로, 새로 들어온 플레이어까지 다른 모두와 함께 거듭 실패하면 경기의 결함으로 본다. 4명 중 1명만 거듭 실패하는 경우는 초기화하지 않는다.
+- Player 단위 격리(서버 리뷰 M7): `Match.Tick`의 플레이어 루프는 플레이어마다(`TickPlayer`: 입력·이동·재장전·행동·회복 완료) try/catch로 감싼다. 던진 플레이어는 목록(최대 `MaxPlayers`, 미리 만든 버퍼)에 적고, 루프가 끝난 뒤(붕괴·종료 판정 전) 그 플레이어만 경기에서 내보낸다(이탈과 같다. 유예 중이면 바로 지운다). 그 뒤 `GameLoop`가 `playerFailures`로 세고(구간당 첫 하나만 Error 로그) 그 연결을 `ServerError`로 끊고(`kicks serverError`) `_peers`에서 뺀다. 다른 플레이어와 Tick, Snapshot은 그대로 이어진다. 경기 초기화는 플레이어 루프 밖 단계(흐름·Zone·건설·송신)의 실패에 쓴다. 리뷰 1차: 경기 상태가 깨져 모든 플레이어가 매 Tick 실패하면 Tick은 성공으로 끝나므로, `GameLoop`가 플레이어 실패의 Tick 번호와 출처(그 연결의 `ConnectRateLimiter` 칸, 리뷰 수정 A6. 연결이 없으면 각자 다른 출처)를 Ring에 적는다. 10초 안에 `MaxPlayers`번이 되고 출처가 둘 이상이면 경기 전체의 결함으로 보고 그 Tick 뒤에 같은 초기화를 한다(초기화 횟수와 fatal 판정도 같다). 한 출처뿐이면 그 주소의 짓으로 보고 초기화하지 않는다(SEC-14: Client가 일으킬 수 있는 예외 하나로 공격자 한 명이 리셋·서버 정지를 만들지 못하게). 같은 출처가 60초 안에 3번이면 그 IP 칸을 60초 동안 거절한다(`penalties`). 아래 '모두 실패한 Tick' 5번 규칙도 같은 창 안 실패의 출처가 둘 이상일 때만 초기화한다(한 주소가 연결 여러 개를 열어 둔 채 혼자 거듭 실패해도 초기화하지 않는다). 유예 중 플레이어(연결 없음)의 실패는 출처를 몰라 따로 센다. 리뷰 2차: 접속한 Client가 적으면 `MaxPlayers`번에 닿지 않으므로(1명이 재접속마다 실패하면 10초에 약 9번), 한 Tick에 루프를 돈 플레이어가 모두 실패한 Tick(`Match.EveryPlayerFailed`)도 5칸 Ring에 적는다. 10초 안에 5번이면 같은 초기화를 한다. 플레이어 자신의 상태는 그 플레이어와 함께 사라지므로, 새로 들어온 플레이어까지 다른 모두와 함께 거듭 실패하면 경기의 결함으로 본다. 4명 중 1명만 거듭 실패하는 경우는 초기화하지 않는다.
 - 멈춤 대응(서버 리뷰 M8): Watchdog이 Tick이 `FatalStallSeconds`(기본 30초)보다 오래 없다고 보면 한 번만 `stallExits`를 세고 Critical 로그를 남기고, 새 연결 요청을 `ServerFull`로 거절하기 시작하고, 종료 코드 1로 Host를 멈춘다(위 초기화 실패와 같은 종료 경로). 멈춘 Game Loop 스레드는 종료의 Join 5초 제한 뒤 남겨 두고(Background) `ServerShutdown`으로 끊는다. 재시작은 프로세스 감시자(서비스 관리자, 컨테이너 재시작 정책)가 한다. 0이면 끈다. 앞선 검사가 이미 본 멈춤이 이어질 때만 멈춘다: 디버거 중단이나 프로세스 일시 정지 뒤 한 번의 검사가 긴 공백을 보는 것만으로는 서버를 멈추지 않는다(실제 Hang은 최대 1초 늦게 멈춘다).
 - 콜백 경계(서버 리뷰 L9): `OnConnectionRequest`, `OnPeerDisconnected`, `OnNetworkError`, Watchdog의 `Check`는 예외를 밖으로 내지 않는다. `callbackErrors`로 세고 구간당 한 번 Error 로그를 남긴다(Watchdog은 Stats 줄이 없어 10초에 한 번). `Accept` 전에 던진 연결 요청은 거절하고, `Accept` 뒤에 던진 연결은 `ServerError`로 끊는다(Game Loop가 모르는 연결이 자리를 차지하지 않게). `OnNetworkError`는 평소에도 `networkErrors`로 세고 구간당 한 번만 Warning 로그를 남긴다(서버 리뷰 M1).
 - `Program`이 `AppDomain.UnhandledException`(Critical 로그, `Console.Error`에도 기록. 로그 큐가 프로세스 종료 전에 비지 않을 수 있어서다)과 `TaskScheduler.UnobservedTaskException`(Error 로그, 관찰한 것으로 처리)을 로그로 남긴다. 처리되지 않은 예외는 런타임이 정한 대로 프로세스를 끝낸다.
@@ -112,8 +114,9 @@ Snapshot 송신(Phase 8): `Match.SendSnapshots`가 플레이어 목록을 90명�
 
 | Queue | 크기 | 가득 찼을 때 |
 |---|---|---|
-| Control 채널 | 3 × (MaxPlayers + ConnectBurstPerIp + ⌈ConnectsPerIpPerSecond / SimHz⌉). 제한이 꺼지면 MaxPlayers × 3(리뷰 1·2차) | TryWrite 실패 → 해당 peer를 `ServerError`로 끊는다(Critical 로그, `kicks serverError`로 센다. 서버가 끊은 것이라 유예 없음). Disconnected 메시지가 유실되면 stale-peer 정리가 대신 처리 |
-| Input 채널 | MaxPlayers × InputBufferPerPlayer | 가장 오래된 입력 폐기(inputDrops) |
+| Control 채널 | 3 × (MaxPlayers + AcceptBurst + ⌈AcceptsPerSecond / SimHz⌉)(리뷰 1·2차, 리뷰 수정 A2: 전역 수락 Bucket 기준. 기본 3 × (16 + 16 + 1) = 99) | TryWrite 실패 → 해당 peer를 `ServerError`로 끊는다(Critical 로그, `kicks serverError`로 센다. 서버가 끊은 것이라 유예 없음). Disconnected 메시지가 유실되면 stale-peer 정리가 대신 처리 |
+| Input 채널 | MaxPlayers × InputBurst(= SimHz, 기본 16 × 30 = 480. 리뷰 수정 A5: 모든 Player의 burst를 한꺼번에) | 가장 오래된 입력 폐기(inputDrops) |
+| Build 채널(Phase 13) | MaxPlayers × 2 × `building.json` maxRequestsPerSecond(기본 16 × 2 × 20 = 640. 리뷰 수정 A5: 연결당 1초 고정 창 두 개가 맞붙으면 2배가 한꺼번에 온다). Game Loop는 Tick당 MaxPlayers × 8개까지 비운다 | 가장 오래된 요청 폐기(`buildInboxDrops`) |
 | Marker 채널(Phase 15) | MaxPlayers × 4(`InboundChannels.MarkersPerPlayer`) | 가장 오래된 지도 표시 요청 폐기(`markerInboxDrops`). 수신 스레드가 연결당 한 번에 4개만 넘기고 Game Loop가 Tick마다 채널 용량만큼 비운다 |
 | 팀 Ping(Phase 15, `Match.Map`) | 팀당 8칸 고정 배열(256 × 8, 생성 때 한 번) | 가장 오래된 Ping 교체(`replaced`). 만료·이탈·경기 시작·끝·라운드 리셋에 비운다 |
 | PlayerInputBuffer(플레이어별) | InputBufferPerPlayer(8) | 가장 오래된 입력 폐기(bufferDrops) |
@@ -121,12 +124,13 @@ Snapshot 송신(Phase 8): `Match.SendSnapshots`가 플레이어 목록을 90명�
 | `StatsQueryQueue` 요청 채널(Phase 11) | 32 | Reject: 수신 스레드가 요청자에게 `Busy`를 답한다(`busy`). 생산자 수신 스레드, 소비자 `StatsQueryService` 하나 |
 | `StatsQueryQueue` 응답 채널(Phase 11) | 32 | Reject: 답을 버리고 `undelivered`를 센다(Client는 5초 뒤 "응답 없음"). 생산자 `StatsQueryService`와 수신 스레드(`Busy`), 소비자 Game Loop |
 
-Game Loop는 Tick당 입력 메시지를 최대 `MaxInputMessagesPerTick`개만 소비한다. Control 채널은 연결당 이벤트가 최대 3개(Connected, Join, Disconnected)라는 전제로 크기를 정했다. 모든 Player 몫에 더해, 한 IP가 한 Drain 주기(1 Tick) 안에 burst와 그 사이 다시 채워지는 Token(⌈초당 수 / SimHz⌉)만큼 연결·Join·해제해도 다른 Player의 메시지가 들어갈 자리를 둔다(리뷰 1·2차. 기본 3 × (16 + 20 + 1) = 111, 부하 테스트 burst 200·MaxPlayers 100이면 903). 연결당 3개 전제는 "Join은 연결당 1회" 규칙(`PeerState.JoinRequested`)이 지킨다. Input 채널은 모든 peer가 공유하므로, Join 전 입력 거절과 peer별 입력 Token Bucket(한 번에 `SimHz`, 초당 `SimHz * 2`. 넘으면 버리고 `inputRate`로 센다)으로 한 peer가 채널을 독점하지 못하게 한다. Control 채널은 IP별 연결 요청 Token Bucket(서버 리뷰 M2)이 연결 churn으로부터 지킨다.
+Game Loop는 Tick당 입력 메시지를 최대 `MaxInputMessagesPerTick`개만 소비한다. Control 채널은 연결당 이벤트가 최대 3개(Connected, Join, Disconnected)라는 전제로 크기를 정했다. 모든 Player 몫에 더해, 한 Drain 주기(1 Tick) 안에 전역 수락 Bucket이 들일 수 있는 연결 전부(burst `AcceptBurst` = MaxPlayers와 그 사이 다시 채워지는 Token ⌈AcceptsPerSecond / SimHz⌉)가 연결·Join·해제해도 다른 Player의 메시지가 들어갈 자리를 둔다(리뷰 1·2차, 리뷰 수정 A2: 여러 IP가 함께 churn해도 넘지 않는다. 기본 3 × (16 + 16 + 1) = 99, MaxPlayers 100이면 603). 연결당 3개 전제는 "Join은 연결당 1회" 규칙(`PeerState.JoinRequested`)이 지킨다. Input 채널은 모든 peer가 공유하므로, Join 전 입력 거절과 peer별 입력 Token Bucket(한 번에 `SimHz`, 초당 `SimHz * 2`. 넘으면 버리고 `inputRate`로 센다)으로 한 peer가 채널을 독점하지 못하게 한다. Control 채널은 전역 수락 Bucket(리뷰 수정 A2)이 연결 churn으로부터 지키고, IP별 Bucket·동시 연결 수(서버 리뷰 M2, 리뷰 수정 A2)가 한 주소의 몫을 제한한다.
 
 | 표·버퍼(서버 리뷰) | 크기 | 제거·덮어쓰기 |
 |---|---|---|
-| `ConnectRateLimiter` 표(M2) | 1024칸 고정(꺼지면 0) | 지우지 않는다. 같은 칸에 오는 IP들이 그 칸의 Bucket을 나눠 쓴다(빈 칸만 가득 찬 Bucket으로 시작) |
-| `GameLoop._playerFailureTicks`(리뷰 1차) | `MaxPlayers`칸 Ring, 한 번 만든다 | 가장 오래된 칸을 덮어쓴다. 경기 초기화가 비운다 |
+| `ConnectRateLimiter` 표(M2, 리뷰 수정 A2·A6) | 1024칸 고정, 언제나 만든다(빈도 제한이 꺼져도 동시 연결 수·벌점에 쓴다). 칸 = 해시(IP ^ 시작 때 난수 salt) | 지우지 않는다. 같은 칸에 오는 IP들이 그 칸의 Bucket·연결 수·벌점을 나눠 쓴다(빈 칸만 가득 찬 Bucket으로 시작). 연결 수는 Accept 때 +1(수신 스레드), 끊길 때 −1(끊김을 처리한 스레드, 0 아래로 가지 않는다). 둘 다 `Interlocked`. 벌점은 시각이 지나면 효력이 없다 |
+| `AcceptRateLimiter`(리뷰 수정 A2) | Bucket 하나 | 없음(값만 바뀐다) |
+| `GameLoop._playerFailureMarks`(리뷰 1차, 리뷰 수정 A6) | max(`MaxPlayers`, 3)칸 Ring(Tick, IP 칸), 한 번 만든다 | 가장 오래된 칸을 덮어쓴다. 경기 초기화가 비운다 |
 | `GameLoop._allFailedTicks`(리뷰 2차) | 5칸 Ring, 한 번 만든다 | 가장 오래된 칸을 덮어쓴다. 경기 초기화가 비운다 |
 | `Match._failedPlayers`(M7) | `MaxPlayers` 용량으로 한 번 만든다 | 플레이어 루프 시작과 실패한 플레이어 처리 뒤에 비운다 |
 | `ProjectileSet`(Phase 17 D6) | 32칸 고정 배열(`ProjectileSet.Capacity`), 생성 때 한 번 | 가득 차면 새 투사체를 만들지 않는다(로켓은 탄을 쓰지 않고 불발, 수류탄은 던져지지 않음). 칸은 폭발 때, 그리고 경기 시작·라운드 리셋·경기 끝에 모두 비운다 |
@@ -157,10 +161,11 @@ Game Loop는 Tick당 입력 메시지를 최대 `MaxInputMessagesPerTick`개만 
 Health peers players graced match=<State>#<Round>
   connections joins resumed graceStarts graceExpiries
   disconnects timeout other
-  rejects full badRequest version connectRate
+  rejects full badRequest version connectRate perIp penalized accept cookie cookieChallenges
   kicks kicked joinTimeout inputTimeout serverError congested
   badPackets unknownId malformed beforeJoin duplicateJoin inputRate wrongDirection handlerException buildRate markerRate
-  tickFailures loopFailures matchResets stalls movementAnomalies networkErrors playerFailures stallExits callbackErrors
+  inputSeqDrops
+  tickFailures loopFailures matchResets stalls movementAnomalies networkErrors playerFailures penalties stallExits callbackErrors
   build pieces cells requests accepted destroyed collapsed duplicates eventPackets syncPackets
   buildRejects noResource outOfRange blocked unsupported occupied rateLimited invalidState invalidRequest budgetFull
   harvest hits envDestroyed syncDeferred
@@ -180,6 +185,7 @@ Health peers players graced match=<State>#<Round>
 - `badPackets` 9개 항목(Phase 13 `buildRate`, Phase 15 `markerRate` 포함): 잘못된 패킷(이유별, `Networking.md` "Validation").
 - `tickFailures`·`loopFailures`·`matchResets`: 예외 복구 카운터. `stalls`: Watchdog이 센 멈춤.
 - 서버 리뷰: `rejects connectRate`(M2)는 IP별 연결 빈도를 넘어 거절한 요청(Client에는 `ServerFull`로 가지만 `full`에는 세지 않는다). `networkErrors`(M1)는 LiteNetLib가 알린 소켓 오류. `playerFailures`(M7)는 자기 Tick 부분이 던져 경기에서 빠지고 `ServerError`로 끊긴 플레이어. `stallExits`(M8)는 `FatalStallSeconds`를 넘은 멈춤으로 서버를 멈춘 수(프로세스당 최대 1). `callbackErrors`(L9)는 콜백 경계에서 잡은 예외. 정상이면 `networkErrors` 밖은 모두 0이다.
+- 리뷰 수정 A(네트워크 진입): `rejects perIp`는 IP당 동시 연결 수(`MaxConnectionsPerIp`), `penalized`는 벌점 중인 IP, `accept`는 전역 수락 빈도(`AcceptsPerSecond`)로 거절한 요청이다(셋 다 Client에는 `ServerFull`, `full`에는 세지 않는다). `cookie`는 틀리거나 낡은 쿠키를 가진 요청(새 쿠키를 돌려준다). `cookieChallenges`는 쿠키 없는 첫 요청에 쿠키를 돌려준 수로, 정상 접속마다 1씩 오른다(거절이 아니다). `inputSeqDrops`는 Seq 창(`InputSeqWindow`)을 넘어 버린 입력(정상 Client는 0, 경기 초기화를 넘어 합계가 이어진다). `penalties`는 같은 IP 칸의 플레이어 실패가 60초에 3번이 되어 그 칸에 60초 벌점을 준 횟수다(`Networking.md` "Validation"). LiteNetLib 자체 메시지(예: 조각 상한을 넘은 메시지마다 "Invalid FragmentsTotal")는 `Program`이 시작 때 단 `NetDebug.Logger`(`LiteNetLogBridge`)가 ILogger 카테고리 `LiteNetLib`의 Debug로 보낸다. 설정하지 않으면 LiteNetLib가 수신 스레드에서 콘솔에 바로 쓴다.
 - `movementAnomalies`(Phase 12 D12): 한 Tick의 이동이 그 모드의 최대 속도 × dt × 1.5를 넘은 수(`MovementLimits`, `Movement.md` "이동 이상 검사"). 서버가 이동을 입력만으로 직접 계산하므로 치트가 아니라 시뮬레이션 버그를 알리는 값이다. 정상이면 언제나 0이다. Phase 13: 건설 조각 안에서 시작한 이동(머리를 가로질러 지은 경사로가 한 번에 2 m 넘게 들어 올리는 경우 등)은 조각이 민 것이라 세지 않는다. 맵 상자·문·채집 대상 안에서 시작한 이동은 그대로 센다.
 - `build`(Phase 13): `pieces`·`cells`는 지금 서 있는 조각 수와 조각이 있는 건설 칸 수(공간 색인), 나머지는 누적이다. `requests`는 Game Loop가 처리한 요청, `accepted`는 지어진 수, `destroyed`는 부서진 조각(붕괴 포함), `collapsed`는 그중 지지를 잃어 무너진 수, `duplicates`는 이미 본 번호라 버린 요청, `eventPackets`·`syncPackets`는 보낸 건설 패킷 수다. `buildRejects`는 거절 코드별 수다. `badPackets`에는 `buildRate`(연결당 초당 상한 초과)가 더해졌다.
 - `harvest`(Phase 13): 채집 타격 수(`hits`)와 부서진 채집 대상 수(`envDestroyed`). `syncDeferred`: 건설 채널이 밀려 Sync를 건너뛴 (연결, Tick) 수. Meter는 `projecth.build.sync_deferred`.
@@ -204,7 +210,8 @@ dotnet-counters monitor -n ProjectH.Server --counters ProjectH.Server
 | `projecth.match_state` | Gauge | 값 = `MatchFlowState`(0 WaitingForPlayers, 1 Starting, 2 Playing, 3 FinalPhase, 4 Finished, 5 Closing) |
 | `projecth.connections`, `projecth.joins`, `projecth.resumes`, `projecth.grace_starts`, `projecth.grace_expiries` | Counter | |
 | `projecth.disconnects` | Counter | `reason` = `timeout` / `other` |
-| `projecth.rejects` | Counter | `reason` = `ServerFull` / `BadRequest` / `VersionMismatch` / `ConnectRate`(서버 리뷰 M2) |
+| `projecth.rejects` | Counter | `reason` = `ServerFull` / `BadRequest` / `VersionMismatch` / `ConnectRate`(서버 리뷰 M2) / `PerIp` / `Penalized` / `AcceptRate` / `Cookie`(리뷰 수정 A2·A3·A6) |
+| `projecth.cookie_challenges`, `projecth.penalties`, `projecth.input_seq_drops` | Counter | 리뷰 수정 A3, A6, A4 |
 | `projecth.kicks` | Counter | `code` = `Kicked` / `JoinTimeout` / `InputTimeout` / `ServerError`(종료는 Kick이 아니라 `ServerShutdown` 계열이 없다) |
 | `projecth.bad_packets` | Counter | `reason` = `BadPacketReason` 7가지 |
 | `projecth.tick_failures`, `projecth.loop_failures`, `projecth.match_resets`, `projecth.stalls` | Counter | |

@@ -117,6 +117,7 @@ public sealed partial class Match
     private readonly int _maxPlayers;
     private readonly int _snapshotEveryTicks;
     private readonly int _inputCapacity;
+    private readonly int _inputSeqWindow;   // review fix A4: ServerOptions.InputSeqWindow
     private readonly byte _simHz;
     private readonly byte _snapshotHz;
     private readonly float _tickSeconds;
@@ -195,6 +196,7 @@ public sealed partial class Match
         _maxPlayers = options.MaxPlayers;
         _snapshotEveryTicks = options.SnapshotEveryTicks;
         _inputCapacity = options.InputBufferPerPlayer;
+        _inputSeqWindow = options.InputSeqWindow;
         _simHz = (byte)options.SimHz;
         _snapshotHz = options.SnapshotHz;
         _tickSeconds = 1f / options.SimHz;
@@ -347,7 +349,7 @@ public sealed partial class Match
             return JoinResult.MatchFull;
         }
 
-        var player = new PlayerEntity(AllocateEntityId(), peerId, devPlayerId, _inputCapacity);
+        var player = new PlayerEntity(AllocateEntityId(), peerId, devPlayerId, _inputCapacity, _inputSeqWindow);
         player.JoinOrder = ++_joinCounter;   // Phase 14 D1
         if (_flow.DevRespawn) AssignDevTeam(player);
         player.State.Position = SpawnPosition(player.EntityId);
@@ -466,11 +468,26 @@ public sealed partial class Match
         if (squad) CheckTeam(player.TeamId);
     }
 
-    public void EnqueueInput(int peerId, in PlayerInputPacket packet)
+    // 기능: 네트워크에서 온 입력 패킷의 명령들을 그 플레이어의 입력 버퍼에 넣는다.
+    // 입력: peerId - 연결 id, packet - 입력 1–3개.
+    // 출력: 리뷰 수정 A4: 하나라도 버퍼에 들어갔으면 true, 플레이어가 있는데 모두 거절됐으면(이미 받은 Seq, Seq 창 밖) false.
+    //   그 연결의 플레이어가 없으면 true(전과 같이 GameLoop가 입력 시간을 갱신한다: 판단할 버퍼가 없다).
+    public bool EnqueueInput(int peerId, in PlayerInputPacket packet)
     {
-        if (!_playersByPeer.TryGetValue(peerId, out var player)) return;
-        for (int i = 0; i < packet.Count; i++) player.Inputs.Add(packet.Get(i));
+        if (!_playersByPeer.TryGetValue(peerId, out var player)) return true;
+        bool accepted = false;
+        for (int i = 0; i < packet.Count; i++)
+        {
+            long dropsBefore = player.Inputs.SeqAheadDrops;
+            if (player.Inputs.Add(packet.Get(i))) accepted = true;
+            InputSeqDrops += player.Inputs.SeqAheadDrops - dropsBefore;
+        }
+        return accepted;
     }
+
+    // Review fix A4: inputs this match object dropped for a Seq past the window (game loop thread; HealthCounters carries
+    // it over a match reset).
+    public long InputSeqDrops { get; private set; }
 
     // 기능: 네트워크에서 온 건설 요청(배치 또는 편집, GameLoop.DrainBuild)을 플레이어 큐에 넣는다. 다음 Tick에 처리된다.
     //   큐가 가득 차면 바로 RateLimited로 답한다(홍수는 작은 답 하나씩만 들고 메모리는 늘지 않는다).

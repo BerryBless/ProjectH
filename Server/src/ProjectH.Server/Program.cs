@@ -20,6 +20,10 @@ IHost host = builder.Build();   // RunAsync disposes the host
 // Phase 10 D6: whatever escapes every other handler is at least logged. An unhandled exception on any thread still
 // ends the process (the runtime decides that); an unobserved task exception does not.
 ILogger log = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("ProjectH.Server");
+// Review fix A1: LiteNetLib's own messages (one per dropped over-fragmented datagram, among others) go to ILogger at Debug
+// instead of a synchronous console write on the receive thread. Process-wide, set once before the server starts.
+LiteNetLib.NetDebug.Logger = new ProjectH.Server.Diagnostics.LiteNetLogBridge(
+    host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("LiteNetLib"));
 if (qaRefused)
     log.LogWarning("QA mode was requested but the environment is {Environment}: QA mode stays off (set DOTNET_ENVIRONMENT=Development)",
         builder.Environment.EnvironmentName);

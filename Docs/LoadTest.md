@@ -27,7 +27,7 @@
 dotnet build Server/ProjectH.Server.slnx -c Release
 
 # 1. 서버 (N = 10, 20, 32, 50)
-dotnet Server/src/ProjectH.Server/bin/Release/net10.0/ProjectH.Server.dll --Server:Port=7790 --Server:MaxPlayers=50 --Server:DevRespawn=true --Server:ConnectBurstPerIp=200 > load-server-N.log 2>&1 &
+dotnet Server/src/ProjectH.Server/bin/Release/net10.0/ProjectH.Server.dll --Server:Port=7790 --Server:MaxPlayers=50 --Server:DevRespawn=true --Server:ConnectBurstPerIp=200 --Server:MaxConnectionsPerIp=200 > load-server-N.log 2>&1 &
 
 # 2. 4초 뒤 봇을 2분 돌린다
 dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 7790 --count N --duration 120 --connect-interval-ms 50 > load-bots-N.log 2>&1
@@ -35,7 +35,7 @@ dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 779
 # 3. 서버를 끈다(자기가 띄운 프로세스만 pid로. 이름으로 끄지 않는다)
 ```
 
-- **`--Server:ConnectBurstPerIp=200`을 준다(서버 리뷰 M2).** 서버는 IP마다 연결 요청을 한 번에 20개, 그 뒤 초당 5개까지만 받는다. 봇은 모두 127.0.0.1에서 30–50 ms 간격으로 붙으므로 이 값을 올리지 않으면 21번째 봇부터 `ServerFull`로 거절된다(Health 줄 `rejects connectRate`). 아래 Phase 7–13 결과는 이 제한이 생기기 전에 쟀다. 그때 명령은 이 옵션 없이 같다.
+- **`--Server:ConnectBurstPerIp=200`을 준다(서버 리뷰 M2).** 서버는 IP마다 연결 요청을 한 번에 20개, 그 뒤 초당 5개까지만 받는다. 봇은 모두 127.0.0.1에서 30–50 ms 간격으로 붙으므로 이 값을 올리지 않으면 21번째 봇부터 `ServerFull`로 거절된다(Health 줄 `rejects connectRate`). 리뷰 수정 A2부터는 한 IP의 동시 연결도 4개로 제한하므로 `--Server:MaxConnectionsPerIp=200`도 준다(넘으면 `rejects perIp`). 아래 Phase 7–13 결과는 이 제한들이 생기기 전에 쟀다. 그때 명령은 이 옵션들 없이 같다.
 - **`DevRespawn=true`로 잰다.** 배틀로얄 모드에서는 죽은 봇이 입력을 멈춰서(계획 단계의 50명 실측에서 1분 만에 살아 있는 봇이 20명으로 줄었다) "50명" 행이 실제로는 더 적은 인원의 부하가 된다. `DevRespawn`에서는 3초 뒤 부활하므로 N명이 2분 내내 움직이고 싸운다.
 - 추가로 배틀로얄 모드 50명 1회를 `DevRespawn` 없이 같은 명령으로 쟀다(표의 "BR").
 - 봇 프로세스 CPU: 봇을 `Start-Process -PassThru`로 띄워 pid를 얻고, 실행 중 0.2초마다 `(Get-Process -Id pid).TotalProcessorTime`을 읽어 시작 값과 종료 직전 값의 차를 실행 시간(약 120초)으로 나눴다. 1.0 = 코어 하나 100%다.

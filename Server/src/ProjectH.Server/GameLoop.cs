@@ -85,15 +85,28 @@ public sealed class GameLoop : IDisposable
     private Exception? _carriedSinkError;
     private long _loopFailuresSinceStats;
     private long _playerFailuresSinceStats;   // server review M7: the first player failure of an interval is logged
-    // Review round 1 (game loop thread only): the loop ticks of the latest MaxPlayers player failures, a ring made once.
-    // MaxPlayers of them within PlayerFailureWindowSeconds are taken as a fault in the match, not in one player (every
-    // player failing every tick, reconnecting and failing again): the match is reset like after failing ticks (D6).
-    // Emptied by every reset.
+    // Review round 1, review fix A6 (game loop thread only): the loop tick and the source (ConnectRateLimiter slot, -1 =
+    // unknown) of the latest player failures, a ring of max(MaxPlayers, PenaltyFailures) made once; nothing else grows.
+    // MaxPlayers of them within PlayerFailureWindowSeconds from at least two sources are taken as a fault in the match,
+    // not in one player (every player failing every tick, reconnecting and failing again): the match is reset like after
+    // failing ticks (D6). From one source they are that source's doing (SEC-14: one attacker must not reset or stop the
+    // server): PenaltyFailures of them within PenaltyWindowSeconds penalize the address (refused for PenaltySeconds). An
+    // unknown source (a graced player, a test without a connection) counts as a source of its own. Emptied by every reset.
     private const int PlayerFailureWindowSeconds = 10;
+    private const int PenaltyFailures = 3;
+    private const int PenaltyWindowSeconds = 60;
+    private const int PenaltySeconds = 60;
     private readonly long _playerFailureWindowTicks;
-    private readonly long[] _playerFailureTicks;
+    private readonly long _penaltyWindowTicks;
+    private readonly FailureMark[] _playerFailureMarks;
     private int _playerFailureCount;
     private int _playerFailureNext;
+
+    private struct FailureMark
+    {
+        public long Tick;
+        public int Slot;
+    }
     private bool _resetForPlayerFailures;
     // Review round 2 (game loop thread only): the loop ticks of the latest ticks in which every player failed, a ring of
     // AllFailedTicksBeforeReset made once. A player's own bad state goes with it, so a fresh player (a rejoin, a newcomer)
@@ -131,7 +144,8 @@ public sealed class GameLoop : IDisposable
     // the host with exit code 1. time: the clock of the reset window (tests pass a manual one).
     // statsQueries: Phase 11 D8, the statistics path shared with StatsQueryService; null = a queue nobody answers (tests
     // that do not need answers), so requests wait there and, once it is full, are answered Busy.
-    // 기능: Game Loop와 NetManager·채널·수신 처리기·첫 경기를 만든다(Phase 15: Marker 채널과 map.json 속도 제한 수치를 넘긴다).
+    // 기능: Game Loop와 NetManager·채널·수신 처리기·첫 경기를 만든다(Phase 15: Marker 채널과 map.json 속도 제한 수치를 넘긴다.
+    //   리뷰 수정 A1: 조각 상한 MaxFragments, A5: Build 채널에 building.json 초당 요청 수, A6: 출처를 적는 실패 Ring).
     // 입력: options - 서버 설정, data - 게임 데이터, logger - 로그, 나머지 - 위 설명의 테스트용·선택 인자.
     // 출력: Start 전의 GameLoop.
     public GameLoop(ServerOptions options, GameData data, ILogger logger, StartingLoadout? loadout = null,
@@ -151,8 +165,9 @@ public sealed class GameLoop : IDisposable
         _time = time ?? TimeProvider.System;
         _failuresBeforeReset = options.SimHz * FailingSecondsBeforeReset;
         _playerFailureWindowTicks = (long)PlayerFailureWindowSeconds * options.SimHz;
-        _playerFailureTicks = new long[options.MaxPlayers];
-        _channels = new InboundChannels(options, _stats, _health.AddBuildInboxDrop, _health.AddMarkerInboxDrop);
+        _penaltyWindowTicks = (long)PenaltyWindowSeconds * options.SimHz;
+        _playerFailureMarks = new FailureMark[Math.Max(options.MaxPlayers, PenaltyFailures)];
+        _channels = new InboundChannels(options, _stats, _health.AddBuildInboxDrop, _health.AddMarkerInboxDrop, data.Building.MaxRequestsPerSecond);
         _joinTimeoutTicks = (long)options.JoinTimeoutSeconds * options.SimHz;
         _inputTimeoutTicks = (long)options.InputTimeoutSeconds * options.SimHz;
         _congestedTicks = (long)CongestedSeconds * options.SimHz;
@@ -176,6 +191,9 @@ public sealed class GameLoop : IDisposable
             ChannelsCount = ProtocolConstants.ChannelCount,
             UnconnectedMessagesEnabled = false,
             IPv6Enabled = false,
+            // Review fix A1 (SEC-1): no client packet needs fragments, so a message of more fragments is refused by
+            // LiteNetLib before reassembly (the default, 65535, let one connection hold tens of MB per message).
+            MaxFragmentsCount = ProtocolLimits.MaxFragments,
         };
         _listener.Manager = _net;
         _match = NewMatch();
@@ -193,10 +211,16 @@ public sealed class GameLoop : IDisposable
     // (the client may reconnect and join as a new player) and forgotten here at once, without calling back into Match (it
     // is mid-tick). A graced player (NoPeer) has no connection. Counted every time, logged once per interval.
     // Review round 1: also recorded in the failure window; RunTickGuarded resets the match after this tick when it is full.
+    // 기능: Match가 자기 Tick에서 예외가 난 플레이어를 뺐을 때 부른다. 실패를 출처(연결의 ConnectRateLimiter 칸)와 함께 기록하고(리뷰 수정 A6),
+    //   리셋 조건이면 Tick 뒤 리셋을 예약하고, 연결을 ServerError로 닫는다.
+    // 입력: peerId - 실패한 플레이어의 연결 id(유예 중이면 NoPeer), error - 예외.
+    // 출력: 반환값 없음. 실패 Ring·벌점·연결 상태가 바뀐다.
     private void OnPlayerFailed(int peerId, Exception error)
     {
         _health.AddPlayerFailure();
-        if (RecordPlayerFailure()) _resetForPlayerFailures = true;
+        int slot = peerId != PlayerEntity.NoPeer && _peers.TryGetValue(peerId, out NetPeer? failedPeer) && failedPeer.Tag is PeerState failedState
+            ? failedState.ConnectSlot : -1;
+        if (RecordPlayerFailure(slot)) _resetForPlayerFailures = true;
         if (++_playerFailuresSinceStats == 1)
         {
             try
@@ -213,10 +237,52 @@ public sealed class GameLoop : IDisposable
         NetworkListener.Close(peer, DisconnectCode.ServerError);
     }
 
-    // Review round 1: true when this failure makes MaxPlayers of them within the window. The ring holds the latest
-    // MaxPlayers failure ticks; once full, the entry after the newest is the oldest.
-    private bool RecordPlayerFailure() =>
-        RecordInWindow(_playerFailureTicks, ref _playerFailureCount, ref _playerFailureNext);
+    // 기능: 플레이어 실패 하나를 (지금 loop tick, 출처 칸)으로 Ring에 적고 판단한다(리뷰 1차, 리뷰 수정 A6). 같은 출처가
+    //   PenaltyWindowSeconds 안에 PenaltyFailures번이면 그 주소에 벌점을 준다(ConnectRateLimiter.Penalize, Interlocked).
+    // 입력: slot - 실패한 연결의 ConnectRateLimiter 칸(-1 = 모름: 각자 다른 출처로 센다).
+    // 출력: 창 안 실패가 MaxPlayers번 이상이고 출처가 둘 이상이면 true(경기 리셋), 아니면 false.
+    private bool RecordPlayerFailure(int slot)
+    {
+        FailureMark[] ring = _playerFailureMarks;
+        ring[_playerFailureNext] = new FailureMark { Tick = _loopTick, Slot = slot };
+        _playerFailureNext = (_playerFailureNext + 1) % ring.Length;
+        if (_playerFailureCount < ring.Length) _playerFailureCount++;
+
+        int inWindow = 0;
+        int sameSource = 0;
+        for (int i = 0; i < _playerFailureCount; i++)
+        {
+            FailureMark mark = ring[(_playerFailureNext - 1 - i + ring.Length) % ring.Length];
+            long age = _loopTick - mark.Tick;
+            if (age < _playerFailureWindowTicks) inWindow++;
+            if (slot >= 0 && mark.Slot == slot && age < _penaltyWindowTicks) sameSource++;
+        }
+        if (sameSource >= PenaltyFailures)
+        {
+            _listener.ConnectRate.Penalize(slot, Environment.TickCount64 + PenaltySeconds * 1000L);
+            _health.AddPenalty();
+        }
+        return inWindow >= _options.MaxPlayers && HasTwoSourcesInWindow();
+    }
+
+    // 기능: 실패 Ring의 창 안 항목에 서로 다른 출처가 둘 이상 있는지 본다(모르는 출처 -1은 각자 다른 출처). 리셋 판단 때만 불린다
+    //   (항목 수 ≤ MaxPlayers ≤ 100이라 이중 반복이어도 짧다).
+    // 입력: 없음.
+    // 출력: 둘 이상이면 true.
+    private bool HasTwoSourcesInWindow()
+    {
+        FailureMark[] ring = _playerFailureMarks;
+        int first = int.MinValue;
+        for (int i = 0; i < _playerFailureCount; i++)
+        {
+            FailureMark mark = ring[(_playerFailureNext - 1 - i + ring.Length) % ring.Length];
+            if (_loopTick - mark.Tick >= _playerFailureWindowTicks) continue;
+            if (mark.Slot < 0) return true;   // an unknown source is one of its own; with any other entry that makes two
+            if (first == int.MinValue) first = mark.Slot;
+            else if (mark.Slot != first) return true;
+        }
+        return false;
+    }
 
     // Writes the current loop tick into the ring; true when the ring is full and its oldest entry is within the window.
     private bool RecordInWindow(long[] ring, ref int count, ref int next)
@@ -431,8 +497,8 @@ public sealed class GameLoop : IDisposable
     private const string TickFailuresCause = "ticks failed in a row";
     private const string PlayerFailuresCause = "players' ticks failed (MaxPlayers failures, or 5 ticks with every player failing, within 10 s)";
 
-    // 기능: 경기 객체를 버리고 새로 만든다(모든 연결은 ServerError로 닫는다). 짧은 시간에 너무 많으면 서버를 멈춘다. 건설·분대·지도(Phase 15)·Loot(Phase 16)
-    //   합계는 기준값으로 넘겨 줄지 않게 한다.
+    // 기능: 경기 객체를 버리고 새로 만든다(모든 연결은 ServerError로 닫는다). 짧은 시간에 너무 많으면 서버를 멈춘다. 건설·분대·지도(Phase 15)·Loot(Phase 16)·
+    //   Seq 창 드롭(리뷰 수정 A4) 합계는 기준값으로 넘겨 줄지 않게 한다.
     // 입력: cause - 리셋 이유(로그).
     // 출력: 반환값 없음. 새 경기가 생기거나 치명 정지 경로로 간다.
     private void ResetMatch(string cause)
@@ -478,6 +544,7 @@ public sealed class GameLoop : IDisposable
         _health.CarrySquadTotals();   // Phase 14
         _health.CarryMapTotals();     // Phase 15
         _health.CarryLootTotals();    // Phase 16
+        _health.CarryInputSeqDrops(); // review fix A4
         // The old match's unlogged sink failure would go with it; LogPeriodic logs it with the next stats line.
         _carriedSinkError ??= _match.TakeSinkError();
         try
@@ -506,7 +573,8 @@ public sealed class GameLoop : IDisposable
         }
     }
 
-    // 기능: 한 Tick: 들어온 메시지 처리(Phase 15 지도 표시 요청 포함), 경기 Tick, Health 수치(Phase 14 분대, Phase 15 지도, Phase 16 Loot 수치 포함) 갱신, QA 작업.
+    // 기능: 한 Tick: 들어온 메시지 처리(Phase 15 지도 표시 요청 포함), 경기 Tick, 모두 실패한 Tick 기록(리뷰 수정 A6: 출처 둘 이상일 때만
+    //   리셋 예약), Health 수치(Phase 14 분대, Phase 15 지도, Phase 16 Loot, 리뷰 수정 A4 Seq 창 드롭 수치 포함) 갱신, QA 작업.
     // 입력: 없음.
     // 출력: 반환값 없음.
     internal void RunTick()
@@ -519,13 +587,17 @@ public sealed class GameLoop : IDisposable
         SweepPeers();
         SendStatsReplies();
         _match.Tick();
-        // Review round 2: a tick in which every player failed (see _allFailedTicks).
-        if (_match.EveryPlayerFailed && RecordInWindow(_allFailedTicks, ref _allFailedCount, ref _allFailedNext)) _resetForPlayerFailures = true;
+        // Review round 2: a tick in which every player failed (see _allFailedTicks). Review fix A6: only when the failures of
+        // the window came from two sources or more, so one address alone on the server, joining and failing again and again
+        // (it may hold several connections open, which the penalty on new ones does not stop), cannot reset the match.
+        if (_match.EveryPlayerFailed && RecordInWindow(_allFailedTicks, ref _allFailedCount, ref _allFailedNext)
+            && HasTwoSourcesInWindow()) _resetForPlayerFailures = true;
         _health.SetGauges(_peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State);
         _health.SetBuild(_match.BuildCounts(), _buildRejects);
         _health.SetSquad(_match.SquadCounts());   // Phase 14
         _health.SetMap(_match.MapCounts());       // Phase 15
         _health.SetLoot(_match.LootCounts());     // Phase 16
+        _health.SetInputSeqDrops(_match.InputSeqDrops);   // review fix A4
         // QA-1 D5: last, so QA commands act between ticks on a finished tick. OnTick catches everything itself: a QA
         // failure must never count as a tick failure (that path resets the match).
         _qa?.OnTick(this);
@@ -565,22 +637,27 @@ public sealed class GameLoop : IDisposable
         }
     }
 
+    // 기능: Input 채널의 입력 패킷을 경기에 넘긴다(Tick당 MaxInputMessagesPerTick까지, 홍수가 한 Tick을 늘리지 않게).
+    //   리뷰 수정 A4(SEC-7): 경기가 입력을 하나라도 받았을 때만 그 연결의 입력 시간(LastInputTick)을 갱신한다. 모두 거절된 패킷은
+    //   입력이 아니므로 InputTimeout을 미루지 않는다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 플레이어 입력 버퍼와 연결의 LastInputTick이 바뀐다.
     private void DrainInput()
     {
-        // Budgeted so an input flood cannot stretch one tick; the rest waits for the next tick.
         var reader = _channels.Input.Reader;
         int budget = _options.MaxInputMessagesPerTick;
         while (budget-- > 0 && reader.TryRead(out InputMessage message))
         {
-            if (_peers.TryGetValue(message.PeerId, out var peer) && ReferenceEquals(peer, message.Peer))
+            if (_peers.TryGetValue(message.PeerId, out var peer) && ReferenceEquals(peer, message.Peer)
+                && _match.EnqueueInput(message.PeerId, message.Packet))
             {
                 ((PeerState)peer.Tag).LastInputTick = _loopTick;
-                _match.EnqueueInput(message.PeerId, message.Packet);
             }
         }
     }
 
-    // Phase 13 D8: build requests, bounded per tick like inputs (the channel holds at most this many).
+    // Phase 13 D8: build requests, bounded per tick like inputs. Review fix A5: the channel holds more (two one-second windows
+    // per player); what is left waits for the next tick (the per-connection rate keeps the steady flow far below this).
     private void DrainBuild()
     {
         var reader = _channels.Build.Reader;
@@ -814,7 +891,8 @@ public sealed class GameLoop : IDisposable
         _listener.ResetLogLimits();
     }
 
-    // 기능: 연결·보호·건설·분대(Phase 14)·지도 표시(Phase 15)·Loot(Phase 16)·DB 수치를 한 줄로 기록한다(시작부터의 합계).
+    // 기능: 연결·보호(리뷰 수정 A2–A4·A6: IP별 동시 연결·벌점·전역 수락·쿠키 거절, 쿠키 응답, Seq 창 드롭, 벌점 수)·건설·분대(Phase 14)·
+    //   지도 표시(Phase 15)·Loot(Phase 16)·DB 수치를 한 줄로 기록한다(시작부터의 합계).
     // 입력: 없음.
     // 출력: 반환값 없음. Health 로그 한 줄.
     // Phase 10 D9: connections, protection and database in one line, as totals since the start.
@@ -832,11 +910,13 @@ public sealed class GameLoop : IDisposable
             "connections={Connections} joins={Joins} resumed={Resumed} graceStarts={GraceStarts} graceExpiries={GraceExpiries} " +
             "disconnects timeout={DisconnectTimeouts} other={DisconnectOthers} " +
             "rejects full={RejectFull} badRequest={RejectBad} version={RejectVersion} connectRate={RejectConnectRate} " +
+            "perIp={RejectPerIp} penalized={RejectPenalized} accept={RejectAccept} cookie={RejectCookie} cookieChallenges={CookieChallenges} " +
             "kicks kicked={KickBad} joinTimeout={KickJoin} inputTimeout={KickInput} serverError={KickError} congested={KickCongested} " +
             "badPackets unknownId={BadUnknown} malformed={BadMalformed} beforeJoin={BadBeforeJoin} duplicateJoin={BadDuplicate} " +
             "inputRate={BadRate} wrongDirection={BadDirection} handlerException={BadHandler} buildRate={BadBuildRate} markerRate={BadMarkerRate} " +
+            "inputSeqDrops={InputSeqDrops} " +
             "tickFailures={TickFailures} loopFailures={LoopFailures} matchResets={Resets} stalls={Stalls} movementAnomalies={MovementAnomalies} " +
-            "networkErrors={NetworkErrors} playerFailures={PlayerFailures} stallExits={StallExits} callbackErrors={CallbackErrors} " +
+            "networkErrors={NetworkErrors} playerFailures={PlayerFailures} penalties={Penalties} stallExits={StallExits} callbackErrors={CallbackErrors} " +
             "build pieces={BuildPieces} cells={BuildCells} requests={BuildRequests} accepted={BuildAccepted} destroyed={BuildDestroyed} " +
             "collapsed={BuildCollapsed} duplicates={BuildDuplicates} edits={BuildEdits} eventPackets={BuildEventPackets} syncPackets={BuildSyncPackets} " +
             "buildRejects noResource={RejectNoResource} outOfRange={RejectRange} blocked={RejectBlocked} unsupported={RejectUnsupported} " +
@@ -856,13 +936,15 @@ public sealed class GameLoop : IDisposable
             h.Connections, h.Joins, h.Resumes, h.GraceStarts, h.GraceExpiries,
             h.DisconnectTimeouts, h.DisconnectOthers,
             h.Rejects(RejectReason.ServerFull), h.Rejects(RejectReason.BadRequest), h.Rejects(RejectReason.VersionMismatch), h.ConnectRateRejects,
+            h.PerIpRejects, h.PenaltyRejects, h.AcceptRateRejects, h.CookieRejects, h.CookieChallenges,
             h.Kicks(DisconnectCode.Kicked), h.Kicks(DisconnectCode.JoinTimeout), h.Kicks(DisconnectCode.InputTimeout), h.Kicks(DisconnectCode.ServerError),
             h.Kicks(DisconnectCode.Congested),
             h.BadPackets(BadPacketReason.UnknownId), h.BadPackets(BadPacketReason.Malformed), h.BadPackets(BadPacketReason.InputBeforeJoin),
             h.BadPackets(BadPacketReason.DuplicateJoin), h.BadPackets(BadPacketReason.InputRate), h.BadPackets(BadPacketReason.WrongDirection),
             h.BadPackets(BadPacketReason.HandlerException), h.BadPackets(BadPacketReason.BuildRate), h.BadPackets(BadPacketReason.MarkerRate),
+            h.InputSeqDrops,
             h.TickFailures, h.LoopFailures, h.MatchResets, h.Stalls, h.MovementAnomalies,
-            h.NetworkErrors, h.PlayerFailures, h.StallExits, h.CallbackErrors,
+            h.NetworkErrors, h.PlayerFailures, h.Penalties, h.StallExits, h.CallbackErrors,
             b.Pieces, b.Cells, b.Requests, b.Accepted, b.Destroyed, b.Collapsed, b.Duplicates, b.Edits, b.EventPackets, b.SyncPackets,
             h.BuildRejects(BuildResultCode.NoResource), h.BuildRejects(BuildResultCode.OutOfRange), h.BuildRejects(BuildResultCode.Blocked),
             h.BuildRejects(BuildResultCode.Unsupported), h.BuildRejects(BuildResultCode.Occupied), h.BuildRejects(BuildResultCode.RateLimited),

@@ -227,6 +227,9 @@ public static class FaultActions
     // (a PlayerInput whose count or length is wrong); garbage → UnknownId or WrongDirection (the first byte is never a
     // client-to-server id); inputFlood → valid-format inputs (Seq 0, so never applied) above the per-peer rate →
     // InputRate for the ones over the limit. Every bad one counts toward the BadPacketDisconnectThreshold kick.
+    // 기능: 종류 이름에 맞는 잘못된 패킷 하나를 만든다(리뷰 수정 A1: oversized는 조각 2개 안의 1,600 B).
+    // 입력: kind - InvalidKinds 중 하나, rng - 난수.
+    // 출력: 보낼 바이트.
     internal static byte[] InvalidPacket(string kind, Random rng)
     {
         switch (kind)
@@ -242,8 +245,10 @@ public static class FaultActions
                 return new[] { (byte)PacketId.PlayerInput, (byte)3 };
             case "oversized":
             {
-                // Larger than any valid packet (MaxPacketSize) and with an impossible input count.
-                var b = new byte[ProtocolConstants.MaxPacketSize * 3];
+                // Larger than any valid packet (MaxPacketSize) and with an impossible input count. Review fix A1: the server
+                // refuses it by size before parsing (Malformed). At most 2 fragments at LiteNetLib's default MTU (1024), the
+                // bots' MaxFragmentsCount (ProtocolLimits.MaxFragments): a larger one could not be sent at all.
+                var b = new byte[ProtocolConstants.MaxPacketSize + 400];
                 rng.NextBytes(b);
                 b[0] = (byte)PacketId.PlayerInput;
                 b[1] = 0xFF;

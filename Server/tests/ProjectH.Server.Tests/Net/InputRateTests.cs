@@ -83,6 +83,36 @@ public class InputRateTests
         Assert.Equal(20, server.Health.BadPackets(BadPacketReason.Malformed));
     }
 
+    // Review fix A5 (SEC-18): the shared Input channel holds every player's whole burst at once, so connections spending
+    // their bursts together never push another player's input out (DropOldest).
+    [Fact]
+    public void TheInputChannel_HoldsEveryPlayersBurst()
+    {
+        var options = new ServerOptions();
+        Assert.Equal(options.MaxPlayers * options.InputBurst, options.InputChannelCapacity);
+        var stats = new ServerStats();
+        var channels = new InboundChannels(options, stats);
+        for (int i = 0; i < options.MaxPlayers * options.InputBurst; i++)
+            Assert.True(channels.Input.Writer.TryWrite(new InputMessage(i % options.MaxPlayers, null!, default)));
+        Assert.Equal(0, stats.TakeDelta().InputDrops);
+    }
+
+    // Review fix A5: the same for the Build channel: every player's requests of two back-to-back one-second windows
+    // (the listener counts building requests in fixed windows, so 2 x maxRequestsPerSecond can arrive at once).
+    [Fact]
+    public void TheBuildChannel_HoldsTwoWindowsOfEveryPlayersRequests()
+    {
+        var options = new ServerOptions();
+        int dropped = 0;
+        const int perSecond = 20;
+        var channels = new InboundChannels(options, new ServerStats(), () => dropped++, buildRequestsPerSecond: perSecond);
+        for (int i = 0; i < options.MaxPlayers * 2 * perSecond; i++)
+            Assert.True(channels.Build.Writer.TryWrite(new BuildMessage(i % options.MaxPlayers, null!, new ProjectH.Server.Game.Build.BuildQueueItem(new BuildRequest()))));
+        Assert.Equal(0, dropped);
+        channels.Build.Writer.TryWrite(new BuildMessage(0, null!, new ProjectH.Server.Game.Build.BuildQueueItem(new BuildRequest())));
+        Assert.Equal(1, dropped);   // still bounded: one more pushes the oldest out
+    }
+
     // One input per tick for the given number of ticks.
     private static void Flow(HeadlessClient client, int ticks)
     {

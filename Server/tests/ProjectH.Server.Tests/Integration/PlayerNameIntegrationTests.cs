@@ -33,11 +33,13 @@ public sealed class PlayerNameIntegrationTests
     public void ABadName_IsRejectedAsBadRequest(byte[] name)
     {
         using GameLoop server = StartServer();
-        var payload = new byte[3 + name.Length];
+        // v19 layout (review fix A3): version, flags (0: no cookie; the name is read before the cookie step), name.
+        var payload = new byte[4 + name.Length];
         payload[0] = (byte)(ProtocolConstants.ProtocolVersion & 0xFF);
         payload[1] = (byte)(ProtocolConstants.ProtocolVersion >> 8);
-        payload[2] = (byte)name.Length;
-        name.CopyTo(payload, 3);
+        payload[2] = 0;
+        payload[3] = (byte)name.Length;
+        name.CopyTo(payload, 4);
 
         using var bad = new HeadlessClient();
         bad.ConnectRaw(server.LocalPort, payload);

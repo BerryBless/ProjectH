@@ -9,7 +9,9 @@ dotnet run --project Server/src/ProjectH.Bots -c Release -- --port 7777 --count 
 dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 7790 --count 50 --duration 120 --connect-interval-ms 50
 ```
 
-서버는 따로 띄운다(`Server.md`). 봇이 20명을 넘으면 서버에 `--Server:ConnectBurstPerIp=200`을 준다. 서버는 IP마다 연결 요청을 한 번에 20개, 그 뒤 초당 5개까지만 받는데, 봇은 모두 한 IP에서 붙기 때문이다(서버 리뷰 M2, `Networking.md` "Validation"). 경기는 2명 이상이면 시작한다. 모양은 `--이름 값` 쌍이고, 모르는 이름이나 잘못된 숫자는 오류로 끝난다.
+서버는 따로 띄운다(`Server.md`). 봇이 4명을 넘으면 서버에 `--Server:ConnectBurstPerIp=200 --Server:MaxConnectionsPerIp=200`을 준다. 서버는 IP마다 연결 요청을 한 번에 20개, 그 뒤 초당 5개까지만 받고(서버 리뷰 M2) 한 IP의 동시 연결을 4개까지만 받는데(리뷰 수정 A2), 봇은 모두 한 IP에서 붙기 때문이다(`Networking.md` "Validation"). 전역 수락 빈도(`AcceptsPerSecond` 20, 한 번에 MaxPlayers개)는 `--connect-interval-ms` 50 이상이면 걸리지 않는다.
+
+봇의 접속은 Unity Client와 같은 쿠키 단계를 거친다(리뷰 수정 A3, `Networking.md` "접속 순서"): 첫 연결 요청에 서버가 16B 쿠키를 `RejectForce`로 돌려주면 `BotConnection`이 같은 요청을 쿠키(`ConnectFlags.HasCookie`)와 함께 바로 한 번 다시 보낸다(`CookieRetries`). 쿠키 단계는 끊김으로 치지 않으므로 재접속 판단(`Retryable`)에 영향이 없다. `NetManager.MaxFragmentsCount`는 서버·Client와 같은 2다(리뷰 수정 A1). QA 도구의 `SendRaw`는 이보다 조각이 많은 데이터를 보내지 못하고 false를 돌려준다. 경기는 2명 이상이면 시작한다. 모양은 `--이름 값` 쌍이고, 모르는 이름이나 잘못된 숫자는 오류로 끝난다.
 
 | 옵션 | 기본값 | 의미 |
 |---|---|---|

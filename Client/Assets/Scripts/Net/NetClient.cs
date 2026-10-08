@@ -1,3 +1,5 @@
+#nullable disable
+// (Nullable is off for the Unity client; the server test project compiles this file with nullable on.)
 using System;
 using System.Net;
 using System.Net.Sockets;
@@ -24,6 +26,14 @@ namespace ProjectH.Client.Net
     // Phase 19 D4: one VehicleStates, its records in NetClient's reused array (valid only during the call).
     public delegate void VehicleStatesHandler(uint serverTick, uint ackInputSeq, VehicleRecord[] records, int count);
 
+    // Review fix A3: what the data of a refused connection is (NetClient.ClassifyReject).
+    public enum RejectKind
+    {
+        None,     // no data, or a length that is neither: a reject without a known reason
+        Reason,   // 1 byte: a RejectReason
+        Cookie,   // ProtocolLimits.CookieBytes: the server's cookie; send the request again with it
+    }
+
     // Owns the LiteNetLib client. Main thread only: UnsyncedEvents is off and Poll() is called from
     // Update, so every callback below runs on the Unity main thread. Buffers are reused: receiving
     // and sending do not allocate per packet.
@@ -47,7 +57,20 @@ namespace ProjectH.Client.Net
         // LiteNetLib's own connect budget, used by a manual Connect (Phase 10 D10).
         private readonly int _defaultReconnectDelay;
         private readonly int _defaultMaxConnectAttempts;
+        // Review fix A3: the address of the current connect, for the cookie retry.
+        private string _host;
+        private int _port;
+        private string _devPlayerId;
+        // Review fix A3: the cookie of the server's first reject (copied: the reject's reader is recycled after the
+        // callback), sent with the retry. One retry per connect: a second cookie ends the connect. Cleared when the
+        // connect succeeds, ends or is given up, and at every new Connect (a cookie is only valid for its address and 30-60 s).
+        private readonly byte[] _cookie = new byte[ProtocolLimits.CookieBytes];
+        private bool _hasCookie;
+        private bool _cookieRetried;
 
+        // 기능: LiteNetLib 클라이언트를 서버와 같은 MTU·채널 수·조각 상한으로 만든다(소켓은 첫 Connect가 연다).
+        // 입력: 없음.
+        // 출력: Disconnected 상태의 NetClient. LiteNetLib의 기본 연결 예산을 기억해 둔다(직접 Connect가 되돌릴 값).
         public NetClient()
         {
             _net = new NetManager(this, null)
@@ -58,6 +81,7 @@ namespace ProjectH.Client.Net
                 IPv6Enabled = false,
                 MtuOverride = ProtocolConstants.Mtu,   // same value as the server so both sides agree on datagram size
                 ChannelsCount = ProtocolConstants.ChannelCount,   // Phase 13 D13: channel 1 is the building stream
+                MaxFragmentsCount = ProtocolLimits.MaxFragments,  // review fix A1: same cap as the server; no packet needs fragments
             };
             _defaultReconnectDelay = _net.ReconnectDelay;
             _defaultMaxConnectAttempts = _net.MaxConnectAttempts;
@@ -148,10 +172,13 @@ namespace ProjectH.Client.Net
         public bool LastConnectStartFailed { get; private set; }
         public int RoundTripMs => _server != null ? _server.RoundTripTime : 0;
 
+        // 기능: 서버에 새로 접속을 시작한다(쿠키 없이 보내고, 서버가 쿠키로 거절하면 OnPeerDisconnected가 한 번 다시 보낸다).
+        // 입력: host·port - 서버 주소, devPlayerId - 이름, reconnectAttempt - 자동 재접속 시도면 true(짧은 연결 예산).
+        // 출력: 반환값 없음. 시작되면 State가 Connecting이고 LastError가 null, 못 하면 Disconnected와 LastError·LastConnectStartFailed.
         // reconnectAttempt (Phase 10 D10): an automatic attempt gets the short connect budget of DisconnectCodes, so it
         // gives up within its slot (about 1.5 s instead of LiteNetLib's 5.5 s). A manual connect gets the defaults
         // back. LiteNetLib reads both fields on every update of a connecting peer (they are plain public fields,
-        // written only by its constructor), so setting them before Connect applies to this connect.
+        // written only by its constructor), so setting them before Connect applies to this connect (and its cookie retry).
         public void Connect(string host, int port, string devPlayerId, bool reconnectAttempt = false)
         {
             if (_disposed || State != ClientState.Disconnected) return;
@@ -166,12 +193,40 @@ namespace ProjectH.Client.Net
                 return;
             }
 
+            _host = host;
+            _port = port;
+            _devPlayerId = devPlayerId;
+            ClearCookie();
+            _cookieRetried = false;
+            string error = StartConnect(null);
+            if (error != null)
+            {
+                LastError = error;
+                return;
+            }
+            LastError = null;
+            LastConnectStartFailed = _server == null;
+        }
+
+        // 기능: 접속 요청 데이터(쿠키를 갖고 있으면 HasCookie와 쿠키)를 쓰고 LiteNetLib 접속을 시작한다. Connect와 쿠키 재시도가 쓴다.
+        // 입력: endPoint - 보낼 주소(쿠키 재시도는 거절한 peer의 주소, null이면 _host·_port의 이름을 푼다).
+        // 출력: 시작되면 null(_server가 새 peer, State Connecting), 못 하면 오류 문장(LiteNetLib이 peer를 주지 않으면 null)과
+        //   State Disconnected. Last* 필드는 바꾸지 않는다(부르는 쪽이 정한다).
+        private string StartConnect(IPEndPoint endPoint)
+        {
             var writer = new PacketWriter(_sendBuffer);
-            ConnectRequestData.Write(ref writer, new ConnectRequestData { ProtocolVersion = ProtocolConstants.ProtocolVersion, DevPlayerId = devPlayerId });
+            ConnectRequestData.Write(ref writer, new ConnectRequestData
+            {
+                ProtocolVersion = ProtocolConstants.ProtocolVersion,
+                Flags = _hasCookie ? ConnectFlags.HasCookie : ConnectFlags.None,
+                Cookie = _hasCookie ? _cookie : null,
+                DevPlayerId = _devPlayerId,
+            });
             if (writer.Overflowed)
             {
-                LastError = "DevPlayerId is longer than 32 bytes.";
-                return;
+                _server = null;
+                State = ClientState.Disconnected;
+                return "DevPlayerId is longer than 32 bytes.";
             }
             _connectData.Reset();
             _connectData.Put(_sendBuffer, 0, writer.Length);
@@ -179,17 +234,35 @@ namespace ProjectH.Client.Net
             try
             {
                 // Host comes from user input or command line: an unresolvable name is an expected failure.
-                _server = _net.Connect(host, port, _connectData);
+                _server = endPoint != null ? _net.Connect(endPoint, _connectData) : _net.Connect(_host, _port, _connectData);
             }
             catch (Exception ex) when (ex is SocketException || ex is ArgumentException)
             {
                 _server = null;
-                LastError = "Connect failed: " + ex.Message;
-                return;
+                State = ClientState.Disconnected;
+                return "Connect failed: " + ex.Message;
             }
-            LastError = null;
-            LastConnectStartFailed = _server == null;
             State = _server != null ? ClientState.Connecting : ClientState.Disconnected;
+            return null;
+        }
+
+        // 기능: 거절 데이터가 쿠키인지 RejectReason인지 가른다(설계 A3·B5의 데이터 규약).
+        // 입력: data - ConnectionRejected의 추가 데이터(없으면 빈 Span).
+        // 출력: ProtocolLimits.CookieBytes(16 B)면 Cookie, 1 B면 Reason(그 바이트가 RejectReason), 그 밖의 길이는 None.
+        public static RejectKind ClassifyReject(ReadOnlySpan<byte> data)
+        {
+            if (data.Length == ProtocolLimits.CookieBytes) return RejectKind.Cookie;
+            return data.Length == 1 ? RejectKind.Reason : RejectKind.None;
+        }
+
+        // 기능: 보관한 쿠키를 지운다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 다음 접속 요청은 쿠키 없이 나간다.
+        private void ClearCookie()
+        {
+            if (!_hasCookie) return;
+            Array.Clear(_cookie, 0, _cookie.Length);
+            _hasCookie = false;
         }
 
         public void Poll()
@@ -254,6 +327,9 @@ namespace ProjectH.Client.Net
             return true;
         }
 
+        // 기능: 진행 중인 접속(연결 중, 또는 연결됐지만 Join 전)을 Disconnected 이벤트 없이 버린다. 쿠키 재시도 중이면 쿠키도 지운다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 버렸으면 State가 Disconnected이고 Last* 필드는 그대로다.
         // Phase 10 D10: gives up a connect that is still in progress, without a Disconnected event: the caller starts
         // the next attempt at once. Phase 11: also a connection that is connected but not joined yet (the disconnected
         // screen's Cancel), so the Last* fields keep the end that started the reconnect cycle. The peer is forgotten
@@ -265,6 +341,7 @@ namespace ProjectH.Client.Net
             NetPeer abandoned = _server;
             _server = null;
             State = ClientState.Disconnected;
+            ClearCookie();
             _net.DisconnectPeer(abandoned);
         }
 
@@ -277,9 +354,13 @@ namespace ProjectH.Client.Net
             State = ClientState.Disconnected;
         }
 
+        // 기능: 접속이 성립하면 Join을 요청하고 Connected를 올린다. 쓴 쿠키는 지운다.
+        // 입력: peer - 연결된 peer(지금 접속이 아니면 무시).
+        // 출력: 반환값 없음. State가 Connected가 되고 JoinMatchRequest가 전송된다.
         void INetEventListener.OnPeerConnected(NetPeer peer)
         {
             if (peer != _server) return;   // an abandoned attempt (CancelConnect)
+            ClearCookie();
             State = ClientState.Connected;
             var writer = new PacketWriter(_sendBuffer);
             JoinMatchRequest.Write(ref writer);
@@ -287,12 +368,44 @@ namespace ProjectH.Client.Net
             Connected?.Invoke();
         }
 
+        // 기능: 지금 접속의 끝을 처리한다. 첫 쿠키 거절(16 B)이면 쿠키를 보관하고 같은 주소로 바로 다시 접속한다(끝이 아니다).
+        //   두 번째 쿠키 거절이나 그 밖의 끝은 Last* 필드를 정하고 Disconnected를 올린다.
+        // 입력: peer - 끊긴 peer(지금 접속이 아니면 무시), disconnectInfo - 이유와 추가 데이터(거절 데이터·끊기 코드).
+        // 출력: 반환값 없음. 쿠키 재시도면 State가 Connecting이고 이벤트·Last* 필드는 그대로, 아니면 State Disconnected,
+        //   LastDisconnect*·LastRejectReason·LastError가 정해지고 Disconnected 이벤트가 올라간다.
         void INetEventListener.OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo)
         {
             if (peer != _server) return;   // an abandoned attempt (CancelConnect): not this connection's end
             _server = null;
             State = ClientState.Disconnected;
             DisconnectReason why = disconnectInfo.Reason;
+
+            // Review fix A3: the server answers a request without a valid cookie with RejectForce + a 16 B cookie (no peer on
+            // its side). The retry goes out inside this call, so the reconnect cycle (GameClient) never sees an end.
+            ReadOnlySpan<byte> rejectData = why == DisconnectReason.ConnectionRejected && disconnectInfo.AdditionalData != null
+                ? disconnectInfo.AdditionalData.GetRemainingBytesSpan()
+                : ReadOnlySpan<byte>.Empty;
+            RejectKind rejectKind = ClassifyReject(rejectData);
+            string cookieError = null;
+            if (rejectKind == RejectKind.Cookie)
+            {
+                if (!_cookieRetried)
+                {
+                    rejectData.CopyTo(_cookie);   // the reader is recycled after this callback (AutoRecycle)
+                    _hasCookie = true;
+                    _cookieRetried = true;
+                    // The rejected peer's own address (NetPeer is an IPEndPoint): no second name lookup, and the cookie is
+                    // bound to that IP and port. One allocation per connect, not per frame.
+                    cookieError = StartConnect(new IPEndPoint(peer.Address, peer.Port));
+                    if (_server != null) return;
+                    cookieError = cookieError ?? "Connect failed: the cookie retry could not start";
+                }
+                else
+                {
+                    cookieError = "cookie challenge loop";
+                }
+            }
+            ClearCookie();
             bool remoteClose = why == DisconnectReason.RemoteConnectionClose;
             LastDisconnectCode = remoteClose && disconnectInfo.AdditionalData != null
                 ? DisconnectCodes.Read(disconnectInfo.AdditionalData.GetRemainingBytesSpan())
@@ -304,10 +417,13 @@ namespace ProjectH.Client.Net
             LastRejectReason = RejectReason.None;
 
             string reason = why.ToString();
-            if (why == DisconnectReason.ConnectionRejected &&
-                disconnectInfo.AdditionalData != null && disconnectInfo.AdditionalData.AvailableBytes > 0)
+            if (cookieError != null)
             {
-                LastRejectReason = (RejectReason)disconnectInfo.AdditionalData.GetByte();
+                reason = cookieError;
+            }
+            else if (rejectKind == RejectKind.Reason)
+            {
+                LastRejectReason = (RejectReason)rejectData[0];
                 reason = "Rejected: " + LastRejectReason;
             }
             else if (LastDisconnectCode != DisconnectCode.None)
