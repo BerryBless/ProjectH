@@ -11,6 +11,9 @@ namespace ProjectH.Server.Tests.Game;
 // refused with a message naming the field.
 public class BuildingCatalogTests
 {
+    // 기능: 테스트 출력 폴더에 복사된 운영 building.json을 30 Hz 기준으로 읽는다.
+    // 입력: 없음.
+    // 출력: 읽은 BuildingCatalog. 파일이 없거나 잘못되면 예외가 난다.
     private static BuildingCatalog Shipped() => BuildingCatalog.LoadFile(Path.Combine(AppContext.BaseDirectory, GameData.BuildingFile), 30);
 
     [Fact]

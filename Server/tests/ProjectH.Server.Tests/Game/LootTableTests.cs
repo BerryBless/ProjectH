@@ -11,6 +11,9 @@ public class LootTableTests
 {
     private readonly GameData _data = TestGameData.Create();
 
+    // 기능: 잘못된 loot.json 문자열의 파싱이 거절되는지 확인하고 오류 메시지를 돌려준다.
+    // 입력: json - 파싱할 문자열.
+    // 출력: 거절 오류 메시지. 파싱이 성공하거나 메시지가 비면 테스트가 실패한다.
     private string Parse(string json)
     {
         Assert.False(LootTable.TryParse(json, _data.Items, out var loot, out string? error));
@@ -19,12 +22,18 @@ public class LootTableTests
         return error!;
     }
 
+    // 기능: 유효한 테스트 loot.json에서 한 조각만 바꿔 규칙 하나만 깨진 문자열을 만든다.
+    // 입력: from - 바꿀 원문 조각(반드시 있어야 한다), to - 대신 넣을 조각.
+    // 출력: 바뀐 JSON 문자열. 원문 조각이 없으면 테스트가 실패한다.
     private static string Broken(string from, string to)
     {
         Assert.Contains(from, TestGameData.LootJson);
         return TestGameData.LootJson.Replace(from, to);
     }
 
+    // 기능: 테스트 Loot 데이터의 이름 붙은 테이블에서 한 번 굴린다.
+    // 입력: table - 테이블 이름, rng - 굴림 난수.
+    // 출력: 굴린 LootRoll.
     private LootRoll Roll(string table, Random rng) => _data.Loot.Roll(_data.Loot.TableIndex(table), rng, _data.Weapons, _data.Items);
 
     [Fact]
@@ -233,6 +242,9 @@ public class LootTableTests
 
     private const string Rarity = "\"rarityWeights\": { \"Common\": 1, \"Uncommon\": 1, \"Rare\": 1, \"Epic\": 1, \"Legendary\": 1 }";
 
+    // 기능: 균등 희귀도 가중치와 Floor 테이블에 주어진 Chest 테이블(과 추가 항목)을 붙인 loot.json 문자열을 만든다.
+    // 입력: table - Chest 테이블의 JSON, extra - tables 뒤에 붙일 추가 JSON 조각(기본 없음).
+    // 출력: loot.json 문자열.
     private static string WithTable(string table, string extra = "") =>
         "{ " + Rarity + ", \"tables\": { \"Floor\": [ { \"kind\": \"Ammo\", \"weight\": 1 } ], \"Chest\": " + table + " }" + extra + " }";
 

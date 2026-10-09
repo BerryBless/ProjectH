@@ -35,6 +35,9 @@ namespace ProjectH.Client.Game
         // Phase 17 D3: our own tracers' spread (presentation only; the server's spread uses its own seed). Made once.
         private readonly System.Random _random = new System.Random();
 
+        // 기능: 착탄 표시 풀(충돌체 없는 큐브)과 예광탄 풀(LineRenderer)을 만들고 공유 Material 하나를 붙인다(모두 꺼진 채).
+        // 입력: 없음.
+        // 출력: 고정 크기 풀이 준비된 효과 객체(Dispose가 해제한다).
         public LocalFireEffects()
         {
             _root = new GameObject("LocalFireEffects");
@@ -105,14 +108,18 @@ namespace ProjectH.Client.Game
             }
         }
 
-        // D11: another player's shot as the server resolved it, from its eye to where it stopped.
+        // 기능: 다른 플레이어의 사격(ShotFired)을 서버가 판정한 대로 예광탄으로 그린다(D11, 착탄 표시 없음).
+        // 입력: start - 사수의 눈 위치, end - 탄이 멈춘 지점, now - 현재 시각.
+        // 출력: 반환값 없음. 예광탄 풀 하나가 쓰인다.
         public void ShowRemoteShot(Vector3 start, Vector3 end, float now)
         {
             if (_root == null) return;
             ShowTracer(start, end, now);
         }
 
-        // Call once per frame: hides tracers whose time is up.
+        // 기능: 프레임마다 표시 시간이 끝난 예광탄을 끈다.
+        // 입력: now - 현재 시각.
+        // 출력: 반환값 없음. 만료된 LineRenderer가 비활성화된다.
         public void Tick(float now)
         {
             if (_root == null) return;
@@ -122,6 +129,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 모든 예광탄과 착탄 표시를 숨긴다(풀은 그대로 둔다).
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void HideAll()
         {
             // Unity null: on scene or play-mode teardown the root (and the pooled children with it) can
@@ -131,12 +141,18 @@ namespace ProjectH.Client.Game
             for (int i = 0; i < ImpactPoolSize; i++) _impacts[i].SetActive(false);
         }
 
+        // 기능: 풀 객체(Root)와 공유 Material을 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);
             if (_material != null) Object.Destroy(_material);
         }
 
+        // 기능: 발 위치와 yaw로 총구 위치를 구한다(오른쪽·앞으로 0.24 m, 높이 1.4 m).
+        // 입력: feet - 그린 발 위치, yawDegrees - 바라보는 방향(도, 0 = +Z).
+        // 출력: 총구 월드 위치.
         private static Vector3 MuzzlePosition(Vector3 feet, float yawDegrees)
         {
             float yaw = yawDegrees * Mathf.Deg2Rad;
@@ -149,6 +165,9 @@ namespace ProjectH.Client.Game
                 feet.z - sin * MuzzleRight + cos * MuzzleForward);
         }
 
+        // 기능: 퍼짐 없는 한 발을 총구에서 조준점으로 Raycast해 예광탄(맞으면 착탄 표시도)을 그린다(Phase 1 D13).
+        // 입력: aimPoint - 조준점, muzzle - 총구 위치, now - 현재 시각.
+        // 출력: 반환값 없음. 조준점이 총구에 너무 가까우면 아무것도 그리지 않는다.
         private void FireOne(Vector3 aimPoint, Vector3 muzzle, float now)
         {
             Vector3 toAim = aimPoint - muzzle;
@@ -185,6 +204,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 다음 풀 자리의 예광탄을 두 점 사이에 켜고 TracerSeconds 뒤 숨길 시각을 기록한다.
+        // 입력: from - 시작점, to - 끝점, now - 현재 시각.
+        // 출력: 반환값 없음. 링 커서가 한 칸 돈다.
         private void ShowTracer(Vector3 from, Vector3 to, float now)
         {
             int slot = _nextTracer.Next();
@@ -195,6 +217,9 @@ namespace ProjectH.Client.Game
             _tracerHideTime[slot] = now + TracerSeconds;
         }
 
+        // 기능: 다음 풀 자리의 착탄 표시를 표면 법선 방향으로 살짝 띄워 놓는다(끌 때까지 남는다).
+        // 입력: point - 착탄 지점, normal - 표면 법선.
+        // 출력: 반환값 없음. 링 커서가 한 칸 돈다.
         private void ShowImpact(Vector3 point, Vector3 normal)
         {
             GameObject impact = _impacts[_nextImpact.Next()];

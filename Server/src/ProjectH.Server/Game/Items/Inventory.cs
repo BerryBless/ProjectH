@@ -90,8 +90,14 @@ public sealed class Inventory
         return -1;
     }
 
+    // 기능: 재료의 소지량을 돌려준다.
+    // 입력: material - 재료.
+    // 출력: 소지량.
     public int Resource(BuildMaterialType material) => _resources[(int)material];
 
+    // 기능: 재료의 소지량을 바꾼다.
+    // 입력: material - 재료, amount - 새 소지량.
+    // 출력: 반환값 없음. 값이 달라졌을 때만 ResourcesChanged가 켜진다.
     public void SetResource(BuildMaterialType material, int amount)
     {
         if (_resources[(int)material] == amount) return;
@@ -99,6 +105,9 @@ public sealed class Inventory
         ResourcesChanged = true;
     }
 
+    // 기능: 주인에게 보낼 ResourcesState를 만든다(ushort 범위로 자른다).
+    // 입력: 없음.
+    // 출력: 목재·석재·금속 소지량을 담은 ResourcesState.
     public ResourcesState ResourcesToWire() => new()
     {
         Wood = (ushort)Math.Clamp(_resources[0], 0, ushort.MaxValue),
@@ -108,8 +117,14 @@ public sealed class Inventory
 
     public ref HeldWeapon Current => ref Slots[CurrentSlot];
 
+    // 기능: 탄 종류의 예비 탄 수를 돌려준다.
+    // 입력: type - 탄 종류(None 제외).
+    // 출력: 예비 탄 수.
     public int GetAmmo(AmmoType type) => _ammo[(int)type - 1];
 
+    // 기능: 탄 종류의 예비 탄 수를 바꾼다(Changed는 호출자가 켠다).
+    // 입력: type - 탄 종류(None 제외), value - 새 예비 탄 수.
+    // 출력: 반환값 없음.
     public void SetAmmo(AmmoType type, int value) => _ammo[(int)type - 1] = value;
 
     // 기능: 인벤토리를 빈 새 생명 상태로 되돌린다(Phase 14: 카드 칸도 비운다. Phase 17: 수류탄도).

@@ -131,15 +131,18 @@ namespace ProjectH.Client.Game
         // the server would open a nearer container or supply drop with the same E instead.
         public LootState Loot { get; set; }
 
-        // D5: the match's transport route (TransportRoute). Kept until the next one or ClearRoute; it acts only in Transport
-        // mode.
+        // 기능: 경기의 수송기 경로(TransportRoute, D5)를 보관한다. 다음 경로나 ClearRoute까지 유지되며 Transport 모드에서만 쓴다.
+        // 입력: route - 수송기 경로.
+        // 출력: 반환값 없음. 이후 Transport 모드의 입력은 이 경로를 타고 예측된다.
         public void SetRoute(in DropRoute route)
         {
             _route = route;
             _hasRoute = true;
         }
 
-        // A new round's countdown (MatchState back to WaitingForPlayers or Starting): the old route is over.
+        // 기능: 수송기 경로를 지운다(새 라운드 카운트다운: MatchState가 WaitingForPlayers·Starting으로 돌아갈 때).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 경로 없이 예측한다.
         public void ClearRoute()
         {
             _hasRoute = false;
@@ -154,6 +157,9 @@ namespace ProjectH.Client.Game
             return !_seatedAt[slot] && ActionsAllowed(_results[slot].Mode);
         }
 
+        // 기능: 서버가 그 이동 모드에서 입력의 행동(사격·상호작용·도구)을 받는지 본다(D12: 탑승·낙하·활강·Vault·기절은 받지 않는다).
+        // 입력: mode - 이동 모드.
+        // 출력: Ground·Crouch·Slide면 true, 그 밖에는 false.
         public static bool ActionsAllowed(MovementMode mode) =>
             mode == MovementMode.Ground || mode == MovementMode.Crouch || mode == MovementMode.Slide;
 
@@ -357,10 +363,11 @@ namespace ProjectH.Client.Game
             return walked;
         }
 
-        // One input, exactly as Match.Tick runs it: ride the route aboard, otherwise one Step against the predicted world;
-        // a charging move blocked by a closed door opens it (D9).
-        // Before the first ack the tick an input is simulated at is unknown: a rider is held where it is (Step does nothing
-        // in Transport mode) instead of riding from a guessed tick.
+        // 기능: 입력 하나를 서버 Match.Tick과 같은 순서로 시뮬레이션한다: 수송기에 탔으면 경로를 타고, 아니면 예측 월드(상자·예측 문·서 있는
+        //   채집 대상·확정 조각·지형)에 대해 한 Step. 돌진 이동이 닫힌 문에 막히면 그 문을 연 것으로 예측한다(D9).
+        //   첫 ack 전에는 입력의 서버 Tick을 모르므로 탑승자는 제자리에 둔다(Transport 모드의 Step은 아무것도 하지 않는다).
+        // 입력: state - 갱신할 이동 상태, command - 적용할 입력(무시할 Jump는 이미 뺀 것), result - 결과(Step 결과; 경로를 탔으면 default).
+        // 출력: 반환값 없음. state가 한 Tick 진행되고 예측 문 상태가 바뀔 수 있다.
         private void Simulate(ref MoveState state, in InputCommand command, out StepResult result)
         {
             if (_hasRoute && _hasTickBase && DropTransport.Ride(ref state, command, _route, (uint)(_tickBase + command.Seq)))
@@ -422,10 +429,14 @@ namespace ProjectH.Client.Game
             }
         }
 
-        // One of the last HistorySize inputs (seq in LastSeq - 63 .. LastSeq).
+        // 기능: 기록된 입력을 번호로 꺼낸다(최근 HistorySize개 안: LastSeq - 63 .. LastSeq. 그 밖의 번호는 같은 칸의 다른 입력을 돌려준다).
+        // 입력: seq - 입력 번호.
+        // 출력: 그 칸에 기록된 InputCommand.
         public InputCommand InputAt(uint seq) => _inputs[(int)(seq % HistorySize)];
 
-        // Newest inputs, oldest first (up to 3). Resending recent inputs covers single packet loss.
+        // 기능: 가장 새 입력 최대 MaxInputsPerPacket개(3)를 오래된 것부터 담은 입력 패킷을 만든다(최근 입력을 다시 보내 패킷 하나 유실을 덮는다).
+        // 입력: packet - 결과.
+        // 출력: 입력이 하나라도 있으면 true와 채워진 패킷, 아직 없으면(LastSeq 0) false.
         public bool TryBuildInputPacket(out PlayerInputPacket packet)
         {
             packet = default;
@@ -580,7 +591,9 @@ namespace ProjectH.Client.Game
             Corrections++;
         }
 
-        // The server's state as it is, without counting a correction (a held rider before the first ack).
+        // 기능: 서버 상태를 교정으로 세지 않고 그대로 받는다(첫 ack 전에 제자리에 둔 탑승자).
+        // 입력: authoritative - 서버 상태.
+        // 출력: 반환값 없음. 예측 상태가 서버 상태가 되고 렌더 오차가 0이 된다.
         private void Hold(in MoveState authoritative)
         {
             _state = authoritative;
@@ -588,6 +601,9 @@ namespace ProjectH.Client.Game
             _renderError = Vector3.zero;
         }
 
+        // 기능: 서버 상태로 바로 옮긴다(재실행 없음). 옮긴 거리를 LastCorrection에 적고, 살아 있고 상태가 달랐으면 교정 횟수를 센다.
+        // 입력: authoritative - 서버 상태.
+        // 출력: 반환값 없음. 예측 상태가 서버 상태가 되고 렌더 오차가 0이 된다.
         private void Snap(in MoveState authoritative)
         {
             LastCorrection = (_state.Position - authoritative.Position).Length();
@@ -597,8 +613,10 @@ namespace ProjectH.Client.Game
             _renderError = Vector3.zero;
         }
 
-        // Position, VelocityY and the horizontal velocity within the snapshot's quantization (1/256), and the exact mode,
-        // energy, tick counters and exhaustion.
+        // 기능: 예측 상태가 서버 상태와 맞는지 본다(위치·VelocityY·수평 속도는 Snapshot 양자화(1/256) 안의 MatchEpsilon, 모드·에너지·Tick
+        //   카운터·탈진은 정확히 같아야 한다).
+        // 입력: predicted - ack 입력의 예측 결과, server - 서버 상태.
+        // 출력: 맞으면 true(재실행 불필요), 아니면 false.
         private static bool Matches(in MoveState predicted, in MoveState server)
         {
             return System.Numerics.Vector3.DistanceSquared(predicted.Position, server.Position) < MatchEpsilon * MatchEpsilon &&
@@ -609,6 +627,9 @@ namespace ProjectH.Client.Game
                    predicted.Exhausted == server.Exhausted;
         }
 
+        // 기능: 검증되지 않은 Snapshot 값이 유한한 수인지 본다.
+        // 입력: value - 검사할 값.
+        // 출력: NaN·무한대가 아니면 true.
         private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
     }
 }

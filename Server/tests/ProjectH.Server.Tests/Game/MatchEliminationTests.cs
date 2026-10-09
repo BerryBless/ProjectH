@@ -30,6 +30,9 @@ public class MatchEliminationTests
     private static readonly Vector3 Outside = new(10f, 0f, 0f);   // outside every circle of DamageZonesJson
     private static readonly Vector3 Center = Vector3.Zero;         // inside until phase 2 shrinks
 
+    // 기능: 서버 Tick이 주어진 값에 이를 때까지 Tick을 돌린다(그 Tick 자체는 아직 처리하지 않는다).
+    // 입력: h - 경기, serverTick - 목표 Tick.
+    // 출력: 반환값 없음. ServerTick이 serverTick 이상이 된다.
     private static void TickTo(RoyaleHarness h, uint serverTick)
     {
         while (h.Match.ServerTick < serverTick) h.Match.Tick();

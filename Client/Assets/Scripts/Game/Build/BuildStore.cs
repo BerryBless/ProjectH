@@ -72,12 +72,18 @@ namespace ProjectH.Client.Game
 
         public IReadOnlyList<uint> Changed => _changed;
 
+        // 기능: 변경 목록을 비운다(뷰가 Apply로 가져간 뒤).
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void ClearChanged()
         {
             _changed.Clear();
             _changedSet.Clear();
         }
 
+        // 기능: 조각이 놓인 관심 영역 칸 번호(Cells의 비트 위치)를 낸다.
+        // 입력: shape - 조각 모양(X·Z 건설 칸).
+        // 출력: 관심 칸 번호(0..CellsPerSide²-1).
         // The interest cell (bit index) a piece lies in.
         public int CellOf(in BuildPieceShape shape)
         {
@@ -100,6 +106,9 @@ namespace ProjectH.Client.Game
             Ignored = 0;
         }
 
+        // 기능: 받은 BuildInterest로 관심 창을 바꾸고 새 창 밖의 조각을 모두 지운다.
+        // 입력: cells - 관심 칸 비트.
+        // 출력: 반환값 없음. 지운 조각은 변경 목록에 오르고 그 편집 예측도 사라진다.
         public void ApplyInterest(ulong cells)
         {
             Cells = cells;
@@ -140,6 +149,9 @@ namespace ProjectH.Client.Game
             MarkChanged(piece.Id);
         }
 
+        // 기능: Health 기록으로 조각의 피해를 갱신한다.
+        // 입력: id - 조각 id, damage - 누적 피해, version - 건설 스트림 버전.
+        // 출력: 반환값 없음. 모르는 id면 무시하고 Ignored가 는다. 아는 조각은 변경 목록에 오른다.
         public void ApplyHealth(uint id, ushort damage, uint version)
         {
             if (version > Version) Version = version;
@@ -177,6 +189,9 @@ namespace ProjectH.Client.Game
             return true;
         }
 
+        // 기능: Destroyed 기록으로 조각을 지운다(Grid·편집 예측 포함).
+        // 입력: id - 조각 id, version - 건설 스트림 버전.
+        // 출력: 반환값 없음. 모르는 id면 Ignored가 는다. 지운 조각은 변경 목록에 오른다.
         public void ApplyDestroyed(uint id, uint version)
         {
             if (version > Version) Version = version;
@@ -253,6 +268,9 @@ namespace ProjectH.Client.Game
             return true;
         }
 
+        // 기능: 조각 id를 변경 목록에 올린다(ClearChanged 전까지 한 번만).
+        // 입력: id - 조각 id.
+        // 출력: 반환값 없음.
         private void MarkChanged(uint id)
         {
             if (_changedSet.Add(id)) _changed.Add(id);
@@ -311,6 +329,10 @@ namespace ProjectH.Client.Game
         // 출력: 반환값 없음. 예측 수가 하나 준다.
         private void RemovePredictionAt(int p) => _predictions[p] = _predictions[--_predictionCount];
 
+        // 기능: 후보 자리가 이미 차 있는지 본다(서버 BuildRules.Occupied와 같은 규칙: 같은 슬롯, 또는 바닥과 바로 아래 지붕의 판 공유).
+        //   그 칸 기둥의 조각(보이는 모양 기준)만 본다.
+        // 입력: shape - 후보 모양.
+        // 출력: 차 있으면 true.
         // D1: the slot is taken (or shares the slab of a floor and the roof below it), as the server's BuildRules.Occupied.
         // Only the pieces of that cell's column are looked at (at most 16 levels x 5 slots).
         public bool Occupied(in BuildPieceShape shape)

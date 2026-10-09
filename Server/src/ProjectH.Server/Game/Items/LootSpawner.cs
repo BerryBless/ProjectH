@@ -44,12 +44,19 @@ public sealed class LootSpawner
 
     public int Count => _points.Length;
 
+    // 기능: Loot Point의 World 위치를 돌려준다.
+    // 입력: point - Loot Point 색인(0..Count-1).
+    // 출력: 그 점의 위치.
     public Vector3 Position(int point) => _points[point].Position;
 
+    // 기능: Loot Point의 표에서 아이템 하나를 이 경기의 Random으로 굴린다.
+    // 입력: point - Loot Point 색인.
+    // 출력: 굴린 LootRoll(Random 상태가 앞으로 간다).
     public LootRoll Roll(int point) => _data.Loot.Roll(_tables[point], _rng, _data.Weapons, _data.Items);
 
-    // The point's item left the world (picked up completely). With respawning on, a new roll is due
-    // respawnTicks later (D7); dropped items never come here.
+    // 기능: Loot Point의 아이템이 World를 떠났음을(완전히 주워짐) 기록한다. 재생성이 켜져 있으면 respawnTicks 뒤 새 굴림이 예정된다(D7).
+    // 입력: point - Loot Point 색인, now - 마지막 Tick.
+    // 출력: 반환값 없음. 재생성이 꺼져 있으면(respawnTicks 0) 아무것도 바뀌지 않는다.
     public void OnTaken(int point, uint now)
     {
         if (_respawnTicks == 0) return;
@@ -57,15 +64,22 @@ public sealed class LootSpawner
         _refillAt[point] = now + _respawnTicks;
     }
 
+    // 기능: Loot Point의 재생성 시각이 되었는지 본다.
+    // 입력: point - Loot Point 색인, now - 마지막 Tick.
+    // 출력: 재생성을 기다리고 있고 그 Tick이 지났으면 true.
     public bool IsDue(int point, uint now) => _waiting[point] && now >= _refillAt[point];
 
-    // Phase 5 D3: every match rolls its loot from its own seed (LootSeed + round), with no timers pending.
-    // One Random per match start, never per tick.
+    // 기능: 새 경기의 Seed로 Random을 다시 만들고 대기 중인 재생성을 모두 지운다(Phase 5 D3: LootSeed + round, 경기 시작마다 한 번).
+    // 입력: seed - 이 경기의 Loot Seed.
+    // 출력: 반환값 없음. Random과 대기 상태가 초기화된다.
     public void Restart(int seed)
     {
         _rng = new Random(seed);
         Array.Clear(_waiting);
     }
 
+    // 기능: Loot Point가 다시 채워졌음을 기록한다.
+    // 입력: point - Loot Point 색인.
+    // 출력: 반환값 없음. 그 점의 재생성 대기가 풀린다.
     public void OnRefilled(int point) => _waiting[point] = false;
 }

@@ -30,7 +30,7 @@ namespace ProjectH.Client.Game.Audio
         }
 
         // 기능: 종류·변형의 클립 길이(샘플 수)를 낸다.
-        // 입력: kind - 소리 종류, variant - 변형 번호(0부터, 표의 변형 수로 자른다).
+        // 입력: kind - 소리 종류, variant - 변형 번호(0부터. Render와 달리 표의 변형 수로 자르지 않지만 Varied는 길이를 바꾸지 않으므로 결과는 같다).
         // 출력: 샘플 수(1 이상).
         public static int Length(SoundKind kind, int variant)
         {

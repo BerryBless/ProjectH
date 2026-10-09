@@ -13,6 +13,9 @@ public class ConnectCookieTests
     private static readonly byte[] Secret = new byte[32];
     private static readonly IPEndPoint Alice = new(IPAddress.Parse("10.0.0.1"), 50000);
 
+    // 기능: 테스트 공용 비밀 키 32 B를 정해진 값으로 채운다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. Secret이 채워진다.
     static ConnectCookieTests()
     {
         for (int i = 0; i < Secret.Length; i++) Secret[i] = (byte)(i * 7 + 1);

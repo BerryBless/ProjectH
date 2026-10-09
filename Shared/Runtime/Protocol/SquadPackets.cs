@@ -100,7 +100,7 @@ namespace ProjectH.Shared.Protocol
 
         // 기능: TeamState 본문(PacketId 뒤)을 읽고 서버가 보내지 않는 값을 거절한다.
         // 입력: reader - 본문.
-        // 출력: 성공하면 true와 팀 상태, TeamId 0·인원 0 또는 상한 초과·id 0·모르는 상태나 플래그면 false.
+        // 출력: 성공하면 true와 팀 상태. 짧거나, TeamId 0·인원 0 또는 상한 초과·id 0·모르는 상태나 플래그면 false.
         public static bool TryRead(ref PacketReader reader, out TeamState s)
         {
             s = default;
@@ -255,6 +255,9 @@ namespace ProjectH.Shared.Protocol
             }
         }
 
+        // 기능: i번째 스테이션이 대기 중인지 마스크 비트로 본다.
+        // 입력: index - 0..RebootStations.Count-1.
+        // 출력: 그 비트가 켜져 있으면 true.
         public bool IsCoolingDown(int index) => (CooldownMask & (1 << index)) != 0;
 
         // 기능: RebootStations 패킷을 쓴다.

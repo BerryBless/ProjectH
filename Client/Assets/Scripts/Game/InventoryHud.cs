@@ -36,6 +36,9 @@ namespace ProjectH.Client.Game
         private bool _slotsHidden;   // Phase 19: the weapon slot lines are hidden while seated
         private float _noticeHideTime = -1f;
 
+        // 기능: 인벤토리 HUD 캔버스(무기 슬롯 줄 3개, 소모품 줄, 줍기 안내, 알림, 치료 진행 막대)를 만든다(D15, 숨긴 채).
+        // 입력: 없음.
+        // 출력: 숨겨진 HUD(Dispose가 캔버스를 파괴한다).
         public InventoryHud()
         {
             _root = new GameObject("InventoryHud");
@@ -75,6 +78,9 @@ namespace ProjectH.Client.Game
             _root.SetActive(false);
         }
 
+        // 기능: HUD 전체를 보이거나 숨긴다(같은 값이면 아무것도 하지 않는다).
+        // 입력: visible - 보일지 여부.
+        // 출력: 반환값 없음. 캔버스 Root의 활성 상태가 바뀐다.
         public void SetVisible(bool visible)
         {
             // Unity null: the root can be destroyed on teardown before the owner's OnDestroy runs this.
@@ -94,6 +100,10 @@ namespace ProjectH.Client.Game
             for (int i = 0; i < _slots.Length; i++) _slots[i].gameObject.SetActive(visible);
         }
 
+        // 기능: 무기 슬롯 줄 하나를 InventoryHudText가 문자열을 새로 만들었을 때만 화면에 쓰고 희귀도 색을 입힌다(빈 슬롯은 반투명 흰색).
+        // 입력: slot - 슬롯 번호(0..), selected - 손에 든 슬롯인지, weapon - 무기 이름(null = 빈 슬롯), rarityName - 희귀도 이름, rarity - 희귀도
+        //   번호(RarityColors 색인), ammo - 탄창, reserve - 예비탄.
+        // 출력: 반환값 없음. 슬롯 Text의 문자열과 색이 갱신된다.
         public void SetSlot(int slot, bool selected, string weapon, string rarityName, int rarity, int ammo, int reserve)
         {
             if (_root == null || !_text.SetSlot(slot, selected, weapon, rarityName, ammo, reserve)) return;
@@ -110,13 +120,18 @@ namespace ProjectH.Client.Game
             _consumables.text = _text.Consumables;
         }
 
+        // 기능: "[E] 줍기" 안내 줄을 대상이나 수량이 바뀌었을 때만 화면에 쓴다.
+        // 입력: itemId - 범위 안의 아이템 id(0 = 없음), amount - 묶음 수량, name - 아이템 이름, rarity - 희귀도 이름(null = 묶음 아이템).
+        // 출력: 반환값 없음. 안내 Text가 갱신된다.
         public void SetPrompt(ushort itemId, ushort amount, string name, string rarity)
         {
             if (_root == null || !_text.SetPrompt(itemId, amount, name, rarity)) return;
             _prompt.text = _text.Prompt;
         }
 
-        // progress < 0 hides the bar.
+        // 기능: 치료 진행 막대를 보이거나 숨기고 채움 폭을 맞춘다(D11).
+        // 입력: progress - 진행 비율(0..1), 음수면 막대를 숨긴다.
+        // 출력: 반환값 없음. 막대의 활성 상태와 채움 폭이 바뀐다.
         public void SetUseProgress(float progress)
         {
             if (_root == null) return;
@@ -125,7 +140,9 @@ namespace ProjectH.Client.Game
             if (show) _barFill.sizeDelta = new Vector2(BarWidth * Mathf.Clamp01(progress), 8f);
         }
 
-        // PickupResult feedback. message must be a constant string (no per-call allocation).
+        // 기능: 알림 줄(PickupResult 결과)을 NoticeSeconds 동안 보인다.
+        // 입력: message - 상수 문자열(호출마다 할당하지 않는다), now - 현재 로컬 시간(초).
+        // 출력: 반환값 없음. 알림 문자열과 숨길 시각이 기록된다.
         public void ShowNotice(string message, float now)
         {
             if (_root == null) return;
@@ -133,6 +150,9 @@ namespace ProjectH.Client.Game
             _noticeHideTime = now + NoticeSeconds;
         }
 
+        // 기능: 프레임마다 알림 줄의 표시 시간이 끝났으면 비운다.
+        // 입력: now - 현재 로컬 시간(초).
+        // 출력: 반환값 없음. 시간이 지난 알림이 지워진다.
         public void Tick(float now)
         {
             if (_root == null || _noticeHideTime < 0f || now < _noticeHideTime) return;
@@ -140,11 +160,17 @@ namespace ProjectH.Client.Game
             _notice.text = string.Empty;
         }
 
+        // 기능: HUD 캔버스를 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Root와 그 아래 모든 UI 객체가 파괴된다.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);
         }
 
+        // 기능: 캔버스 Root 아래에 평문 UGUI Text 하나를 만든다(Raycast 대상 아님, 가로 Overflow).
+        // 입력: name - 객체 이름, font - 사용할 폰트, anchor - 앵커이자 피벗(0..1), offset - 앵커 기준 위치, alignment - 글자 정렬.
+        // 출력: 빈 문자열로 초기화된 Text.
         private Text CreateText(string name, Font font, Vector2 anchor, Vector2 offset, TextAnchor alignment)
         {
             var go = new GameObject(name, typeof(RectTransform));

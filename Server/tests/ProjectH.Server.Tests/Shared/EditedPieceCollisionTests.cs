@@ -15,6 +15,9 @@ public class EditedPieceCollisionTests
     private const int Window = 1 << 4;
     private const int HalfWall = 0b111_000_000;
 
+    // 기능: 격자 좌표·회전을 정규화하고 편집 상태를 입힌 테스트용 조각 모양을 만든다. 정규화나 편집 상태가 유효하지 않으면 Assert 실패.
+    // 입력: type - 조각 종류, x/y/z - 격자 좌표(셀·층), rotation - 회전(기본 0), edit - 편집 상태 비트(기본 0).
+    // 출력: 정규화된 좌표·회전에 edit를 적용한 BuildPieceShape.
     private static BuildPieceShape Piece(BuildPieceType type, int x, int y, int z, int rotation = 0, int edit = 0)
     {
         Assert.True(BuildGrid.TryNormalize(type, x, y, z, rotation, out BuildPieceShape shape));
@@ -22,6 +25,9 @@ public class EditedPieceCollisionTests
         return shape.WithEdit(edit, shape.Rotation);
     }
 
+    // 기능: 조각 모양들을 ID 1부터 순서대로 넣은 테스트용 PieceGrid를 만든다. 추가에 실패하면 Assert 실패.
+    // 입력: shapes - 넣을 조각 모양 목록.
+    // 출력: 용량 256에 shapes가 ID 1..N으로 등록된 PieceGrid.
     private static PieceGrid Grid(params BuildPieceShape[] shapes)
     {
         var grid = new PieceGrid(256);
@@ -157,6 +163,9 @@ public class EditedPieceCollisionTests
         Assert.True(maxY > 3.5f, $"highest {maxY}");
     }
 
+    // 기능: 건설 격자 셀의 최소 X 좌표(월드)를 구한다.
+    // 입력: x - 격자 셀 X 번호.
+    // 출력: 해당 셀의 서쪽 경계 X 좌표.
     private static float X0(int x) => BuildGrid.CellMinX(x);
 
     // Random inputs in an edited one-cell box (a door, a window, a half wall, a plain wall, a floor with a quadrant open and
@@ -199,5 +208,8 @@ public class EditedPieceCollisionTests
         }
     }
 
+    // 기능: 벽의 가운데 세로 열(타일 1, 4, 7)을 모두 뚫은 편집 상태 비트를 만든다.
+    // 입력: 없음.
+    // 출력: 가운데 열 세 타일이 뚫린 벽 편집 비트.
     private static int TallOpening() => (1 << 1) | (1 << 4) | (1 << 7);
 }

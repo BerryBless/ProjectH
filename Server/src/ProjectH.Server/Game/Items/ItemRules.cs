@@ -94,13 +94,19 @@ public static class ItemRules
         }
     }
 
-    // Offset on the ground plane for a yaw in degrees (yaw 0 = +Z, 90 = +X, the camera convention).
+    // 기능: 지면 위에서 yaw 방향으로 distance만큼의 변위를 만든다(yaw 0 = +Z, 90 = +X, Camera 규약).
+    // 입력: yawDegrees - 수평 각도, distance - 거리.
+    // 출력: Y가 0인 변위 벡터.
     public static Vector3 Offset(float yawDegrees, float distance)
     {
         float radians = yawDegrees * (MathF.PI / 180f);
         return new Vector3(MathF.Sin(radians) * distance, 0f, MathF.Cos(radians) * distance);
     }
 
+    // 기능: 떨어뜨린 아이템이 놓일 자리를 정한다: 발 + offset, 무릎 높이 Ray가 상자에 막히거나 그 점이 상자 안이면 발 아래. 높이는
+    //   그 자리의 땅(지형, 발 이하의 가장 높은 상자 윗면, 걸어 오를 수 있는 경사면).
+    // 입력: feet - 발 위치, offset - 놓을 변위, world - 맵 상자들, terrain - 지형 높이, slopes - 발 주변 경사면(Phase 13 B10).
+    // 출력: 아이템 위치(땅 위).
     // Where a dropped item lies: feet + offset, unless a box is in the way (a wall, even a thin one, or a
     // box the offset would end inside), then under the feet. Always on the ground there: the terrain, or the
     // highest box top at or below the feet (Phase 6 D11). Items do not fall later, so a drop in mid-air or over a
@@ -129,8 +135,9 @@ public static class ItemRules
         return p;
     }
 
-    // Strictly within the footprint, from the bottom face (a floor box has Min.Y 0, where the floor ground
-    // lies) up to but not including the top face (lying on a box top is fine).
+    // 기능: 점이 어떤 상자 안에 있는지 본다(바닥면 포함, 윗면 제외: 상자 위에 놓이는 것은 괜찮다; 옆면은 열린 구간).
+    // 입력: p - 검사할 점, world - 맵 상자들.
+    // 출력: 상자 안이면 true.
     private static bool InsideAnyBox(Vector3 p, ReadOnlySpan<Box> world)
     {
         for (int i = 0; i < world.Length; i++)
@@ -142,8 +149,9 @@ public static class ItemRules
         return false;
     }
 
-    // The terrain height there, or a higher box top at or below the feet, or a higher slope surface a walk from the feet
-    // could climb onto.
+    // 기능: 그 자리의 땅 높이를 구한다: 지형, 그보다 높고 발 이하(GroundProbe 여유)인 상자 윗면, 발에서 걸어 오를 수 있는 경사면 중 가장 높은 것.
+    // 입력: p - 자리(X·Z), feet - 발 위치, world - 맵 상자들, terrain - 지형 높이, slopes - 경사면들.
+    // 출력: 땅 높이.
     private static float GroundHeight(Vector3 p, Vector3 feet, ReadOnlySpan<Box> world, HeightField terrain, ReadOnlySpan<Slope> slopes)
     {
         float x = p.X;

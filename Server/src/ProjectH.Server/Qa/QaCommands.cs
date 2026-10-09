@@ -80,7 +80,9 @@ internal static class QaCommands
         }
     }
 
-    // A connected player first; otherwise a graced one with that DevPlayerId (D7: the id survives a reconnect).
+    // 기능: DevPlayerId로 플레이어를 찾는다(접속 중인 사람을 먼저, 없으면 유예 중인 사람. D7: id는 재접속에도 유지된다).
+    // 입력: m - 경기, devPlayerId - 찾을 이름.
+    // 출력: 찾은 PlayerEntity, 없으면 null.
     public static PlayerEntity? FindPlayer(Match m, string devPlayerId)
     {
         PlayerEntity? graced = null;
@@ -94,9 +96,18 @@ internal static class QaCommands
         return graced;
     }
 
+    // 기능: 인자 오류를 400 응답으로 만든다.
+    // 입력: a - Error가 채워진 인자.
+    // 출력: 400 QaResult.
     private static QaResult Bad(QaArgs a) => QaResult.Error(400, a.Error!);
+    // 기능: 살아 있지 않은 대상에 대한 409 응답을 만든다.
+    // 입력: p - 대상 플레이어.
+    // 출력: 409 QaResult.
     private static QaResult NotAlive(PlayerEntity p) => QaResult.Error(409, $"Player '{p.DevPlayerId}' is not alive.");
 
+    // 기능: mark: 시나리오 표시 문구를 서버 로그에 남긴다(run id와 Tick과 함께).
+    // 입력: t - QA Tick 문맥, a - 인자(text, MaxMarkLength까지), runId - 실행 id, logger - 로그.
+    // 출력: Ok면 { tick }.
     private static QaResult Mark(QaTick t, QaArgs a, string? runId, ILogger logger)
     {
         string text = a.RequiredText("text", MaxMarkLength);
@@ -107,7 +118,7 @@ internal static class QaCommands
 
     // 기능: 플레이어를 Tick 사이에 옮긴다(맵 상자·닫힌 문과 겹치면 거절). Phase 14: 기절한 사람은 기절 모드 그대로. Phase 19: 탄 사람은 먼저 내린다.
     // 입력: m - 경기, p - 대상, a - 인자(x, z, y·yaw 선택).
-    // 출력: Ok면 새 위치.
+    // 출력: Ok면 새 위치, 죽었으면·맵 상자나 닫힌 문과 겹치면 409.
     // A teleport between ticks: the next Step starts from here, so the movement self-check (which compares one Step's
     // start and end) never sees the jump; the lag compensation history starts over here (a rewind must not reach the old
     // place), and the move state is a rested Ground one, as Respawn makes it. A client's next input sets the yaw again.
@@ -137,6 +148,9 @@ internal static class QaCommands
         return QaResult.Ok(new { x = position.X, y = position.Y, z = position.Z, yaw = fyaw });
     }
 
+    // 기능: setHealth: 체력을 바로 정한다(1~MaxHealth).
+    // 입력: p - 대상, a - 인자(value).
+    // 출력: Ok면 { health }, 죽었으면 409.
     private static QaResult SetHealth(PlayerEntity p, QaArgs a)
     {
         long value = a.RequiredInteger("value", 1, CombatRules.MaxHealth);
@@ -146,6 +160,9 @@ internal static class QaCommands
         return QaResult.Ok(new { health = p.Health });
     }
 
+    // 기능: setShield: 실드를 바로 정한다(0~MaxShield).
+    // 입력: p - 대상, a - 인자(value).
+    // 출력: Ok면 { shield }, 죽었으면 409.
     private static QaResult SetShield(PlayerEntity p, QaArgs a)
     {
         long value = a.RequiredInteger("value", 0, CombatRules.MaxShield);
@@ -155,7 +172,9 @@ internal static class QaCommands
         return QaResult.Ok(new { shield = p.Shield });
     }
 
-    // A weapon by id or name (weapons.json), or the error naming the choices.
+    // 기능: 인자의 무기 id 또는 이름(weapons.json)으로 무기 정의를 찾는다.
+    // 입력: weapons - 무기 카탈로그, a - 인자, name - 인자 이름, required - 없으면 오류로 칠지.
+    // 출력: 찾은 정의, 없거나 모르는 무기면 null(모르는 무기는 선택지를 담은 Error).
     private static WeaponDefinition? FindWeapon(WeaponCatalog weapons, QaArgs a, string name, bool required)
     {
         string? text = required ? a.RequiredText(name) : a.Text(name);
@@ -172,7 +191,9 @@ internal static class QaCommands
         return null;
     }
 
-    // A rarity by index or name (items.json); 0 when missing.
+    // 기능: "rarity" 인자를 번호 또는 이름(items.json)으로 읽는다.
+    // 입력: items - 아이템 카탈로그, a - 인자.
+    // 출력: 등급 번호, 없으면 0, 모르는 값이면 0과 Error.
     private static byte Rarity(ItemCatalog items, QaArgs a)
     {
         string? text = a.Text("rarity");
@@ -189,6 +210,9 @@ internal static class QaCommands
         return 0;
     }
 
+    // 기능: giveWeapon: 무기를 탄창 가득 채워 칸에 넣는다(칸을 안 주면 빈 칸, 없으면 지금 칸). 손에 든 무기를 바꾸면 재장전을 취소한다.
+    // 입력: t - QA Tick 문맥, p - 대상, a - 인자(weapon, rarity·slot·select(기본 true) 선택).
+    // 출력: Ok면 { slot, weaponId, name, rarity, magAmmo }, 죽었으면 409.
     private static QaResult GiveWeapon(QaTick t, PlayerEntity p, QaArgs a)
     {
         GameData data = t.Loop.Data;
@@ -218,6 +242,9 @@ internal static class QaCommands
         return QaResult.Ok(new { slot, weaponId = (int)weapon.Id, name = weapon.Name, rarity = (int)rarity, magAmmo = (int)weapon.MagazineSize });
     }
 
+    // 기능: giveAmmo: 예비탄을 더한다(종류의 상한까지).
+    // 입력: t - QA Tick 문맥, p - 대상, a - 인자(type, amount).
+    // 출력: Ok면 { ammo } 새 예비탄 수, 죽었으면 409.
     private static QaResult GiveAmmo(QaTick t, PlayerEntity p, QaArgs a)
     {
         int type = a.RequiredChoice("type", AmmoNames);
@@ -272,6 +299,9 @@ internal static class QaCommands
         return QaResult.Ok(new { count = value });
     }
 
+    // 기능: giveResource: 건설 자원을 더한다(MaxResource까지).
+    // 입력: m - 경기, p - 대상, a - 인자(material, amount).
+    // 출력: Ok면 { amount } 새 자원 수, 죽었으면 409.
     private static QaResult GiveResource(Match m, PlayerEntity p, QaArgs a)
     {
         int material = a.RequiredChoice("material", MaterialNames);
@@ -359,12 +389,18 @@ internal static class QaCommands
         return QaResult.Ok(new { container = id, state = ContainerStates[state], loot = m.ContainerLoot((int)id).Length });
     }
 
+    // 기능: killPlayer: Match의 죽음 경로로 플레이어를 바로 탈락시킨다.
+    // 입력: m - 경기, p - 대상.
+    // 출력: Ok면 { placement }, 죽었으면 409.
     private static QaResult KillPlayer(Match m, PlayerEntity p)
     {
         if (!m.KillPlayer(p)) return NotAlive(p);
         return QaResult.Ok(new { placement = (int)p.Placement });
     }
 
+    // 기능: forceMatchState: start면 카운트다운을 건너뛰어 다음 Tick에 경기를 시작하고, finish면 경기를 바로 끝낸다.
+    // 입력: m - 경기, a - 인자(state = start|finish).
+    // 출력: Ok면 { state, startsAtTick(start만) }, 이미 진행 중·시작 불가·진행 중 아님이면 409.
     private static QaResult ForceMatchState(Match m, QaArgs a)
     {
         int state = a.RequiredChoice("state", "start", "finish");
@@ -381,6 +417,9 @@ internal static class QaCommands
         return QaResult.Ok(new { state = m.Flow.State.ToString() });
     }
 
+    // 기능: setZone: 자기장을 다음 단계로, 또는 지정한 단계까지 앞당긴다(뒤로는 못 간다).
+    // 입력: m - 경기, a - 인자(advance = true 또는 phase = n).
+    // 출력: Ok면 { phase, shrinkStartTick, shrinkEndTick }, 경기 밖·뒤로 가기·마지막 단계면 409.
     private static QaResult SetZone(Match m, QaArgs a)
     {
         bool advance = a.Bool("advance") ?? false;
@@ -465,6 +504,9 @@ internal static class QaCommands
         return QaResult.Ok(new { itemId = (int)itemId });
     }
 
+    // 기능: spawnBuildPiece: 플레이어 없이 조각을 놓는다(Match.PlacePiece, 지지·겹침 규칙은 그대로). 칸(cellX, level, cellZ) 또는 좌표(x, z, y 선택)로 자리를 준다.
+    // 입력: m - 경기, a - 인자(piece, material, rotation 선택, 칸 또는 좌표).
+    // 출력: Ok면 { pieceId, cellX, level, cellZ, rotation }, 격자에 안 맞으면 400, 거절되면 409.
     private static QaResult SpawnBuildPiece(Match m, QaArgs a)
     {
         int piece = a.RequiredChoice("piece", PieceNames);
@@ -543,6 +585,9 @@ internal static class QaCommands
         return QaResult.Ok(new { health = v.Health, state = v.State.ToString() });
     }
 
+    // 기능: damageBuild: 조각에 공격자 없는 피해를 준다(Match.DamagePieceById, 파괴·붕괴·복제는 평소대로).
+    // 입력: m - 경기, a - 인자(pieceId, amount).
+    // 출력: Ok면 { destroyed, health(다음 Tick 기준), standing }, 없는 조각이면 404.
     private static QaResult DamageBuild(Match m, QaArgs a)
     {
         long id = a.RequiredInteger("pieceId", 1, uint.MaxValue);

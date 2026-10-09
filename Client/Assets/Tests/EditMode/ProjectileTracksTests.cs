@@ -11,10 +11,16 @@ namespace ProjectH.Client.Tests
         private const int SimHz = 30;
         private const float Gravity = 9.81f;
 
+        // 기능: 소유자 7의 시험용 투사체 생성 이벤트를 만든다.
+        // 입력: id - 투사체 ID, position - 시작 위치, velocity - 시작 속도, tick - 시작 Tick, kind - 투사체 종류.
+        // 출력: ProjectileSpawned.
         private static ProjectileSpawned Spawned(ushort id, Vec3 position, Vec3 velocity, uint tick,
             ProjectileKind kind = ProjectileKind.Grenade) =>
             new ProjectileSpawned { Id = id, Kind = kind, OwnerId = 7, Position = position, Velocity = velocity, StartTick = tick };
 
+        // 기능: 두 벡터의 세 성분이 허용 오차 안에서 같은지 단언한다.
+        // 입력: expected - 기대 벡터, actual - 실제 벡터, tolerance - 성분별 허용 오차.
+        // 출력: 반환값 없음. 어느 성분이든 벗어나면 테스트가 실패한다.
         private static void AssertNear(Vec3 expected, Vec3 actual, float tolerance = 1e-4f)
         {
             Assert.AreEqual(expected.X, actual.X, tolerance);

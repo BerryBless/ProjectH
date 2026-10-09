@@ -8,6 +8,9 @@ namespace ProjectH.Client.Tests
     // Phase 13 D10: the drawn piece follows the server's construction and health rule (BuildWorld.Progress / Health).
     public class BuildPieceLookTests
     {
+        // 기능: 나무 재질(index 0)의 최대 체력 150, 초기 체력 30, 건설 60 Tick으로 채운 시험용 건설 카탈로그를 만든다.
+        // 입력: 없음.
+        // 출력: 시험용 BuildCatalogData.
         private static BuildCatalogData Catalog()
         {
             var c = new BuildCatalogData();
@@ -17,6 +20,9 @@ namespace ProjectH.Client.Tests
             return c;
         }
 
+        // 기능: Tick 100에 지은 나무 벽 조각 레코드를 만든다.
+        // 입력: damage - 누적 피해량.
+        // 출력: Id 1인 BuildPieceRecord.
         private static BuildPieceRecord Piece(ushort damage = 0) => new BuildPieceRecord
         {
             Id = 1,

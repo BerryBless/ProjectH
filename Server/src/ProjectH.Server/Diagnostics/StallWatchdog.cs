@@ -37,6 +37,9 @@ public sealed class StallWatchdog : IDisposable
     private bool _errorLogged;
     private long _errorLoggedAt;
 
+    // 기능: Game Loop 정지 감시기를 만든다(Timer는 Start에서 시작).
+    // 입력: lastTickTimestamp - 마지막 Tick이 끝난 TimeProvider Timestamp를 읽는 함수, time - 시계, health - 정지·치명 정지·콜백 오류를 셀 합계, logger - 로그, threshold - 정지로 보는 무Tick 시간(null이면 2초), fatalAfter - 이 시간을 넘긴 정지면 onFatalStall을 부른다(Zero면 끔), onFatalStall - 치명 정지 때 한 번 부를 콜백.
+    // 출력: 아직 감시를 시작하지 않은 StallWatchdog.
     public StallWatchdog(Func<long> lastTickTimestamp, TimeProvider time, HealthCounters health, ILogger logger, TimeSpan? threshold = null,
         TimeSpan fatalAfter = default, Action? onFatalStall = null)
     {
@@ -49,8 +52,14 @@ public sealed class StallWatchdog : IDisposable
         _onFatalStall = onFatalStall;
     }
 
+    // 기능: 1초마다 Check를 부르는 Timer를 시작한다. 이미 시작했으면 아무것도 하지 않는다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. Timer 스레드에서 Check가 주기적으로 돈다.
     public void Start() => _timer ??= _time.CreateTimer(_ => Check(), null, Period, Period);
 
+    // 기능: 정지 검사 한 번을 실행한다. 다른 검사가 돌고 있으면 바로 돌아가고, 예외는 OnError로 삼킨다. 테스트가 수동 시계로 직접 부를 수 있게 public이다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 정지 상태·합계·로그가 갱신되고, 치명 정지면 onFatalStall이 불린다.
     // One check; public so tests can drive it with a manual clock.
     public void Check()
     {
@@ -70,6 +79,9 @@ public sealed class StallWatchdog : IDisposable
         }
     }
 
+    // 기능: 마지막 Tick 이후 시간으로 정지 시작·회복을 판정해 로그와 합계를 남기고, 이전 검사에서 본 정지가 fatalAfter를 넘겼으면 한 번만 치명 정지 처리를 한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. _stalled·_stalledFrom·_fatalDone이 바뀌고 필요하면 onFatalStall이 불린다.
     private void CheckOnce()
     {
         long last = _lastTickTimestamp();
@@ -100,6 +112,9 @@ public sealed class StallWatchdog : IDisposable
         }
     }
 
+    // 기능: 검사 중 잡은 예외를 콜백 오류로 세고 ErrorLogInterval(10초)에 한 번만 Error 로그를 남긴다. 절대 던지지 않는다.
+    // 입력: ex - 잡은 예외.
+    // 출력: 반환값 없음.
     // Never throws (the log call is guarded too).
     private void OnError(Exception ex)
     {
@@ -119,5 +134,8 @@ public sealed class StallWatchdog : IDisposable
         }
     }
 
+    // 기능: 감시 Timer를 멈추고 해제한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 더는 Check가 예약되지 않는다.
     public void Dispose() => _timer?.Dispose();
 }

@@ -11,6 +11,9 @@ namespace ProjectH.Server;
 // (server review M1).
 internal static class ServerHost
 {
+    // 기능: 서버 호스트 Builder를 만든다: 실행 폴더를 Content Root로, Console Logger는 가득 차면 버리게, Server·Persistence 옵션 바인딩, 경기 기록 큐·Writer, 통계 조회 큐·서비스, GameServerService 등록(종료 역순이 되게 Writer·통계 서비스를 먼저).
+    // 입력: args - 명령줄 인자(설정 덮어쓰기).
+    // 출력: 아직 Build하지 않은 HostApplicationBuilder.
     public static HostApplicationBuilder CreateBuilder(string[] args)
     {
         // Content root = the build output folder, so appsettings.json is found no matter where

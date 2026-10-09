@@ -95,6 +95,9 @@ public sealed class RunSession
     private UiBatch? _batch;
     private readonly List<UiBatchRow> _batchRows = new();
 
+    // 기능: UI 세션을 idle 상태로 만든다.
+    // 입력: host - UI 설정, hub - 로그·이벤트 허브, registry - 액션 레지스트리, markers - 마커 저장소.
+    // 출력: idle 상태의 RunSession.
     public RunSession(UiHostOptions host, UiHub hub, ActionRegistry registry, MarkerStore markers)
     {
         _host = host;
@@ -113,6 +116,9 @@ public sealed class RunSession
         get { lock (_lock) return _last; }
     }
 
+    // 기능: 브라우저용 run 상태 DTO를 잠금 아래에서 복사한다.
+    // 입력: 없음.
+    // 출력: 현재 UiRunState(단계 배열 복사본 포함).
     public UiRunState State()
     {
         lock (_lock)
@@ -122,6 +128,9 @@ public sealed class RunSession
         }
     }
 
+    // 기능: 요청을 검사(단계 index, seed sweep, 배치 옵션, 중복 run)하고 세션을 "starting"으로 바꾼 뒤 RunGate를 설정하고 run Task를 띄운다.
+    // 입력: request - 실행 요청, scenario - 검증된 시나리오, warnings - 검증 경고, unsaved - 저장본과 다른 텍스트면 true.
+    // 출력: 시작했으면 null, 아니면 거절 사유 문자열.
     // Null when started, else why not.
     public string? Start(UiRunRequest request, ScenarioDefinition scenario, IReadOnlyList<ValidationIssue> warnings, bool unsaved)
     {
@@ -196,6 +205,9 @@ public sealed class RunSession
         if (request.Mode == "single") gate.Pause();
         gate.PausedChanged = paused => OnPausedChanged(gate, paused);
 
+        // 기능: 계획된 run 하나의 QaRunOptions를 만든다(UI 설정·gate·hub·콜백 연결).
+        // 입력: planned - 배치 계획의 run 한 건.
+        // 출력: 그 run의 QaRunOptions.
         QaRunOptions Options(PlannedRun planned) => new()
         {
             RepoRoot = _host.RepoRoot,
@@ -230,6 +242,9 @@ public sealed class RunSession
         return null;
     }
 
+    // 기능: run Task 본체: 계획된 run들을 차례로 orchestrator로 실행해 결과를 세션 상태·배치 행에 반영하고, 배치 요약을 쓰며, 끝나면 "finished"로 정리한다.
+    // 입력: scenario - 시나리오, warnings - 검증 경고, plan - 계획된 run 열거, options - run별 옵션 생성기, stopOnFail - 첫 실패에서 멈출지, file - 보고용 시나리오 파일 이름, token - 취소 토큰.
+    // 출력: 반환값 없음. 세션 상태가 갱신되고 _done이 완료된다.
     private async Task RunAsync(ScenarioDefinition scenario, IReadOnlyList<ValidationIssue> warnings, IEnumerable<PlannedRun> plan,
         Func<PlannedRun, QaRunOptions> options, bool stopOnFail, string file, CancellationToken token)
     {
@@ -344,6 +359,9 @@ public sealed class RunSession
         }
     }
 
+    // 기능: 배치의 다음 run 전에 타임라인(단계·run id·상태·보고서 URL·오류)을 초기화하고 현재 run 정보를 적는다.
+    // 입력: scenario - 시나리오, planned - 다음 run.
+    // 출력: 반환값 없음. _steps가 Pending으로 돌아간다.
     // Between two runs of a batch: the timeline starts over for the next run (the previous one is in the batch rows).
     private void BeginNextRun(ScenarioDefinition scenario, PlannedRun planned)
     {
@@ -359,6 +377,9 @@ public sealed class RunSession
         SetCurrent(planned);
     }
 
+    // 기능: 현재 run의 seed와 배치의 현재 번호·파라미터 설명을 기록한다.
+    // 입력: planned - 현재 run.
+    // 출력: 반환값 없음. _seed와 _batch의 Current·CurrentParameters가 바뀐다.
     private void SetCurrent(PlannedRun planned)
     {
         lock (_lock)
@@ -368,19 +389,40 @@ public sealed class RunSession
         }
     }
 
+    // 기능: 활성 run의 gate에 일시정지를 지시한다(활성 run이 없으면 무시).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void Pause() => GateOrNull()?.Pause();
 
+    // 기능: 활성 run의 gate에 재개를 지시한다(활성 run이 없으면 무시).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void Resume() => GateOrNull()?.Resume();
 
+    // 기능: 활성 run의 gate에 한 단계만 실행하게 지시한다(활성 run이 없으면 무시).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void StepOnce() => GateOrNull()?.StepOnce();
 
+    // 기능: 실패로 멈춘 단계를 다시 실행하게 한다.
+    // 입력: 없음.
+    // 출력: 재시도를 걸었으면 true, 멈춘 단계가 없거나 활성 run이 없으면 false.
     public bool Retry() => GateOrNull()?.Retry() ?? false;
 
+    // 기능: 기다리는 manual check에 사람의 답을 넘긴다.
+    // 입력: passed - 통과 여부, note - 메모.
+    // 출력: 답했으면 true, 기다리는 check나 활성 run이 없으면 false.
     // D30: the person's answer to the manual check the run waits for. False when none is waiting.
     public bool AnswerManual(bool passed, string? note) => GateOrNull()?.AnswerManual(passed, note) ?? false;
 
+    // 기능: 활성 run의 중단점을 바꾼다(활성 run이 없으면 무시).
+    // 입력: indices - 중단점 단계 index.
+    // 출력: 반환값 없음.
     public void SetBreakpoints(int[] indices) => GateOrNull()?.SetBreakpoints(indices);
 
+    // 기능: 활성 run의 토큰을 취소한다(정리는 run Task가 한다).
+    // 입력: 없음.
+    // 출력: 반환값 없음. 활성 run이 없거나 이미 끝났으면 아무 일도 없다.
     // Request §57-58: cancel at once; cleanup (actors, launched server, report) runs in the run task.
     public void Stop()
     {
@@ -396,6 +438,9 @@ public sealed class RunSession
         }
     }
 
+    // 기능: 새 run을 막고 활성 run을 취소한 뒤 정리 완료를 StopWait까지 기다린다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. _closing이 true가 된다.
     // Shutdown of the UI: stop the run and wait (bounded) for its cleanup, so a launched server is not left behind.
     public async Task StopAndWaitAsync()
     {
@@ -411,6 +456,9 @@ public sealed class RunSession
 
     // ---- inspector (D22): only the published actor snapshot and the session's own QA client ----
 
+    // 기능: 라이브 run의 액터 상태를 UI 행으로 복사한다.
+    // 입력: 없음.
+    // 출력: 액터 행 목록(MaxActors까지). 라이브 run이 없으면 null.
     public IReadOnlyList<UiActorRow>? Actors()
     {
         LiveRun? live;
@@ -429,6 +477,9 @@ public sealed class RunSession
     private const int MaxInspectCache = 128;
     private readonly Dictionary<string, (long At, object? Value)> _inspectCache = new(StringComparer.Ordinal);
 
+    // 기능: stress run 중에는 key별로 StressInspectMs 동안 캐시한 값을 돌려주고, 아니면 매번 읽는다.
+    // 입력: key - 캐시 키, read - 실제 조회.
+    // 출력: 조회(또는 캐시) 결과.
     private async Task<T?> ThrottledAsync<T>(string key, Func<Task<T?>> read)
     {
         bool stress;
@@ -449,8 +500,14 @@ public sealed class RunSession
         return value;
     }
 
+    // 기능: 액터의 게시 상태와 서버 플레이어 상태를 (throttle해서) 읽는다.
+    // 입력: alias - 액터 별칭, token - 취소 토큰.
+    // 출력: {alias, actor, player} 객체. 라이브 run이나 액터가 없으면 null.
     public Task<object?> ActorAsync(string alias, CancellationToken token) => ThrottledAsync("actor:" + alias, () => ReadActorAsync(alias, token));
 
+    // 기능: 라이브 run에서 alias의 액터를 찾아 ActorState와 서버 /qa/players/{id}를 읽는다.
+    // 입력: alias - 액터 별칭, token - 취소 토큰.
+    // 출력: {alias, actor, player} 객체. 라이브 run·client·액터가 없으면 null.
     private async Task<object?> ReadActorAsync(string alias, CancellationToken token)
     {
         LiveRun? live;
@@ -467,14 +524,23 @@ public sealed class RunSession
         return new { alias, actor = actor.State, player };
     }
 
+    // 기능: 서버 /qa/match를 (throttle해서) 읽는다.
+    // 입력: token - 취소 토큰.
+    // 출력: Match JSON. inspector client가 없으면 null.
     public Task<JsonElement?> MatchAsync(CancellationToken token) => ThrottledAsync<JsonElement?>("match", async () =>
     {
         IQaServerClient? client = Inspector();
         return client == null ? null : await client.GetMatchAsync(token).ConfigureAwait(false);
     });
 
+    // 기능: 서버 metrics·health를 (throttle해서) 읽는다.
+    // 입력: token - 취소 토큰.
+    // 출력: {metrics, health} 객체. inspector client가 없으면 null.
     public Task<object?> ServerAsync(CancellationToken token) => ThrottledAsync("server", () => ReadServerAsync(token));
 
+    // 기능: 서버 /qa/metrics와 /qa/health를 읽는다.
+    // 입력: token - 취소 토큰.
+    // 출력: {metrics, health} 객체. inspector client가 없으면 null.
     private async Task<object?> ReadServerAsync(CancellationToken token)
     {
         IQaServerClient? client = Inspector();
@@ -484,16 +550,25 @@ public sealed class RunSession
         return new { metrics, health };
     }
 
+    // 기능: 잠금 아래에서 inspector client를 읽는다.
+    // 입력: 없음.
+    // 출력: inspector client. 라이브 run이 없으면 null.
     private IQaServerClient? Inspector()
     {
         lock (_lock) return _inspector;
     }
 
+    // 기능: 잠금 아래에서 활성 run의 gate를 읽는다.
+    // 입력: 없음.
+    // 출력: RunGate. 활성 run이 없으면 null.
     private RunGate? GateOrNull()
     {
         lock (_lock) return _gate;
     }
 
+    // 기능: run이 라이브가 되거나 끝날 때 inspector용 QA client를 새로 만들거나 버리고(이전 것은 해제), 캐시를 비운 뒤 상태를 게시한다.
+    // 입력: live - 라이브 run 정보(끝나면 null).
+    // 출력: 반환값 없음. _inspector·_live·_runId가 바뀌고 state 이벤트가 나간다.
     // The inspector gets its own client for the run's QA URL: the run's client is disposed by the run's cleanup, and
     // inspector polling stays independent of it. Replaced/disposed here, outside the lock.
     private void SetLive(LiveRun? live)
@@ -512,6 +587,9 @@ public sealed class RunSession
         PublishState();
     }
 
+    // 기능: 단계 시작·완료 콜백: 단계 결과를 복사해 저장하고 step 이벤트를 게시한다.
+    // 입력: r - 단계 결과.
+    // 출력: 반환값 없음.
     private void StepChanged(StepResult r)
     {
         UiStep step = Copy(r);
@@ -519,15 +597,24 @@ public sealed class RunSession
         _hub.Publish("step", step);
     }
 
+    // 기능: 단계 DTO를 index 자리에 저장한다.
+    // 입력: step - 단계 DTO.
+    // 출력: 반환값 없음. index가 범위 안이면 _steps가 갱신된다.
     // Caller holds _lock.
     private void Store(UiStep step)
     {
         if (step.Index >= 0 && step.Index < _steps.Length) _steps[step.Index] = step;
     }
 
+    // 기능: 라이브 StepResult를 불변 UiStep으로 복사한다.
+    // 입력: r - 단계 결과.
+    // 출력: UiStep.
     private static UiStep Copy(StepResult r) => new(r.Index, r.Id, r.Title, r.Action, r.Actor, r.Phase, r.Status.ToString(),
         r.DurationMs, r.Message, r.Expected, r.Actual, r.Attempts);
 
+    // 기능: gate의 일시정지 변화를 세션 상태(paused/running, 대기 단계, 실패 대기, manual check)에 반영하고 게시한다.
+    // 입력: gate - 알린 gate, paused - 멈췄으면 true.
+    // 출력: 반환값 없음. running/paused가 아니면 무시된다.
     private void OnPausedChanged(RunGate gate, bool paused)
     {
         // Gate first (its own lock), then the session lock: never both at once.
@@ -545,5 +632,8 @@ public sealed class RunSession
         PublishState();
     }
 
+    // 기능: 현재 상태를 state 이벤트로 게시한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     private void PublishState() => _hub.Publish("state", State());
 }

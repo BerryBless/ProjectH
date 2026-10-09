@@ -111,6 +111,9 @@ public class LootPointsTests
         }
     }
 
+    // 기능: 점이 윗면에 올라서 있는 맵 상자(발자국이 점을 포함하고 윗면 높이가 점의 Y와 같은 상자)를 찾는다.
+    // 입력: pos - 검사할 Loot 지점 위치.
+    // 출력: 해당 상자의 번호, 없으면 -1.
     // Index of the box whose top the point stands on (footprint contains it, top at its height), or -1.
     private static int BoxUnder(Vector3 pos)
     {
@@ -123,6 +126,9 @@ public class LootPointsTests
         return -1;
     }
 
+    // 기능: 맵 상자의 윗면에 점프로 올라갈 수 있는지 재귀로 검사한다 (상자 높이가 MaxStep 이하이고 받침이 지형이거나 도달 가능한 다른 상자).
+    // 입력: index - 검사할 맵 상자 번호.
+    // 출력: 윗면에 도달할 수 있으면 true, 너무 높거나 받침이 없으면 false.
     // A box top is reachable if its height above what it stands on is at most one jump, and what it stands on (the
     // terrain under it, or another box top) is reachable.
     private static bool IsReachable(int index)

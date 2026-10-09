@@ -146,7 +146,7 @@ namespace ProjectH.Shared.Simulation
 
         // 기능: 칸 하나가 차지하는 공간(상자)을 낸다. Client 오버레이와 서버의 "새로 막히는 칸" 검사가 쓴다.
         //   Wall: 그 칸의 벽 두께 전체. Floor: 그 사분면의 판. Roof·Ramp: 조각 범위(BoundsOf)의 그 사분면 기둥.
-        // 입력: shape - 조각 모양, tile - 칸 번호(0..TileCount-1, 범위 밖은 잘라 쓴다).
+        // 입력: shape - 조각 모양, tile - 칸 번호(0..TileCount-1. 범위 밖이면 Wall은 끝 칸으로 자르고, 나머지는 하위 2비트만 쓴다).
         // 출력: 칸의 상자.
         public static Box TileBox(in BuildPieceShape shape, int tile)
         {
@@ -231,6 +231,9 @@ namespace ProjectH.Shared.Simulation
             return reached == holes;
         }
 
+        // 기능: 칸 번호를 0..count-1 범위로 자른다.
+        // 입력: value - 자를 번호, count - 칸 수.
+        // 출력: 범위 안으로 자른 번호.
         private static int ClampIndex(int value, int count) => value < 0 ? 0 : value >= count ? count - 1 : value;
     }
 }

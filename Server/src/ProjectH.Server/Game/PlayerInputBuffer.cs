@@ -75,6 +75,9 @@ public sealed class PlayerInputBuffer
         return true;
     }
 
+    // 기능: 버퍼를 비우고 Seq 기준을 지운다(재접속한 연결이 Seq를 1부터 다시 센다).
+    // 입력: 없음.
+    // 출력: 반환값 없음. Count가 0, LastTakenSeq가 0이 된다. DroppedCount·SeqAheadDrops 누적은 유지된다.
     // Phase 10 D2: a resumed player's new connection numbers its inputs from 1 again, so what the old connection
     // sent and the Seq order it set are forgotten. DroppedCount is a total and stays.
     public void Reset()
@@ -83,6 +86,9 @@ public sealed class PlayerInputBuffer
         LastTakenSeq = 0;
     }
 
+    // 기능: Seq가 가장 작은 입력 하나를 꺼내고 LastTakenSeq를 그 Seq로 올린다.
+    // 입력: command - 꺼낸 입력(없으면 default).
+    // 출력: 입력이 있으면 true와 그 입력, 버퍼가 비었으면 false.
     public bool TryTake(out InputCommand command)
     {
         if (_count == 0)

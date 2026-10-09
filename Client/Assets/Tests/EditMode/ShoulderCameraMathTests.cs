@@ -18,6 +18,9 @@ namespace ProjectH.Client.Tests
             public Vector3 FirstOrigin, FirstDirection, SecondOrigin, SecondDirection;
             public float FirstMaxDistance, SecondMaxDistance;
 
+            // 기능: 대본대로 답하는 구 캐스트. 첫 호출은 ShoulderHit, 둘째는 BackHit를 쓰고 호출 인자를 기록한다.
+            // 입력: origin - 시작점, direction - 방향, maxDistance - 최대 거리.
+            // 출력: 대본 거리가 0 이상이고 maxDistance보다 짧으면 true와 그 거리, 아니면 false와 0.
             public bool Cast(Vector3 origin, Vector3 direction, float maxDistance, out float hitDistance)
             {
                 Calls++;
@@ -44,6 +47,9 @@ namespace ProjectH.Client.Tests
             }
         }
 
+        // 기능: 두 벡터의 세 성분이 Eps 안에서 같은지 단언한다.
+        // 입력: expected - 기대 벡터, actual - 실제 벡터.
+        // 출력: 반환값 없음. 어느 성분이든 벗어나면 테스트가 실패한다.
         private static void AssertVector(Vector3 expected, Vector3 actual)
         {
             Assert.AreEqual(expected.x, actual.x, Eps, "x");

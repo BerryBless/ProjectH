@@ -11,7 +11,10 @@ namespace ProjectH.Client.Game
         public const float Range = 2f;
         public const float Height = 2f;
 
-        // Index into the list, or -1.
+        // 기능: E가 주울 아이템을 서버 규칙(ItemRules + WorldItems.FindNearest, D8)과 같게 고른다: 발에서 수평 2 m·높이 ±2 m 안에서 3D 거리가
+        //   가장 가까운 것, 같은 거리면 작은 ItemId. 재료(Material)는 닿으면 줍는 것이라 제외한다(Phase 13 D15).
+        // 입력: items - 월드 아이템 목록, feet - 예측된 내 발 위치.
+        // 출력: 목록 안의 색인, 범위 안에 없으면 -1.
         public static int FindNearest(WorldItemList items, Vector3 feet)
         {
             int best = -1;

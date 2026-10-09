@@ -15,18 +15,27 @@ public class PieceCollisionTests
 
     private static readonly InputCommand Idle = new();
 
+    // 기능: 벽 조각 하나를 정규화한다(실패하면 테스트 실패).
+    // 입력: x/y/z - 격자 칸 좌표, rotation - 벽이 놓이는 변(회전).
+    // 출력: 정규화된 벽의 BuildPieceShape.
     private static BuildPieceShape Wall(int x, int y, int z, int rotation)
     {
         Assert.True(BuildGrid.TryNormalize(BuildPieceType.Wall, x, y, z, rotation, out BuildPieceShape shape));
         return shape;
     }
 
+    // 기능: 건설 조각 하나를 정규화한다(실패하면 테스트 실패).
+    // 입력: type - 조각 종류, x/y/z - 격자 칸 좌표, rotation - 회전(기본 0).
+    // 출력: 정규화된 BuildPieceShape.
     private static BuildPieceShape Piece(BuildPieceType type, int x, int y, int z, int rotation = 0)
     {
         Assert.True(BuildGrid.TryNormalize(type, x, y, z, rotation, out BuildPieceShape shape));
         return shape;
     }
 
+    // 기능: 조각들을 1부터 차례로 ID를 붙여 담은 PieceGrid를 만든다.
+    // 입력: shapes - 담을 조각 모양들.
+    // 출력: 조각이 모두 든 PieceGrid. 추가에 실패하면 Assert 실패.
     private static PieceGrid Grid(params BuildPieceShape[] shapes)
     {
         var grid = new PieceGrid(256);
@@ -34,6 +43,9 @@ public class PieceCollisionTests
         return grid;
     }
 
+    // 기능: Match.Move처럼 주변 세계(맵 상자 + 조각)를 모은 뒤 이동 Step을 한 번 돌린다.
+    // 입력: s - 이동 상태, input - 입력, grid - 조각 격자, world - 재사용할 충돌 세계.
+    // 출력: 그 Step의 StepResult. s는 한 Step 진행된다.
     // One step as Match.Move runs it.
     private static StepResult StepOnce(ref MoveState s, InputCommand input, PieceGrid grid, CollisionWorld world)
     {
@@ -42,19 +54,31 @@ public class PieceCollisionTests
         return result;
     }
 
+    // 기능: 현재 위치·자세의 몸이 주변 상자·조각에 파고들어 있는지 검사한다.
+    // 입력: s - 검사할 이동 상태, grid - 조각 격자, world - 재사용할 충돌 세계(s 위치 주변으로 다시 모은다).
+    // 출력: 파고들어 있으면 true, 아니면 false.
     private static bool Penetrates(in MoveState s, PieceGrid grid, CollisionWorld world)
     {
         world.Gather(s.Position, 0, 0UL, grid);
         return MovementSimulation.Penetrates(s.Position, MovementSimulation.CollisionHeight(s.Mode), world);
     }
 
+    // 기능: 현재 상태가 바닥(지형·상자·조각) 위에 서 있는지 검사한다.
+    // 입력: s - 검사할 이동 상태, grid - 조각 격자, world - 재사용할 충돌 세계(s 위치 주변으로 다시 모은다).
+    // 출력: 접지 상태면 true, 공중이면 false.
     private static bool Grounded(in MoveState s, PieceGrid grid, CollisionWorld world)
     {
         world.Gather(s.Position, 0, 0UL, grid);
         return MovementSimulation.IsGrounded(s, world, GameMap.Terrain);
     }
 
+    // 기능: 건설 칸의 최소 X 월드 좌표를 구한다.
+    // 입력: x - 칸 번호.
+    // 출력: 그 칸 서쪽 변의 X 좌표.
     private static float X0(int x) => BuildGrid.CellMinX(x);
+    // 기능: 건설 칸의 최소 Z 월드 좌표를 구한다.
+    // 입력: z - 칸 번호.
+    // 출력: 그 칸 남쪽 변의 Z 좌표.
     private static float Z0(int z) => BuildGrid.CellMinZ(z);
 
     // ---- Walls ----
@@ -197,6 +221,9 @@ public class PieceCollisionTests
         Assert.True(cases > 1000, $"only {cases} cases");
     }
 
+    // 기능: 선 몸의 중심점이 모아 둔 상자 중 하나의 안쪽에 있는지 검사한다.
+    // 입력: feet - 발 위치, world - 이미 모아 둔 충돌 세계.
+    // 출력: 중심이 어떤 상자 안이면 true, 아니면 false.
     private static bool CentreInAPiece(Vector3 feet, CollisionWorld world)
     {
         Vector3 centre = feet + new Vector3(0f, MoveSettings.Height * 0.5f, 0f);
@@ -208,6 +235,9 @@ public class PieceCollisionTests
         return false;
     }
 
+    // 기능: 선 몸이 경사면 판(Slab) 안에 들어 있는지 검사한다.
+    // 입력: feet - 발 위치, world - 이미 모아 둔 충돌 세계.
+    // 출력: 발자국 위 경사면 판과 몸이 겹치면 true, 아니면 false.
     // The standing body is inside a slope's slab (the touching-box cases start outside every slab: a slab start is the
     // "built onto a character" case, tested on its own).
     private static bool InASlab(Vector3 feet, CollisionWorld world)
@@ -261,6 +291,9 @@ public class PieceCollisionTests
 
     // ---- Ramps ----
 
+    // 기능: 칸 16에서 +Z로 오르는 경사로와 그 끝 칸 (16, 17)의 1층 바닥으로 된 격자를 만든다.
+    // 입력: 없음.
+    // 출력: 경사로와 바닥 두 조각이 든 PieceGrid.
     // Ramp at cell (16, 0, 16) rising +Z from 0 to 3, then a level 1 floor on cell (16, 17): z 5..10, top 3.
     private static PieceGrid RampToFloor() => Grid(Piece(BuildPieceType.Ramp, C, 0, C, 0), Piece(BuildPieceType.Floor, C, 1, 17));
 
@@ -448,6 +481,9 @@ public class PieceCollisionTests
                 Buttons = rng.Next(5) == 0 ? InputButtons.Jump : 0,
             };
         }
+        // 기능: 새 충돌 세계로 같은 입력 열을 처음부터 끝까지 돌린다.
+        // 입력: 없음(바깥의 inputs·grid를 쓴다).
+        // 출력: 입력 열을 모두 돌린 뒤의 MoveState.
         MoveState Run()
         {
             var world = new CollisionWorld();
@@ -463,6 +499,9 @@ public class PieceCollisionTests
     // A level 0 roof's flat ceiling, and a level 1 floor's underside: 3 - 0.25.
     private const float Ceiling = BuildGrid.LevelHeight - BuildGrid.SlopeThickness;
 
+    // 기능: 칸 16을 네 벽과 지붕으로 막고 안에 +Z로 오르는 경사로를 둔 격자를 만든다.
+    // 입력: 없음.
+    // 출력: 벽 넷·경사로·지붕이 든 PieceGrid.
     private static PieceGrid RoofedCellWithARamp() =>
         Grid(Wall(C, 0, C, 0), Wall(C, 0, C, 1), Wall(C, 0, C, 2), Wall(C, 0, C, 3), Piece(BuildPieceType.Ramp, C, 0, C, 0),
             Piece(BuildPieceType.Roof, C, 0, C));

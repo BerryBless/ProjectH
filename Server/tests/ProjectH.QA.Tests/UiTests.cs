@@ -14,6 +14,9 @@ public sealed class UiTests : IAsyncLifetime
     private QaUiHost _host = null!;
     private HttpClient _http = null!;
 
+    // 기능: 임시 저장소에 QA/Scenarios/Smoke와 Server 폴더를 만들고 가짜 QA 서버·MockActor를 꽂은 UI Host를 빈 포트로 띄운 뒤 HttpClient를 연결한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. _host와 _http가 준비된다.
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(Path.Combine(_root, "QA", "Scenarios", "Smoke"));
@@ -31,6 +34,9 @@ public sealed class UiTests : IAsyncLifetime
         _http = new HttpClient { BaseAddress = new Uri(_host.Url), Timeout = TimeSpan.FromSeconds(10) };
     }
 
+    // 기능: HttpClient와 UI Host를 닫고 임시 저장소를 지운다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. Host가 내려가고 임시 폴더가 삭제된다(IO 오류는 무시).
     public async Task DisposeAsync()
     {
         _http.Dispose();
@@ -38,9 +44,15 @@ public sealed class UiTests : IAsyncLifetime
         try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
     }
 
+    // 기능: playerA 한 명과 주어진 단계·추가 필드로 시나리오 JSON을 만든다.
+    // 입력: steps - steps 배열 JSON, extra - 루트에 끼울 추가 필드 JSON.
+    // 출력: 시나리오 JSON 문자열.
     private static string Scenario(string steps, string extra = "") =>
         $$"""{ "schemaVersion": 1, "name": "ui", {{extra}} "actors": [ { "id": "playerA" } ], "steps": {{steps}} }""";
 
+    // 기능: 본문을 JSON으로 직렬화한 POST 요청을 만들고, 필요하면 보내기 전에 요청을 고친 뒤 UI Host로 보낸다.
+    // 입력: path - 요청 경로, body - JSON으로 보낼 객체, edit - 보내기 전에 헤더 등을 바꾸는 함수(없으면 null).
+    // 출력: HTTP 응답.
     private Task<HttpResponseMessage> Post(string path, object body, Action<HttpRequestMessage>? edit = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, path)
@@ -51,12 +63,18 @@ public sealed class UiTests : IAsyncLifetime
         return _http.SendAsync(request);
     }
 
+    // 기능: /api/run 상태를 한 번 읽는다.
+    // 입력: 없음.
+    // 출력: 상태 JSON(문서와 분리된 복사본).
     private async Task<JsonElement> State()
     {
         using JsonDocument doc = JsonDocument.Parse(await _http.GetStringAsync("/api/run"));
         return doc.RootElement.Clone();
     }
 
+    // 기능: /api/run 상태를 20 ms 간격으로 읽어 조건을 만족할 때까지 기다린다.
+    // 입력: condition - 상태 JSON에 대한 조건, timeoutMs - 최대 대기 시간.
+    // 출력: 조건을 만족한 상태 JSON. 제한 시간을 넘기면 TimeoutException.
     private async Task<JsonElement> WaitState(Func<JsonElement, bool> condition, int timeoutMs = 8000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
@@ -69,7 +87,13 @@ public sealed class UiTests : IAsyncLifetime
         }
     }
 
+    // 기능: 실행 상태 JSON에서 status 값을 꺼낸다.
+    // 입력: s - /api/run 상태 JSON.
+    // 출력: status 문자열.
     private static string Status(JsonElement s) => s.GetProperty("status").GetString()!;
+    // 기능: 실행 상태 JSON에서 i번째 단계의 status 값을 꺼낸다.
+    // 입력: s - /api/run 상태 JSON, i - 단계 인덱스.
+    // 출력: 단계 status 문자열.
     private static string StepStatus(JsonElement s, int i) => s.GetProperty("steps")[i].GetProperty("status").GetString()!;
 
     [Theory]
@@ -337,6 +361,9 @@ public sealed class UiTests : IAsyncLifetime
 
 public class UiReportAndDebugTests
 {
+    // 기능: 새 임시 저장소에 QA/Scenarios를 만들고 가짜 QA 서버를 꽂은 UI Host를 빈 포트로 띄운다.
+    // 입력: 없음.
+    // 출력: 띄운 Host, 그 가짜 서버, 임시 저장소 루트 경로(정리는 호출자 몫).
     private static async Task<(QaUiHost Host, FakeQaServer Server, string Root)> NewHost()
     {
         string root = Path.Combine(Path.GetTempPath(), "qa-ui-x-" + Guid.NewGuid().ToString("N"));
@@ -349,6 +376,9 @@ public class UiReportAndDebugTests
         return (host, server, root);
     }
 
+    // 기능: 30초 wait 한 단계짜리 시나리오를 파싱한다.
+    // 입력: 없음.
+    // 출력: 파싱된 ScenarioDefinition.
     private static ScenarioDefinition LongScenario() =>
         ScenarioLoader.Parse("""{ "schemaVersion": 1, "name": "long", "steps": [ { "action": "wait", "milliseconds": 30000 } ] }""").Scenario!;
 

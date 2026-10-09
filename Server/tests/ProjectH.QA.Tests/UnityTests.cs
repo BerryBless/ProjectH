@@ -12,6 +12,9 @@ public sealed class FakeUnity : HttpMessageHandler
 {
     private readonly object _gate = new();
 
+    // 기능: 스크린샷 폴더를 만들고 InGame·접속 상태의 가짜 Player 수신기를 준비한다.
+    // 입력: shotDir - 스크린샷 PNG를 쓸 폴더.
+    // 출력: ShotDir가 설정된 FakeUnity.
     public FakeUnity(string shotDir)
     {
         ShotDir = shotDir;
@@ -78,12 +81,18 @@ public sealed class FakeUnity : HttpMessageHandler
         }
     }
 
+    // 기능: 가짜 Player의 현재 화면을 바꾼다.
+    // 입력: screen - 새 화면 이름.
+    // 출력: 항상 true(UI 명령이 적용됐음을 뜻한다).
     private bool Set(string screen)
     {
         Screen = screen;
         return true;
     }
 
+    // 기능: 값을 JSON 본문으로 담은 HTTP 응답을 만든다.
+    // 입력: status - HTTP 상태 코드, value - 직렬화할 객체.
+    // 출력: application/json 본문을 가진 HttpResponseMessage.
     private static HttpResponseMessage Json(int status, object value) => new((HttpStatusCode)status)
     {
         Content = new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json"),
@@ -94,21 +103,33 @@ public class UnityTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "qa-unity-" + Guid.NewGuid().ToString("N"));
 
+    // 기능: 임시 저장소 루트 아래에 QA/Scenarios 폴더를 만든다.
+    // 입력: 없음.
+    // 출력: 임시 저장소 루트가 준비된 UnityTests 객체.
     public UnityTests()
     {
         Directory.CreateDirectory(Path.Combine(_root, "QA", "Scenarios"));
     }
 
+    // 기능: 테스트가 만든 임시 저장소 루트를 통째로 지운다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 임시 폴더가 삭제되며 IO 오류는 무시한다.
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
     }
 
+    // 기능: 주어진 Actor·단계로 seed 3의 시나리오 JSON을 만든다.
+    // 입력: actors - actors 배열 JSON, steps - steps 배열 JSON.
+    // 출력: 시나리오 JSON 문자열.
     private static string Scenario(string actors, string steps) =>
         $$"""{ "schemaVersion": 1, "name": "u", "seed": 3, "actors": {{actors}}, "steps": {{steps}} }""";
 
     private const string Viewer = """[ { "id": "viewer", "type": "UnityClient", "unity": { "attachPort": 18777 } } ]""";
 
+    // 기능: 시나리오를 파싱·검증한 뒤 qa-viewer가 등록된 가짜 서버, MockActor, 가짜 Unity 수신기, 수동 확인 프롬프트를 꽂아 Orchestrator를 끝까지 실행한다.
+    // 입력: json - 시나리오 JSON, unity - Unity 요청에 답할 가짜 Player(null이면 Player 없음), unityExe - Player 실행 파일 경로(없으면 null), prompt - manualCheck에 답할 함수(없으면 null).
+    // 출력: 실행 결과 RunReport와 콘솔 출력 문자열. 보고서는 임시 저장소의 reports 아래에 쓴다.
     private async Task<(RunReport Report, string Output)> Run(string json, FakeUnity? unity, string? unityExe = null,
         Func<StepDefinition, string, CancellationToken, Task<ManualCheckAnswer>>? prompt = null)
     {
@@ -255,8 +276,14 @@ public class UnityTests : IDisposable
     {
         private readonly ManualResetEventSlim _gate = new(false);
 
+        // 기능: 막혀 있던 ReadLine을 풀어 준다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 대기 중인 ReadLine이 null을 돌려주고 끝난다.
         public void Release() => _gate.Set();
 
+        // 기능: Release가 호출되거나 10초가 지날 때까지 막혔다가 입력 없음을 돌려준다.
+        // 입력: 없음.
+        // 출력: 항상 null(입력 끝).
         public override string? ReadLine()
         {
             _gate.Wait(TimeSpan.FromSeconds(10));

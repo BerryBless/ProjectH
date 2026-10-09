@@ -16,12 +16,18 @@ public class DeploymentMovementTests
     private static readonly InputCommand Idle = new();
     private static readonly InputCommand JumpPress = new() { Buttons = InputButtons.Jump };
 
+    // 기능: +X 방향으로 고도 90 m, x -100..100을 Tick 1000부터 300 Tick 동안 지나는 테스트용 수송기 경로를 만든다.
+    // 입력: 없음.
+    // 출력: 고정 좌표·고도·시작 Tick·길이를 가진 DropRoute.
     // A route along +X at 90 m: x -100..100 over 300 ticks, starting at tick 1000.
     private static DropRoute AlongX() => new()
     {
         StartX = -100f, StartZ = 0f, EndX = 100f, EndZ = 0f, Altitude = 90f, StartTick = 1000, DurationTicks = 300,
     };
 
+    // 기능: 지정 위치에서 자유 낙하 중인 이동 상태를 만든다.
+    // 입력: at - 시작 위치.
+    // 출력: Position이 at이고 Mode가 Freefall인 MoveState (속도·Yaw는 기본값).
     private static MoveState Freefalling(Vector3 at) => new() { Position = at, Mode = MovementMode.Freefall };
 
     // ---- Route (D5) ----

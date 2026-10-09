@@ -61,7 +61,9 @@ namespace ProjectH.Client.Game
         // before it resets the wait (WeaponRules.ResetState), so it starts no wait.
         private bool _inventoryFresh;
 
-        // catalog: every weapon of the server's WeaponCatalog (weapon items and slots refer to them by id).
+        // 기능: 서버 무기 카탈로그의 복사본으로 예측 무기 상태를 만든다.
+        // 입력: catalog - 서버 WeaponCatalog의 모든 무기(아이템·슬롯이 id로 가리킨다). null이거나 비어 있으면 ArgumentException.
+        // 출력: 빈손(Clear 상태)의 WeaponState.
         public WeaponState(WeaponInfo[] catalog)
         {
             if (catalog == null || catalog.Length == 0) throw new ArgumentException("Empty weapon catalog.", nameof(catalog));
@@ -83,7 +85,9 @@ namespace ProjectH.Client.Game
         // 출력: 예비탄 수. None이나 범위 밖 값이면 0.
         public int GetReserve(AmmoType type) => type == AmmoType.None || (int)type > _reserve.Length ? 0 : _reserve[(int)type - 1];
 
-        // For the HUD: false for an empty slot.
+        // 기능: 한 슬롯의 무기·희귀도·탄창을 읽는다(HUD).
+        // 입력: slot - 슬롯 번호(0..SlotCount-1), weapon - 그 슬롯의 무기(비어 있으면 default), rarity - 희귀도, ammo - 탄창의 탄.
+        // 출력: 슬롯에 무기가 있으면 true, 비어 있으면 false.
         public bool TryGetSlot(int slot, out WeaponInfo weapon, out int rarity, out int ammo)
         {
             Held held = _slots[slot];
@@ -348,6 +352,9 @@ namespace ProjectH.Client.Game
             return true;
         }
 
+        // 기능: 그 무기 탄 종류의 예비탄이 있으면 재장전을 시작한다(없으면 아무것도 하지 않는다).
+        // 입력: weapon - 손에 든 무기, now - 이 입력의 Step.
+        // 출력: 반환값 없음. 시작했으면 Reloading이 켜지고 끝 Step이 now + ReloadTicks가 된다.
         private void TryStartReload(WeaponInfo weapon, long now)
         {
             if (GetReserve(weapon.AmmoType) == 0) return;
@@ -355,6 +362,9 @@ namespace ProjectH.Client.Game
             _reloadEndStep = now + weapon.ReloadTicks;
         }
 
+        // 기능: 재장전이 끝나 예비탄에서 탄창을 채운다(부족하면 있는 만큼). 빈손이거나 탄 종류가 None이면 아무것도 하지 않는다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 지금 슬롯의 탄창이 늘고 그 종류의 예비탄이 같은 만큼 준다.
         private void FinishReload()
         {
             if (!HasWeapon) return;
@@ -367,6 +377,9 @@ namespace ProjectH.Client.Game
             _reserve[index] -= take;
         }
 
+        // 기능: 무기 id로 카탈로그 색인을 찾는다.
+        // 입력: weaponId - 무기 id.
+        // 출력: 카탈로그 색인, 없으면 -1.
         private int IndexOf(byte weaponId)
         {
             for (int i = 0; i < _catalog.Length; i++)

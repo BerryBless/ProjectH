@@ -12,11 +12,17 @@ public class Qa5Tests : IDisposable
     private readonly FakeQaServer _server = new();
     private readonly List<MockActor> _actors = new();
 
+    // 기능: 임시 저장소 루트 아래에 QA/Scenarios/T 폴더를 만들어 테스트 환경을 준비한다.
+    // 입력: 없음.
+    // 출력: 임시 저장소 루트와 가짜 QA 서버가 준비된 Qa5Tests 객체.
     public Qa5Tests()
     {
         Directory.CreateDirectory(Path.Combine(_root, "QA", "Scenarios", "T"));
     }
 
+    // 기능: 테스트가 만든 임시 저장소 루트를 통째로 지운다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 임시 폴더가 삭제되며 IO 오류는 무시한다.
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
@@ -24,6 +30,9 @@ public class Qa5Tests : IDisposable
 
     private string Reports => Path.Combine(_root, "out");
 
+    // 기능: 임시 저장소 루트 아래 상대 경로에 폴더를 만들고 텍스트 파일을 쓴다.
+    // 입력: relative - 루트 기준 상대 경로, text - 파일 내용.
+    // 출력: 기록한 파일의 절대 경로.
     private string Write(string relative, string text)
     {
         string path = Path.Combine(_root, relative);
@@ -32,6 +41,9 @@ public class Qa5Tests : IDisposable
         return path;
     }
 
+    // 기능: 가짜 QA 서버와 MockActor를 꽂은 QaCli를 임시 저장소 루트(--repo)로 실행하고 만들어진 Actor를 _actors에 모은다.
+    // 입력: token - 취소 토큰, setup - 새 MockActor마다 적용할 설정(없으면 null), args - CLI 인자(--repo는 자동으로 덧붙인다).
+    // 출력: CLI 종료 코드와 표준 출력 문자열.
     private async Task<(int Exit, string Output)> Cli(CancellationToken token, Action<MockActor>? setup, params string[] args)
     {
         var output = new StringWriter();
@@ -45,8 +57,14 @@ public class Qa5Tests : IDisposable
         return (exit, output.ToString());
     }
 
+    // 기능: 취소와 Actor 설정 없이 CLI를 실행한다.
+    // 입력: args - CLI 인자.
+    // 출력: CLI 종료 코드와 표준 출력 문자열.
     private Task<(int Exit, string Output)> Cli(params string[] args) => Cli(default, null, args);
 
+    // 기능: 시나리오 JSON을 파싱하고 파싱 오류와 검증 결과를 하나의 목록으로 합친다.
+    // 입력: json - 시나리오 JSON 문자열.
+    // 출력: 파싱 오류(IsError)와 검증 지적을 합친 목록.
     private static IReadOnlyList<ValidationIssue> Validate(string json)
     {
         ScenarioLoadResult load = ScenarioLoader.Parse(json, "x.json");
@@ -55,6 +73,9 @@ public class Qa5Tests : IDisposable
         return issues;
     }
 
+    // 기능: 실행 ID 폴더의 report.json을 읽어 JSON 문서로 연다.
+    // 입력: dir - 보고서 루트 폴더, runId - 실행 ID.
+    // 출력: report.json의 JsonDocument(호출자가 Dispose).
     private static JsonDocument ReportJson(string dir, string runId) => JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, runId, "report.json")));
 
     // ---- D31 parameters ----
@@ -196,6 +217,9 @@ public class Qa5Tests : IDisposable
 
     // ---- D33 history and baseline ----
 
+    // 기능: 고정 시각과 tickP95Ms 하나를 가진 기준선 이력 항목을 만든다.
+    // 입력: runId - 실행 ID, status - 실행 상태, p95 - tickP95Ms 값, parameters - 매개변수 집합 키(없으면 null).
+    // 출력: 채워진 HistoryEntry.
     private static HistoryEntry Entry(string runId, string status = "Passed", double p95 = 1.0, string? parameters = null) => new()
     {
         RunId = runId, Status = status, Utc = "2026-10-02T00:00:00Z", ParametersKey = parameters,
@@ -324,6 +348,9 @@ public class Qa5Tests : IDisposable
 
     // ---- D34 recordings ----
 
+    // 기능: Client 기록 형식대로 헤더와 count개의 입력 줄을 가진 입력 기록 텍스트를 만든다.
+    // 입력: count - 입력 줄 수, simHz - 시뮬레이션 Hz, buttons - 줄 번호별 버튼 비트를 주는 함수(없으면 0).
+    // 출력: JSONL 입력 기록 문자열.
     private static string Recording(int count, int simHz = 30, Func<int, int>? buttons = null)
     {
         var sb = new StringBuilder();
@@ -333,9 +360,15 @@ public class Qa5Tests : IDisposable
         return sb.ToString();
     }
 
+    // 기능: JSON 한 줄에서 필드의 값을 다른 값으로 바꾼다.
+    // 입력: line - JSON 한 줄, field - 바꿀 필드 이름, value - 새 값 텍스트.
+    // 출력: 필드 값이 바뀐 줄.
     private static string Set(string line, string field, string value) =>
         System.Text.RegularExpressions.Regex.Replace(line, "\"" + field + "\":[^,}]+", "\"" + field + "\":" + value);
 
+    // 기능: 입력 기록 텍스트를 파싱한다.
+    // 입력: text - JSONL 입력 기록.
+    // 출력: 파싱된 InputRecording. 형식이 틀리면 RecordingException.
     private static InputRecording Read(string text) => InputRecording.Read(new StringReader(text));
 
     [Fact]

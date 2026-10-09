@@ -64,6 +64,9 @@ public static class QaCli
         public BatchOptions Batch => new() { Repeat = Repeat, SeedSweep = SeedSweep, StopOnFail = StopOnFail, ParameterSet = ParameterSet };
     }
 
+    // 기능: 명령줄 인자를 명령·대상·옵션으로 파싱하고 값 범위와 조합(--seed/--seed-sweep 동시 사용 등)을 검증한다.
+    // 입력: args - 명령줄 인자, parsed - 파싱 결과를 받을 객체, error - 실패 이유를 받을 문자열.
+    // 출력: 파싱과 검증에 성공하면 true, 실패하면 false와 error에 이유.
     public static bool TryParse(string[] args, out Parsed parsed, out string? error)
     {
         parsed = new Parsed();
@@ -204,6 +207,9 @@ public static class QaCli
         return error == null;
     }
 
+    // 기능: CLI 진입점. 인자를 파싱해 list / ui / convert-recording / validate / run 명령을 수행하고, run은 선택된 시나리오마다 배치(반복·시드·파라미터 세트)를 돌린다.
+    // 입력: args - 명령줄 인자, output - 콘솔 출력, token - 취소 토큰, serverFactory - QA 서버 Client 생성(테스트 주입), actorFactory - 액터 생성(테스트 주입), input - 수동 확인 입력(기본 Console.In), interactive - 터미널 여부(기본 입력 리디렉션 여부로 판단), unityHandlerFactory - Unity 액터 HTTP Handler 생성(테스트 주입).
+    // 출력: 프로세스 종료 코드(0 전부 PASS/SKIPPED, 1 실패·중단, 2 도구 오류). 보고서 파일과 콘솔 요약이 기록된다.
     public static async Task<int> RunAsync(string[] args, TextWriter output, CancellationToken token,
         Func<Uri, IQaServerClient>? serverFactory = null, Func<string, string, IQaActor>? actorFactory = null,
         TextReader? input = null, bool? interactive = null, Func<int, HttpMessageHandler?>? unityHandlerFactory = null)
@@ -392,6 +398,9 @@ public static class QaCli
         return exit;
     }
 
+    // 기능: 배치 안의 한 실행을 콘솔에 표시할 레이블("run 2/5, iteration 2, parameters[1]")로 만든다.
+    // 입력: r - 계획된 실행 한 건.
+    // 출력: 실행 번호·반복 회차·파라미터 세트 번호가 들어간 레이블 문자열.
     private static string BatchLabel(PlannedRun r)
     {
         string label = $"run {r.Number}/{r.Total}";
@@ -400,6 +409,9 @@ public static class QaCli
         return label;
     }
 
+    // 기능: --manual 모드와 터미널 여부에 따라 수동 확인 단계에 답을 받는 콘솔 프롬프트 함수를 만든다.
+    // 입력: mode - ask / skip / fail, input - 답을 읽을 입력, interactive - 터미널에서 실행 중인지, output - 프롬프트를 쓸 출력.
+    // 출력: 터미널이면 p/f/s와 메모를 묻는 비동기 프롬프트, 비터미널 fail 모드면 항상 FAIL을 답하는 함수, skip 모드나 비터미널 ask 모드면 null(단계 SKIPPED).
     // D30 on the console: on a terminal ask p(ass) / f(ail) / s(kip) and a note; without one, SKIPPED (or FAIL with
     // --manual fail). Console reads ignore cancellation, so each read runs on its own task and the wait for it ends on
     // Ctrl+C / Stop (the abandoned read finishes with the next Enter or with the process).
@@ -429,6 +441,9 @@ public static class QaCli
         };
     }
 
+    // 기능: 취소할 수 없는 콘솔 ReadLine을 별도 Task에서 실행하고 토큰으로 대기만 끊는다.
+    // 입력: input - 읽을 입력, token - 대기를 끊을 취소 토큰.
+    // 출력: 읽은 한 줄. 입력이 닫혔으면 null. 취소되면 OperationCanceledException.
     private static async Task<string?> ReadLine(TextReader input, CancellationToken token)
     {
         string? line = await Task.Run(input.ReadLine, CancellationToken.None).WaitAsync(token).ConfigureAwait(false);
@@ -436,6 +451,9 @@ public static class QaCli
         return line;
     }
 
+    // 기능: 웹 UI 호스트를 127.0.0.1에 띄우고 취소(Ctrl+C)될 때까지 유지한 뒤 활성 실행 정리 → 호스트 종료 순으로 닫는다.
+    // 입력: p - 파싱된 CLI 옵션, root - 저장소 루트, output - 콘솔 출력, token - 종료 토큰, serverFactory - QA 서버 Client 생성(테스트 주입), actorFactory - 액터 생성(테스트 주입).
+    // 출력: 정상 종료면 0, 포트를 열지 못하면 2.
     // D19: serve the UI until Ctrl+C. Shutdown order: stop the active run and wait for its cleanup (actors, launched
     // server, report), then stop the web host.
     private static async Task<int> RunUiAsync(Parsed p, string root, TextWriter output, CancellationToken token,
@@ -477,6 +495,9 @@ public static class QaCli
         return 0;
     }
 
+    // 기능: QA/Scenarios의 카테고리별 시나리오(이름·태그), QA/Suites의 스위트, 등록된 액션 목록을 콘솔에 출력한다.
+    // 입력: root - 저장소 루트, output - 콘솔 출력.
+    // 출력: 반환값 없음. 목록이 output에 기록된다.
     private static void List(string root, TextWriter output)
     {
         string scenarios = Path.Combine(root, "QA", "Scenarios");
@@ -507,6 +528,9 @@ public static class QaCli
             output.WriteLine($"  {s.Name}{(s.ServerCommand ? " (server QA command)" : string.Empty)}");
     }
 
+    // 기능: 경로를 기준 디렉터리에 대한 상대 경로로 바꾼다.
+    // 입력: root - 기준 디렉터리, path - 바꿀 경로.
+    // 출력: root 기준 상대 경로.
     private static string Relative(string root, string path) => Path.GetRelativePath(root, path);
 }
 
@@ -537,8 +561,14 @@ public static class ScenarioCatalog
     public const string SuitePrefix = "suite:";
     public const string CategoryPrefix = "category:";
 
+    // 기능: 대상 지정을 시나리오 파일 경로 목록으로만 푼다(Select의 파일 목록 버전).
+    // 입력: root - 저장소 루트, target - suite:/category:/경로/이름 지정.
+    // 출력: 중복을 제거한 시나리오 파일 절대 경로 목록. 해석에 실패하면 QaToolException.
     public static List<string> Resolve(string root, string target) => Select(root, target).Files.ToList();
 
+    // 기능: run / validate 대상 지정(suite:, category:, 파일·디렉터리 경로, 카테고리 또는 스위트의 bare 이름)을 실행할 시나리오 항목 목록으로 푼다.
+    // 입력: root - 저장소 루트, target - 대상 지정 문자열.
+    // 출력: 해석 설명과 시나리오 항목 목록. 못 찾거나 bare 이름이 스위트·카테고리 둘 다이면 QaToolException.
     public static ScenarioSelection Select(string root, string target)
     {
         string scenarios = Path.Combine(root, "QA", "Scenarios");
@@ -572,8 +602,14 @@ public static class ScenarioCatalog
         return Done($"{kind} {target}", files);
     }
 
+    // 기능: 파일 경로 목록을 옵션 없는 시나리오 항목으로 감싸 선택 결과를 만든다.
+    // 입력: what - 해석 설명("category Combat"), files - 시나리오 파일 경로 목록.
+    // 출력: 중복 제거·상한 적용된 선택 결과. 항목이 없으면 QaToolException.
     private static ScenarioSelection Done(string what, List<string> files) => DoneItems(what, files.Select(f => new SelectionItem(f)).ToList());
 
+    // 기능: 항목 목록에서 같은 Key(파일·파라미터 세트·변수)의 중복을 제거하고 MaxScenarios개까지 잘라 선택 결과를 만든다.
+    // 입력: what - 해석 설명, items - 시나리오 항목 목록.
+    // 출력: 설명("…: N scenarios")과 항목이 담긴 선택 결과. 항목이 없으면 QaToolException.
     private static ScenarioSelection DoneItems(string what, List<SelectionItem> items)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -582,8 +618,14 @@ public static class ScenarioCatalog
         return new ScenarioSelection($"{what}: {distinct.Count} scenario{(distinct.Count == 1 ? string.Empty : "s")}", distinct);
     }
 
+    // 기능: 스위트 이름을 QA/Suites/<name>.json 경로로 만든다.
+    // 입력: root - 저장소 루트, name - 스위트 이름.
+    // 출력: 스위트 파일 경로(존재 여부는 확인하지 않음).
     private static string SuiteFile(string root, string name) => Path.Combine(root, "QA", "Suites", name + ".json");
 
+    // 기능: QA/Scenarios 아래에서 이름이 같은(대소문자 무시) 카테고리 폴더를 찾는다.
+    // 입력: scenarios - QA/Scenarios 경로, name - 카테고리 이름.
+    // 출력: 카테고리 폴더 경로. 이름이 비었거나 경로 구분자·"."·".."이거나 폴더가 없으면 null.
     // The category folder with this name (any case), or null.
     private static string? Category(string scenarios, string name)
     {
@@ -591,9 +633,15 @@ public static class ScenarioCatalog
         return System.IO.Directory.GetDirectories(scenarios).FirstOrDefault(d => string.Equals(Path.GetFileName(d), name, StringComparison.OrdinalIgnoreCase));
     }
 
+    // 기능: 디렉터리 아래(하위 포함)의 모든 .json 파일을 모은다.
+    // 입력: dir - 검색할 디렉터리.
+    // 출력: 대소문자 무시 정렬된 절대 경로 목록.
     private static List<string> Directory(string dir) =>
         System.IO.Directory.GetFiles(dir, "*.json", SearchOption.AllDirectories).Select(Path.GetFullPath).OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
 
+    // 기능: QA/Suites/<name>.json의 "scenarios" 항목(경로 문자열 또는 옵션 객체)을 시나리오 항목 목록으로 푼다.
+    // 입력: root - 저장소 루트, name - 스위트 이름.
+    // 출력: 시나리오 항목 목록. 스위트 파일이 없거나 이름이 잘못되면 null, 형식이 틀리거나 항목을 못 찾으면 QaToolException.
     private static List<SelectionItem>? Suite(string root, string name)
     {
         string file = SuiteFile(root, name);
@@ -625,6 +673,9 @@ public static class ScenarioCatalog
         return items;
     }
 
+    // 기능: 스위트의 객체 항목({ path, parameterSet?, variables? })을 검증해 시나리오 항목 하나로 만든다.
+    // 입력: root - 저장소 루트, suite - 오류 메시지용 스위트 이름, e - 항목 JSON 객체.
+    // 출력: 파일 경로·파라미터 세트·변수가 담긴 시나리오 항목. 필드가 잘못되거나 path가 QA/Scenarios 아래 파일이 아니면 QaToolException.
     // { "path": "<file under QA/Scenarios>", "parameterSet"?: N (1-based), "variables"?: { name: value } }.
     private static SelectionItem SuiteItem(string root, string suite, JsonElement e)
     {
@@ -655,6 +706,9 @@ public static class ScenarioCatalog
         return new SelectionItem(files[0], set, variables);
     }
 
+    // 기능: 대상을 파일 또는 디렉터리로 해석해 시나리오 파일 경로를 files에 보탠다. 후보는 그대로 → QA/Scenarios 아래 → 저장소 루트 아래 순이며, scenariosOnly면 QA/Scenarios 아래만 허용한다.
+    // 입력: root - 저장소 루트, target - 파일·디렉터리 지정, files - 찾은 파일 경로를 보탤 목록, scenariosOnly - 스위트 항목처럼 QA/Scenarios 밖("..")을 막을지.
+    // 출력: 파일이면 "file", 디렉터리면 "directory", 못 찾으면 null.
     // A file or a directory: as given, under QA/Scenarios, under the repo root (CLI targets). Suite entries
     // (scenariosOnly): under QA/Scenarios and nowhere else, and they may not climb out of it with "..".
     private static string? AddPath(string root, string target, List<string> files, bool scenariosOnly = false)

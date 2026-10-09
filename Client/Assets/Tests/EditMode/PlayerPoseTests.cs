@@ -77,6 +77,9 @@ namespace ProjectH.Client.Tests
 
         private sealed class NoHit : ISphereCaster
         {
+            // 기능: 아무것도 맞지 않는 구 캐스트. 카메라 충돌이 없는 상황을 흉내 낸다.
+            // 입력: origin - 시작점, direction - 방향, maxDistance - 최대 거리.
+            // 출력: 항상 false, hitDistance는 0.
             public bool Cast(UnityEngine.Vector3 origin, UnityEngine.Vector3 direction, float maxDistance, out float hitDistance)
             {
                 hitDistance = 0f;

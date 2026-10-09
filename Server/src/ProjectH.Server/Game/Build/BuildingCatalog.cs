@@ -9,6 +9,10 @@ namespace ProjectH.Server.Game.Build;
 // Phase 13 D4 (request §7): one building material's numbers. Tick values are already in simulation ticks.
 public sealed class BuildMaterialConfig
 {
+    // 기능: 재료 하나의 수치를 담고 초기 체력(최대 x 비율, 최소 1)을 계산한다.
+    // 입력: type - 재료, resourceCost - 조각 하나의 자원 비용, maxHealth - 최대 체력, initialHealthRatio - 초기 체력 비율,
+    //   constructionTicks - 건설 Tick 수, structureDamageMultiplier - 구조물 피해 배율, harvestToolDamageMultiplier - 채집 도구 피해 배율.
+    // 출력: 값이 채워진 BuildMaterialConfig.
     public BuildMaterialConfig(BuildMaterialType type, int resourceCost, int maxHealth, float initialHealthRatio, ushort constructionTicks,
         float structureDamageMultiplier, float harvestToolDamageMultiplier)
     {
@@ -36,6 +40,9 @@ public sealed class BuildMaterialConfig
 // Phase 13 D4, D6: one kind of harvestable object.
 public sealed class HarvestableConfig
 {
+    // 기능: 채집물 종류 하나의 수치를 담는다.
+    // 입력: kind - 채집물 종류, health - 체력, baseResourcePerHit - 타격당 기본 자원, destroyBonus - 파괴 시 추가 자원.
+    // 출력: 값이 채워진 HarvestableConfig.
     public HarvestableConfig(HarvestKind kind, int health, int baseResourcePerHit, int destroyBonus)
     {
         Kind = kind;
@@ -61,6 +68,10 @@ public sealed class BuildingCatalog
     private readonly BuildMaterialConfig[] _materials;
     private readonly HarvestableConfig[] _harvestables;
 
+    // 기능: 검증을 마친 값들로 카탈로그를 만든다(TryParse만 호출한다).
+    // 입력: materials - 재료별 수치(Enum 순서), harvestables - 채집물별 수치(Enum 순서), simHz - Tick 속도, root - 파싱된 JSON,
+    //   cooldownTicks - 채집 도구 쿨다운 Tick, intervalTicks - 최소 건설 간격 Tick.
+    // 출력: 모든 값이 채워진 불변 BuildingCatalog.
     private BuildingCatalog(BuildMaterialConfig[] materials, HarvestableConfig[] harvestables, int simHz, BuildingJson root, ushort cooldownTicks,
         ushort intervalTicks)
     {
@@ -109,10 +120,19 @@ public sealed class BuildingCatalog
     public int InterestRadius { get; }
     public int InterestKeepMargin { get; }
 
+    // 기능: 재료의 수치를 찾는다.
+    // 입력: type - 재료.
+    // 출력: 그 재료의 BuildMaterialConfig.
     public BuildMaterialConfig Material(BuildMaterialType type) => _materials[(int)type];
 
+    // 기능: 채집물 종류의 수치를 찾는다.
+    // 입력: kind - 채집물 종류.
+    // 출력: 그 종류의 HarvestableConfig.
     public HarvestableConfig Harvestable(HarvestKind kind) => _harvestables[(int)kind];
 
+    // 기능: 내장 기본값(building.json과 같은 내용)으로 카탈로그를 만든다. 파일이 없을 때(테스트) GameData가 쓴다.
+    // 입력: simHz - Tick 속도.
+    // 출력: 기본값 카탈로그. 기본값이 검증에 실패하면 InvalidOperationException.
     // The shipped numbers (the same as building.json; BuildingCatalogTests pins the two). GameData uses them when no file is
     // given (tests).
     public static BuildingCatalog Default(int simHz)
@@ -122,6 +142,9 @@ public sealed class BuildingCatalog
         return catalog!;
     }
 
+    // 기능: building.json 파일을 읽어 검증한 카탈로그를 만든다(시작 시 한 번).
+    // 입력: path - 파일 경로, simHz - Tick 속도.
+    // 출력: 검증된 카탈로그. 파일이 없거나 내용이 틀리면 InvalidOperationException.
     public static BuildingCatalog LoadFile(string path, int simHz)
     {
         if (!File.Exists(path)) throw new InvalidOperationException($"Building data not found: {path}");
@@ -222,8 +245,14 @@ public sealed class BuildingCatalog
         return true;
     }
 
+    // 기능: 값이 유한한 양수인지 본다.
+    // 입력: value - 검사할 값.
+    // 출력: 유한하고 0보다 크면 true.
     private static bool PositiveFinite(double value) => double.IsFinite(value) && value > 0;
 
+    // 기능: 검증 실패 이유를 error에 담고 false를 돌려준다(TryParse의 한 줄 반환용).
+    // 입력: message - 실패 이유, error - 결과.
+    // 출력: 항상 false와 error = message.
     private static bool Fail(string message, out string? error)
     {
         error = message;

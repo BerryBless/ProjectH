@@ -12,8 +12,17 @@ namespace ProjectH.Server.Qa;
 // them on an HTTP thread reads nothing the game loop writes).
 public sealed record QaResult(int Status, object Body)
 {
+    // 기능: 성공 응답(200)을 만든다.
+    // 입력: result - 응답에 담을 결과(없으면 null).
+    // 출력: Ok=true와 result를 담은 200 QaResult.
     public static QaResult Ok(object? result = null) => new(200, new QaOk(true, result));
+    // 기능: 오류 응답을 만든다.
+    // 입력: status - HTTP 상태 코드, error - 오류 메시지.
+    // 출력: Ok=false와 메시지를 담은 status QaResult.
     public static QaResult Error(int status, string error) => new(status, new QaError(false, error));
+    // 기능: 본문을 그대로 담은 200 응답을 만든다.
+    // 입력: body - JSON으로 직렬화할 본문.
+    // 출력: body를 그대로 담은 200 QaResult.
     public static QaResult Data(object body) => new(200, body);
 }
 
@@ -38,13 +47,22 @@ internal sealed class QaWorkItem
 {
     private int _state;
 
+    // 기능: 게임 루프를 기다리는 작업 항목을 만든다.
+    // 입력: work - 게임 루프 스레드에서 실행할 작업.
+    // 출력: 대기(0) 상태의 QaWorkItem.
     public QaWorkItem(QaWork work) => Work = work;
 
     public QaWork Work { get; }
     // Continuations run on the thread pool, never inline on the game loop thread that completes it.
     public TaskCompletionSource<QaResult> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    // 기능: 게임 루프가 이 항목의 실행을 차지한다(TryAbandon과 하나만 이긴다).
+    // 입력: 없음.
+    // 출력: 아직 대기 상태였으면 true(이제 실행한다), 이미 포기됐으면 false.
     public bool TryStart() => Interlocked.CompareExchange(ref _state, 1, 0) == 0;
+    // 기능: HTTP 요청이 시간 초과로 이 항목을 포기한다(TryStart와 하나만 이긴다).
+    // 입력: 없음.
+    // 출력: 아직 대기 상태였으면 true(절대 실행되지 않는다), 이미 실행이 시작됐으면 false.
     public bool TryAbandon() => Interlocked.CompareExchange(ref _state, 2, 0) == 0;
 }
 
@@ -71,6 +89,9 @@ public sealed class QaControl
     private double _lastQaMs;
     private bool _first = true;
 
+    // 기능: QA Control을 만든다(작업 큐, 사건 Ring, 측정 Ring).
+    // 입력: server - 서버 옵션(SimHz), options - QA 옵션, logger - 로그, environmentName - 호스트 환경 이름.
+    // 출력: 게임 루프에 아직 묶이지 않은(GamePort 0) QaControl.
     public QaControl(ServerOptions server, QaOptions options, ILogger logger, string environmentName)
     {
         Server = server ?? throw new ArgumentNullException(nameof(server));
@@ -100,8 +121,14 @@ public sealed class QaControl
     internal QaEvents Events { get; }
     internal QaMetrics Metrics { get; }
 
+    // 기능: 게임 루프를 이 QA Control에 묶는다(GamePort·Peers의 출처).
+    // 입력: loop - 게임 루프.
+    // 출력: 반환값 없음. _loop가 정해진다.
     internal void Bind(GameLoop loop) => _loop = loop;
 
+    // 기능: 게임 루프 통계에서 시작부터의 패킷·바이트 합계를 읽는다.
+    // 입력: loop - 게임 루프.
+    // 출력: 수신·송신 패킷 수와 바이트 수를 담은 QaNetTotals.
     // Game loop thread (ServerStats' folded totals are written there).
     internal static QaNetTotals NetTotals(GameLoop loop)
     {
@@ -114,6 +141,9 @@ public sealed class QaControl
     // QA-3: connections open now (the game loop's gauge; any thread).
     public int Peers => _loop?.Health.Peers ?? 0;
 
+    // 기능: 작업 항목을 큐에 넣고 게임 루프가 실행한 결과를 기다린다(HTTP 스레드).
+    // 입력: work - 게임 루프에서 실행할 작업, cancellation - 요청 중단 토큰.
+    // 출력: 작업의 QaResult. 큐가 가득이면 503, 제때 시작되지 않았으면 504(실행 안 됨), 시작됐지만 끝나지 않았으면 504(결과 모름).
     // HTTP threads. 503 when the queue is full; 504 when the game loop did not take the item in time (it is dropped then,
     // so it never runs). An item already running is awaited for one more timeout: it ends within its tick.
     internal async Task<QaResult> SubmitAsync(QaWork work, CancellationToken cancellation = default)
@@ -148,6 +178,9 @@ public sealed class QaControl
         }
     }
 
+    // 기능: 매 Tick 끝에 측정 기록·사건 Diff·큐의 작업 항목(최대 MaxItemsPerTick)을 실행한다(게임 루프 스레드, 예외를 던지지 않음).
+    // 입력: loop - 게임 루프(Match와 Tick 시간의 출처).
+    // 출력: 반환값 없음. 측정·사건 Ring이 갱신되고 실행된 항목의 Completion이 채워진다.
     // Game loop thread, the end of every tick (GameLoop.RunTick). Never throws: a QA failure must not count as a tick
     // failure. The match is read from the loop every time, because a reset replaces it.
     internal void OnTick(GameLoop loop)

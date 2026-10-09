@@ -12,6 +12,10 @@ namespace ProjectH.Server.Tests.Integration;
 // join and players that stop sending input, and counts invalid packets and rejects by reason.
 public sealed class HardeningIntegrationTests
 {
+    // 기능: 전투 장비를 든 실제 UDP 서버를 포트 0에 띄운다(결과 1초, 끊김 판정 1초, 통계 60초).
+    // 입력: maxPlayers - 최대 인원, joinTimeout - Join 제한 시간(초), inputTimeout - 입력 제한 시간(초, 0 = 없음), grace - 재접속 유예(초),
+    //   minPlayers - 시작 최소 인원, countdown - 시작 카운트다운(초), statsQueries - 전적 조회 큐(null = 없음).
+    // 출력: 스레드가 시작된 GameLoop(호출자가 Dispose한다).
     internal static GameLoop StartServer(int maxPlayers = 4, int joinTimeout = 5, int inputTimeout = 10, int grace = 10,
         int minPlayers = 2, int countdown = 10, ProjectH.Server.Persistence.StatsQueryQueue? statsQueries = null)
     {
@@ -32,6 +36,9 @@ public sealed class HardeningIntegrationTests
         return loop;
     }
 
+    // 기능: 새 HeadlessClient로 서버에 접속해 Join을 보내고 응답이 기대한 결과인지 확인한다.
+    // 입력: server - 접속할 서버, devId - 플레이어 이름, expected - 기대하는 Join 결과.
+    // 출력: Join 응답을 받은 HeadlessClient(호출자가 Dispose한다). 3초 안에 접속·응답이 없거나 결과가 다르면 테스트가 실패한다.
     internal static HeadlessClient Join(GameLoop server, string devId, JoinResult expected = JoinResult.Ok)
     {
         var client = new HeadlessClient();
@@ -72,6 +79,9 @@ public sealed class HardeningIntegrationTests
         Assert.Equal(1, server.Health.Kicks(DisconnectCode.InputTimeout));
     }
 
+    // 기능: 조건이 참이 될 때까지 sender가 약 Tick마다 정지 입력을 보내며 모든 Client를 Poll한다.
+    // 입력: sender - 입력을 보낼 Client, condition - 기다릴 조건, timeoutMs - 제한 시간(ms), others - 함께 Poll할 Client들.
+    // 출력: 제한 시간 안에 조건이 참이 되면 true, 아니면 false.
     // Sends one input about every tick (well below the 60/s cap) while polling, until the condition holds.
     internal static bool SendInputsUntil(HeadlessClient sender, Func<bool> condition, int timeoutMs, params HeadlessClient[] others)
     {
@@ -361,5 +371,8 @@ public sealed class HardeningIntegrationTests
         Assert.Equal(0, idle.AuthDrops);
     }
 
+    // 기능: 조건이 참이 될 때까지 제한 시간 안에서 기다린다.
+    // 입력: condition - 기다릴 조건, timeoutMs - 제한 시간(ms).
+    // 출력: 제한 시간 안에 조건이 참이 되면 true, 아니면 false.
     private static bool SpinUntil(Func<bool> condition, int timeoutMs) => System.Threading.SpinWait.SpinUntil(condition, timeoutMs);
 }

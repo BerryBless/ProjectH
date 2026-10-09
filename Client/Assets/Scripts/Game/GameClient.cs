@@ -211,7 +211,9 @@ namespace ProjectH.Client.Game
         public float NextReconnectIn =>
             _reconnectPending && _net.State == ClientState.Disconnected ? Mathf.Max(0f, _reconnectAt - Time.unscaledTime) : 0f;
 
-        // D9: the name a PlayerSpawned gave this entity, or null when it is not known.
+        // 기능: PlayerSpawned가 알려 준 Entity의 이름을 찾는다(D9; 이름 표는 퇴장·끊김 때 지워진다).
+        // 입력: entityId - 찾을 Entity id.
+        // 출력: 등록된 이름, 모르는 Entity면 null.
         public string NameOf(ushort entityId) => _names.TryGetValue(entityId, out string name) ? name : null;
 
         // D7: the match as the HUD sees it, and how the round ended for us.
@@ -228,7 +230,9 @@ namespace ProjectH.Client.Game
         // Phase 14 D6: our team had more than one member this round (the result counts teams, not players).
         public bool SquadMatch => _roundTeamSize > 1;
 
-        // Phase 12 D14: the F1 movement line (UiRoot owns the overlay; the values are the local prediction's).
+        // 기능: F1 이동 줄을 로컬 예측 값으로 갱신한다(Phase 12 D14; UiRoot가 오버레이를 소유한다). 예측기가 없거나 죽었으면 "없음" 상태로 쓴다.
+        // 입력: overlay - 디버그 오버레이, now - 현재 시각.
+        // 출력: 반환값 없음. 오버레이의 이동 줄(모드, 속도, 에너지, 교정량, 수송기 경로)이 갱신된다.
         public void TickMovementDebug(DebugOverlay overlay, float now)
         {
             bool alive = _predictor != null && !_predictor.IsDead;
@@ -372,8 +376,10 @@ namespace ProjectH.Client.Game
             _map.SetFullOpen(open);
         }
 
-        // D5: UiRoot passes UiFlow's outputs every frame. Without a screen up a click locks the cursor as before; with
-        // one up the cursor is freed and movement, fire, aim and look are zero (inputs still go out, empty).
+        // 기능: UiFlow의 UI 제어 값을 받는다(D5; UiRoot가 매 프레임 넘긴다). 화면이 떠 있으면 커서를 풀고 이동·사격·조준·시점을 0으로 둔다
+        //   (입력 패킷은 빈 채로 계속 나간다).
+        // 입력: allowCursorLock - 클릭으로 커서를 잠글 수 있는지, blockInput - 게임 입력을 막을지.
+        // 출력: 반환값 없음. 다음 Update부터 커서 잠금·입력 차단에 반영된다.
         public void SetUiControl(bool allowCursorLock, bool blockInput)
         {
             _cursorLockAllowed = allowCursorLock;
@@ -385,10 +391,10 @@ namespace ProjectH.Client.Game
         public float StatsSentAt => _statsSentAt;
         public float StatsAnsweredAt => _statsAnsweredAt;
 
-        // D8: sends a request unless one went out less than StatsWait.ResendSeconds ago (the server would drop it; its
-        // answer is here or on the way). Returns when the request in effect was sent (negative = none could be sent).
-        // A send that fails forgets the older request, so the window says "no answer" instead of showing the answer to
-        // that older request as this one's.
+        // 기능: 전적 요청을 보낸다(D8). StatsWait.ResendSeconds 안에 이미 보냈으면 다시 보내지 않는다(서버가 버리고, 그 답이 이미 있거나 오는 중).
+        //   전송이 실패하면 이전 요청도 잊어 창이 이전 요청의 답을 이번 것으로 보이지 않게 한다.
+        // 입력: 없음.
+        // 출력: 유효한 요청을 보낸 시각(unscaled 초), 보낼 수 없었으면 음수.
         public float RequestStats()
         {
             float now = Time.unscaledTime;
@@ -396,10 +402,10 @@ namespace ProjectH.Client.Game
             return _statsSentAt;
         }
 
-        // D6: the disconnected screen's Cancel. Stops the automatic reconnect; an attempt still connecting, or connected
-        // and waiting for its join answer, is given up without a disconnect event, so the reason on screen stays the one
-        // that started the cycle. Nothing of a match arrives before the join answer, so there is no match state to
-        // clear; the attempt no longer counts as established (a later manual connect that fails is not retried).
+        // 기능: 자동 재접속을 멈춘다(D6: 끊김 화면의 취소). 연결 중이거나 참가 응답을 기다리는 시도는 끊김 이벤트 없이 포기해 화면의 이유를
+        //   그대로 둔다(참가 응답 전에는 경기 상태가 오지 않아 지울 것이 없다).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 재접속 주기가 끝나고, 포기한 시도는 established로 치지 않는다(뒤의 수동 접속이 실패해도 재시도하지 않는다).
         public void StopReconnecting()
         {
             CancelReconnect();
@@ -458,6 +464,9 @@ namespace ProjectH.Client.Game
             return xml;
         }
 
+        // 기능: 자동 재접속 주기를 끝낸다(시도 횟수 0, 예약된 다음 시도 해제).
+        // 입력: 없음.
+        // 출력: 반환값 없음. ReconnectAttempt가 0이 된다.
         private void CancelReconnect()
         {
             _reconnectAttempt = 0;
@@ -1115,7 +1124,9 @@ namespace ProjectH.Client.Game
             store.ClearChanged();
         }
 
-        // The server tick now, estimated as the match HUD does (render tick plus the interpolation delay); 0 before a clock.
+        // 기능: 지금 서버 Tick을 경기 HUD와 같은 방식(렌더 Tick + 보간 지연)으로 추정한다.
+        // 입력: 없음.
+        // 출력: 추정 서버 Tick, 시계가 없거나 준비 전이거나 SimHz가 0이면 0.
         private double EstimatedServerTick() =>
             _clock != null && _clock.IsReady && _simHz > 0 ? _renderTick + _interpolationDelaySeconds * _simHz : 0;
 
@@ -1212,7 +1223,10 @@ namespace ProjectH.Client.Game
             return UiText.HintReboot;
         }
 
-        // Phase 12 D14: aboard (inside the jump window) "jump", in freefall "glider", next to a door "open"/"close".
+        // 기능: 이동 모드와 문에 따른 안내 문구를 고른다(Phase 12 D14: 수송기의 뛰어내리기 창 안이면 "뛰어내리기", 자유 낙하면 "글라이더",
+        //   문 옆이면 예측 상태에 따라 "열기"/"닫기").
+        // 입력: alive - 살아 있음, door - DoorRule.FindTarget 결과(-1 = 문 없음).
+        // 출력: UiText 상수(할당 없음), 해당 없으면 null.
         private string Hint(bool alive, int door)
         {
             if (!alive) return null;
@@ -1245,13 +1259,15 @@ namespace ProjectH.Client.Game
             }
         }
 
-        // The server tick our rider is drawn at: the predicted one, or before the first ack (the rider held at the server's
-        // position) the newest snapshot's. Only called with a predictor and a clock.
+        // 기능: 수송기에 탄 나를 그리는 서버 Tick을 낸다(예측기와 시계가 있을 때만 부른다).
+        // 입력: 없음.
+        // 출력: 첫 ack 뒤면 예측기의 렌더 Tick, 그 전(서버 위치에 고정된 탑승자)이면 가장 새 Snapshot의 Tick.
         private double RiderTick() => _predictor.HasTickBase ? _predictor.RenderTick : _clock.LatestTick;
 
-        // D14: state line, zone line and circle, red edges outside the zone, spectating. Strings are rebuilt only on
-        // change (MatchHudText). Times use the estimated current server tick: the render tick plus the interpolation
-        // delay. Phase 11 D7: the result is the result screen's (UiRoot), no longer a HUD line.
+        // 기능: 경기 HUD 한 프레임(D14): 상태 줄, 자기장 줄과 원, 자기장 밖이면 빨간 테두리, 관전 줄. 문자열은 바뀔 때만 만든다(MatchHudText).
+        //   시각은 추정 서버 Tick(렌더 Tick + 보간 지연) 기준. Phase 11 D7: 결과는 결과 화면(UiRoot)이 보이고 HUD 줄이 아니다.
+        // 입력: alive - 살아 있음(자기장 밖 표시는 살아 있을 때만).
+        // 출력: 반환값 없음. 경기 상태·시계·SimHz가 없으면 아무것도 하지 않는다.
         private void UpdateMatchHud(bool alive)
         {
             if (!_hasMatch || _clock == null || !_clock.IsReady || _simHz <= 0) return;
@@ -1328,6 +1344,9 @@ namespace ProjectH.Client.Game
             return _itemCatalog.Ammo[index].Name;
         }
 
+        // 기능: 무기 id의 이름을 무기 카탈로그에서 찾는다(줍기 안내에 쓴다; 카탈로그가 있을 때만 부른다).
+        // 입력: weaponId - 카탈로그의 무기 id.
+        // 출력: 카탈로그 이름(입장 때 받은 문자열), 없으면 "?".
         private string WeaponName(byte weaponId)
         {
             for (int i = 0; i < _weaponCatalog.Length; i++)
@@ -1544,9 +1563,10 @@ namespace ProjectH.Client.Game
             return shots;
         }
 
-        // Phase 10 D10: the next attempt starts in its slot. An attempt still connecting then is given up first (it had
-        // its connect budget, about 1.5 s, so this is rare). Connect sets State to Connecting at once, or leaves it
-        // Disconnected when it failed right away (LastError says why): then the cycle ends.
+        // 기능: 예약된 재접속 시도의 시각이 되면 시도를 시작한다(Phase 10 D10). 아직 연결 중인 이전 시도는 먼저 포기한다(접속 예산 약 1.5 s를
+        //   이미 썼으므로 드물다). Connect가 바로 실패해 Disconnected로 남으면(LastError) 주기를 끝낸다.
+        // 입력: 없음(unscaled 시간과 NetClient 상태를 읽는다).
+        // 출력: 반환값 없음. 시도 횟수가 늘고, 상한 전이면 다음 시도가 예약된다. 그사이 연결됐으면 아무것도 하지 않는다.
         private void UpdateReconnect()
         {
             if (!_reconnectPending || Time.unscaledTime < _reconnectAt) return;
@@ -1565,12 +1585,18 @@ namespace ProjectH.Client.Game
             if (_reconnectAttempt < DisconnectCodes.MaxReconnectAttempts) ArmReconnect(_reconnectAttempt + 1);
         }
 
+        // 기능: 다음 재접속 시도를 끊김 시각 기준 슬롯(DisconnectCodes.ReconnectOffsetSeconds)에 예약한다.
+        // 입력: attempt - 예약할 시도 번호(1..MaxReconnectAttempts).
+        // 출력: 반환값 없음. _reconnectPending이 켜지고 _reconnectAt이 정해진다.
         private void ArmReconnect(int attempt)
         {
             _reconnectPending = true;
             _reconnectAt = _dropAt + DisconnectCodes.ReconnectOffsetSeconds(attempt);
         }
 
+        // 기능: 연결 성립을 기록한다(이 연결은 끊기면 재시도 대상이고, 예약된 다음 시도 슬롯은 해제한다).
+        // 입력: 없음.
+        // 출력: 반환값 없음. _established가 켜지고 _reconnectPending이 꺼진다.
         private void OnConnected()
         {
             _established = true;
@@ -1669,16 +1695,25 @@ namespace ProjectH.Client.Game
             _projectileViews.HideAll();
         }
 
+        // 기능: 아이템 카탈로그(희귀도·탄·소모품 이름과 수치)를 보관한다.
+        // 입력: items - 받은 카탈로그.
+        // 출력: 반환값 없음.
         private void OnItemCatalog(ItemCatalogData items)
         {
             _itemCatalog = items;
         }
 
+        // 기능: 월드 아이템 추가·갱신을 뷰 목록에 넣는다(같은 id면 덮어쓴다).
+        // 입력: item - 받은 월드 아이템.
+        // 출력: 반환값 없음.
         private void OnItem(WorldItemData item)
         {
             _worldItems.Upsert(item);
         }
 
+        // 기능: 월드 아이템 제거를 뷰 목록에 반영한다.
+        // 입력: itemId - 제거된 아이템 id.
+        // 출력: 반환값 없음.
         private void OnItemRemoved(ushort itemId)
         {
             _worldItems.Remove(itemId);
@@ -1695,8 +1730,10 @@ namespace ProjectH.Client.Game
             else if (result.Result == PickupResultCode.NothingInRange) _inventoryHud.ShowNotice("주울 수 있는 물건이 없습니다", Time.time);
         }
 
-        // Phase 4: what sits in each slot, the reserves, heals and the heal channel (D14). The current slot
-        // comes with snapshots. The channel is shown from the remaining ticks at arrival; the server decides it.
+        // 기능: InventoryState(Phase 4: 슬롯 내용, 예비탄, 회복템, 치료 채널 D14)를 보관하고 무기 복사본에 적용한다. 현재 슬롯은 Snapshot으로
+        //   온다. 채널은 도착 시점의 남은 Tick으로 로컬 끝 시각을 계산한다(서버가 결정한다).
+        // 입력: inventory - 받은 인벤토리 상태.
+        // 출력: 반환값 없음. _useSeconds·_useEndTime이 갱신된다(채널이 없거나 카탈로그·SimHz가 없으면 _useSeconds 0).
         private void OnInventory(InventoryState inventory)
         {
             _inventory = inventory;
@@ -1991,7 +2028,9 @@ namespace ProjectH.Client.Game
             _zoneView.SetZone(zone);
         }
 
-        // Only participants get one (D11).
+        // 기능: 경기 결과를 보관한다(D11: 참가자만 받는다). ResultCount가 늘어 UiFlow가 결과 화면을 한 번 연다.
+        // 입력: result - 받은 MatchResult.
+        // 출력: 반환값 없음.
         private void OnMatchResult(MatchResult result)
         {
             _result = result;
@@ -2069,13 +2108,18 @@ namespace ProjectH.Client.Game
             if (_audio.Doors.OnServerState(_doors.OpenMask, Time.unscaledTime, out int opened, out int closed)) PlayDoorSounds(opened, closed);
         }
 
-        // Phase 13 D4: what the client needs of the building numbers.
+        // 기능: 건설 카탈로그(Phase 13 D4: Client가 쓰는 건설 수치)를 건설 컨트롤러에 넣고 관심 영역 한 칸의 격자 칸 수를 정한다.
+        // 입력: catalog - 받은 건설 카탈로그.
+        // 출력: 반환값 없음.
         private void OnBuildCatalog(BuildCatalogData catalog)
         {
             _build.Catalog = catalog;
             _buildStore.CellsPerInterest = Mathf.Max(1, Mathf.RoundToInt(catalog.InterestCellSize / BuildGrid.CellSize));
         }
 
+        // 기능: 서버의 재료(나무·돌·금속) 수량을 건설 컨트롤러에 넣는다.
+        // 입력: resources - 받은 재료 상태.
+        // 출력: 반환값 없음.
         private void OnResources(ResourcesState resources) => _build.Resources = resources;
 
         // 기능: 건설·편집 요청의 BuildResult를 순번으로 주인에게 보낸다(Phase 13.5 D9: 편집이면 편집 예측, 아니면 배치 대기).
@@ -2126,7 +2170,9 @@ namespace ProjectH.Client.Game
             _audio.Play3D(SoundKind.BuildPlace, BuildGrid.CenterOf(piece.Shape).ToUnity(), piece.Id);
         }
 
-        // Phase 13 D13, D14: the building stream, applied by id (BuildStore).
+        // 기능: 건설 스트림의 조각 기록(Phase 13 D13, D14)을 id로 저장소에 적용한다.
+        // 입력: piece - 조각 기록, version - 건설 스트림 버전.
+        // 출력: 반환값 없음.
         private void OnBuildPiece(BuildPieceRecord piece, uint version) => _buildStore.ApplyPiece(piece, version);
 
         // 기능: Health 기록을 저장소에 적용한다. Phase 18 D6: 적용 전 피해보다 늘었으면 피해 소리(조각마다 0.15초 간격은 믹서의 중복 규칙).
@@ -2171,11 +2217,19 @@ namespace ProjectH.Client.Game
             _buildStore.ApplyDestroyed(id, version);
         }
 
+        // 기능: 건설 초기화(라운드 리셋)를 받아 저장소의 조각을 모두 비운다.
+        // 입력: version - 건설 스트림 버전(저장소 Reset은 쓰지 않는다).
+        // 출력: 반환값 없음.
         private void OnBuildReset(uint version) => _buildStore.Reset();
 
+        // 기능: 내 관심 영역(건설 창) 칸 비트를 저장소에 적용한다.
+        // 입력: cells - 관심 영역 칸 비트.
+        // 출력: 반환값 없음. 창 밖 조각은 저장소가 정리한다.
         private void OnBuildInterest(ulong cells) => _buildStore.ApplyInterest(cells);
 
-        // Phase 13 D6: a destroyed harvestable leaves the screen and the predicted collision at once.
+        // 기능: 채집 대상 파괴 마스크(HarvestStates)를 화면·효과·예측 충돌에 한꺼번에 반영한다(Phase 13 D6).
+        // 입력: destroyed - 비트 i = 채집 대상 i가 파괴됨.
+        // 출력: 반환값 없음. 예측기가 있으면 그 충돌 마스크도 갱신된다.
         private void OnHarvestStates(ulong destroyed)
         {
             _destroyedHarvestables = destroyed;
@@ -2256,12 +2310,18 @@ namespace ProjectH.Client.Game
             _hasOwnSnapshot = false;
         }
 
+        // 기능: 전적 응답을 보관하고 받은 시각을 기록한다(D8).
+        // 입력: response - 받은 StatsResponse.
+        // 출력: 반환값 없음. LastStats·StatsAnsweredAt이 갱신된다.
         private void OnStats(StatsResponse response)
         {
             _stats = response;
             _statsAnsweredAt = Time.unscaledTime;
         }
 
+        // 기능: 연결 종료를 처리한다: 내 id와 경기 상태를 비우고 커서를 풀고 자동 재접속을 예약한다.
+        // 입력: reason - 종료 이유(로그용).
+        // 출력: 반환값 없음. 조건에 맞으면 재접속 주기가 시작되거나 이어진다.
         private void OnDisconnected(string reason)
         {
             MyEntityId = 0;
@@ -2271,10 +2331,11 @@ namespace ProjectH.Client.Game
             ScheduleReconnect();
         }
 
-        // Phase 10 D10: retry only what DisconnectCodes allows (a lost connection, a match reset), only for a connection
-        // that was established or an attempt of a running cycle, and at most MaxReconnectAttempts times until a join.
-        // A new cycle remembers when the drop was seen; every slot is measured from it. A failed attempt whose
-        // successor's slot is already armed just waits for it.
+        // 기능: 끊김 뒤 자동 재접속을 예약한다(Phase 10 D10). DisconnectCodes가 허용하는 끊김(연결 유실, 경기 리셋)이고, 성립했던 연결이거나
+        //   진행 중인 주기의 시도일 때만, 참가할 때까지 최대 MaxReconnectAttempts번. 새 주기는 끊김 시각을 기억하고 모든 슬롯을 그 기준으로 잰다.
+        //   다음 슬롯이 이미 예약된 실패 시도는 그 슬롯을 기다린다.
+        // 입력: 없음(NetClient의 마지막 끊김 정보와 재접속 상태를 읽는다).
+        // 출력: 반환값 없음. 다음 시도가 예약되거나 주기가 끝난다. _established는 항상 꺼진다.
         private void ScheduleReconnect()
         {
             bool cycle = _established || _reconnectAttempt > 0;

@@ -96,6 +96,9 @@ namespace ProjectH.Client.CameraControl
             return targets;
         }
 
+        // 기능: 카메라 목표(기준 높이·거리·FOV) 세 값을 ModeSharpness로 각각 목표 쪽으로 완화한다.
+        // 입력: current - 지금 값, target - 목표 값, deltaTime - 프레임 시간.
+        // 출력: 한 프레임만큼 목표에 가까워진 CameraTargets.
         // Frame-rate independent easing of every target value.
         public static CameraTargets Approach(CameraTargets current, CameraTargets target, float deltaTime)
         {
@@ -107,6 +110,9 @@ namespace ProjectH.Client.CameraControl
             };
         }
 
+        // 기능: Yaw·Pitch(도)에서 카메라 앞 방향 단위 벡터를 삼각함수로 구한다.
+        // 입력: yawDegrees - 수평 회전(도), pitchDegrees - 수직 회전(도, 양수가 아래를 본다).
+        // 출력: Quaternion.Euler(pitch, yaw, 0) * Vector3.forward와 같은 앞 방향 벡터.
         // Same convention as Quaternion.Euler(pitch, yaw, 0) * Vector3.forward: positive pitch looks down.
         public static Vector3 Forward(float yawDegrees, float pitchDegrees)
         {
@@ -116,6 +122,9 @@ namespace ProjectH.Client.CameraControl
             return new Vector3(Mathf.Sin(yaw) * cosPitch, -Mathf.Sin(pitch), Mathf.Cos(yaw) * cosPitch);
         }
 
+        // 기능: Yaw 방향의 수평 오른쪽 단위 벡터를 구한다.
+        // 입력: yawDegrees - 수평 회전(도).
+        // 출력: MovementSimulation의 right 벡터와 같은 수평 오른쪽 벡터(Y는 0).
         // Horizontal right of the yaw heading (matches MovementSimulation's right vector).
         public static Vector3 Right(float yawDegrees)
         {
@@ -123,12 +132,18 @@ namespace ProjectH.Client.CameraControl
             return new Vector3(Mathf.Cos(yaw), 0f, -Mathf.Sin(yaw));
         }
 
+        // 기능: 값 하나를 프레임 시간에 무관한 지수 완화로 목표 쪽으로 옮긴다.
+        // 입력: current - 지금 값, target - 목표 값, sharpness - 완화 속도(클수록 빠르다), deltaTime - 프레임 시간.
+        // 출력: current에서 목표 쪽으로 (1 - e^(-sharpness * deltaTime)) 비율만큼 간 값.
         // Frame-rate independent exponential approach.
         public static float Approach(float current, float target, float sharpness, float deltaTime)
         {
             return current + (target - current) * (1f - Mathf.Exp(-sharpness * deltaTime));
         }
 
+        // 기능: 충돌이 허용하는 거리로 카메라 거리를 정한다. 벽이 더 가까우면 즉시 당기고, 길이 트이면 ReturnSharpness로 천천히 되돌린다.
+        // 입력: current - 지금 카메라 거리, allowed - 충돌 검사가 허용한 최대 거리, deltaTime - 프레임 시간.
+        // 출력: allowed가 current보다 작으면 allowed, 아니면 current에서 allowed 쪽으로 완화한 거리.
         // A wall closer than the current distance pulls the camera in at once (never show the wall's
         // inside); when the way clears, the camera eases back out.
         public static float ResolveDistance(float current, float allowed, float deltaTime)
@@ -136,9 +151,17 @@ namespace ProjectH.Client.CameraControl
             return allowed < current ? allowed : Approach(current, allowed, ReturnSharpness, deltaTime);
         }
 
+        // 기능: 기본 허리 카메라(Hip)로 어깨 카메라 자세를 푼다(모드 목표를 받는 Solve의 축약형).
+        // 입력: feet - 따라갈 발 위치, yaw·pitch - 카메라 회전(도), aimBlend - 조준 혼합(0 허리, 1 조준), currentDistance - 지금 카메라 거리,
+        //   deltaTime - 프레임 시간, caster - 충돌 검사용 구 Cast.
+        // 출력: 충돌을 반영한 어깨점·카메라 위치·앞 방향·거리·FOV의 ShoulderPose.
         public static ShoulderPose Solve(Vector3 feet, float yaw, float pitch, float aimBlend, float currentDistance,
             float deltaTime, ISphereCaster caster) => Solve(feet, yaw, pitch, aimBlend, currentDistance, deltaTime, caster, Hip);
 
+        // 기능: 어깨 카메라 자세를 두 단계 충돌로 푼다(1단계 기준점→어깨점을 오른쪽으로 Cast, 2단계 어깨점→카메라 위치를 뒤로 Cast).
+        // 입력: feet - 따라갈 발 위치, yaw·pitch - 카메라 회전(도), aimBlend - 조준 혼합(0 허리, 1 조준), currentDistance - 지금 카메라 거리,
+        //   deltaTime - 프레임 시간, caster - 충돌 검사용 구 Cast, hip - 모드별로 완화된 허리 카메라 목표.
+        // 출력: 충돌을 반영한 어깨점·카메라 위치·앞 방향·거리·FOV의 ShoulderPose. 거리는 ResolveDistance로 당기거나 되돌린 값.
         // Phase 12 D14: hip is the mode's (eased) camera; aiming blends from it to the aim camera as before.
         public static ShoulderPose Solve(Vector3 feet, float yaw, float pitch, float aimBlend, float currentDistance,
             float deltaTime, ISphereCaster caster, in CameraTargets hip)

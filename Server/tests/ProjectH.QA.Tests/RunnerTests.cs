@@ -11,16 +11,25 @@ public class RunnerTests : IDisposable
     private readonly FakeQaServer _server = new();
     private readonly Dictionary<string, MockActor> _actors = new();
 
+    // 기능: 임시 저장소 루트 폴더를 만들어 테스트 환경을 준비한다.
+    // 입력: 없음.
+    // 출력: 임시 저장소 루트와 가짜 QA 서버가 준비된 RunnerTests 객체.
     public RunnerTests()
     {
         Directory.CreateDirectory(_root);
     }
 
+    // 기능: 테스트가 만든 임시 저장소 루트를 통째로 지운다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 임시 폴더가 삭제되며 IO 오류는 무시한다.
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
     }
 
+    // 기능: 가짜 서버가 Actor를 따라가도록(접속하면 플레이어 등록, 끊으면 graced, playerB의 발사는 playerA에 10씩 피해) OnCommand를 건 MockActor를 만든다.
+    // 입력: alias - Actor 별칭, type - Actor 종류(쓰지 않음).
+    // 출력: 만들어진 MockActor. _actors에도 등록된다.
     private IQaActor CreateActor(string alias, string type)
     {
         var actor = new MockActor(alias);
@@ -47,6 +56,9 @@ public class RunnerTests : IDisposable
         return actor;
     }
 
+    // 기능: 시나리오를 파싱·검증한 뒤 가짜 서버와 CreateActor로 Orchestrator를 끝까지 실행한다.
+    // 입력: steps - steps 배열 JSON, extra - 루트에 끼울 추가 필드 JSON, token - 취소 토큰, actors - actors 배열 JSON, writeReport - true면 보고서 파일을 쓴다.
+    // 출력: 실행 결과 RunReport와 콘솔 출력 문자열.
     private async Task<(RunReport Report, string Output)> RunAsync(string steps, string extra = "", CancellationToken token = default,
         string actors = """[ { "id": "playerA" }, { "id": "playerB" } ]""", bool writeReport = false)
     {
@@ -91,6 +103,9 @@ public class RunnerTests : IDisposable
         Assert.Matches(@"^qa-\d{8}-\d{6}-[0-9a-f]{4}$", r.RunId);
     }
 
+    // 기능: playerB가 playerA를 두 번 쏴 체력이 80이 되는 표준 시나리오를 실행한다.
+    // 입력: 없음.
+    // 출력: 실행 결과 RunReport와 콘솔 출력 문자열.
     private Task<(RunReport Report, string Output)> RunWithDamageAsync() => RunAsync("""
         [ { "action": "connect", "actor": "playerA" },
           { "action": "connect", "actor": "playerB" },

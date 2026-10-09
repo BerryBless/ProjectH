@@ -27,15 +27,24 @@ public class CombatMatchTests
     private readonly Dictionary<int, uint> _seq = new();
     private Match _match;
 
+    // 기능: 테스트 카탈로그로 3인 개발 모드 Match를 만든다.
+    // 입력: 없음.
+    // 출력: 참가자 없는 Match를 든 테스트 인스턴스.
     public CombatMatchTests()
     {
         _match = NewMatch(TestGameData.Create());
     }
 
+    // 기능: 보낸 패킷을 _sent에 모으는 3인 개발 모드 Match(Snapshot 2 Tick마다)를 만든다.
+    // 입력: data - 무기·아이템 카탈로그.
+    // 출력: 전투 장비로 시작하는 참가자 없는 Match.
     private Match NewMatch(GameData data) =>
         new(new ServerOptions { MaxPlayers = 3, SnapshotEveryTicks = 2, DevRespawn = true }, data,
             (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)), TestGameData.CombatLoadout);
 
+    // 기능: 플레이어를 경기에 들여보내고 주어진 자리에 세운다(지연 보상 이력도 그 자리로 맞춘다).
+    // 입력: peer - 연결 id, feet - 발 위치.
+    // 출력: 들어온 플레이어. 입장이 거절되면 테스트가 실패한다.
     private PlayerEntity Join(int peer, Vector3 feet)
     {
         Assert.Equal(JoinResult.Ok, _match.TryJoin(peer, "p" + peer));
@@ -46,6 +55,9 @@ public class CombatMatchTests
         return player;
     }
 
+    // 기능: 입력 하나에 그 플레이어의 다음 순번을 붙여 경기 입력 큐에 넣는다(Tick은 돌리지 않는다).
+    // 입력: player - 보내는 플레이어, command - 보낼 입력(Seq는 덮어쓴다).
+    // 출력: 반환값 없음. 입력이 큐에 쌓이고 순번이 올라간다.
     private void Send(PlayerEntity player, InputCommand command)
     {
         _seq.TryGetValue(player.PeerId, out uint seq);
@@ -56,6 +68,9 @@ public class CombatMatchTests
         _match.EnqueueInput(player.PeerId, packet);
     }
 
+    // 기능: 사수의 눈에서 월드 한 점을 겨눈 입력을 현재 Tick의 ViewTick으로 큐에 넣는다.
+    // 입력: shooter - 사수, point - 겨눌 월드 좌표, buttons - 누를 버튼(기본 Fire).
+    // 출력: 반환값 없음. 조준 입력이 큐에 쌓인다.
     // An input aimed from the shooter's eye at a world point, rendered at the current tick.
     private void FireAt(PlayerEntity shooter, Vector3 point, InputButtons buttons = InputButtons.Fire)
     {
@@ -63,8 +78,14 @@ public class CombatMatchTests
         Send(shooter, new InputCommand { Buttons = buttons, AimYaw = yaw, AimPitch = pitch, ViewTick = _match.ServerTick });
     }
 
+    // 기능: 한 peer에게 간 특정 종류의 패킷을 보낸 순서대로 모은다.
+    // 입력: peer - 받는 연결 id, id - 패킷 종류.
+    // 출력: 조건에 맞는 Sent 목록.
     private List<Sent> SentTo(int peer, PacketId id) => _sent.Where(s => s.PeerId == peer && s.Id == id).ToList();
 
+    // 기능: 보낸 패킷의 id 바이트를 건너뛴 본문 Reader를 만든다.
+    // 입력: s - 보낸 패킷.
+    // 출력: 본문 첫 바이트에 놓인 PacketReader.
     private static PacketReader Reader(Sent s)
     {
         var reader = new PacketReader(s.Data);
@@ -72,12 +93,30 @@ public class CombatMatchTests
         return reader;
     }
 
+    // 기능: 보낸 패킷을 ShotFired로 읽는다.
+    // 입력: s - 보낸 패킷.
+    // 출력: 읽은 ShotFired. 읽기에 실패하면 테스트가 실패한다.
     private static ShotFired ReadShot(Sent s) { var r = Reader(s); Assert.True(ShotFired.TryRead(ref r, out var v)); return v; }
+    // 기능: 보낸 패킷을 HitConfirmed로 읽는다.
+    // 입력: s - 보낸 패킷.
+    // 출력: 읽은 HitConfirmed. 읽기에 실패하면 테스트가 실패한다.
     private static HitConfirmed ReadHit(Sent s) { var r = Reader(s); Assert.True(HitConfirmed.TryRead(ref r, out var v)); return v; }
+    // 기능: 보낸 패킷을 DamageTaken으로 읽는다.
+    // 입력: s - 보낸 패킷.
+    // 출력: 읽은 DamageTaken. 읽기에 실패하면 테스트가 실패한다.
     private static DamageTaken ReadDamage(Sent s) { var r = Reader(s); Assert.True(DamageTaken.TryRead(ref r, out var v)); return v; }
+    // 기능: 보낸 패킷을 PlayerDied로 읽는다.
+    // 입력: s - 보낸 패킷.
+    // 출력: 읽은 PlayerDied. 읽기에 실패하면 테스트가 실패한다.
     private static PlayerDied ReadDied(Sent s) { var r = Reader(s); Assert.True(PlayerDied.TryRead(ref r, out var v)); return v; }
+    // 기능: 보낸 패킷을 PlayerRespawned로 읽는다.
+    // 입력: s - 보낸 패킷.
+    // 출력: 읽은 PlayerRespawned. 읽기에 실패하면 테스트가 실패한다.
     private static PlayerRespawned ReadRespawned(Sent s) { var r = Reader(s); Assert.True(PlayerRespawned.TryRead(ref r, out var v)); return v; }
 
+    // 기능: 한 peer가 받은 마지막 WorldSnapshot을 머리와 엔티티 목록으로 읽는다.
+    // 입력: peer - 받는 연결 id.
+    // 출력: (Snapshot 머리, 엔티티 목록). Snapshot이 없거나 읽기에 실패하면 테스트가 실패한다.
     private (WorldSnapshotHeader header, List<SnapshotEntity> entities) LastSnapshotFor(int peer)
     {
         var reader = Reader(_sent.Last(s => s.PeerId == peer && s.Id == PacketId.WorldSnapshot));
@@ -91,6 +130,9 @@ public class CombatMatchTests
         return (header, list);
     }
 
+    // 기능: 사수가 대상의 가슴을 3 Tick 간격으로 다섯 번 쏴 죽인다(30 x 5 = 보호막 50 + 체력 100).
+    // 입력: shooter - 사수, target - 대상.
+    // 출력: 반환값 없음. 대상이 죽은 상태가 된다. 살아 있으면 테스트가 실패한다.
     // Five hits of 30 = shield 50 + health 100. The auto weapon fires every 3 ticks.
     private void KillWithFiveHits(PlayerEntity shooter, PlayerEntity target)
     {

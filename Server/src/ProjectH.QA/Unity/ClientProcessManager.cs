@@ -38,6 +38,9 @@ public sealed class ClientProcessManager : IDisposable
         }
     }
 
+    // 기능: loopback TCP의 빈 포트를 하나 찾는다(bind 후 바로 놓는다).
+    // 입력: 없음.
+    // 출력: 포트 번호.
     // A free loopback TCP port for the player's QA receiver (bind, read, release: another process could take it in
     // between; the readiness wait then fails with a clear message).
     public static int FreePort()
@@ -49,6 +52,9 @@ public sealed class ClientProcessManager : IDisposable
         return port;
     }
 
+    // 기능: Unity Development 플레이어의 명령줄 인자를 만든다(자동 접속, QA 수신기, 로그 파일, 창 크기).
+    // 입력: host·gamePort - 접속할 서버, devPlayerId - Dev 플레이어 ID, qaPort - QA 수신기 포트, shotDir - 스크린샷 폴더, logFile - 로그 파일 경로, width·height - 창 크기.
+    // 출력: 인자 목록.
     public static IReadOnlyList<string> BuildArguments(string host, int gamePort, string devPlayerId, int qaPort, string shotDir, string logFile, int width, int height) =>
         new[]
         {
@@ -61,6 +67,9 @@ public sealed class ClientProcessManager : IDisposable
             "-screen-height", height.ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
 
+    // 기능: 플레이어를 띄우고 stdout/stderr를 읽어 버리며 kill-on-close job에 넣는다.
+    // 입력: exe - 플레이어 실행 파일, arguments - 명령줄 인자.
+    // 출력: 반환값 없음. _process가 설정되고 job에 못 넣으면 JobWarning이 남는다. exe가 없거나 시작에 실패하면 QaToolException.
     public void Start(string exe, IReadOnlyList<string> arguments)
     {
         if (!File.Exists(exe)) throw new QaToolException($"Unity player not found: {exe}");
@@ -83,6 +92,9 @@ public sealed class ClientProcessManager : IDisposable
         if (!KillOnCloseJob.TryAssign(_process, out string? jobError)) JobWarning = $"not in the kill-on-close job ({jobError}): a hard-killed QA tool would leave this player running";
     }
 
+    // 기능: 창 닫기를 요청하고 CloseGrace 안에 끝나지 않으면 이 자식의 프로세스 트리를 죽인다.
+    // 입력: 없음.
+    // 출력: Stopped - 프로세스가 끝났으면 true, Message - 정리 과정 설명.
     // Graceful first (the window closes: the client sends its disconnect), then a kill of our own child only.
     public async Task<(bool Stopped, string Message)> StopAsync()
     {
@@ -110,6 +122,9 @@ public sealed class ClientProcessManager : IDisposable
         return gone ? (true, "did not close in time, killed") : (false, $"kill did not end pid {p.Id}");
     }
 
+    // 기능: 아직 살아 있는 자식 프로세스 트리를 죽이고 Process 핸들을 놓는다(크래시 경로의 최후 정리).
+    // 입력: 없음.
+    // 출력: 반환값 없음. _process가 null이 되고 핸들이 해제된다.
     public void Dispose()
     {
         Process? p = _process;
@@ -126,6 +141,9 @@ public sealed class ClientProcessManager : IDisposable
         p.Dispose();
     }
 
+    // 기능: 프로세스 종료를 timeout 동안 기다린다.
+    // 입력: p - 기다릴 프로세스, timeout - 최대 대기 시간.
+    // 출력: 시간 안에 끝났으면 true, 넘겼으면 그 시점의 HasExited.
     private static async Task<bool> WaitExitAsync(Process p, TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);

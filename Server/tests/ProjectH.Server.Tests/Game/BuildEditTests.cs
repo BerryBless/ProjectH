@@ -24,7 +24,7 @@ public class BuildEditTests
     private readonly SandboxHarness _h = new();
     private ushort _seq;
 
-    // 기능: 조준 Tick 한 번 뒤 편집 요청을 넣고 처리하는 Tick을 돌린다(BuildPlacementTests.Build와 같은 순서).
+    // 기능: 건설 간격(MinBuildInterval)만큼 Tick을 보낸 뒤 조준 Tick 한 번, 편집 요청을 넣고 처리하는 Tick을 돌린다(BuildPlacementTests.Build와 같은 순서).
     // 입력: p - 편집자, id - 대상 조각, state - 새 상태, aimAt - 조준점(기본 조각 중심), sequence - 순번(기본 다음 순번),
     //   beforeTick - 처리 Tick 직전에 할 일.
     // 출력: 그 플레이어가 받은 마지막 BuildResult.
@@ -40,9 +40,15 @@ public class BuildEditTests
         return LastResult(p);
     }
 
+    // 기능: 조각의 경계 상자 중심을 구한다(조준점으로 쓴다).
+    // 입력: id - 조각 id.
+    // 출력: 조각이 있으면 그 경계 상자 중심, 없으면 남쪽 벽 중심 (2.5, 1.5, 0).
     private Vector3 CentreOf(uint id) =>
         _h.Match.Build.TryGetSlot(id, out int slot) ? BuildGrid.BoundsOf(_h.Match.Build.At(slot).Shape).Center : new Vector3(2.5f, 1.5f, 0f);
 
+    // 기능: 플레이어가 받은 마지막 BuildResult 패킷을 읽는다.
+    // 입력: p - 받은 플레이어.
+    // 출력: 마지막 BuildResult 내용. 하나도 없거나 읽기에 실패하면 테스트가 실패한다.
     private BuildResult LastResult(PlayerEntity p)
     {
         PacketReader r = SandboxHarness.Body(_h.To(p.PeerId, PacketId.BuildResult).Last());
@@ -50,6 +56,9 @@ public class BuildEditTests
         return result;
     }
 
+    // 기능: 경기의 건설 저장소에서 조각을 찾는다.
+    // 입력: id - 조각 id.
+    // 출력: 그 조각의 현재 상태. 없으면 테스트가 실패한다.
     private BuildPiece PieceOf(uint id)
     {
         Assert.True(_h.Match.Build.TryGetSlot(id, out int slot));

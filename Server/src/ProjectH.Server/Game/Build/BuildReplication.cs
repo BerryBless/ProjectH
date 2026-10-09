@@ -89,7 +89,9 @@ public sealed class BuildReplication
     // Every interest cell (a dead player or a spectator watches the whole map, D14).
     public ulong AllCells => _interestPerSide * _interestPerSide >= 64 ? ulong.MaxValue : (1UL << (_interestPerSide * _interestPerSide)) - 1;
 
-    // The interest cell a world position lies in (clamped to the map).
+    // 기능: World 위치가 속한 관심 칸을 구한다(맵 밖이면 가장자리 칸으로 Clamp).
+    // 입력: position - World 위치.
+    // 출력: 관심 칸 Index(64비트 창의 비트 위치).
     public int InterestCellAt(Vector3 position)
     {
         int bx = Math.Clamp(BuildGrid.CellX(position.X), 0, BuildGrid.CellsX - 1);
@@ -97,7 +99,9 @@ public sealed class BuildReplication
         return InterestCell(bx, bz);
     }
 
-    // The cells within radius (Chebyshev) of a cell.
+    // 기능: 한 관심 칸에서 Chebyshev 거리 radius 안의 칸들을 비트 마스크로 만든다.
+    // 입력: cell - 중심 관심 칸, radius - 칸 단위 반지름.
+    // 출력: 범위 안 칸들의 비트 마스크(맵 밖 칸은 빠진다).
     public ulong Window(int cell, int radius)
     {
         int cx = cell % _interestPerSide;
@@ -109,11 +113,19 @@ public sealed class BuildReplication
         return mask;
     }
 
+    // 기능: 살아 있는 플레이어 Client가 유지할 관심 창을 구한다(D14): radius 안 칸 + 이미 갖고 있고 radius + keepMargin 안인 칸.
+    // 입력: cell - 플레이어의 관심 칸, current - 지금 갖고 있는 창, radius - 기본 반지름, keepMargin - 유지 여유 칸 수.
+    // 출력: 새 관심 창 비트 마스크(칸 경계를 오가도 조각을 버렸다 다시 보내지 않는다).
     // D14: the window a living player's client keeps: the cells within radius of its cell, plus those it already keeps
     // that are still within radius + keepMargin (so walking along a cell border does not drop and resend pieces).
     public ulong WindowFor(int cell, ulong current, int radius, int keepMargin) =>
         Window(cell, radius) | (current & Window(cell, radius + keepMargin));
 
+    // 기능: Client 하나의 다음 BuildSync 패킷을 현재 조각들로 쓴다(D14). 대기 칸을 center에 가까운 순으로, 칸 안은 열·id 순으로
+    //   이어 쓰며 시작한 칸은 끝까지 쓴 뒤 다음 칸으로 넘어간다. 패킷당 최대 BuildSyncPacket.MaxRecords개.
+    // 입력: buffer - 쓸 곳, pending - 아직 보낼 칸 비트(끝낸 칸은 지워진다), cell - 쓰던 칸(-1이면 새로 고른다), column - 쓰던 열,
+    //   afterId - 그 열에서 마지막으로 쓴 조각 id, center - Client의 관심 칸.
+    // 출력: 패킷 길이. 남은 조각이 없으면 0. pending·cell·column·afterId는 이어 쓸 위치로 갱신된다.
     // D14: the next BuildSync packet for one client, from the current pieces (a piece destroyed meanwhile is simply not
     // in it): the pending cells nearest first (Chebyshev distance to center, the client's own interest cell; ties by
     // index), each cell's build columns in order, each column in id order, resuming after (cell, column, afterId). A cell
@@ -171,7 +183,9 @@ public sealed class BuildReplication
         return writer.Length;
     }
 
-    // The pending cell nearest to center (Chebyshev, in interest cells), the lowest index among equals. At most 64 cells.
+    // 기능: 대기 칸 중 center에 Chebyshev 거리로 가장 가까운 칸을 고른다(같으면 Index가 낮은 칸). 최대 64칸.
+    // 입력: pending - 대기 칸 비트 마스크, center - 기준 관심 칸.
+    // 출력: 고른 칸 Index. pending이 비어 있으면 -1.
     public int NearestPending(ulong pending, int center)
     {
         int cx = center % _interestPerSide;
@@ -189,16 +203,27 @@ public sealed class BuildReplication
         return best;
     }
 
+    // 기능: 서 있는 조각을 전송용 기록으로 바꾼다.
+    // 입력: piece - 조각.
+    // 출력: id·모양·재질·소유자·생성 Tick·누적 피해를 담은 BuildPieceRecord.
     public static BuildPieceRecord Record(in BuildPiece piece) => new()
     {
         Id = piece.Id, Shape = piece.Shape, Material = piece.Material, Owner = piece.Owner, CreatedTick = piece.CreatedTick, Damage = piece.Damage,
     };
 
-    // D14: the interest cell (bit index in a 64-bit window) of a build cell.
+    // 기능: 건설 칸 좌표가 속한 관심 칸을 구한다(D14).
+    // 입력: buildX - 건설 칸 X, buildZ - 건설 칸 Z.
+    // 출력: 관심 칸 Index(64비트 창의 비트 위치).
     public int InterestCell(int buildX, int buildZ) => buildX / _cellsPerInterest + _interestPerSide * (buildZ / _cellsPerInterest);
 
+    // 기능: 조각 모양의 칸 좌표가 속한 관심 칸을 구한다.
+    // 입력: shape - 조각 모양.
+    // 출력: 관심 칸 Index.
     public int InterestCell(in BuildPieceShape shape) => InterestCell(shape.X, shape.Z);
 
+    // 기능: 이번 Tick에 놓인 조각을 Placed 목록에 기록한다(플레이어당 하나, QA 배치는 목록을 상한까지 늘린다).
+    // 입력: record - 놓인 조각의 기록.
+    // 출력: 반환값 없음. Placed 목록이 하나 늘고 Version이 오른다(상한을 넘으면 기록하지 않는다).
     public void Placed(in BuildPieceRecord record)
     {
         // One per player per tick, plus pieces placed between ticks without a player (QA-1 spawnBuildPiece): then the list
@@ -215,7 +240,9 @@ public sealed class BuildReplication
         Version++;
     }
 
-    // A piece took damage this tick (its Health record goes out at the end of the tick, once).
+    // 기능: 조각이 이번 Tick에 피해를 입었음을 표시한다(Health 기록은 Tick 끝 Collect에서 조각마다 한 번 나간다).
+    // 입력: slot - 피해를 입은 조각의 slot.
+    // 출력: 반환값 없음. 처음 표시된 slot만 대기 목록에 들어간다.
     public void Damaged(int slot)
     {
         if (slot >= _damagedFlag.Length) Array.Resize(ref _damagedFlag, Grown(_damagedFlag.Length, slot + 1));
@@ -239,7 +266,9 @@ public sealed class BuildReplication
         _editedSlots[_editedSlotCount++] = slot;
     }
 
-    // Doubling, at least to need, never past the match's piece limit (no list holds more than every piece).
+    // 기능: 목록의 새 길이를 정한다(두 배 또는 need 중 큰 쪽, 경기 조각 상한을 넘지 않는다).
+    // 입력: length - 지금 길이, need - 최소로 필요한 길이.
+    // 출력: 새 길이.
     private int Grown(int length, int need) => Math.Min(_world.Capacity, Math.Max(need, length * 2));
 
     // 기능: 조각이 이번 Tick에 World를 떠났음을 기록한다(파괴 또는 붕괴). 그 slot의 대기 중인 Health·Edited 기록은 버린다
@@ -283,7 +312,7 @@ public sealed class BuildReplication
 
     // 기능: Tick 끝에 대기 중인 Edited·Health 기록을 지금 상태로 만든다(아직 서 있는 조각만).
     // 입력: 없음.
-    // 출력: 반환값 없음. Edited·Health 목록이 채워지고 대기 표시가 지워진다.
+    // 출력: 반환값 없음. Edited·Health 목록이 채워지고 대기 표시가 지워지며 기록마다 Version이 오른다.
     public void Collect()
     {
         if (_editedSlotCount > _editedIds.Length)
@@ -393,7 +422,9 @@ public sealed class BuildReplication
         return writer.Length;
     }
 
-    // After every recipient got its packets.
+    // 기능: 모든 수신자에게 패킷을 보낸 뒤 이번 Tick의 Placed·Edited·Health·Destroyed 목록을 비운다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 네 목록의 개수가 0이 된다(Version·StructureVersion은 그대로).
     public void Clear()
     {
         _placedCount = 0;
@@ -402,7 +433,9 @@ public sealed class BuildReplication
         _destroyedCount = 0;
     }
 
-    // A round reset: nothing pending survives, and the damaged flags start clean.
+    // 기능: 라운드 Reset: 대기 중인 피해·편집 표시를 지우고 이벤트 목록을 비운다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 대기 표시와 네 목록이 비워진다(Version·StructureVersion은 그대로).
     public void Reset()
     {
         for (int i = 0; i < _damagedCount; i++) _damagedFlag[_damagedSlots[i]] = false;

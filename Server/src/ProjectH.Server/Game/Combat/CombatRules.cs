@@ -38,8 +38,9 @@ public static class CombatRules
     public const float FallDamageMaxSpeed = 30f;
     public const int FallDamageMax = 100;
 
-    // Phase 12 D10: no damage up to FallDamageMinSpeed, FallDamageMax from FallDamageMaxSpeed on, linear between
-    // (rounded half away from zero). Speeds are the landing's vertical speed in m/s; anything not a number is 0.
+    // 기능: 착지 속도로 낙하 피해를 정한다(Phase 12 D10): FallDamageMinSpeed까지 0, FallDamageMaxSpeed부터 FallDamageMax, 사이는 선형(반올림).
+    // 입력: landingSpeed - 착지 때 수직 속도(m/s, NaN이면 0으로 본다).
+    // 출력: 낙하 피해(0..FallDamageMax).
     public static int FallDamage(float landingSpeed)
     {
         if (!(landingSpeed > FallDamageMinSpeed)) return 0;
@@ -48,8 +49,9 @@ public static class CombatRules
         return (int)MathF.Round(share * FallDamageMax, MidpointRounding.AwayFromZero);
     }
 
-    // D8: the shield absorbs first, the rest comes off health (never below 0). Returns true when this
-    // damage took health from above 0 to 0.
+    // 기능: 피해를 보호막이 먼저 흡수하고 나머지를 체력에서 뺀다(D8, 0 아래로는 가지 않는다).
+    // 입력: health - 체력(갱신된다), shield - 보호막(갱신된다), damage - 적용할 피해.
+    // 출력: 이 피해로 체력이 0보다 크다가 0이 되었으면 true(피해가 0 이하이거나 이미 죽었으면 false, 아무것도 바뀌지 않는다).
     public static bool ApplyDamage(ref int health, ref int shield, int damage)
     {
         if (damage <= 0 || health <= 0) return false;
@@ -59,6 +61,9 @@ public static class CombatRules
         return health == 0;
     }
 
+    // 기능: 무기 피해에 등급 배율을 곱해 반올림한다(Phase 4 D4). decimal로 계산해 90 x 1.15가 데이터대로 104가 되게 한다.
+    // 입력: damage - 무기 기본 피해, multiplier - 등급 배율.
+    // 출력: 반올림한 피해(최소 1, ushort 상한).
     // Phase 4 D4: a weapon's damage times its rarity multiplier, rounded half away from zero, at least 1.
     // decimal, not float: 1.15f is 1.1499999..., and 90 x 1.15 must round to 104 as written in the data.
     // Casting the float to decimal keeps its 7 significant digits (1.15).
@@ -117,8 +122,10 @@ public static class CombatRules
         return Vector3.Distance(point, closest);
     }
 
-    // D14: non-finite angles are no shot. Pitch is clamped to +-89 degrees. Same convention as the
-    // client camera (ShoulderCameraMath.Forward): yaw 0 faces +Z, yaw 90 faces +X, positive pitch looks down.
+    // 기능: 조준 각도를 단위 방향 벡터로 바꾼다(D14). Client Camera(ShoulderCameraMath.Forward)와 같은 규약: yaw 0 = +Z, yaw 90 = +X,
+    //   양의 pitch = 아래. pitch는 ±89도로 자른다.
+    // 입력: yawDegrees - 수평 각도, pitchDegrees - 수직 각도, direction - 결과.
+    // 출력: 두 각도가 유한하면 true와 단위 방향, 아니면 false(사격 없음).
     public static bool TryAimDirection(float yawDegrees, float pitchDegrees, out Vector3 direction)
     {
         direction = default;
@@ -132,8 +139,9 @@ public static class CombatRules
         return true;
     }
 
-    // D14: the tick a shot rewinds targets to. The client's ViewTick is untrusted: anything outside
-    // [latestTick - maxRewindTicks, latestTick] is clamped into it (never below tick 0); uint.MaxValue ("now") is latestTick.
+    // 기능: 사격이 대상을 되감을 Tick을 정한다(D14, 잘렸는지는 돌려주지 않는 판).
+    // 입력: viewTick - Client가 본 Tick(uint.MaxValue = "지금"), latestTick - 마지막으로 끝난 Tick, maxRewindTicks - 되감을 수 있는 최대 Tick.
+    // 출력: [latestTick - maxRewindTicks, latestTick] 안으로 자른 되감기 Tick(Tick 0 아래로는 가지 않는다).
     public static double ClampViewTick(uint viewTick, uint latestTick, int maxRewindTicks) =>
         ClampViewTick(viewTick, latestTick, maxRewindTicks, out _);
 
@@ -168,14 +176,17 @@ public static class CombatRules
         return (int)Math.Clamp(allowed, Math.Min(2, maxRewindTicks), maxRewindTicks);
     }
 
-    // MaxRewindSeconds in ticks, cut to what PositionHistory holds (a high SimHz would otherwise reach
-    // outside the ring: 0.4 s at 128 Hz is 51 ticks, the ring keeps Capacity - 1 = 31 behind the newest).
+    // 기능: MaxRewindSeconds를 Tick으로 바꾸되 PositionHistory가 보관하는 범위(Capacity - 1)로 자른다(128 Hz면 51 → 31).
+    // 입력: simHz - Tick 속도.
+    // 출력: 되감기 상한 Tick 수.
     public static int MaxRewindTicks(int simHz)
     {
         return Math.Min((int)TicksFromSeconds(MaxRewindSeconds, simHz), PositionHistory.Capacity - 1);
     }
 
-    // Whole ticks at simHz, at least 1 (3 s at 30 Hz = 90).
+    // 기능: 초를 simHz 기준 Tick 수로 반올림한다(3 s at 30 Hz = 90).
+    // 입력: seconds - 초, simHz - Tick 속도.
+    // 출력: 최소 1인 Tick 수.
     public static uint TicksFromSeconds(float seconds, int simHz)
     {
         return (uint)Math.Max(1, (int)MathF.Round(seconds * simHz, MidpointRounding.AwayFromZero));

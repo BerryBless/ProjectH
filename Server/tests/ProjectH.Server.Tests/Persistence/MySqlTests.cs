@@ -20,6 +20,9 @@ public sealed class MySqlFactAttribute : FactAttribute
 {
     public const string Variable = "PROJECTH_TEST_MYSQL";
 
+    // 기능: PROJECTH_TEST_MYSQL이 비어 있으면 테스트를 건너뛰도록 Skip 사유를 적는다.
+    // 입력: 없음.
+    // 출력: 연결 문자열이 없을 때 Skip이 설정된 Fact Attribute.
     public MySqlFactAttribute()
     {
         if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(Variable)))
@@ -32,8 +35,14 @@ public sealed class MySqlFactAttribute : FactAttribute
 // Phase 9 against a real MySQL. Every test uses its own random DevPlayerIds, so tests never see each other's rows.
 public class MySqlTests
 {
+    // 기능: 다른 테스트와 겹치지 않는 임의의 DevPlayerId를 만든다.
+    // 입력: tag - id 앞에 붙일 짧은 표시.
+    // 출력: "t{tag}-{guid}"를 32자로 자른 id.
     private static string NewId(string tag) => $"t{tag}-{Guid.NewGuid():N}"[..32];
 
+    // 기능: 4분 전에 시작해 지금 끝난 경기 기록을 만든다. Placement 1인 참가자가 우승자다.
+    // 입력: round - 라운드 번호, players - 참가자 기록들.
+    // 출력: 그 참가자들의 MatchRecord(Placement 1이 없으면 우승자 null).
     private static MatchRecord Match(int round, params PlayerRecord[] players)
     {
         string? winner = null;
@@ -42,6 +51,9 @@ public class MySqlTests
         return new MatchRecord(round, end.AddMinutes(-4), end, winner, players);
     }
 
+    // 기능: 테스트 MySQL에 붙는 MatchStore를 만들고 Schema를 두 번 보장한다(멱등 확인).
+    // 입력: 없음.
+    // 출력: Schema가 준비된 MatchStore.
     private static async Task<MatchStore> StoreAsync()
     {
         var store = new MatchStore(MySqlFactAttribute.ConnectionString);
@@ -141,7 +153,7 @@ public class MySqlTests
 
     // 기능: SQL 한 문장을 실행한다(시험 준비용).
     // 입력: connection - 열린 연결, sql - 문장.
-    // 출력: 반환값 없음.
+    // 출력: 반환값 없음. 문장이 실행된 뒤 끝난다.
     private static async Task Execute(MySqlConnection connection, string sql)
     {
         await using var command = new MySqlCommand(sql, connection);
@@ -262,6 +274,9 @@ public class MySqlTests
         private readonly TcpListener _listener;
         private readonly CancellationTokenSource _stop = new();
 
+        // 기능: 127.0.0.1:listenPort에서 듣기 시작하고 연결 받기를 배경에서 돌린다.
+        // 입력: listenPort - 들을 포트, host·port - 연결을 넘길 목적지.
+        // 출력: 동작 중인 TcpForwarder(Dispose가 멈춘다).
         public TcpForwarder(int listenPort, string host, int port)
         {
             _listener = new TcpListener(IPAddress.Loopback, listenPort);
@@ -269,6 +284,9 @@ public class MySqlTests
             _ = AcceptAsync(host, port);
         }
 
+        // 기능: Dispose될 때까지 들어오는 TCP 연결을 받아 각각 목적지로 잇는 Pipe를 띄운다.
+        // 입력: host·port - 연결을 넘길 목적지.
+        // 출력: 반환값 없음. 중단 요청으로 끝나며 그때의 예외는 삼킨다.
         private async Task AcceptAsync(string host, int port)
         {
             try
@@ -284,6 +302,9 @@ public class MySqlTests
             }
         }
 
+        // 기능: 받은 연결을 목적지에 이어 양방향으로 바이트를 복사하고, 한쪽이 닫히면 둘 다 닫는다.
+        // 입력: inbound - 받은 연결, host·port - 목적지.
+        // 출력: 반환값 없음. 연결 실패·종료 예외는 삼키고 두 소켓이 닫힌다.
         private async Task PipeAsync(TcpClient inbound, string host, int port)
         {
             using (inbound)
@@ -302,6 +323,9 @@ public class MySqlTests
             }
         }
 
+        // 기능: 받기와 모든 Pipe를 취소하고 Listener를 닫는다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 더 이상 연결을 받지 않는다.
         public void Dispose()
         {
             _stop.Cancel();
@@ -373,6 +397,9 @@ public class MySqlTests
         Assert.Null(await new MatchStore(MySqlFactAttribute.ConnectionString).GetStatsAsync(blocked, CancellationToken.None));
     }
 
+    // 기능: 실제 DB에 붙은 StatsQueryService를 띄워 한 플레이어의 전적 조회를 넣고 답을 기다린 뒤 서비스를 멈춘다.
+    // 입력: devPlayerId - 조회할 플레이어 id.
+    // 출력: 서비스가 돌려준 StatsResponse. 10초 안에 답이 없으면 TimeoutException.
     // Phase 11 D8: what a player asks for, through the service as the server runs it.
     private static async Task<StatsResponse> AskAsync(string devPlayerId)
     {
@@ -438,6 +465,9 @@ public class MySqlTests
 // database is a failed save, counted. Needs no MySQL.
 public class UnreachableDatabaseTests
 {
+    // 기능: OS에서 빈 Loopback 포트를 받아 바로 놓아 준다.
+    // 입력: 없음.
+    // 출력: 지금 아무도 듣지 않는 포트 번호.
     // A loopback port nothing listens on (taken from the OS, then released).
     internal static int FreePort()
     {
@@ -448,6 +478,9 @@ public class UnreachableDatabaseTests
         return port;
     }
 
+    // 기능: 조건이 참이 될 때까지 50ms마다 확인하며 최대 15초 기다린다.
+    // 입력: condition - 기다릴 조건.
+    // 출력: 반환값 없음. 조건이 참이 되거나 15초가 지나면 끝난다(실패를 알리지 않는다).
     internal static async Task WaitFor(Func<bool> condition)
     {
         var clock = Stopwatch.StartNew();

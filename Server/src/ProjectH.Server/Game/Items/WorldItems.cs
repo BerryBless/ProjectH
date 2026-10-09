@@ -79,6 +79,9 @@ public sealed class WorldItems
         return true;
     }
 
+    // 기능: 아이템 id로 저장 index를 찾는다(선형 탐색, 최대 Capacity).
+    // 입력: itemId - 아이템 id.
+    // 출력: index(0..Count-1). 없으면 -1.
     public int IndexOf(ushort itemId)
     {
         for (int i = 0; i < _count; i++)
@@ -100,18 +103,22 @@ public sealed class WorldItems
         _items[_count] = default;
     }
 
+    // 기능: 아이템의 양을 바꾼다(일부만 주웠을 때).
+    // 입력: index - 0..Count-1, amount - 새 양.
+    // 출력: 반환값 없음.
     public void SetAmount(int index, ushort amount)
     {
         _items[index].Data.Amount = amount;
     }
 
+    // 기능: 범위 안에서 발에 가장 가까운(3D 거리) 줍기 대상을 찾는다(D8, Material 제외). 같은 거리면 작은 ItemId(저장 순서와 무관,
+    //   Client 안내도 같은 규칙). Phase 14 D9: 카드는 cardTeam의 카드만 대상이다.
+    // 입력: feet - 발 위치, horizontalRange·verticalRange - 범위, cardTeam - 줍는 사람의 팀(0 = 카드는 모두 건너뜀).
+    // 출력: 아이템 index, 없으면 -1.
     // D8: the item nearest to feet (3D distance) among those within horizontalRange on the ground plane
     // and verticalRange up or down, or -1. Ties go to the lower ItemId, so the result does not depend on
     // the storage order (the client prompt applies the same rule to its own list). Phase 13 D15: never a Material
     // item (those are picked up on touch).
-    // 기능: 범위 안에서 발에 가장 가까운 줍기 대상을 찾는다(Material 제외). Phase 14 D9: 카드는 cardTeam의 카드만 대상이다.
-    // 입력: feet - 발 위치, horizontalRange·verticalRange - 범위, cardTeam - 줍는 사람의 팀(0 = 카드는 모두 건너뜀).
-    // 출력: 아이템 index, 없으면 -1.
     public int FindNearest(Vector3 feet, float horizontalRange, float verticalRange, byte cardTeam = 0)
     {
         int best = -1;
@@ -135,8 +142,9 @@ public sealed class WorldItems
         return best;
     }
 
-    // Ids go 1, 2, ... 65535, 1, ... skipping ids still in use, so a freed id is reused only after a full
-    // lap (a late ItemRemoved can never name a newer item). At most Capacity ids are in use, so this ends.
+    // 기능: 다음 아이템 id를 낸다(1..65535 순환, 쓰고 있는 id는 건너뛴다: 늦은 ItemRemoved가 새 아이템을 가리키지 않는다).
+    // 입력: 없음.
+    // 출력: 쓰고 있지 않은 id(최대 Capacity개만 사용 중이라 반드시 끝난다).
     private ushort NextId()
     {
         while (true)

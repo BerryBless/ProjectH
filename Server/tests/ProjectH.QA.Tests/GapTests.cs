@@ -7,6 +7,9 @@ namespace ProjectH.QA.Tests;
 // QA-1 gap closing: setZone zonePhase, pauseInput/resumeInput, build.
 public class GapTests
 {
+    // 기능: playerA 한 명짜리 시나리오를 파싱·검증한 뒤 가짜 서버와 MockActor로 Orchestrator를 끝까지 실행한다.
+    // 입력: steps - steps 배열 JSON, refusal - MockActor가 모든 건설 요청에 돌려줄 거절 코드(null이면 모두 Ok).
+    // 출력: 실행 결과 RunReport, 사용한 FakeQaServer, 만들어진 MockActor.
     private static async Task<(RunReport Report, FakeQaServer Server, MockActor Actor)> Run(string steps, string? refusal = null)
     {
         var server = new FakeQaServer();

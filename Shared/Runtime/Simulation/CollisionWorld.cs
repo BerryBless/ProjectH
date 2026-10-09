@@ -20,6 +20,9 @@ namespace ProjectH.Shared.Simulation
         public readonly ColliderKind Kind;
         public readonly uint Id;
 
+        // 기능: 종류와 번호로 충돌체 이름을 만든다.
+        // 입력: kind - 충돌체 종류, id - 종류 안의 번호(맵 인덱스 또는 조각 id).
+        // 출력: 두 값을 담은 충돌체 이름.
         public ColliderId(ColliderKind kind, uint id)
         {
             Kind = kind;
@@ -30,11 +33,29 @@ namespace ProjectH.Shared.Simulation
 
         public bool IsNone => Kind == ColliderKind.None;
 
+        // 기능: 두 충돌체 이름이 같은지 본다.
+        // 입력: other - 비교할 이름.
+        // 출력: 종류와 번호가 모두 같으면 true.
         public bool Equals(ColliderId other) => Kind == other.Kind && Id == other.Id;
+        // 기능: object로 받은 값이 같은 충돌체 이름인지 본다.
+        // 입력: obj - 비교할 값.
+        // 출력: ColliderId이고 종류·번호가 같으면 true.
         public override bool Equals(object obj) => obj is ColliderId other && Equals(other);
+        // 기능: 종류와 번호로 해시를 만든다.
+        // 입력: 없음.
+        // 출력: 해시 값(종류 << 28 ^ 번호).
         public override int GetHashCode() => ((int)Kind << 28) ^ (int)Id;
+        // 기능: 두 충돌체 이름이 같은지 본다(== 연산자).
+        // 입력: a·b - 비교할 두 이름.
+        // 출력: 종류와 번호가 모두 같으면 true.
         public static bool operator ==(ColliderId a, ColliderId b) => a.Equals(b);
+        // 기능: 두 충돌체 이름이 다른지 본다(!= 연산자).
+        // 입력: a·b - 비교할 두 이름.
+        // 출력: 종류나 번호가 다르면 true.
         public static bool operator !=(ColliderId a, ColliderId b) => !a.Equals(b);
+        // 기능: 충돌체 이름을 로그용 문자열로 만든다.
+        // 입력: 없음.
+        // 출력: "종류:번호" 문자열.
         public override string ToString() => Kind + ":" + Id;
     }
 
@@ -160,12 +181,18 @@ namespace ProjectH.Shared.Simulation
             PieceCount = count;
         }
 
+        // 기능: 상자 하나를 이름과 함께 상자 버퍼 끝에 넣는다(용량 검사 없음. MaxBoxes는 Gather가 보장한다).
+        // 입력: box - 넣을 상자, id - 그 상자의 충돌체 이름.
+        // 출력: 반환값 없음. Boxes·BoxIds가 하나 늘어난다.
         private void AddBox(in Box box, ColliderId id)
         {
             _boxes[_boxCount] = box;
             _boxIds[_boxCount++] = id;
         }
 
+        // 기능: 상자가 지면 평면의 수집 사각형과 겹치는지 본다(높이는 보지 않는다).
+        // 입력: box - 검사할 상자, minX·minZ·maxX·maxZ - 수집 사각형.
+        // 출력: X·Z 범위가 겹치거나 닿으면 true.
         private static bool Near(in Box box, float minX, float minZ, float maxX, float maxZ) =>
             box.Max.X >= minX && box.Min.X <= maxX && box.Max.Z >= minZ && box.Min.Z <= maxZ;
     }

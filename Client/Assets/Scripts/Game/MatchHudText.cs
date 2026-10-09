@@ -22,8 +22,10 @@ namespace ProjectH.Client.Game
         public string Zone { get; private set; } = string.Empty;
         public string Spectating { get; private set; } = string.Empty;
 
-        // The top line: "플레이어를 기다리는 중 1/2", "시작까지 7초", "생존 3/5", "경기 종료". secondsLeft is used while
-        // Starting; alive / participants / minPlayers come from MatchState.
+        // 기능: 위쪽 상태 줄을 보이는 값이 바뀔 때만 만든다("플레이어를 기다리는 중 1/2", "시작까지 7초", "생존 3/5", "경기 종료").
+        // 입력: state - 경기 상태, secondsLeft - 남은 초(Starting에서만 쓴다), alive - 생존자 수, participants - 참가자 수, minPlayers - 시작
+        //   최소 인원(MatchState 값; 상태에 따라 쓰는 값만 비교한다).
+        // 출력: 문자열을 새로 만들었으면 true, 값이 같아 그대로면 false.
         public bool SetStatus(MatchFlowState state, int secondsLeft, int alive, int participants, int minPlayers)
         {
             int a;
@@ -53,7 +55,9 @@ namespace ProjectH.Client.Game
             return true;
         }
 
-        // "자기장 축소까지 12초" / "자기장 축소 중" / nothing.
+        // 기능: 자기장 줄을 바뀔 때만 만든다("자기장 축소까지 12초", "자기장 축소 중", 아니면 빈 문자열).
+        // 입력: hint - 자기장 안내 종류, seconds - 축소까지 남은 초(ShrinksIn이 아니면 0으로 본다).
+        // 출력: 문자열을 새로 만들었으면 true, 값이 같아 그대로면 false.
         public bool SetZone(ZoneHint hint, int seconds)
         {
             if (hint != ZoneHint.ShrinksIn) seconds = 0;
@@ -70,8 +74,9 @@ namespace ProjectH.Client.Game
             return true;
         }
 
-        // Phase 11 D9: "관전 중: alice", or "관전 중: 플레이어 3" when that player's name is not known. 0 hides it. The name
-        // is PlayerSpawned's string, compared by reference.
+        // 기능: 관전 줄을 대상이나 이름(참조 비교)이 바뀔 때만 만든다(Phase 11 D9: "관전 중: alice", 이름을 모르면 "관전 중: 플레이어 3").
+        // 입력: entityId - 관전 대상(0이면 빈 문자열), name - PlayerSpawned가 준 이름(모르면 null).
+        // 출력: 문자열을 새로 만들었으면 true, 값이 같아 그대로면 false.
         public bool SetSpectating(ushort entityId, string name)
         {
             if (entityId == _spectating && ReferenceEquals(name, _spectatingName)) return false;

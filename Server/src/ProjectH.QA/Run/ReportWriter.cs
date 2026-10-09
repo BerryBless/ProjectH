@@ -8,6 +8,9 @@ namespace ProjectH.QA;
 // external resources) in QA/Reports/<runId>/.
 public static class ReportWriter
 {
+    // 기능: 보고서 폴더를 만들고 report.json과 report.html을 쓴다.
+    // 입력: report - 실행 보고서, directory - QA/Reports/<runId> 폴더.
+    // 출력: 반환값 없음. 두 파일이 기록된다. IO 오류는 호출자에게 전파된다.
     public static void Write(RunReport report, string directory)
     {
         Directory.CreateDirectory(directory);
@@ -15,6 +18,9 @@ public static class ReportWriter
         File.WriteAllText(Path.Combine(directory, "report.html"), Html(report), Encoding.UTF8);
     }
 
+    // 기능: 보고서를 외부 자원 없는 단일 HTML 문서(요약 표, 실패, 단계 표, 경고, 스트레스, 기준선, 상태 덤프, 이벤트, 지표, 정리, 수동 확인, 스크린샷, 서버 명령·로그)로 만든다.
+    // 입력: r - 실행 보고서.
+    // 출력: HTML 문자열(모든 텍스트는 HTML 인코딩됨).
     public static string Html(RunReport r)
     {
         var sb = new StringBuilder(16 * 1024);
@@ -158,6 +164,9 @@ public static class ReportWriter
         return sb.ToString();
     }
 
+    // 기능: 기준선 절(비교 대상 실행, 지표 행 표, 경고, 히스토리 파일)을 HTML에 덧붙인다.
+    // 입력: sb - 출력 버퍼, b - 기준선 보고서.
+    // 출력: 반환값 없음. sb에 절이 추가된다.
     // D33 / request §136: Previous / Current / Change % against the latest earlier PASSED run with the same parameters.
     private static void Baseline(StringBuilder sb, BaselineReport b)
     {
@@ -183,9 +192,15 @@ public static class ReportWriter
         if (b.HistoryFile != null) sb.Append("<p class=\"muted\">History: ").Append(E(b.HistoryFile)).Append(b.Recorded ? "" : " (this run was not recorded)").Append("</p>");
     }
 
+    // 기능: 이름·값 한 쌍을 표 행(<tr><th>이름</th><td>값</td></tr>)으로 덧붙인다.
+    // 입력: sb - 출력 버퍼, name - 행 이름, value - 행 값.
+    // 출력: 반환값 없음. sb에 행이 추가된다.
     private static void Row(StringBuilder sb, string name, string value) =>
         sb.Append("<tr><th>").Append(E(name)).Append("</th><td>").Append(E(value)).Append("</td></tr>");
 
+    // 기능: 소제목과 JSON 값을 들여쓴 <pre> 블록으로 덧붙인다.
+    // 입력: sb - 출력 버퍼, title - 소제목, value - 표시할 JSON(null이면 "Not available.").
+    // 출력: 반환값 없음. sb에 블록이 추가된다.
     private static void Json(StringBuilder sb, string title, JsonElement? value)
     {
         sb.Append("<h3>").Append(E(title)).Append("</h3>");
@@ -197,5 +212,8 @@ public static class ReportWriter
         sb.Append("<pre>").Append(E(JsonSerializer.Serialize(value.Value, QaJson.Options))).Append("</pre>");
     }
 
+    // 기능: 텍스트를 HTML 인코딩한다.
+    // 입력: text - 원문.
+    // 출력: HTML 특수문자가 이스케이프된 문자열.
     private static string E(string text) => WebUtility.HtmlEncode(text);
 }

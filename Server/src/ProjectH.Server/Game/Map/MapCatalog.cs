@@ -11,6 +11,9 @@ public sealed class MapCatalog
 {
     public const string FileName = "map.json";
 
+    // 기능: 검증을 마친 값들로 카탈로그를 만든다(TryParse만 호출한다).
+    // 입력: simHz - Tick 속도, root - 파싱된 JSON, pingTicks - 일반 핑 유지 Tick, enemyPingTicks - 적 핑 유지 Tick.
+    // 출력: 모든 값이 채워진 불변 MapCatalog.
     private MapCatalog(int simHz, MapJson root, uint pingTicks, uint enemyPingTicks)
     {
         SimHz = simHz;
@@ -96,6 +99,9 @@ public sealed class MapCatalog
         return true;
     }
 
+    // 기능: 검증 실패 이유를 error에 담고 false를 돌려준다(TryParse의 한 줄 반환용).
+    // 입력: message - 실패 이유, error - 결과.
+    // 출력: 항상 false와 error = message.
     private static bool Fail(string message, out string? error)
     {
         error = message;

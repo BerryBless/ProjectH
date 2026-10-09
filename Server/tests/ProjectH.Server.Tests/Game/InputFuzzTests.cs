@@ -17,6 +17,9 @@ public class InputFuzzTests
         float.Epsilon, -0f, 0f, 1f, -1f, 360f, -720f, 1e6f,
     };
 
+    // 기능: 퍼징용 float 값 하나를 고른다(1/3은 -2..2의 정상 값, 나머지는 적대적인 값).
+    // 입력: random - 시드 고정 난수.
+    // 출력: 입력 필드에 넣을 float 값.
     private static float Value(Random random) =>
         random.Next(3) == 0 ? (float)(random.NextDouble() * 4 - 2) : Hostile[random.Next(Hostile.Length)];
 
@@ -29,6 +32,9 @@ public class InputFuzzTests
     private static uint TickValue(Random random) =>
         random.Next(3) == 0 ? (uint)random.Next(0, 10_000) : HostileTicks[random.Next(HostileTicks.Length)];
 
+    // 기능: 적대적인 값으로 채운 입력 패킷을 만들어 실제 Wire 쓰기·읽기를 거친 결과를 돌려준다.
+    // 입력: random - 시드 고정 난수, buffer - 직렬화 버퍼, nextSeq - 이 플레이어의 다음 순번(정상 입력마다 올라간다), endgame - true면 uint 상단 Seq도 섞는다.
+    // 출력: TryRead로 다시 읽은 PlayerInputPacket. 쓰기·읽기에 실패하면 테스트가 실패한다.
     // Through PlayerInputPacket.Write and TryRead, as NetworkListener sees it (unknown buttons are masked there).
     // Seq: mostly the next one (so most inputs are taken and acted on), sometimes old or repeated ones; near the end
     // also the top of the uint range ("negative" Seq), after which this player's normal inputs are refused.
@@ -59,6 +65,9 @@ public class InputFuzzTests
         return read;
     }
 
+    // 기능: 경기에 있는 모든 플레이어의 위치·속도·Yaw가 유한하고 체력·보호막이 0..100인지 확인한다.
+    // 입력: match - 검사할 경기, peers - 검사할 연결 id 상한(1..peers, 없는 peer는 건너뛴다).
+    // 출력: 반환값 없음. 하나라도 벗어나면 테스트가 실패한다.
     private static void AssertSane(Match match, int peers)
     {
         for (int peer = 1; peer <= peers; peer++)

@@ -9,6 +9,9 @@ namespace ProjectH.Shared.Simulation
         public readonly Vector3 Position;
         public readonly string Table;
 
+        // 기능: 아이템 생성 지점 하나를 만든다.
+        // 입력: position - 아이템이 놓일 위치, table - 채울 loot.json Table 이름.
+        // 출력: 두 값을 담은 생성 지점.
         public LootPoint(Vector3 position, string table)
         {
             Position = position;
@@ -97,9 +100,15 @@ namespace ProjectH.Shared.Simulation
 
         public static ReadOnlySpan<LootPoint> All => s_points;
 
+        // 기능: 지형 위의 생성 지점을 만든다(높이는 GameMap.Terrain에서 오므로 언덕을 옮기면 같이 움직인다).
+        // 입력: x·z - 평면 위치, table - Table 이름.
+        // 출력: 그 자리 지형 높이에 놓인 생성 지점.
         // On the terrain: the height comes from GameMap.Terrain, so moving a hill moves its points with it.
         private static LootPoint Ground(float x, float z, string table) => new LootPoint(new Vector3(x, GameMap.Terrain.Height(x, z), z), table);
 
+        // 기능: 상자 위의 생성 지점을 만든다.
+        // 입력: x·z - 평면 위치, y - 상자 윗면 높이, table - Table 이름.
+        // 출력: 높이 y에 놓인 생성 지점.
         // On a box top at height y.
         private static LootPoint Top(float x, float y, float z, string table) => new LootPoint(new Vector3(x, y, z), table);
     }

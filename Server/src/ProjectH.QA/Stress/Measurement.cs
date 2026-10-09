@@ -36,6 +36,9 @@ public sealed class MeasureSample
     public long DbSaved { get; set; }
     public long DbFailed { get; set; }
 
+    // 기능: /qa/metrics 응답 한 건을 MeasureSample로 읽는다(없거나 숫자가 아닌 키는 0).
+    // 입력: m - /qa/metrics JSON, seconds - 단계 시작 후 경과 초, toolCpuPercent - QA 도구 자체 CPU %.
+    // 출력: 채워진 MeasureSample.
     // Missing keys read as 0 (an older server without the D36 keys still gives the tick numbers).
     public static MeasureSample From(JsonElement m, double seconds, double toolCpuPercent)
     {
@@ -125,6 +128,9 @@ public sealed class MeasureResult
 // end of the cumulative counters is `whole`, else the last sample.
 public static class MeasureMath
 {
+    // 기능: 단계의 시작 reading·sample 창·전체 창(whole)으로 MeasureResult의 집계 항목(tick 백분위·CPU·메모리·GC·네트워크·플레이어·DB·카운터 차이)을 채운다.
+    // 입력: r - 채울 결과, start - 단계 시작 reading(누적 카운터 기준), samples - sample 창 reading들, whole - 단계 전체 창 reading(없으면 null), seconds - 단계 길이.
+    // 출력: 반환값 없음. r의 집계 필드가 덮어써진다(whole이 없으면 TicksExact=false와 TicksNote).
     public static void Summarize(MeasureResult r, MeasureSample start, IReadOnlyList<MeasureSample> samples, MeasureSample? whole, double seconds)
     {
         r.Seconds = Math.Round(seconds, 2);
@@ -193,6 +199,9 @@ public static class MeasureMath
     public const double MinSampleSeconds = 1;
     public const double DefaultSampleSeconds = 5;
 
+    // 기능: 단계 길이와 요청값으로 sample 간격을 정한다(최소 MinSampleSeconds, 최대 MaxSamples개가 되도록 늘림).
+    // 입력: seconds - 단계 길이, requested - 시나리오가 요청한 간격(null이면 DefaultSampleSeconds).
+    // 출력: 정수 초 간격(서버 창 범위 1..120).
     public static int SampleInterval(double seconds, double? requested)
     {
         double interval = Math.Max(MinSampleSeconds, requested ?? DefaultSampleSeconds);
@@ -201,6 +210,9 @@ public static class MeasureMath
         return (int)Math.Clamp(Math.Ceiling(interval), 1, 120);
     }
 
+    // 기능: 숫자를 보고용 문자열로 만든다(절대값 100 이상은 소수 1자리, 그 외 3자리, InvariantCulture).
+    // 입력: v - 숫자.
+    // 출력: 포맷된 문자열.
     public static string F(double v) => v.ToString(Math.Abs(v) >= 100 ? "0.#" : "0.###", CultureInfo.InvariantCulture);
 }
 
@@ -303,6 +315,9 @@ public sealed class MatchLoopReport
 // matchLoop's pure parts (tests): milestones, a match span's post-GC floor and the trend rule.
 public static class MatchTrend
 {
+    // 기능: 보고서에 줄을 남길 milestone 매치 번호인지 판정한다(1, 5, 그리고 10·25·50 x 10^n).
+    // 입력: match - 매치 번호.
+    // 출력: milestone이면 true.
     // "after match 1/5/10/25/50/100/250/500/1000..." (1, 5, then 10, 25, 50 x powers of ten... 2.5 and 5 steps).
     public static bool IsMilestone(int match)
     {
@@ -314,6 +329,9 @@ public static class MatchTrend
         return false;
     }
 
+    // 기능: 구간 reading들 중 첫 reading보다 GC 횟수가 늘어난 reading의 최소 managed MB를 구한다.
+    // 입력: span - 시간순 reading(첫 항목이 구간 시작).
+    // 출력: post-GC 최저 managed MB. reading이 2개 미만이거나 구간에 GC가 없었으면 null.
     // The lowest managed reading after the first GC in the span (readings in time order; the first is the span's start).
     public static double? PostGcFloor(IReadOnlyList<MeasureSample> span)
     {
@@ -328,8 +346,14 @@ public static class MatchTrend
         return floor;
     }
 
+    // 기능: sample의 누적 GC 횟수(gen0+gen1+gen2)를 더한다.
+    // 입력: s - sample.
+    // 출력: 합계.
     private static long Gc(MeasureSample s) => s.Gen0 + s.Gen1 + s.Gen2;
 
+    // 기능: 마지막 count개의 post-GC floor가 매번 오르고 첫 값 대비 percent %를 넘게 올랐으면 경고 문장을 만든다.
+    // 입력: floors - (매치 번호, floor MB) 시간순 목록, count - 볼 마지막 매치 수, percent - 경고 기준 상승률(%).
+    // 출력: 경고 문자열. 조건에 안 맞으면(count<2, 자료 부족, 첫 값 0 이하 포함) null.
     // D42-style warning rule (not a failure): the last `count` post-GC floors (matches without a GC skipped) each higher
     // than the one before, and the last more than `percent` % above the first of them. Null = no warning.
     public static string? Check(IReadOnlyList<(int Match, double Floor)> floors, int count, double percent)
@@ -373,6 +397,9 @@ public sealed class StressSummary
     public double? InputLatencyP95Ms { get; set; }
     public string Result { get; set; } = string.Empty;
 
+    // 기능: 요약에 쓸 단계를 고른다("steady"가 있으면 그 마지막, 없으면 PlannedSeconds가 가장 긴 단계 중 마지막).
+    // 입력: phases - 측정 단계들.
+    // 출력: 고른 단계. 단계가 없으면 null.
     // The judged phase: "steady"; without one, the longest phase (the last of equally long ones: soak, match_10).
     public static MeasureResult? Pick(IReadOnlyList<MeasureResult> phases)
     {
@@ -386,6 +413,9 @@ public sealed class StressSummary
         return best;
     }
 
+    // 기능: 고른 단계의 수치로 StressSummary를 만든다(Stalls는 모든 단계의 합).
+    // 입력: phases - 측정 단계들, result - run 결과 문자열.
+    // 출력: StressSummary. 단계가 없으면 null.
     public static StressSummary? From(IReadOnlyList<MeasureResult> phases, string result)
     {
         MeasureResult? p = Pick(phases);
@@ -400,6 +430,9 @@ public sealed class StressSummary
         };
     }
 
+    // 기능: 요약 한 줄("STRESS ...")을 만든다.
+    // 입력: 없음.
+    // 출력: 콘솔·보고서 헤더·배치 표용 문자열.
     public string Line()
     {
         string F(double v) => MeasureMath.F(v);

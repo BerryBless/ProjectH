@@ -25,6 +25,9 @@ public class ConsumableTests
     private readonly PlayerEntity _a;
     private uint _seq;
 
+    // 기능: 메드킷 2개·보호막 셀 3개 장비의 2인 개발 모드 Match를 만들고 플레이어 1을 들여보낸다(입장 패킷은 비운다).
+    // 입력: 없음.
+    // 출력: 플레이어 _a가 들어온 Match를 든 테스트 인스턴스.
     public ConsumableTests()
     {
         _match = new Match(new ServerOptions { MaxPlayers = 2, DevRespawn = true }, TestGameData.Create(),
@@ -42,6 +45,9 @@ public class ConsumableTests
         _sent.Clear();
     }
 
+    // 기능: 플레이어 1의 입력 하나를 다음 순번으로 넣고 Tick을 한 번 돌린다.
+    // 입력: buttons - 누를 버튼, moveY - 앞뒤 이동(기본 0).
+    // 출력: 반환값 없음. 경기가 한 Tick 진행된다.
     private void Press(InputButtons buttons, float moveY = 0f)
     {
         var packet = new PlayerInputPacket { Count = 1 };
@@ -50,11 +56,17 @@ public class ConsumableTests
         _match.Tick();
     }
 
+    // 기능: 아무 버튼도 누르지 않은 입력으로 주어진 Tick 수만큼 진행한다.
+    // 입력: ticks - 진행할 Tick 수.
+    // 출력: 반환값 없음. 경기가 그만큼 진행된다.
     private void Idle(int ticks)
     {
         for (int i = 0; i < ticks; i++) Press(InputButtons.None);
     }
 
+    // 기능: 플레이어 1이 받은 InventoryState를 보낸 순서대로 모두 읽는다.
+    // 입력: 없음.
+    // 출력: InventoryState 목록. 읽기에 실패하면 테스트가 실패한다.
     private List<InventoryState> Inventories() => _sent.Where(s => s.PeerId == 1 && s.Id == PacketId.InventoryState)
         .Select(s =>
         {

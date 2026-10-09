@@ -26,15 +26,24 @@ public class InventoryMatchTests
     private readonly Dictionary<int, uint> _seq = new();
     private Match _match;
 
+    // 기능: 전투 장비로 3인 개발 모드 Match를 만든다.
+    // 입력: 없음.
+    // 출력: 참가자 없는 Match를 든 테스트 인스턴스.
     public InventoryMatchTests()
     {
         _match = NewMatch(TestGameData.CombatLoadout);
     }
 
+    // 기능: 보낸 패킷을 _sent에 모으는 3인 개발 모드 Match를 주어진 시작 장비로 만든다.
+    // 입력: loadout - 시작 장비(null이면 기본 빈손 시작).
+    // 출력: 참가자 없는 Match. 장비가 잘못되면 ArgumentException.
     private Match NewMatch(StartingLoadout? loadout) =>
         new(new ServerOptions { MaxPlayers = 3, DevRespawn = true }, TestGameData.Create(),
             (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)), loadout);
 
+    // 기능: 플레이어를 경기에 들여보내고 주어진 자리에 세운다(지연 보상 이력도 그 자리로 맞춘다).
+    // 입력: peer - 연결 id, feet - 발 위치.
+    // 출력: 들어온 플레이어. 입장이 거절되면 테스트가 실패한다.
     private PlayerEntity Join(int peer, Vector3 feet)
     {
         Assert.Equal(JoinResult.Ok, _match.TryJoin(peer, "p" + peer));
@@ -44,6 +53,9 @@ public class InventoryMatchTests
         return player;
     }
 
+    // 기능: 입력 하나에 그 플레이어의 다음 순번을 붙여 경기 입력 큐에 넣는다(Tick은 돌리지 않는다).
+    // 입력: player - 보내는 플레이어, command - 보낼 입력(Seq는 덮어쓴다).
+    // 출력: 반환값 없음. 입력이 큐에 쌓이고 순번이 올라간다.
     private void Send(PlayerEntity player, InputCommand command)
     {
         _seq.TryGetValue(player.PeerId, out uint seq);
@@ -54,12 +66,18 @@ public class InventoryMatchTests
         _match.EnqueueInput(player.PeerId, packet);
     }
 
+    // 기능: 사수의 눈에서 월드 한 점을 겨눈 Fire 입력을 현재 Tick의 ViewTick으로 큐에 넣는다.
+    // 입력: shooter - 사수, point - 겨눌 월드 좌표.
+    // 출력: 반환값 없음. 조준 입력이 큐에 쌓인다.
     private void FireAt(PlayerEntity shooter, Vector3 point)
     {
         TestAim.YawPitch(shooter.State.Position, point, out float yaw, out float pitch);
         Send(shooter, new InputCommand { Buttons = InputButtons.Fire, AimYaw = yaw, AimPitch = pitch, ViewTick = _match.ServerTick });
     }
 
+    // 기능: 한 peer가 받은 InventoryState를 보낸 순서대로 모두 읽고 ReliableOrdered로 왔는지 확인한다.
+    // 입력: peer - 받는 연결 id.
+    // 출력: InventoryState 목록. 전송 방식이 다르거나 읽기에 실패하면 테스트가 실패한다.
     private List<InventoryState> InventoriesSentTo(int peer)
     {
         var list = new List<InventoryState>();
@@ -209,6 +227,9 @@ public class InventoryMatchTests
         Assert.True(reliable.IndexOf(PacketId.PlayerRespawned) < reliable.IndexOf(PacketId.InventoryState));
     }
 
+    // 기능: Match 생성자가 거절해야 할 시작 장비 사례를 만든다(보호막 초과, 없는 무기, 희귀도 범위 밖, 무기 4개, 탄약 초과·음수, 메드킷 초과).
+    // 입력: 없음.
+    // 출력: Theory 사례 목록(사례마다 StartingLoadout 하나).
     public static IEnumerable<object[]> BadLoadouts()
     {
         yield return new object[] { new StartingLoadout { Shield = CombatRules.MaxShield + 1 } };

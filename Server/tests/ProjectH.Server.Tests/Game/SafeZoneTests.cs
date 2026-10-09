@@ -9,6 +9,9 @@ namespace ProjectH.Server.Tests.Game;
 // Spec §6 SafeZone: seeded circles, containment, arena bound, linear shrink, radius 0 at the end, no allocation.
 public class SafeZoneTests
 {
+    // 기능: 존 설정으로 SafeZone을 만들고 startTick에 seed로 시작시킨다.
+    // 입력: startTick - 시작 Tick, seed - 원 위치를 정하는 seed, json - 존 설정 JSON(기본은 테스트 존).
+    // 출력: 1단계가 시작된 SafeZone.
     private static SafeZone Started(uint startTick, int seed, string json = TestGameData.ZonesJson)
     {
         var zone = new SafeZone(TestGameData.Zones(json: json));

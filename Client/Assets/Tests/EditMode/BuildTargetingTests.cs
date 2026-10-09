@@ -11,17 +11,26 @@ namespace ProjectH.Client.Tests
         // The centre of cell (10, 12) on the ground: x = -80 + 52.5, z = -80 + 62.5.
         private static readonly NVector3 Feet = new NVector3(-27.5f, 0f, -17.5f);
 
+        // 기능: 고정 발 위치(Feet)에서 바라보는 방향으로 조각 후보 자리를 고른다.
+        // 입력: piece - 조각 종류, yaw - 시선 Yaw(도), pitch - 시선 Pitch(도), offset - R 키 회전 횟수.
+        // 출력: 고른 조각 모양. 후보가 없으면 단언 실패.
         private static BuildPieceShape Pick(BuildPieceType piece, float yaw, float pitch = 0f, int offset = 0)
         {
             return PickAt(Feet, piece, yaw, pitch, offset);
         }
 
+        // 기능: 주어진 발 위치에서 BuildTargeting.TryPick으로 조각 후보 자리를 고르고 성공을 단언한다.
+        // 입력: feet - 발 위치, piece - 조각 종류, yaw - 시선 Yaw(도), pitch - 시선 Pitch(도), offset - R 키 회전 횟수.
+        // 출력: 고른 조각 모양. 후보가 없으면 단언 실패.
         private static BuildPieceShape PickAt(NVector3 feet, BuildPieceType piece, float yaw, float pitch = 0f, int offset = 0)
         {
             Assert.IsTrue(BuildTargeting.TryPick(piece, feet, yaw, pitch, offset, out BuildPieceShape shape));
             return shape;
         }
 
+        // 기능: 기대값 비교용 조각 모양을 짧게 만든다.
+        // 입력: type - 조각 종류, x - 격자 x 칸, y - 층, z - 격자 z 칸, rotation - 회전(0..3).
+        // 출력: BuildPieceShape.
         private static BuildPieceShape Shape(BuildPieceType type, int x, int y, int z, int rotation) => new BuildPieceShape(type, x, y, z, rotation);
 
         [TestCase(0f, 0)]

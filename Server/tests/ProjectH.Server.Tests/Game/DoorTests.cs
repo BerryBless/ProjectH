@@ -18,18 +18,27 @@ public class DoorTests
     private static readonly Box Door0 = GameMap.Doors[0];
     private static readonly Vector3 SouthOfDoor0 = Ground(-54f, 48.5f);
 
+    // 기능: 맵 지형 위에 놓인 발 위치를 만든다.
+    // 입력: x·z - 수평 좌표.
+    // 출력: 그 자리의 지형 높이를 Y로 가진 위치.
     private static Vector3 Ground(float x, float z) => new(x, GameMap.Terrain.Height(x, z), z);
 
     private readonly List<(int Peer, PacketId Id, byte[] Data)> _sent = new();
     private readonly Dictionary<int, uint> _seq = new();
     private readonly Match _match;
 
+    // 기능: 보낸 패킷을 _sent에 모으는 4인 개발 모드 Match를 만든다.
+    // 입력: 없음.
+    // 출력: 참가자 없는 Match를 든 테스트 인스턴스.
     public DoorTests()
     {
         _match = new Match(new ServerOptions { MaxPlayers = 4, DevRespawn = true }, TestGameData.Create(),
             (peer, data, _) => _sent.Add((peer, (PacketId)data[0], data.ToArray())), TestGameData.CombatLoadout);
     }
 
+    // 기능: 플레이어를 경기에 들여보내고 주어진 자리와 방향으로 세운다(이동 이력도 그 자리로 맞춘다).
+    // 입력: peer - 연결 id, feet - 발 위치, yaw - 바라보는 방향(기본 0 = 북).
+    // 출력: 들어온 플레이어. 입장이 거절되면 테스트가 실패한다.
     private PlayerEntity Join(int peer, Vector3 feet, float yaw = 0f)
     {
         Assert.Equal(JoinResult.Ok, _match.TryJoin(peer, "p" + peer));
@@ -40,6 +49,9 @@ public class DoorTests
         return player;
     }
 
+    // 기능: 입력 하나에 그 플레이어의 다음 순번을 붙여 경기 입력 큐에 넣는다(Tick은 돌리지 않는다).
+    // 입력: player - 보내는 플레이어, command - 보낼 입력(Seq는 덮어쓴다).
+    // 출력: 반환값 없음. 입력이 큐에 쌓이고 순번이 올라간다.
     private void Send(PlayerEntity player, InputCommand command)
     {
         _seq.TryGetValue(player.PeerId, out uint seq);
@@ -50,12 +62,18 @@ public class DoorTests
         _match.EnqueueInput(player.PeerId, packet);
     }
 
+    // 기능: 버튼만 누른 입력을 넣고 Tick을 한 번 돌린다.
+    // 입력: player - 보내는 플레이어, buttons - 누를 버튼, yaw - 바라보는 방향(기본 0).
+    // 출력: 반환값 없음. 경기가 한 Tick 진행된다.
     private void Press(PlayerEntity player, InputButtons buttons, float yaw = 0f)
     {
         Send(player, new InputCommand { Buttons = buttons, Yaw = yaw });
         _match.Tick();
     }
 
+    // 기능: 한 peer가 받은 DoorStates의 열림 마스크를 보낸 순서대로 모두 읽는다.
+    // 입력: peer - 받는 연결 id.
+    // 출력: 열림 마스크 목록. 읽기에 실패하면 테스트가 실패한다.
     private List<byte> DoorStatesTo(int peer) => _sent.Where(s => s.Peer == peer && s.Id == PacketId.DoorStates).Select(s =>
     {
         var r = new PacketReader(s.Data);
@@ -89,6 +107,9 @@ public class DoorTests
         }
     }
 
+    // 기능: 문 상자가 맵의 정적 상자 중 하나와 겹치는지 검사한다(면이 맞닿기만 하면 겹침이 아님).
+    // 입력: d - 문 상자.
+    // 출력: 어떤 맵 상자와 부피가 겹치면 true, 아니면 false.
     private static bool Overlaps(Box d)
     {
         foreach (Box b in GameMap.Boxes)
@@ -327,6 +348,9 @@ public class DoorTests
         PlayerEntity shooter = Join(1, Ground(-54f, 46f));
         PlayerEntity target = Join(2, Ground(-54f, 53f));
         int Hits() => _sent.Count(s => s.Peer == 1 && s.Id == PacketId.HitConfirmed);
+        // 기능: 사수가 대상의 가슴을 한 발 쏘고 무기 발사 간격만큼 Tick을 돌린다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 경기가 4 Tick 진행된다.
         void Shoot()
         {
             TestAim.YawPitch(shooter.State.Position, target.State.Position + new Vector3(0f, 1.2f, 0f), out float yaw, out float pitch);

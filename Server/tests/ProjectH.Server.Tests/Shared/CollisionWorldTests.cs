@@ -8,6 +8,9 @@ namespace ProjectH.Server.Tests.Shared;
 // Phase 13 D3: the piece store for collision (PieceGrid) and the world one step gathers (CollisionWorld).
 public class CollisionWorldTests
 {
+    // 기능: 격자 좌표와 회전을 정규화해 테스트용 조각 모양을 만든다. 정규화에 실패하면 Assert로 테스트를 실패시킨다.
+    // 입력: type - 조각 종류, x/y/z - 격자 좌표(셀·층), r - 회전(기본 0).
+    // 출력: 정규화된 BuildPieceShape.
     private static BuildPieceShape Shape(BuildPieceType type, int x, int y, int z, int r = 0)
     {
         Assert.True(BuildGrid.TryNormalize(type, x, y, z, r, out BuildPieceShape s));
@@ -139,6 +142,9 @@ public class CollisionWorldTests
         }
     }
 
+    // 기능: 충돌체 ID 목록에서 건설 조각(Piece) 종류의 ID만 순서대로 뽑는다.
+    // 입력: ids - 검사할 충돌체 ID 목록.
+    // 출력: Piece 종류 충돌체의 ID 배열(원래 순서 유지).
     private static uint[] PieceIds(ReadOnlySpan<ColliderId> ids)
     {
         var list = new System.Collections.Generic.List<uint>();
@@ -186,6 +192,9 @@ public class CollisionWorldTests
         Assert.Equal(CollisionWorld.MaxPieces * 2 / 5, world.Slopes.Length);
     }
 
+    // 기능: 충돌체 ID 목록에서 건설 조각이 아닌 것(맵 정적 상자·문)의 개수를 센다.
+    // 입력: ids - 검사할 충돌체 ID 목록.
+    // 출력: Piece 종류가 아닌 충돌체의 수.
     private static int CountMap(ReadOnlySpan<ColliderId> ids)
     {
         int n = 0;

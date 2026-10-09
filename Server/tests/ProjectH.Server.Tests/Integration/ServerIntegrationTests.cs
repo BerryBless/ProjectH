@@ -12,6 +12,9 @@ public sealed class ServerIntegrationTests : IDisposable
 {
     private readonly GameLoop _server = StartServer(maxPlayers: 4);
 
+    // 기능: IP별 연결 제한을 끄고 Join 제한 30초인 실제 UDP 서버를 포트 0에 띄운다(100명 동시 접속 시험용).
+    // 입력: maxPlayers - 최대 인원.
+    // 출력: 스레드가 시작된 GameLoop(호출자가 Dispose한다).
     private static GameLoop StartServer(int maxPlayers)
     {
         var loop = new GameLoop(new ServerOptions
@@ -33,8 +36,14 @@ public sealed class ServerIntegrationTests : IDisposable
         return loop;
     }
 
+    // 기능: 공용 테스트 서버를 멈춘다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 서버 스레드와 소켓이 닫힌다.
     public void Dispose() => _server.Dispose();
 
+    // 기능: 새 HeadlessClient로 서버에 접속해 Join을 보내고 Ok 응답을 확인한다.
+    // 입력: server - 접속할 서버, devId - 플레이어 이름.
+    // 출력: Join에 성공한 HeadlessClient(호출자가 Dispose한다). 3초 안에 접속·응답이 없으면 테스트가 실패한다.
     private static HeadlessClient Join(GameLoop server, string devId)
     {
         var client = new HeadlessClient();

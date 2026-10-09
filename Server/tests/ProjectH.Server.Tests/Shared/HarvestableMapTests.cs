@@ -58,6 +58,9 @@ public class HarvestableMapTests
         }
     }
 
+    // 기능: 높이 범위가 겹치는 두 상자의 수평 간격이 캐릭터가 지나갈 만큼(MinGap 이상) 떨어져 있는지 검증한다.
+    // 입력: a - 첫 상자, b - 둘째 상자, what - 실패 메시지에 쓸 쌍 설명.
+    // 출력: 반환값 없음. 높이 범위가 겹치지 않으면 통과, 겹치는데 간격이 MinGap 미만이면 Assert 실패.
     private static void AssertApart(Box a, Box b, string what)
     {
         bool sameBand = a.Min.Y < b.Max.Y && b.Min.Y < a.Max.Y;

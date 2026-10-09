@@ -9,6 +9,9 @@ public class MovementSimulationTests
 {
     private const float Dt = 1f / 30f;
 
+    // 기능: 상자 없는 평지에서 같은 입력으로 이동 Step을 steps번 돌린다.
+    // 입력: input - 매 Step에 줄 입력, steps - 반복 횟수, start - 시작 상태(기본값은 초기 상태).
+    // 출력: steps Step 진행된 MoveState 복사본. start는 바뀌지 않는다.
     private static MoveState Run(InputCommand input, int steps, MoveState start = default)
     {
         MoveState state = start;
@@ -122,8 +125,8 @@ public class MovementSimulationTests
     private const float Bound = GameMap.HalfSize - MoveSettings.HalfWidth - MoveSettings.Skin;
 
     // 기능: 건설 조각 하나를 정규화한다(실패하면 테스트 실패).
-    // 입력: type·x·y·z·rotation - 조각 좌표.
-    // 출력: 조각 모양.
+    // 입력: type - 조각 종류, x/y/z - 격자 칸 좌표, rotation - 회전(기본 0).
+    // 출력: 정규화된 BuildPieceShape.
     private static BuildPieceShape Piece(BuildPieceType type, int x, int y, int z, int rotation = 0)
     {
         Assert.True(BuildGrid.TryNormalize(type, x, y, z, rotation, out BuildPieceShape shape));
@@ -150,9 +153,9 @@ public class MovementSimulationTests
         return result;
     }
 
-    // 기능: 아무 입력 없이 몇 Tick 돌려 발을 바닥에 내려놓는다.
+    // 기능: 아무 입력 없이 30 Tick 돌려 발을 바닥에 내려놓는다.
     // 입력: s - 상태, grid - 조각, world - 충돌 세계.
-    // 출력: 반환값 없음.
+    // 출력: 반환값 없음. s가 30 Tick 진행되어 바닥 위에 선다.
     private static void Settle(ref MoveState s, PieceGrid grid, CollisionWorld world)
     {
         var idle = new InputCommand { Yaw = s.Yaw };

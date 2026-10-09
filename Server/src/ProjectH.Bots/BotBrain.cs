@@ -79,6 +79,9 @@ public sealed class BotBrain
     private Vector3 _landingTarget;
     private uint _jumpTick;
 
+    // 기능: 봇 두뇌 하나를 만든다(자기만의 난수).
+    // 입력: seed - 난수 씨앗(봇마다 다르게).
+    // 출력: 목표 None의 BotBrain.
     public BotBrain(int seed)
     {
         _rng = new Random(seed);
@@ -153,6 +156,9 @@ public sealed class BotBrain
         return true;
     }
 
+    // 기능: 투입(수송기 탑승·낙하·활강) 중의 입력을 정한다(Phase 12 D15). 처음 보면 착지 목표와 점프 Tick을 계획하고, 탑승 중엔 그 Tick부터 점프를 누르며, 공중에선 목표를 향해 전진한다.
+    // 입력: view - 봇이 아는 것, now - 지금 시각(초), command - 이번 입력.
+    // 출력: 투입 모드면 true(command가 채워지고 Goal = Deploy), 그 외 모드면 false(계획이 지워진다).
     // D15: the plan is made once per deployment, from what a client knows: the route and the places it has heard of
     // (the POIs and the items the server sent; the loot points are server data). The brain's own seeded Random picks
     // one, so bots spread over the map. The jump is pressed from the planned tick on, at most every ButtonRepeatSeconds
@@ -200,6 +206,9 @@ public sealed class BotBrain
         return true;
     }
 
+    // 기능: 착지 목표를 고른다(아는 POI와 서버가 보낸 바닥 아이템 중 하나를 난수로).
+    // 입력: view - 봇이 아는 것.
+    // 출력: 착지 목표 위치(POI면 지형 높이).
     private Vector3 PickLandingTarget(BotView view)
     {
         ReadOnlySpan<MapPoi> pois = MapPois.All;
@@ -217,6 +226,9 @@ public sealed class BotBrain
         return Vector3.Zero;   // not reached: pick is below the item count
     }
 
+    // 기능: 수송기가 목표에 가장 가까이 지나는 Tick을 구한다(목표를 경로에 투영, 점프 창 안으로 자른다).
+    // 입력: route - 수송기 경로, target - 착지 목표.
+    // 출력: 점프할 서버 Tick(경로의 JumpWindow 안).
     // D15: the tick the transport passes closest to the target (the target projected on the route), inside the jump window.
     public static uint PlanJumpTick(in DropRoute route, Vector3 target)
     {
@@ -260,6 +272,9 @@ public sealed class BotBrain
     // Phase 14 D15: a crawling bot stops this close to its teammate (inside the 2 m revive range).
     private const float CrawlStopDistance = 1.5f;
 
+    // 기능: 목표를 다시 정한다(D4 규칙 순서: 경기 밖이면 Idle, 자기장 밖이면 Zone, 적이 보이면 Fight, 체력이 낮으면 Heal, 쓸 아이템이 있으면 Loot, 아니면 Wander).
+    // 입력: view - 봇이 아는 것, now - 지금 시각(초).
+    // 출력: 반환값 없음. Goal·Target·GoalItem·GoalPoint와 조종 상태가 바뀐다.
     private void Decide(BotView view, float now)
     {
         Vector3 me = view.MyPosition;
@@ -303,6 +318,9 @@ public sealed class BotBrain
         }
     }
 
+    // 기능: 목표와 목표점을 바꾼다. 목표 종류가 바뀌거나 목표점이 2 m 넘게 옮겨졌거나 force면 조종을 처음부터 시작한다.
+    // 입력: goal - 새 목표, point - 목표점, me - 봇의 지금 위치, now - 지금 시각(초), force - 같은 목표여도 조종을 다시 시작할지.
+    // 출력: 반환값 없음. Goal·GoalPoint가 바뀐다.
     private void SetGoal(BotGoal goal, Vector3 point, Vector3 me, float now, bool force = false)
     {
         bool moved = BotAim.HorizontalDistance(point, GoalPoint) > 2f;
@@ -311,7 +329,9 @@ public sealed class BotBrain
         GoalPoint = point;
     }
 
-    // Rule 3: outside the next circle (less a margin; the last circle has radius 0) -> its centre.
+    // 기능: 봇이 다음 자기장 원(여유 ZoneMargin을 뺀, 최소 2 m) 밖이면 원의 중심을 목표점으로 준다(D4 규칙 3).
+    // 입력: view - 봇이 아는 것, me - 봇의 지금 위치, point - 목표점을 받을 곳.
+    // 출력: 원 밖이면 true와 중심점(지형 높이), 자기장이 없거나 안이면 false.
     private static bool TryZonePoint(BotView view, Vector3 me, out Vector3 point)
     {
         point = default;
@@ -368,7 +388,9 @@ public sealed class BotBrain
         return false;
     }
 
-    // The longest range among held weapons that still have rounds (capped at EngageRange); 0 = cannot fight.
+    // 기능: 탄이 남은 소지 무기 중 가장 긴 사거리를 구한다(EngageRange로 자른다).
+    // 입력: view - 봇이 아는 것.
+    // 출력: 교전 사거리(m), 쏠 무기가 없으면 0.
     private static float FightRange(BotView view)
     {
         float range = 0f;
@@ -410,7 +432,9 @@ public sealed class BotBrain
         return button != InputButtons.None;
     }
 
-    // Rule 6: the nearest useful item within LootSearchRange that is not blacklisted.
+    // 기능: LootSearchRange 안에서 쓸모 있고 블랙리스트에 없는 가장 가까운 바닥 아이템을 고른다(D4 규칙 6).
+    // 입력: view - 봇이 아는 것, now - 지금 시각(초), itemId·position - 고른 아이템 id와 위치를 받을 곳.
+    // 출력: 골랐으면 true, 없으면 false(itemId = 0).
     private bool TryPickItem(BotView view, float now, out ushort itemId, out Vector3 position)
     {
         itemId = 0;
@@ -466,6 +490,9 @@ public sealed class BotBrain
         }
     }
 
+    // 기능: 탄 종류의 예비탄 상한을 카탈로그에서 찾는다.
+    // 입력: view - 봇이 아는 것, type - 탄 종류.
+    // 출력: 상한, 카탈로그가 없거나 모르는 종류면 int.MaxValue.
     private static int AmmoMax(BotView view, AmmoType type)
     {
         if (view.Catalog == null) return int.MaxValue;
@@ -476,6 +503,9 @@ public sealed class BotBrain
         return int.MaxValue;
     }
 
+    // 기능: 소모품 종류의 최대 소지 수를 카탈로그에서 찾는다.
+    // 입력: view - 봇이 아는 것, type - 소모품 종류.
+    // 출력: 최대 소지 수, 카탈로그가 없거나 모르는 종류면 int.MaxValue.
     private static int ConsumableMax(BotView view, ConsumableType type)
     {
         if (view.Catalog == null) return int.MaxValue;
@@ -486,7 +516,9 @@ public sealed class BotBrain
         return int.MaxValue;
     }
 
-    // Rule 7: a random point in the next circle (80 % of its radius), or within WanderRadiusNoZone of the centre.
+    // 기능: 배회할 점을 난수로 고른다(다음 자기장 원 반지름의 80 % 안, 자기장이 없으면 중심에서 WanderRadiusNoZone 안, 맵 경계 5 m 안쪽으로 자른다)(D4 규칙 7).
+    // 입력: view - 봇이 아는 것.
+    // 출력: 배회 목표점(지형 높이).
     private Vector3 PickWanderPoint(BotView view)
     {
         float cx = 0f;
@@ -506,6 +538,9 @@ public sealed class BotBrain
         return new Vector3(x, GameMap.Terrain.Height(x, z), z);
     }
 
+    // 기능: 지금 목표를 이번 Tick의 입력으로 바꾼다(Fight는 조준·사격, Heal은 회복 버튼, Loot은 걷기·E, Zone·Wander는 걷기. Fight가 아니면 조준은 몸 방향).
+    // 입력: view - 봇이 아는 것, now - 지금 시각(초), command - 이번 입력.
+    // 출력: 반환값 없음. command의 이동·조준·버튼이 채워지고 몸 yaw가 기억된다.
     private void Act(BotView view, float now, ref InputCommand command)
     {
         Vector3 me = view.MyPosition;
@@ -543,6 +578,9 @@ public sealed class BotBrain
         _bodyYaw = command.Yaw;
     }
 
+    // 기능: 조종기가 정한 방향으로 전진 입력을 만든다(SprintDistance보다 멀거나 끼였으면 달리기, 조종기가 시키면 점프).
+    // 입력: me - 봇의 지금 위치, goal - 목표점, now - 지금 시각(초), command - 이번 입력, giveUp - 포기 신호를 받을 곳.
+    // 출력: 반환값 없음. command의 Yaw·MoveY·버튼이 채워지고, 목표가 닿지 않는 것 같으면 giveUp = true.
     private void Walk(Vector3 me, Vector3 goal, float now, ref InputCommand command, out bool giveUp)
     {
         _steering.Steer(me, goal, now, _rng, out float yaw, out bool jump, out giveUp);
@@ -553,6 +591,9 @@ public sealed class BotBrain
         if (jump) command.Buttons |= InputButtons.Jump;
     }
 
+    // 기능: 목표 아이템까지 걸어가 닿으면 E를 누른다. 아이템이 사라졌으면 목표를 버리고, 못 가거나 MaxInteractTries번 거절되면 블랙리스트에 넣는다.
+    // 입력: view - 봇이 아는 것, now - 지금 시각(초), command - 이번 입력.
+    // 출력: 반환값 없음. command가 채워지거나 Goal이 None이 된다.
     private void ActLoot(BotView view, float now, ref InputCommand command)
     {
         if (!view.Items.TryGetValue(GoalItem, out WorldItemData item))
@@ -646,6 +687,9 @@ public sealed class BotBrain
         }
     }
 
+    // 기능: 최신 Snapshot의 다른 플레이어 목록에서 Entity id의 칸을 찾는다.
+    // 입력: view - 봇이 아는 것, entityId - 찾을 Entity id.
+    // 출력: 칸 번호, 없으면 -1.
     private static int FindOther(BotView view, ushort entityId)
     {
         for (int i = 0; i < view.OtherCount; i++)
@@ -655,6 +699,9 @@ public sealed class BotBrain
         return -1;
     }
 
+    // 기능: 표적을 IgnoreTargetSeconds 동안 무시 목록에 넣는다(Memory 칸 Ring, 가장 오래된 것을 덮는다).
+    // 입력: entityId - 무시할 Entity id, now - 지금 시각(초).
+    // 출력: 반환값 없음.
     private void Ignore(ushort entityId, float now)
     {
         _ignoredTargets[_nextIgnore] = entityId;
@@ -662,6 +709,9 @@ public sealed class BotBrain
         _nextIgnore = (_nextIgnore + 1) % Memory;
     }
 
+    // 기능: Entity가 아직 무시 중인지 본다.
+    // 입력: entityId - Entity id, now - 지금 시각(초).
+    // 출력: 무시 기한이 남았으면 true.
     private bool IsIgnored(ushort entityId, float now)
     {
         for (int i = 0; i < Memory; i++)
@@ -671,6 +721,9 @@ public sealed class BotBrain
         return false;
     }
 
+    // 기능: 아이템을 ItemBlacklistSeconds 동안 블랙리스트에 넣는다(Memory 칸 Ring, 가장 오래된 것을 덮는다).
+    // 입력: itemId - 아이템 id, now - 지금 시각(초).
+    // 출력: 반환값 없음.
     private void Blacklist(ushort itemId, float now)
     {
         _blacklistedItems[_nextBlacklist] = itemId;
@@ -678,6 +731,9 @@ public sealed class BotBrain
         _nextBlacklist = (_nextBlacklist + 1) % Memory;
     }
 
+    // 기능: 아이템이 아직 블랙리스트에 있는지 본다.
+    // 입력: itemId - 아이템 id, now - 지금 시각(초).
+    // 출력: 기한이 남았으면 true.
     private bool IsBlacklisted(ushort itemId, float now)
     {
         for (int i = 0; i < Memory; i++)

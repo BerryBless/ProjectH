@@ -17,6 +17,9 @@ namespace ProjectH.Client.Qa
         public const string ShotDirEnv = "PROJECTH_QA_SHOT_DIR";
         public const string RecordEnv = "PROJECTH_QA_RECORD";
 
+        // 기능: QA 실행 옵션 값을 담는 구조체를 만든다.
+        // 입력: port - 수신기 포트(0 = 꺼짐), shotDir - 스크린샷 폴더(null = 미지정), recordPath - 입력 녹화 파일(null = 미지정).
+        // 출력: 세 값이 채워진 QaLaunchOptions.
         public QaLaunchOptions(int port, string shotDir, string recordPath)
         {
             Port = port;
@@ -28,6 +31,9 @@ namespace ProjectH.Client.Qa
         public string ShotDir { get; }
         public string RecordPath { get; }
 
+        // 기능: 인자 배열에서 -qaPort, -qaShotDir, -qaRecord를 읽는다.
+        // 입력: args - 명령줄 인자(null이면 기본값).
+        // 출력: 읽은 옵션. 포트가 없거나 1..65535 밖이면 0(수신기 꺼짐), 빈 경로는 null.
         // A missing or invalid port (not 1..65535) leaves the receiver off. Empty paths count as not given.
         public static QaLaunchOptions Parse(string[] args)
         {
@@ -48,6 +54,9 @@ namespace ProjectH.Client.Qa
             return new QaLaunchOptions(port, shotDir, record);
         }
 
+        // 기능: 프로세스 명령줄에서 QA 옵션을 읽고, Editor에서는 명령줄에 없는 값을 환경 변수(PROJECTH_QA_*)로 채운다.
+        // 입력: 없음.
+        // 출력: 명령줄(Editor는 환경 변수 보충)로 채운 QaLaunchOptions.
         // The process command line. Inside the Editor there is no command line per Play session, so the environment
         // variables above fill what the command line does not give (an Editor started with PROJECTH_QA_PORT set;
         // Multiplayer Play Mode clones inherit it, and only the first to bind the port gets the receiver).
@@ -63,11 +72,17 @@ namespace ProjectH.Client.Qa
             return options;
         }
 
+        // 기능: 포트 문자열을 검사해 숫자로 바꾼다.
+        // 입력: text - 포트 문자열(null 가능).
+        // 출력: 1..65535의 정수면 그 값, 아니면 0.
         public static int ParsePort(string text)
         {
             return int.TryParse(text, out int port) && port >= 1 && port <= 65535 ? port : 0;
         }
 
+        // 기능: 비어 있거나 공백뿐인 문자열을 null로 바꾼다.
+        // 입력: text - 검사할 문자열.
+        // 출력: 비어 있으면 null, 아니면 text 그대로.
         private static string NullIfEmpty(string text) => string.IsNullOrWhiteSpace(text) ? null : text;
     }
 
@@ -217,6 +232,9 @@ namespace ProjectH.Client.Qa
             }
         }
 
+        // 기능: 스크린샷 이름이 [A-Za-z0-9_-]{1,64}이고 Windows 장치 이름이 아닌지 검사한다(D28: 폴더를 벗어날 수 없게).
+        // 입력: name - 요청의 name 값.
+        // 출력: 허용되는 이름이면 true, 아니면 false.
         // [A-Za-z0-9_-]{1,64}
         public static bool IsValidShotName(string name)
         {
@@ -230,6 +248,9 @@ namespace ProjectH.Client.Qa
             return !IsWindowsDeviceName(name);
         }
 
+        // 기능: 이름이 Windows 예약 장치 이름(CON, PRN, AUX, NUL, COM1-9, LPT1-9, 대소문자 무관)인지 검사한다.
+        // 입력: name - 검사할 이름(null 가능).
+        // 출력: 장치 이름이면 true, 아니면 false.
         // CON, PRN, AUX, NUL, COM1-9 and LPT1-9 (any case) open a device instead of a file on Windows, also with an
         // extension ("NUL.png"), so they are never shot names.
         public static bool IsWindowsDeviceName(string name)
@@ -250,6 +271,9 @@ namespace ProjectH.Client.Qa
             return false;
         }
 
+        // 기능: Content-Type이 application/json으로 시작하는지 검사한다(CSRF 방어: 브라우저의 단순 POST는 415가 된다).
+        // 입력: contentType - 요청의 Content-Type 헤더(null 가능).
+        // 출력: application/json(대소문자 무관, 앞 공백 허용)이면 true, 아니면 false.
         // POST bodies must be declared JSON. A browser page can send a "simple" cross-origin POST (text/plain, form) to
         // localhost without a preflight; requiring application/json makes such a request fail with 415 before it acts.
         public static bool IsJsonContentType(string contentType)
@@ -315,6 +339,10 @@ namespace ProjectH.Client.Qa
     // One parsed POST /qa/input body. Code is the index into QaInput.KeyNames (Key) or 0 = left, 1 = right, 2 = middle (Button).
     public readonly struct QaInputRequest
     {
+        // 기능: 파싱한 입력 요청 값을 담는 구조체를 만든다.
+        // 입력: kind - 입력 종류, action - 누름 방식, code - 키 번호나 버튼 번호, holdMs - 누르고 있을 ms, lookX·lookY - 마우스 이동,
+        //   ms - 이동을 나눌 ms.
+        // 출력: 모든 값이 채워진 QaInputRequest.
         public QaInputRequest(QaInputKind kind, QaInputAction action, int code, int holdMs, double lookX, double lookY, int ms)
         {
             Kind = kind;
@@ -563,6 +591,9 @@ namespace ProjectH.Client.Qa
     // reader only walks the string once, so a hostile body costs at most one linear pass.
     public static class QaJsonReader
     {
+        // 기능: 평평한 JSON 객체에서 key의 문자열 값을 읽는다(객체 전체 문법을 끝까지 검사한다).
+        // 입력: json - 요청 Body, key - 찾을 이름.
+        // 출력: 문자열이면 Ok와 값, key가 없으면 Missing, 객체가 아니거나 값이 문자열이 아니면 Invalid(key가 두 번 나오면 마지막 값).
         public static QaJsonResult TryGetString(string json, string key, out string value)
         {
             value = null;
@@ -737,11 +768,17 @@ namespace ProjectH.Client.Qa
             return found ? QaJsonResult.Ok : QaJsonResult.Missing;
         }
 
+        // 기능: 공백·탭·줄바꿈을 건너뛴다.
+        // 입력: s - 읽는 문자열, i - 현재 위치(ref).
+        // 출력: 반환값 없음. i가 공백이 아닌 첫 문자(또는 끝)로 옮겨진다.
         private static void SkipWhitespace(string s, ref int i)
         {
             while (i < s.Length && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n')) i++;
         }
 
+        // 기능: 문자열이 아닌 스칼라(true, false, null, 숫자 문자 [-+0-9.eE]+)를 건너뛴다.
+        // 입력: s - 읽는 문자열, i - 현재 위치(ref).
+        // 출력: 스칼라가 있었으면 true와 그 뒤로 옮겨진 i, 아무것도 없으면 false.
         // true, false, null or a number ([-+0-9.eE]+, not checked further: such values are never used).
         private static bool SkipScalar(string s, ref int i)
         {
@@ -756,6 +793,9 @@ namespace ProjectH.Client.Qa
             return i > start;
         }
 
+        // 기능: 현재 위치에 주어진 리터럴이 있으면 건너뛴다.
+        // 입력: s - 읽는 문자열, i - 현재 위치(ref), literal - 기대하는 리터럴.
+        // 출력: 일치하면 true와 리터럴 뒤로 옮겨진 i, 아니면 false(i 그대로).
         private static bool Literal(string s, ref int i, string literal)
         {
             if (string.CompareOrdinal(s, i, literal, 0, literal.Length) != 0) return false;
@@ -763,6 +803,9 @@ namespace ProjectH.Client.Qa
             return true;
         }
 
+        // 기능: 현재 위치의 JSON 문자열(따옴표 포함, 이스케이프와 \uXXXX 해석)을 읽는다. 이스케이프가 없으면 Substring 한 번만 할당한다.
+        // 입력: s - 읽는 문자열, i - 현재 위치(ref, 여는 따옴표여야 한다), text - 읽은 문자열을 받을 out.
+        // 출력: 성공하면 true와 닫는 따옴표 뒤로 옮겨진 i, 따옴표가 없거나 제어 문자·잘못된 이스케이프·끝나지 않은 문자열이면 false.
         private static bool ReadString(string s, ref int i, out string text)
         {
             text = null;
@@ -828,6 +871,9 @@ namespace ProjectH.Client.Qa
             return false;
         }
 
+        // 기능: 16진수 문자 하나를 값으로 바꾼다.
+        // 입력: c - 문자.
+        // 출력: 0-9, a-f, A-F면 0..15, 아니면 -1.
         private static int HexValue(char c)
         {
             if (c >= '0' && c <= '9') return c - '0';
@@ -844,6 +890,9 @@ namespace ProjectH.Client.Qa
         // Beyond this the fixed-point digits would not fit a long; such values are not meaningful game input anyway.
         private const double MaxMagnitude = 1e12;
 
+        // 기능: 문자열을 JSON 문자열(따옴표·이스케이프 포함)로 쓴다. 제어 문자는 \uXXXX로 쓴다.
+        // 입력: sb - 이어 쓸 StringBuilder, value - 쓸 문자열(null이면 null 리터럴).
+        // 출력: 반환값 없음. sb 끝에 JSON 문자열이 붙는다.
         public static void AppendString(StringBuilder sb, string value)
         {
             if (value == null)
@@ -879,8 +928,14 @@ namespace ProjectH.Client.Qa
             sb.Append('"');
         }
 
+        // 기능: bool을 JSON 리터럴로 쓴다.
+        // 입력: sb - 이어 쓸 StringBuilder, value - 쓸 값.
+        // 출력: 반환값 없음. sb 끝에 true 또는 false가 붙는다.
         public static void AppendBool(StringBuilder sb, bool value) => sb.Append(value ? "true" : "false");
 
+        // 기능: 정수를 자릿수마다 문자로 써서 할당 없이 JSON 숫자로 쓴다(문화권 무관).
+        // 입력: sb - 이어 쓸 StringBuilder, value - 쓸 정수(long.MinValue 포함).
+        // 출력: 반환값 없음. sb 끝에 십진 숫자가 붙는다.
         public static void AppendLong(StringBuilder sb, long value)
         {
             if (value < 0)
@@ -898,6 +953,9 @@ namespace ProjectH.Client.Qa
             for (; divisor > 0; divisor /= 10) sb.Append((char)('0' + (int)(value / divisor % 10)));
         }
 
+        // 기능: 실수를 소수 decimals자리까지의 고정소수 JSON 숫자로 쓴다(끝의 0은 지우고, 절반은 0에서 먼 쪽으로 반올림).
+        // 입력: sb - 이어 쓸 StringBuilder, value - 쓸 값(NaN·무한은 0, 절댓값은 1e12로 잘린다), decimals - 소수 자릿수(0..9로 잘린다).
+        // 출력: 반환값 없음. sb 끝에 숫자가 붙는다(0이면 "0", 부호는 반올림 뒤 0이 아닐 때만).
         // Fixed point with at most `decimals` (0..9) digits after the point, trailing zeros dropped. NaN and infinities
         // are written as 0 so every line stays valid JSON.
         public static void AppendFixed(StringBuilder sb, double value, int decimals)
@@ -931,12 +989,18 @@ namespace ProjectH.Client.Qa
             for (; divisor > 0; divisor /= 10) sb.Append((char)('0' + (int)(fraction / divisor % 10)));
         }
 
+        // 기능: 0..15 값을 소문자 16진수 문자로 바꾼다.
+        // 입력: v - 0..15.
+        // 출력: '0'-'9' 또는 'a'-'f'.
         private static char HexDigit(int v) => (char)(v < 10 ? '0' + v : 'a' + v - 10);
     }
 
     // D28 response bodies. Every body is one JSON object with "ok"; failures carry "error".
     public static class QaResponses
     {
+        // 기능: 실패 응답 JSON을 쓴다.
+        // 입력: sb - 이어 쓸 StringBuilder, error - 오류 문장.
+        // 출력: 반환값 없음. sb 끝에 {"ok":false,"error":"..."}가 붙는다.
         public static void AppendError(StringBuilder sb, string error)
         {
             sb.Append("{\"ok\":false,\"error\":");
@@ -1113,6 +1177,9 @@ namespace ProjectH.Client.Qa
             sb.Append("\"}");
         }
 
+        // 기능: POST /qa/screenshot 성공 응답 JSON을 쓴다.
+        // 입력: sb - 이어 쓸 StringBuilder, path - 저장한 PNG 경로.
+        // 출력: 반환값 없음. sb 끝에 {"ok":true,"path":"..."}가 붙는다.
         public static void AppendShot(StringBuilder sb, string path)
         {
             sb.Append("{\"ok\":true,\"path\":");
@@ -1120,6 +1187,10 @@ namespace ProjectH.Client.Qa
             sb.Append('}');
         }
 
+        // 기능: POST /qa/ui 응답 JSON을 쓴다(적용 여부와 적용 뒤 화면 상태).
+        // 입력: sb - 이어 쓸 StringBuilder, applied - 명령이 적용됐는지(false = 409), command - 요청한 명령, screen - 지금 화면 이름,
+        //   statsOpen·debugVisible - 통계 창·F1 줄 상태.
+        // 출력: 반환값 없음. sb 끝에 ok·(실패면 error)·command·screen·statsOpen·debugVisible 객체가 붙는다.
         // applied false (HTTP 409): the command does not apply to the current screen; nothing changed.
         public static void AppendUi(StringBuilder sb, bool applied, QaUiCommand command, string screen, bool statsOpen, bool debugVisible)
         {

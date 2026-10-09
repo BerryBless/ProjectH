@@ -26,8 +26,9 @@ namespace ProjectH.Client.Game
             mode == MovementMode.Crouch || mode == MovementMode.Slide ? CrouchEyeHeight
             : mode == MovementMode.Downed ? DownedEyeHeight : EyeHeight;
 
-        // yaw 0 faces +Z, yaw 90 faces +X, positive pitch looks down (ShoulderCameraMath.Forward).
-        // False when the target is too close to the eye to give a direction.
+        // 기능: 눈에서 조준점까지의 방향을 서버가 받는 yaw·pitch(도)로 바꾼다(D2; yaw 0 = +Z, 90 = +X, 양의 pitch = 아래, ShoulderCameraMath.Forward).
+        // 입력: eye - 캐릭터 눈 위치, target - 조준선 아래의 점.
+        // 출력: 방향이 나오면 true와 yaw(0..360)·pitch(±MaxPitch로 제한), 대상이 눈에 너무 가까우면 false와 0·0.
         public static bool TrySolve(Vector3 eye, Vector3 target, out float yaw, out float pitch)
         {
             Vector3 d = target - eye;

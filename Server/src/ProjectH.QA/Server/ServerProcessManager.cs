@@ -16,11 +16,17 @@ public sealed class LogRing
     private readonly int _capacity;
     private long _dropped;
 
+    // 기능: 마지막 capacity줄만 보관하는 로그 Ring을 만든다.
+    // 입력: capacity - 보관할 최대 줄 수.
+    // 출력: 빈 LogRing.
     public LogRing(int capacity = DefaultCapacity)
     {
         _capacity = capacity;
     }
 
+    // 기능: 로그 한 줄을 Ring에 넣는다(MaxLineLength를 넘으면 잘라내고, 가득 차면 가장 오래된 줄을 버린다).
+    // 입력: line - 추가할 로그 줄.
+    // 출력: 반환값 없음. Ring 내용이 갱신되고 버린 줄 수(Dropped)가 늘 수 있다.
     public void Add(string line)
     {
         if (line.Length > MaxLineLength) line = line[..MaxLineLength] + "...";
@@ -35,6 +41,9 @@ public sealed class LogRing
         }
     }
 
+    // 기능: Ring의 마지막 count줄을 복사해 돌려준다.
+    // 입력: count - 가져올 줄 수.
+    // 출력: 오래된 순서의 로그 줄 배열(count보다 적을 수 있음).
     public string[] Tail(int count)
     {
         lock (_gate)
@@ -63,6 +72,9 @@ public sealed partial class ServerProcessManager : IDisposable
     private readonly TaskCompletionSource<(int Game, int Qa)> _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Process? _process;
 
+    // 기능: 서버 프로세스 관리자를 만든다(아직 프로세스는 띄우지 않는다).
+    // 입력: liveLog - 서버 출력 한 줄마다 부를 콜백(없으면 null), log - 같은 run의 이전 프로세스와 공유할 로그 Ring(null이면 새로 만든다).
+    // 출력: 프로세스가 없는 상태의 ServerProcessManager.
     // log: a ring shared with an earlier process of the same run (a restart keeps one server log); null = a new one.
     public ServerProcessManager(Action<string>? liveLog, LogRing? log = null)
     {
@@ -115,6 +127,9 @@ public sealed partial class ServerProcessManager : IDisposable
         return args;
     }
 
+    // 기능: dotnet으로 서버를 띄우고 QA_READY 줄과 /qa/health ok 응답을 ReadyTimeout 안에 기다린다.
+    // 입력: dllPath - 서버 DLL 경로, seed - Loot·Zone·Spawn 시드, overrides - 시나리오 설정 override, clientFactory - 준비 확인용 QA Client 생성기, token - 취소 토큰.
+    // 출력: 서버의 (GamePort, QaPort). DLL이 없거나 시간 안에 준비되지 않거나 먼저 종료되면 QaToolException.
     // Starts the server and returns its ports once the QA API answers healthy.
     public async Task<(int GamePort, int QaPort)> StartAsync(string dllPath, int seed, IReadOnlyDictionary<string, string> overrides,
         Func<Uri, IQaServerClient> clientFactory, CancellationToken token)
@@ -184,6 +199,9 @@ public sealed partial class ServerProcessManager : IDisposable
         }
     }
 
+    // 기능: POST /qa/server/stop으로 정상 종료를 요청하고 StopGrace 안에 끝나지 않으면 이 자식의 프로세스 트리를 죽인다.
+    // 입력: client - 종료 요청을 보낼 QA Client(null이면 요청 없이 대기·kill만).
+    // 출력: Stopped - 프로세스가 끝났으면 true, Message - 정리 과정 설명 한 줄.
     // Graceful stop first; kill our own child only after StopGrace. Returns a cleanup line; Stopped=false means the
     // process could not be ended (the caller turns that into exit code 2, D18).
     public async Task<(bool Stopped, string Message)> StopAsync(IQaServerClient? client)
@@ -219,6 +237,9 @@ public sealed partial class ServerProcessManager : IDisposable
         return gone ? (true, $"{how}; did not exit in {StopGrace.TotalSeconds:0} s, killed") : (false, $"{how}; kill did not end pid {p.Id}");
     }
 
+    // 기능: 시나리오 단계용 종료: stop 요청 뒤 grace 동안 종료를 기다리고, 넘기면 KillAsync로 죽인다.
+    // 입력: client - 종료 요청을 보낼 QA Client, grace - 정상 종료를 기다릴 시간, token - 취소 토큰.
+    // 출력: Exited(grace 안에 스스로 끝났는지)·ExitMs·ExitCode·Killed·Message를 담은 ServerExitInfo. 서버를 띄우지 않았으면 QaStepException.
     // Scenario step (request §129): POST /qa/server/stop and measure until the process is gone. The bound is
     // StopGrace; past it our own child is killed and the result says so (Exited=false: the graceful path failed).
     public async Task<Faults.ServerExitInfo> ShutdownAsync(IQaServerClient client, TimeSpan grace, CancellationToken token)
@@ -242,6 +263,9 @@ public sealed partial class ServerProcessManager : IDisposable
         return killed with { Exited = false, ExitMs = clock.ElapsedMilliseconds, Message = $"{how}; no exit within {grace.TotalSeconds:0} s, {killed.Message}" };
     }
 
+    // 기능: 이 도구가 띄운 서버의 프로세스 트리만 강제 종료하고 최대 5초 동안 끝나기를 기다린다.
+    // 입력: token - 취소 토큰.
+    // 출력: Exited(끝났는지)·ExitMs·ExitCode(끝났을 때만)·Killed(kill 호출이 통했으면 true)·Message를 담은 ServerExitInfo. 서버를 띄우지 않았으면 QaStepException.
     // Crash test or the end of a failed stop: kills this child's process tree only (never another server).
     public async Task<Faults.ServerExitInfo> KillAsync(CancellationToken token)
     {
@@ -260,6 +284,9 @@ public sealed partial class ServerProcessManager : IDisposable
         return new Faults.ServerExitInfo(gone, clock.ElapsedMilliseconds, gone ? ExitCodeOrNull(p) : null, true, gone ? "killed" : $"kill did not end pid {p.Id}");
     }
 
+    // 기능: 프로세스 종료를 timeout 동안 기다린다(호출자 토큰으로도 취소된다).
+    // 입력: p - 기다릴 프로세스, timeout - 최대 대기 시간, token - 취소 토큰.
+    // 출력: 시간 안에 끝났으면 true, 넘겼으면 그 시점의 HasExited. token이 취소되면 OperationCanceledException.
     private static async Task<bool> WaitExitAsync(Process p, TimeSpan timeout, CancellationToken token)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -275,6 +302,9 @@ public sealed partial class ServerProcessManager : IDisposable
         }
     }
 
+    // 기능: 프로세스 종료 코드를 안전하게 읽는다.
+    // 입력: p - 종료된 프로세스.
+    // 출력: 종료 코드. 읽을 수 없으면(아직 실행 중, 핸들 없음) null.
     private static int? ExitCodeOrNull(Process p)
     {
         try
@@ -287,6 +317,9 @@ public sealed partial class ServerProcessManager : IDisposable
         }
     }
 
+    // 기능: 아직 살아 있는 자식 프로세스 트리를 죽이고 Process 핸들을 놓는다(크래시 경로의 최후 정리).
+    // 입력: 없음.
+    // 출력: 반환값 없음. _process가 null이 되고 핸들이 해제된다.
     public void Dispose()
     {
         Process? p = _process;
@@ -303,6 +336,9 @@ public sealed partial class ServerProcessManager : IDisposable
         p.Dispose();
     }
 
+    // 기능: 프로세스 종료를 timeout 동안 기다린다(취소 토큰 없는 판, StopAsync용).
+    // 입력: p - 기다릴 프로세스, timeout - 최대 대기 시간.
+    // 출력: 시간 안에 끝났으면 true, 넘겼으면 그 시점의 HasExited.
     private static async Task<bool> WaitExitAsync(Process p, TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);
@@ -317,6 +353,9 @@ public sealed partial class ServerProcessManager : IDisposable
         }
     }
 
+    // 기능: 종료 코드를 메시지용 문자열로 읽는다.
+    // 입력: p - 프로세스.
+    // 출력: 종료 코드 문자열. 읽을 수 없으면 "?".
     private static string SafeExitCode(Process p)
     {
         try
@@ -329,6 +368,9 @@ public sealed partial class ServerProcessManager : IDisposable
         }
     }
 
+    // 기능: 서버 stdout/stderr 한 줄을 로그 Ring과 live 콜백에 넘기고, 준비 전이면 QA_READY 줄에서 포트를 읽어 _ready를 완료한다.
+    // 입력: line - 출력 줄(스트림 끝이면 null), error - stderr에서 왔으면 true([err] 접두).
+    // 출력: 반환값 없음. Log·liveLog가 갱신되고 QA_READY를 찾으면 _ready에 (gamePort, qaPort)가 설정된다.
     private void OnLine(string? line, bool error)
     {
         if (line == null) return;
@@ -346,11 +388,17 @@ public sealed partial class ServerProcessManager : IDisposable
 // The tool itself cannot do its job (bad input file, server would not start, internal error): exit code 2 (D18).
 public sealed class QaToolException : Exception
 {
+    // 기능: 도구 자체 실패(exit code 2) 예외를 만든다.
+    // 입력: message - 오류 설명, inner - 원인 예외.
+    // 출력: QaToolException.
     public QaToolException(string message, Exception? inner = null) : base(message, inner) { }
 }
 
 public static class JsonElementHelpers
 {
+    // 기능: /qa/health 응답의 ok가 false면 예외를 던진다.
+    // 입력: health - /qa/health 응답 JSON.
+    // 출력: 반환값 없음. ok=false면 QaApiException.
     public static void RequireOk(System.Text.Json.JsonElement health)
     {
         if (JsonPath.Child(health, "ok") is { ValueKind: System.Text.Json.JsonValueKind.False })

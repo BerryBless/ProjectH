@@ -14,6 +14,9 @@ namespace ProjectH.Server.Tests.Persistence;
 // Phase 9 D4: what the game loop records when a match finishes (no database involved).
 public class MatchRecordTests
 {
+    // 기능: 끝난 경기 기록을 목록에 모으는 Match Sink를 단 RoyaleHarness를 만든다.
+    // 입력: 없음.
+    // 출력: 전투 장비의 RoyaleHarness와 Sink가 채울 MatchRecord 목록.
     private static (RoyaleHarness h, List<MatchRecord> records) Harness()
     {
         var records = new List<MatchRecord>();

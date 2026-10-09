@@ -8,12 +8,18 @@ namespace ProjectH.Server.Tests.Game;
 
 public class WeaponCatalogTests
 {
+    // 기능: 무기 하나짜리 카탈로그 JSON을 만든다.
+    // 입력: fields - 그 무기의 필드 본문(JSON 객체 안쪽).
+    // 출력: weapons 배열에 그 무기만 든 JSON 문자열.
     private static string One(string fields) => "{ \"weapons\": [ { " + fields + " } ] }";
 
     private const string ValidFields =
         "\"id\": 1, \"name\": \"Vesper AR\", \"damage\": 20, \"fireIntervalSeconds\": 0.1, \"magazineSize\": 30, " +
         "\"reloadSeconds\": 2.0, \"range\": 150, \"automatic\": true, \"ammoType\": \"Medium\"";
 
+    // 기능: 카탈로그 JSON 파싱이 거부되는지 확인한다. 파싱이 성공하거나 오류 문구가 비어 있으면 테스트를 실패시킨다.
+    // 입력: json - 파싱할 카탈로그 JSON, simHz - 시뮬레이션 Hz.
+    // 출력: 파서가 돌려준 오류 문구.
     private static string Parse(string json, int simHz = 30)
     {
         Assert.False(WeaponCatalog.TryParse(json, simHz, out var catalog, out string? error));

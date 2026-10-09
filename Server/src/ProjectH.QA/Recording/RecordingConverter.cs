@@ -17,6 +17,9 @@ public static partial class RecordingConverter
     [GeneratedRegex(@"[^A-Za-z0-9_\-]")]
     private static partial Regex Unsafe();
 
+    // 기능: 녹화 파일을 검증하고 QA/Scenarios 아래에 초안 시나리오(.json)와 입력 복사본(<name>.inputs.jsonl)을 쓴다. 쓰다 실패하면 이번에 만든 파일을 지운다.
+    // 입력: root - 저장소 루트, recordingPath - 녹화 파일 경로, outPath - 출력 .json 경로(null이면 Recorded/<기본 이름>.json), actor - 재생할 액터 별칭, force - 기존 파일 덮어쓰기 허용, output - 콘솔 출력.
+    // 출력: 썼으면 0, 녹화·별칭·경로가 잘못됐거나 파일이 이미 있거나 쓰기에 실패하면 2.
     public static int Run(string root, string recordingPath, string? outPath, string actor, bool force, TextWriter output)
     {
         string source = Path.GetFullPath(recordingPath);
@@ -86,6 +89,9 @@ public static partial class RecordingConverter
         return 0;
     }
 
+    // 기능: 파일이 있으면 지우되 IO 오류는 무시한다(쓰기 실패 뒤 정리용).
+    // 입력: path - 지울 파일 경로.
+    // 출력: 반환값 없음. 파일이 지워지거나 그대로 남는다.
     private static void TryDelete(string path)
     {
         try
@@ -98,6 +104,9 @@ public static partial class RecordingConverter
         }
     }
 
+    // 기능: 녹화 파일 이름에서 시나리오 기본 이름을 만든다(.inputs.jsonl 또는 확장자를 떼고 허용 밖 문자는 '_').
+    // 입력: recordingPath - 녹화 파일 경로.
+    // 출력: 최대 64자의 이름. 비면 "recording".
     // "Recordings/run1.inputs.jsonl" -> "run1"; anything but [A-Za-z0-9_-] becomes '_'.
     public static string DefaultName(string recordingPath)
     {
@@ -108,9 +117,15 @@ public static partial class RecordingConverter
         return name.Length == 0 ? "recording" : name.Length > 64 ? name[..64] : name;
     }
 
+    // 기능: playInputs 단계의 시간 한도를 녹화 길이 + 여유(TimeoutMarginMs)로 계산한다.
+    // 입력: recording - 재생할 녹화.
+    // 출력: 밀리초 시간 한도. MaxStepTimeoutMs를 넘지 않는다.
     public static int PlayTimeoutMs(InputRecording recording) =>
         (int)Math.Min(ScenarioValidator.MaxStepTimeoutMs, Math.Ceiling(recording.Inputs.Length * 1000.0 / recording.SimHz) + TimeoutMarginMs);
 
+    // 기능: connect → waitFor alive → playInputs → 자리표시 assert 2개로 된 초안 시나리오 JSON 텍스트를 만든다.
+    // 입력: name - 시나리오 파일 이름(확장자 없음), sourceText - 설명에 넣을 원본 녹화 경로, recording - 녹화, inputsFile - 입력 복사본 파일 이름, actor - 액터 별칭.
+    // 출력: 저장소 시나리오 레이아웃(단계당 한 줄)의 JSON 문자열.
     // The repository's scenario layout (one step per line) so the draft diffs like the hand-written ones.
     private static string Draft(string name, string sourceText, InputRecording recording, string inputsFile, string actor)
     {

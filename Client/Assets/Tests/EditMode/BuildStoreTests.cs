@@ -11,6 +11,9 @@ namespace ProjectH.Client.Tests
     {
         private const ulong All = ulong.MaxValue;
 
+        // 기능: Tick 10에 지은 나무 조각 레코드를 level 0, rotation 0으로 만든다.
+        // 입력: id - 조각 ID, x - 격자 x 칸, z - 격자 z 칸, type - 조각 종류.
+        // 출력: 확정 조각으로 넣을 BuildPieceRecord.
         private static BuildPieceRecord Piece(uint id, int x, int z, BuildPieceType type = BuildPieceType.Floor) => new BuildPieceRecord
         {
             Id = id,
@@ -19,6 +22,9 @@ namespace ProjectH.Client.Tests
             CreatedTick = 10,
         };
 
+        // 기능: 관심 영역 Mask를 적용한 빈 BuildStore를 만든다.
+        // 입력: cells - 관심 영역 셀 Bit Mask(기본은 전부).
+        // 출력: 조각이 없는 BuildStore.
         private static BuildStore Store(ulong cells = All)
         {
             var store = new BuildStore();

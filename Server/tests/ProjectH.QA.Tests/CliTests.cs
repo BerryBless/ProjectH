@@ -11,17 +11,26 @@ public class CliTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "qa-cli-" + Guid.NewGuid().ToString("N"));
     private readonly FakeQaServer _server = new();
 
+    // 기능: 임시 저장소 루트 아래에 QA/Scenarios/Smoke와 QA/Suites 폴더를 만들어 CLI 테스트 환경을 준비한다.
+    // 입력: 없음.
+    // 출력: 임시 저장소 루트와 가짜 QA 서버가 준비된 CliTests 객체.
     public CliTests()
     {
         Directory.CreateDirectory(Path.Combine(_root, "QA", "Scenarios", "Smoke"));
         Directory.CreateDirectory(Path.Combine(_root, "QA", "Suites"));
     }
 
+    // 기능: 테스트가 만든 임시 저장소 루트를 통째로 지운다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 임시 폴더가 삭제되며 IO 오류는 무시한다.
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
     }
 
+    // 기능: 임시 저장소 루트 아래 상대 경로에 텍스트 파일을 쓴다.
+    // 입력: relative - 루트 기준 상대 경로, text - 파일 내용.
+    // 출력: 기록한 파일의 절대 경로.
     private string Write(string relative, string text)
     {
         string path = Path.Combine(_root, relative);
@@ -29,6 +38,9 @@ public class CliTests : IDisposable
         return path;
     }
 
+    // 기능: 가짜 QA 서버와 MockActor를 꽂은 QaCli를 임시 저장소 루트(--repo)로 실행한다.
+    // 입력: args - CLI 인자(--repo는 자동으로 덧붙인다).
+    // 출력: CLI 종료 코드와 표준 출력 문자열.
     private async Task<(int Exit, string Output)> Cli(params string[] args)
     {
         var output = new StringWriter();
@@ -170,6 +182,9 @@ public class CliTests : IDisposable
 // harvestables), or combat scenarios would test the map instead of the hit path.
 public class MarkersTests
 {
+    // 기능: 테스트 실행 폴더에서 저장소 루트를 찾는다.
+    // 입력: 없음.
+    // 출력: 저장소 루트 경로. 못 찾으면 InvalidOperationException.
     private static string RepoRoot() => ServerLocator.FindRepoRoot(AppContext.BaseDirectory) ?? throw new InvalidOperationException("repo root not found");
 
     [Theory]

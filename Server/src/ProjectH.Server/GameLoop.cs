@@ -322,6 +322,9 @@ public sealed class GameLoop : IDisposable
         return false;
     }
 
+    // 기능: 지금 loop tick을 Ring에 적는다(가득 차면 가장 오래된 항목을 덮어쓴다).
+    // 입력: ring - Tick을 적는 Ring, count - Ring에 든 항목 수(갱신), next - 다음 쓸 자리(갱신).
+    // 출력: Ring이 가득 찼고 가장 오래된 항목이 PlayerFailureWindowSeconds 안이면 true, 아니면 false.
     // Writes the current loop tick into the ring; true when the ring is full and its oldest entry is within the window.
     private bool RecordInWindow(long[] ring, ref int count, ref int next)
     {
@@ -331,6 +334,9 @@ public sealed class GameLoop : IDisposable
         return count == ring.Length && _loopTick - ring[next] < _playerFailureWindowTicks;
     }
 
+    // 기능: 재접속 없이 유예가 끝난 플레이어를 Health에 세고 Information으로 남긴다(Match가 부른다, Game Loop 스레드).
+    // 입력: devPlayerId - 떠난 플레이어의 개발용 id.
+    // 출력: 반환값 없음.
     // D2, D9: a graced player left without resuming (at most MaxPlayers per round, so logging each is cheap).
     private void OnGraceExpired(string devPlayerId)
     {
@@ -352,6 +358,9 @@ public sealed class GameLoop : IDisposable
     internal int PeerCount => _peers.Count;
     internal double LastTickMs => _lastTickMs;
 
+    // 기능: QA Control 실행기를 붙이고 이 Loop에 묶는다(QA-1 D2). Start 전에만 되고, 이미 시작했거나 붙어 있으면 InvalidOperationException.
+    // 입력: qa - 붙일 QA 실행기(null이면 ArgumentNullException).
+    // 출력: 반환값 없음. 이후 매 Tick 끝에 qa.OnTick이 불린다.
     // QA-1 D2: attaches the QA executor. Before Start only, so the loop thread never sees the field change.
     internal void AttachQa(Qa.QaControl qa)
     {
@@ -374,6 +383,9 @@ public sealed class GameLoop : IDisposable
     public long LastTickTimestamp => Volatile.Read(ref _lastTickTimestamp);
     public bool IsRunning => _thread != null && _thread.IsAlive;
 
+    // 기능: UDP 포트를 열고 "GameLoop" 배경 스레드를 시작한다. 이미 시작했거나 포트를 못 열면 InvalidOperationException.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 연결을 받기 시작하고 Tick이 돈다.
     public void Start()
     {
         if (_thread != null) throw new InvalidOperationException("GameLoop already started.");
@@ -391,8 +403,14 @@ public sealed class GameLoop : IDisposable
             _logger.LogWarning("Server:BuildInfiniteResources is on: building costs no resources (load tests only)");
     }
 
+    // 기능: 기본 대기 시간(ThreadJoinTimeout 5초)으로 Stop(joinTimeout)을 부른다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. Loop 스레드·연결·소켓이 닫힌다.
     public void Stop() => Stop(ThreadJoinTimeout);
 
+    // 기능: 서버를 멈춘다(Phase 10 D7): 새 연결 거부 → Tick 중단과 스레드 Join → 모든 연결에 ServerShutdown → 통지 확인을 최대 ShutdownNoticeTimeout 대기 → 소켓 닫기. 한 번만 실행된다.
+    // 입력: joinTimeout - Loop 스레드가 끝나길 기다리는 최대 시간(넘기면 Critical을 남기고 배경 스레드로 버려둔다).
+    // 출력: 반환값 없음. 호출자를 최대 joinTimeout + ShutdownNoticeTimeout 동안 막는다.
     // Phase 10 D7: 1. stop the ticks, 2. close every connection with ServerShutdown, 3. give those notices up to
     // ShutdownNoticeTimeout to be acknowledged (at once when no peer is left), 4. close the socket. A loop thread that
     // does not stop within joinTimeout is logged and left behind (it is a background thread). Blocks the caller for
@@ -433,6 +451,9 @@ public sealed class GameLoop : IDisposable
         _identity.Dispose();
     }
 
+    // 기능: Loop 스레드 본체. 취소될 때까지 SimHz 간격으로 보호된 Tick을 돌리고(치명 상태면 Timestamp만 갱신), 주기마다 Stats·Health를 기록하며, 5 Tick 넘게 밀리면 밀린 Tick을 건너뛴다. 반복 전체가 예외에 보호된다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. Stop이 취소하면 돌아온다.
     private void Run()
     {
         using var timerResolution = WindowsTimerResolution.Begin();
@@ -483,6 +504,9 @@ public sealed class GameLoop : IDisposable
         }
     }
 
+    // 기능: 절대 던지지 않는 Tick 한 번(D6). 실패는 세고 구간당 한 번 로그하며, FailingSecondsBeforeReset초 연속 실패나 플레이어 실패 예약이 있으면 Tick 뒤 경기를 리셋한다. 끝에 LastTickTimestamp를 갱신한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 경기 상태가 한 Tick 진행되거나(실패 시 건너뜀) 리셋된다.
     // One tick that never throws (D6). A failure is counted and logged (the first of each stats interval, so a
     // repeating one cannot flood the log 30 times per second). One bad tick is skipped; FailingSecondsBeforeReset
     // seconds of failures in a row reset the match.
@@ -615,10 +639,11 @@ public sealed class GameLoop : IDisposable
         }
     }
 
-    // 기능: 한 Tick: 들어온 메시지 처리(Phase 15 지도 표시 요청 포함), 경기 Tick, 모두 실패한 Tick 기록(리뷰 수정 A6: 출처 둘 이상일 때만
-    //   리셋 예약), Health 수치(Phase 14 분대, Phase 15 지도, Phase 16 Loot, 리뷰 수정 A4 Seq 창 드롭 수치 포함) 갱신, QA 작업.
+    // 기능: 한 Tick: 들어온 메시지 처리(Control·Input·Build·Marker 채널, Phase 15 지도 표시 요청 포함), 연결 정리(SweepPeers), 통계 응답 전송,
+    //   경기 Tick, 모두 실패한 Tick 기록(리뷰 수정 A6: 출처 둘 이상일 때만 리셋 예약), Health 수치(Phase 14 분대, Phase 15 지도, Phase 16 Loot,
+    //   리뷰 수정 A4 Seq 창 드롭 수치 포함) 갱신, QA 작업.
     // 입력: 없음.
-    // 출력: 반환값 없음.
+    // 출력: 반환값 없음. 경기 상태가 한 Tick 진행되고 Health 수치가 갱신된다.
     internal void RunTick()
     {
         Interlocked.Increment(ref _loopTick);   // read by tests from another thread (LoopTicks)
@@ -645,6 +670,9 @@ public sealed class GameLoop : IDisposable
         _qa?.OnTick(this);
     }
 
+    // 기능: Control 채널을 비우며 연결 등록(같은 id의 옛 세션은 떨군다), Join 요청, 연결 종료를 처리한다. 메시지의 Peer 참조가 등록된 것과 다르면 무시한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. _peers와 경기 참가 상태가 바뀐다.
     private void DrainControl()
     {
         // Bounded by the channel capacity (ServerOptions.ControlChannelCapacity), so draining fully is safe.
@@ -698,6 +726,9 @@ public sealed class GameLoop : IDisposable
         }
     }
 
+    // 기능: Build 채널의 건설 요청을 경기에 넘긴다(Phase 13 D8). Tick당 MaxPlayers × BuildRequestQueue.Capacity까지만 읽고 나머지는 다음 Tick에 넘긴다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 플레이어별 건설 요청 큐가 채워진다.
     // Phase 13 D8: build requests, bounded per tick like inputs. Review fix A5: the channel holds more (two one-second windows
     // per player); what is left waits for the next tick (the per-connection rate keeps the steady flow far below this).
     private void DrainBuild()
@@ -714,7 +745,7 @@ public sealed class GameLoop : IDisposable
     // 기능: Marker 채널의 지도 표시 요청을 경기에 넘긴다(Phase 15 D7). 채널 용량만큼만 읽어 한 Tick이 늘어나지 않는다.
     //   요청은 바로 검증·반영되고, 바뀐 팀의 TeamMarkers는 이 Tick 끝에 간다.
     // 입력: 없음.
-    // 출력: 반환값 없음.
+    // 출력: 반환값 없음. 경기의 Ping·Waypoint 상태가 바뀐다.
     private void DrainMarkers()
     {
         var reader = _channels.Marker.Reader;
@@ -771,6 +802,9 @@ public sealed class GameLoop : IDisposable
     //    input for InputTimeoutSeconds (dead and spectating players included: the client sends input while joined).
     // 3. A connection whose Join was refused, one second after the refusal (see Join).
     // 4. Review fix C3: copies each live connection's RoundTripTime into PeerState.RttMs (the rewind allowance).
+    // 기능: 매 Tick 모든 연결을 훑어 끊긴 연결을 제거하고, Join·Input Timeout, 거절된 Join의 1초 경과, 혼잡(Congested)에 해당하는 연결을 코드와 함께 닫은 뒤 제거하며, 살아 있는 연결의 RTT를 PeerState에 적는다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. _peers·경기 참가 상태·Kick 합계가 바뀐다.
     private void SweepPeers()
     {
         // Cleared first: a fault in an earlier sweep (RemovePeer threw) must not leave entries behind for every later tick.
@@ -826,6 +860,9 @@ public sealed class GameLoop : IDisposable
         _timedOut.Clear();
     }
 
+    // 기능: 연결의 Reliable 큐(채널 0·1 합)가 MaxReliableBacklog를 넘긴 채 CongestedSeconds 이상 이어졌는지 판정하고, 넘긴 시작 Tick을 PeerState에 기록·해제한다.
+    // 입력: peer - 검사할 연결, state - 그 연결의 상태(CongestedSinceTick 갱신).
+    // 출력: 혼잡이 CongestedSeconds 이상 이어졌으면 true, 아니면 false.
     // Final review A4: the peer's reliable queues (both channels) have held more than MaxReliableBacklog packets for
     // CongestedSeconds in a row. Two queue reads per joined peer per tick; no allocation.
     private bool Congested(NetPeer peer, PeerState state)
@@ -840,12 +877,21 @@ public sealed class GameLoop : IDisposable
         return _loopTick - state.CongestedSinceTick >= _congestedTicks;
     }
 
+    // 기능: 연결의 한 채널에 쌓인 ReliableOrdered 패킷 수를 읽는다(테스트 Probe가 있으면 그것을 쓴다).
+    // 입력: peer - 연결, channel - 채널 번호.
+    // 출력: 그 채널의 전송 대기 Reliable 패킷 수.
     private int Queued(NetPeer peer, byte channel) =>
         _queueProbe is { } probe ? probe(peer, channel) : peer.GetPacketsCountInReliableQueue(channel, ordered: true);
 
+    // 기능: Match가 묻는 연결의 Build 채널 적체량을 돌려준다(최종 리뷰 A4).
+    // 입력: peerId - 연결 id.
+    // 출력: Build 채널에 쌓인 패킷 수. 없는 연결이면 0.
     // Final review A4: Match's question, a peer's building-channel backlog (0 for a peer not here).
     private int BuildBacklog(int peerId) => _peers.TryGetValue(peerId, out NetPeer? peer) ? Queued(peer, ProtocolConstants.BuildChannel) : 0;
 
+    // 기능: 연결을 _peers에서 빼고 그 세션을 경기에서 떨군다. 없는 id면 아무것도 하지 않는다.
+    // 입력: peerId - 제거할 연결 id.
+    // 출력: 반환값 없음. 연결과 경기 참가 상태가 정리된다(유예 자격은 Match가 정한다).
     // Phase 10 D2: a connection the server did not close itself (a client quit, crash or network loss) may keep its
     // character for the reconnect grace; Match decides whether the player qualifies.
     private void RemovePeer(int peerId)
@@ -853,6 +899,9 @@ public sealed class GameLoop : IDisposable
         if (_peers.Remove(peerId, out NetPeer? peer)) DropSession(peerId, peer);
     }
 
+    // 기능: 제거된 연결의 경기 쪽 정리: 서버가 코드 없이 잃은 연결이면 유예를 허용해 Match.Disconnect를 부르고, 유예가 시작됐으면 세고 Debug로 남긴다.
+    // 입력: peerId - 연결 id, peer - 제거된 연결(Tag의 CloseCode로 유예 허용 여부를 정한다).
+    // 출력: 반환값 없음. 플레이어가 유예 상태가 되거나 경기에서 빠진다.
     // The match side of a removed connection (server review L12: apart from _peers, so a replaced peer's session can be
     // dropped after the new connection took its id).
     private void DropSession(int peerId, NetPeer peer)
@@ -868,6 +917,9 @@ public sealed class GameLoop : IDisposable
         }
     }
 
+    // 기능: 응답 큐에 쌓인 StatsResponse를 큐 용량만큼 꺼내 해당 연결에 ReliableOrdered로 보낸다(Phase 11 D8). 연결이 사라졌거나 다른 연결이 된 응답은 버리고 Undelivered로 센다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 대상 Client에 StatsResponse 패킷이 전송된다.
     // Phase 11 D8: the answers StatsQueryService (or a network thread, for Busy) left in the reply queue, at most the
     // queue's capacity per tick, so this never waits. Before Match.Tick, so a failing match does not hold them back. An
     // answer whose connection is gone, or whose peer id now belongs to another connection, is dropped and counted.
@@ -887,6 +939,9 @@ public sealed class GameLoop : IDisposable
         }
     }
 
+    // 기능: 패킷 하나를 연결의 기본 채널(0)로 보내고 송신 통계에 더한다(Match의 송신 위임). 없는 연결이면 버린다.
+    // 입력: peerId - 받을 연결 id, data - 보낼 패킷 바이트, method - LiteNetLib 전달 방식.
+    // 출력: 반환값 없음. 대상 Client에 패킷이 전송된다.
     private void SendToPeer(int peerId, ReadOnlySpan<byte> data, DeliveryMethod method)
     {
         if (!_peers.TryGetValue(peerId, out var peer)) return;
@@ -895,6 +950,9 @@ public sealed class GameLoop : IDisposable
         _stats.AddOut(data.Length);
     }
 
+    // 기능: 건설 패킷 하나를 연결의 Build 채널(1)로 보내고 송신 통계에 더한다(Phase 13 D13). 없는 연결이면 버린다.
+    // 입력: peerId - 받을 연결 id, data - 보낼 패킷 바이트, method - LiteNetLib 전달 방식.
+    // 출력: 반환값 없음. 대상 Client에 건설 패킷이 전송된다.
     // Phase 13 D13: the building stream on its own channel.
     private void SendToPeerBuild(int peerId, ReadOnlySpan<byte> data, DeliveryMethod method)
     {
@@ -903,6 +961,9 @@ public sealed class GameLoop : IDisposable
         _stats.AddOut(data.Length);
     }
 
+    // 기능: StatsIntervalSeconds마다 Stats 줄과 Health 줄을 기록하고, 경기 기록 실패(리셋이 넘긴 것 우선)와 PlayerSpawned 인코딩 실패(프로세스당 한 번)를 Error로 남긴다. 테스트가 부를 수 있게 internal이다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 구간 수치가 0으로 돌아가고 로그가 남는다.
     // Every StatsIntervalSeconds: the Stats line (performance of the interval), then the Health line (state and totals
     // since the start, D9). Internal so tests can read both lines.
     internal void LogPeriodic()
@@ -924,6 +985,9 @@ public sealed class GameLoop : IDisposable
         }
     }
 
+    // 기능: 지난 구간의 패킷·바이트 속도, Tick 시간 백분위, 드롭·예외·GC·메모리·CPU%를 Stats 줄 한 줄로 기록하고 구간별 로그 제한(첫 예외만 로그)을 되돌린다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. Tick 표본과 구간 수치가 비워진다.
     private void LogStats()
     {
         StatsCounters c = _stats.TakeDelta();
@@ -1018,6 +1082,9 @@ public sealed class GameLoop : IDisposable
             sq.Requests, sq.Limited, sq.Busy, sq.Unavailable, sq.Undelivered);
     }
 
+    // 기능: 이 프로세스의 모든 스레드가 쓴 누적 CPU 시간을 읽는다(Stats 줄마다 한 번, Tick 경로 아님).
+    // 입력: 없음.
+    // 출력: 프로세스 누적 CPU 시간.
     // Total processor time of this process (all threads), every StatsIntervalSeconds: not on the tick path.
     private static TimeSpan CurrentCpuTime()
     {
@@ -1025,6 +1092,9 @@ public sealed class GameLoop : IDisposable
         return process.TotalProcessorTime;
     }
 
+    // 기능: Stopwatch가 목표 Tick에 이를 때까지 기다린다(2ms 넘게 남으면 1ms 모자라게 Sleep, 그 아래는 Yield). 취소되면 바로 돌아온다.
+    // 입력: clock - Loop의 Stopwatch, targetTicks - 기다릴 목표 ElapsedTicks, token - 중단 토큰.
+    // 출력: 반환값 없음.
     // Dedicated thread (not the ThreadPool), so sleeping here cannot starve other work.
     private static void WaitUntil(Stopwatch clock, long targetTicks, CancellationToken token)
     {

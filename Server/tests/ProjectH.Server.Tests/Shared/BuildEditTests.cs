@@ -251,18 +251,33 @@ public class BuildEditTests
         }
     }
 
+    // 기능: 조각의 지정 타일 상자 중심 좌표를 구한다.
+    // 입력: shape - 대상 조각 모양, tile - 타일 번호.
+    // 출력: 해당 타일 상자의 중심 좌표.
     private static Vector3 TileCentre(in BuildPieceShape shape, int tile) => BuildEdit.TileBox(shape, tile).Center;
 
+    // 기능: 상자 a가 frame 안에 (1e-4 오차 허용) 완전히 들어가는지 검사한다.
+    // 입력: a - 검사할 상자, frame - 바깥 틀 상자.
+    // 출력: a의 모든 면이 frame 안이면 true, 하나라도 벗어나면 false.
     private static bool Inside(in Box a, in Box frame) =>
         a.Min.X >= frame.Min.X - 1e-4f && a.Min.Y >= frame.Min.Y - 1e-4f && a.Min.Z >= frame.Min.Z - 1e-4f &&
         a.Max.X <= frame.Max.X + 1e-4f && a.Max.Y <= frame.Max.Y + 1e-4f && a.Max.Z <= frame.Max.Z + 1e-4f;
 
+    // 기능: 두 상자의 부피가 (1e-4 이상) 실제로 겹치는지 검사한다. 면만 맞닿은 경우는 겹침이 아니다.
+    // 입력: a - 첫 상자, b - 둘째 상자.
+    // 출력: 세 축 모두 겹치면 true, 아니면 false.
     private static bool Overlap(in Box a, in Box b) =>
         a.Min.X < b.Max.X - 1e-4f && b.Min.X < a.Max.X - 1e-4f && a.Min.Y < b.Max.Y - 1e-4f && b.Min.Y < a.Max.Y - 1e-4f &&
         a.Min.Z < b.Max.Z - 1e-4f && b.Min.Z < a.Max.Z - 1e-4f;
 
+    // 기능: 점이 상자의 내부(경계 제외)에 있는지 검사한다.
+    // 입력: b - 대상 상자, p - 검사할 점.
+    // 출력: 점이 상자 내부에 있으면 true, 경계 위이거나 바깥이면 false.
     private static bool Contains(in Box b, Vector3 p) =>
         p.X > b.Min.X && p.X < b.Max.X && p.Y > b.Min.Y && p.Y < b.Max.Y && p.Z > b.Min.Z && p.Z < b.Max.Z;
 
+    // 기능: 상자의 부피를 계산한다.
+    // 입력: b - 대상 상자.
+    // 출력: 세 변 길이의 곱(부피).
     private static float Volume(in Box b) => (b.Max.X - b.Min.X) * (b.Max.Y - b.Min.Y) * (b.Max.Z - b.Min.Z);
 }

@@ -15,20 +15,32 @@ public class MovementModesTests
     private static readonly InputCommand Walk = new() { MoveY = 1f };
     private static readonly InputCommand Idle = new();
 
+    // 기능: 최소·최대 모서리 좌표 여섯 값으로 충돌 상자를 만든다.
+    // 입력: minX/minY/minZ - 최소 모서리 좌표, maxX/maxY/maxZ - 최대 모서리 좌표.
+    // 출력: 지정한 범위의 Box.
     private static Box B(float minX, float minY, float minZ, float maxX, float maxY, float maxZ)
         => new(new Vector3(minX, minY, minZ), new Vector3(maxX, maxY, maxZ));
 
+    // 기능: 같은 입력으로 이동 Step을 steps번 반복해 상태를 진행시킨다.
+    // 입력: s - 진행시킬 이동 상태, input - 매 Step에 줄 입력, steps - 반복 횟수, world - 충돌 상자들(기본 없음), terrain - 지형(null이면 평지).
+    // 출력: 반환값 없음. s가 steps Step만큼 진행된다.
     private static void Run(ref MoveState s, InputCommand input, int steps, ReadOnlySpan<Box> world = default, HeightField? terrain = null)
     {
         for (int i = 0; i < steps; i++) MovementSimulation.Step(ref s, input, Dt, world, terrain ?? HeightField.Flat);
     }
 
+    // 기능: 이동 Step을 한 번 돌리고 그 Step의 결과를 받는다.
+    // 입력: s - 이동 상태, input - 입력, world - 충돌 상자들(기본 없음), terrain - 지형(null이면 평지).
+    // 출력: 그 Step의 StepResult(Sprinting·Charging·착지 속도·막은 상자 등). s는 한 Step 진행된다.
     private static StepResult StepOnce(ref MoveState s, InputCommand input, ReadOnlySpan<Box> world = default, HeightField? terrain = null)
     {
         MovementSimulation.Step(ref s, input, Dt, world, terrain ?? HeightField.Flat, out StepResult result);
         return result;
     }
 
+    // 기능: 입력 복사본에 버튼을 더한다.
+    // 입력: input - 바탕 입력(값 복사), extra - 추가로 누를 버튼.
+    // 출력: extra 버튼이 더해진 새 InputCommand. 원본은 바뀌지 않는다.
     private static InputCommand With(InputCommand input, InputButtons extra)
     {
         input.Buttons |= extra;
@@ -187,6 +199,9 @@ public class MovementModesTests
 
     // ---- Slide (D3, D7) ----
 
+    // 기능: 평지에서 5 Tick 질주해 Slide를 시작할 수 있는 상태를 만든다.
+    // 입력: 없음.
+    // 출력: 질주 속도로 달리는 중인 MoveState.
     private static MoveState Sprinting()
     {
         var s = new MoveState();

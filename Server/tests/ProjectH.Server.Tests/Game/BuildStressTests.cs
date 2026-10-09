@@ -16,6 +16,9 @@ public sealed class BuildStressFactAttribute : FactAttribute
 {
     public const string Variable = "PROJECTH_BUILD_STRESS";
 
+    // 기능: 환경 변수 PROJECTH_BUILD_STRESS가 1이 아니면 테스트를 건너뛰게 표시한다.
+    // 입력: 없음.
+    // 출력: 환경 변수가 없으면 Skip 사유가 설정된 Fact attribute.
     public BuildStressFactAttribute()
     {
         if (Environment.GetEnvironmentVariable(Variable) != "1") Skip = $"Set {Variable}=1 to run the build stress measurements.";
@@ -36,8 +39,14 @@ public sealed class BuildStressTests
     private long _buildPackets;
     private long _buildBytes;
 
+    // 기능: 측정 결과를 적을 xUnit 출력을 받아 둔다.
+    // 입력: output - 테스트 출력.
+    // 출력: 계수기가 0인 테스트 인스턴스.
     public BuildStressTests(ITestOutputHelper output) => _out = output;
 
+    // 기능: 패킷 수와 바이트를 채널별로 세는 송신 대리자를 단 개발 모드 Match를 만든다(자원 무한).
+    // 입력: players - 최대 인원.
+    // 출력: 참가자 없는 Match.
     private Match NewMatch(int players)
     {
         return new Match(new ServerOptions { MaxPlayers = players, DevRespawn = true, BuildInfiniteResources = true }, TestGameData.Create(),
@@ -53,6 +62,9 @@ public sealed class BuildStressTests
             });
     }
 
+    // 기능: 맵 전체에 바닥, 남쪽 벽, 서쪽 벽 순으로 층마다 칸마다 조각을 채운다.
+    // 입력: match - 채울 경기, count - 세울 조각 수 상한.
+    // 출력: 실제로 세운 조각 수.
     // Floors, then south and west walls, cell by cell and level by level over the whole map.
     private static int Fill(Match match, int count)
     {
@@ -69,6 +81,9 @@ public sealed class BuildStressTests
         return added;
     }
 
+    // 기능: 플레이어들을 들여보내 맵 위 10 x 10 격자(14 m 간격)에 흩어 놓는다.
+    // 입력: match - 경기, players - 들여보낼 인원.
+    // 출력: 연결 id 목록 1..players. 입장이 거절되면 테스트가 실패한다.
     private static List<int> Join(Match match, int players)
     {
         var peers = new List<int>();
@@ -86,6 +101,10 @@ public sealed class BuildStressTests
         return peers;
     }
 
+    // 기능: 한 Tick 분의 입력을 모든 플레이어에게 넣는다: 모두 걷고, 짝수 peer는 쏘며, 홀수 peer는 건설 모드로 주기마다 요청을 보낸다.
+    // 입력: match - 경기, peers - 연결 id 목록, tick - 현재 Tick 번호, buildEveryTicks - 건설 요청 주기(0이면 아무도 짓지 않음),
+    //   rng - 조각 종류·층·회전 난수, seq - peer별 입력 순번, buildSeq - peer별 건설 순번.
+    // 출력: 반환값 없음. 입력·건설 요청이 큐에 쌓이고 순번 배열이 올라간다.
     // Every player walks in a slowly turning direction. Even peers shoot (Fire held, their reserve topped up so they keep
     // shooting); odd peers stay in build mode and, every buildEveryTicks, send one request in their own cell at level 0-3
     // (a wall, a floor or a ramp, any rotation; many are refused, which is part of the load).
@@ -119,6 +138,9 @@ public sealed class BuildStressTests
         }
     }
 
+    // 기능: 30 Tick 예열 뒤 주어진 Tick 수를 돌리며 Tick 시간·할당·GC·채널별 패킷·건설 요청 수를 잰다.
+    // 입력: match - 경기, peers - 연결 id 목록, ticks - 측정 Tick 수, buildEveryTicks - 건설 요청 주기.
+    // 출력: 측정값을 한 줄로 적은 문자열. 채널 계수기는 0으로 되돌아간 뒤 다시 센 값이 된다.
     private string Measure(Match match, List<int> peers, int ticks, int buildEveryTicks)
     {
         var rng = new Random(13);

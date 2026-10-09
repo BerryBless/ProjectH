@@ -53,6 +53,9 @@ public sealed partial class Match
     // Test seams.
     internal SquadCatalog Squad => _squad;
     internal int TeamSize => _teamSize;
+    // 기능: 스테이션의 대기 종료 Tick을 돌려준다(테스트용).
+    // 입력: station - 스테이션 번호.
+    // 출력: 대기가 끝나는 서버 Tick(0 = 바로 사용 가능).
     internal uint StationEndTick(int station) => _stationEnd[station];
 
     // 기능: 두 플레이어가 같은 팀인지 본다(D1, 모든 Gameplay 팀 판정의 한 곳). TeamId 0(관전자·대기)은 누구와도 같은 팀이 아니다.
@@ -91,7 +94,7 @@ public sealed partial class Match
         else Kill(victim, attacker, cause);
     }
 
-    // 기능: 치명 피해를 받으면 기절할지 본다(D5): 팀이 있고 같은 팀에 서 있는 다른 구성원이 있다. Solo는 항상 false.
+    // 기능: 치명 피해를 받으면 기절할지 본다(D5): 피해가 허용되는 상태(경기 중 또는 개발 모드)이고, 팀이 있으며 같은 팀에 서 있는 다른 구성원이 있다. Solo는 항상 false.
     // 입력: victim - 피해자(기절 아님).
     // 출력: 기절하면 true.
     private bool CanBeDowned(PlayerEntity victim) => _flow.DamageAllowed && HasUpMember(victim.TeamId, victim);
@@ -963,7 +966,7 @@ public sealed partial class Match
     }
 
     // 기능: QA giveRebootCard: 같은 팀의 탈락한 참가자의 카드를 플레이어 카드 칸에 넣는다(월드에 있던 그 카드는 지운다).
-    // 입력: holder - 받을 서 있는 플레이어, owner - 카드 주인.
+    // 입력: holder - 받을 살아 있는 플레이어(기절 포함), owner - 카드 주인.
     // 출력: 넣었으면 true, 조건이 맞지 않거나 칸이 가득 찼으면 false.
     internal bool GiveCard(PlayerEntity holder, PlayerEntity owner)
     {

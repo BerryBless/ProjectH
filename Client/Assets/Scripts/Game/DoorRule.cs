@@ -10,6 +10,9 @@ namespace ProjectH.Client.Game
     // the facing direction, on the door's floor. Pure, no allocation, no UnityEngine (the server tests compile it).
     public static class DoorRule
     {
+        // 기능: E로 상호작용할 문을 서버 DoorRules.FindTarget과 같은 규칙으로 고른다(가장 가까운 문, 같은 거리면 나중 번호).
+        // 입력: feet - 내 발 위치, yaw - 바라보는 방향(도, 0 = +Z), doors - GameMap.Doors 상자 목록.
+        // 출력: 발이 문 바닥 - 1 m..문 꼭대기 높이에 있고 문 중심이 수평 DoorInteractRange 안·DoorInteractHalfAngle 안인 가장 가까운 문의 번호, 없으면 -1.
         public static int FindTarget(Vector3 feet, float yaw, ReadOnlySpan<Box> doors)
         {
             float radians = yaw * (MathF.PI / 180f);

@@ -19,6 +19,9 @@ public sealed class BatchOptions
     public int? ParameterSet { get; init; }
     public bool StopOnFail { get; init; }
 
+    // 기능: --seed-sweep 값 "A..B"를 시드 범위로 파싱한다.
+    // 입력: text - "A..B" 문자열, range - 파싱된 범위를 받을 변수, error - 실패 이유를 받을 문자열.
+    // 출력: 형식이 맞고 A <= B이며 MaxSweepSeeds 이하면 true, 아니면 false와 error.
     // "A..B" (inclusive, A <= B, at most MaxSweepSeeds seeds). Negative seeds are allowed ("-3..3").
     public static bool TryParseSweep(string text, out (int From, int To) range, out string? error)
     {
@@ -46,6 +49,9 @@ public sealed class BatchOptions
         return true;
     }
 
+    // 기능: 배치 옵션의 값 범위와 조합(--repeat와 --seed-sweep 동시 사용 금지)을 검사한다.
+    // 입력: 없음.
+    // 출력: 문제없으면 null, 아니면 오류 메시지.
     // Null when the options can go together, else why not.
     public string? Check()
     {
@@ -65,10 +71,16 @@ public sealed record PlannedRun(int Number, int Total, int? ParameterIndex, Json
 
 public static class BatchPlanner
 {
-    // The runs in order: parameter set by parameter set, each with its iterations or seeds. Lazy (a full sweep with
-    // 100 parameter sets is 100,000 runs; nothing per run is kept here).
+    // 기능: 배치가 만들 실행 수(파라미터 세트 수 × 세트당 실행 수)를 센다.
+    // 입력: s - 시나리오 정의, o - 배치 옵션.
+    // 출력: 총 실행 수.
     public static int Count(ScenarioDefinition s, BatchOptions o) => Sets(s, o).Count * PerSet(o);
 
+    // 기능: 파라미터 세트마다 반복 또는 시드 범위만큼의 실행을 순서대로 지연 생성한다.
+    // 입력: s - 시나리오 정의, o - 배치 옵션, seedOverride - --seed 값(없으면 시나리오 시드, 그것도 없으면 null = 실행마다 새 난수 시드).
+    // 출력: 번호·총수·파라미터 세트·반복 회차·시드가 정해진 PlannedRun 열거.
+    // The runs in order: parameter set by parameter set, each with its iterations or seeds. Lazy (a full sweep with
+    // 100 parameter sets is 100,000 runs; nothing per run is kept here).
     public static IEnumerable<PlannedRun> Plan(ScenarioDefinition s, BatchOptions o, int? seedOverride)
     {
         List<int?> sets = Sets(s, o);
@@ -86,6 +98,9 @@ public static class BatchPlanner
         }
     }
 
+    // 기능: --parameter-set 번호가 이 시나리오의 파라미터 세트 수 안에 드는지 검사한다.
+    // 입력: s - 시나리오 정의, o - 배치 옵션.
+    // 출력: 문제없으면(또는 지정이 없으면) null, 아니면 오류 메시지.
     // Null when the parameter-set choice fits this scenario, else why not.
     public static string? CheckFor(ScenarioDefinition s, BatchOptions o)
     {
@@ -95,6 +110,9 @@ public static class BatchPlanner
         return null;
     }
 
+    // 기능: 실행할 파라미터 세트의 0-based 인덱스 목록을 정한다.
+    // 입력: s - 시나리오 정의, o - 배치 옵션.
+    // 출력: 파라미터가 없으면 [null], --parameter-set이 유효하면 그 하나, 아니면 모든 세트.
     private static List<int?> Sets(ScenarioDefinition s, BatchOptions o)
     {
         if (s.Parameters.Count == 0) return new List<int?> { null };
@@ -102,6 +120,9 @@ public static class BatchPlanner
         return Enumerable.Range(0, s.Parameters.Count).Select(i => (int?)i).ToList();
     }
 
+    // 기능: 파라미터 세트 하나당 실행 수를 정한다.
+    // 입력: o - 배치 옵션.
+    // 출력: 시드 범위가 있으면 시드 개수, 아니면 반복 횟수(최소 1).
     private static int PerSet(BatchOptions o) => o.SeedSweep is { } sweep ? sweep.To - sweep.From + 1 : Math.Max(1, o.Repeat);
 }
 
@@ -118,6 +139,9 @@ public sealed class BatchSummary
     private readonly List<Row> _failures = new();
     private int _failuresDropped;
 
+    // 기능: 한 시나리오 파일의 배치 요약을 만든다.
+    // 입력: scenarioName - 시나리오 이름, reproduceFile - 재현 명령에 넣을 파일 경로('/' 구분 상대 경로).
+    // 출력: 실행이 하나도 기록되지 않은 요약.
     public BatchSummary(string scenarioName, string reproduceFile)
     {
         _scenario = scenarioName;
@@ -147,6 +171,9 @@ public sealed class BatchSummary
         public int Runs, Passed, NotPassed;
     }
 
+    // 기능: 실행 결과 하나를 집계한다(상태 카운터, 종료 코드, 파라미터 세트별 집계, 스트레스 행, 실패 행 - 상한을 넘으면 개수만 센다).
+    // 입력: planned - 계획된 실행, report - 그 실행의 보고서.
+    // 출력: 반환값 없음. 카운터와 행 목록이 갱신된다.
     public void Add(PlannedRun planned, RunReport report)
     {
         Runs++;
@@ -181,11 +208,17 @@ public sealed class BatchSummary
 
     public IReadOnlyList<Row> Failures => _failures;
 
+    // 기능: 실패한 실행 하나를 그대로 다시 돌리는 CLI 명령을 만든다.
+    // 입력: row - 실패 행.
+    // 출력: `run <file> --seed S [--parameter-set N]` 명령 문자열.
     // `run <file> --seed S [--parameter-set N]`: the exact run again.
     public string ReproduceCommand(Row row) =>
         $"dotnet run --project Server/src/ProjectH.QA -- run {_reproduceFile} --seed {row.Seed.ToString(CultureInfo.InvariantCulture)}"
         + (row.Run.ParameterIndex is int i ? $" --parameter-set {i + 1}" : string.Empty);
 
+    // 기능: 배치 요약을 콘솔 줄로 만든다(합계, 파라미터 세트별 집계, 실패 시드·회차, 실패 행 최대 MaxPrintedFailures개, 재현 명령).
+    // 입력: 없음.
+    // 출력: 출력할 줄의 지연 열거.
     public IEnumerable<string> Lines()
     {
         yield return $"== Batch {_scenario}: {Runs} runs: {Passed} passed, {Failed} failed, {Skipped} skipped, {Errors} errors{(Stopped ? " (stopped early)" : string.Empty)}; exit code {ExitCode}.";
@@ -211,6 +244,9 @@ public sealed class BatchSummary
         yield return $"   reproduce: {ReproduceCommand(_failures[0])}";
     }
 
+    // 기능: 측정이 있던 실행들의 스트레스 비교표를 콘솔 줄(헤더 + 실행당 한 줄)로 만든다.
+    // 입력: 없음.
+    // 출력: 출력할 줄의 지연 열거. 스트레스 행이 없으면 비어 있다.
     // D40 (request §80, §104): the player-count comparison, one line per run (console).
     public IEnumerable<string> StressLines()
     {
@@ -244,6 +280,9 @@ public sealed class BatchSummary
         ("Result", r => r.Status),
     };
 
+    // 기능: 스트레스 비교표를 QA/Reports/batch-<id>/summary.json과 summary.html로 쓴다.
+    // 입력: reportRoot - 보고서 루트 폴더, scenarioFile - 시나리오 파일 표기, started - 배치 시작 시각(폴더 이름에 쓰임).
+    // 출력: 만든 폴더 경로. 스트레스 행이 없으면 아무것도 쓰지 않고 null. IO 오류는 호출자에게 전파된다.
     // D40: QA/Reports/batch-<id>/summary.json and summary.html (only when some run measured). Returns the folder, or
     // null when there was nothing to write. I/O problems are the caller's to report (never a run failure).
     public string? WriteStressSummary(string reportRoot, string scenarioFile, DateTimeOffset started)
@@ -279,6 +318,9 @@ public sealed class BatchSummary
         return dir;
     }
 
+    // 기능: JSON 값을 표시용 compact 문자열로 줄인다.
+    // 입력: value - 파라미터 세트나 변수 재정의.
+    // 출력: 200자로 자른 compact JSON. null이면 빈 문자열.
     public static string Compact(JsonElement? value)
     {
         if (value == null) return string.Empty;

@@ -21,6 +21,9 @@ namespace ProjectH.Client.Tests
         private readonly List<BuildEditRequest> _sent = new List<BuildEditRequest>();
         private BuildRequestCounter _counter;
 
+        // 기능: 보낸 편집 요청을 _sent에 모으는 시험용 BuildEditController를 새 Sequence Counter와 함께 만든다.
+        // 입력: 없음.
+        // 출력: _sent를 비우고 _counter를 새로 만든 뒤 만든 BuildEditController.
         private BuildEditController Controller()
         {
             _sent.Clear();
@@ -28,6 +31,9 @@ namespace ProjectH.Client.Tests
             return new BuildEditController(r => _sent.Add(r), _counter);
         }
 
+        // 기능: 모든 관심 영역이 켜진 BuildStore에 나무 조각 하나를 확정 상태로 넣어 만든다.
+        // 입력: shape - 조각 모양, owner - 조각 소유자 ID, id - 조각 ID.
+        // 출력: 조각 하나가 들어 있는 BuildStore.
         private static BuildStore Store(BuildPieceShape shape, ushort owner = Me, uint id = WallId)
         {
             var store = new BuildStore();
@@ -36,16 +42,25 @@ namespace ProjectH.Client.Tests
             return store;
         }
 
+        // 기능: 시험용 벽(Wall) 면 위 3x3 타일 한 칸의 중심 좌표를 구한다.
+        // 입력: column - 타일 열(0..2, 서쪽부터), row - 타일 행(0..2, 아래부터).
+        // 출력: 벽 면(z = -15) 위 타일 중심의 월드 좌표.
         // The middle of a wall tile on the wall's face (column, row).
         private static NVector3 WallTile(int column, int row) =>
             new NVector3(-30f + (column + 0.5f) * BuildGrid.CellSize / 3f, (row + 0.5f) * BuildGrid.LevelHeight / 3f, -15f);
 
+        // 기능: 눈 위치에서 목표점을 바라보며 편집 입력 한 프레임을 Update로 넣는다(사거리 7 m, 행동 가능 상태).
+        // 입력: edit - 대상 편집 컨트롤러, store - 조각 저장소, at - 바라볼 월드 좌표, pressed - 이 프레임에 클릭했는지, held - 버튼을 누르고 있는지, eye - 눈 위치(null이면 Eye).
+        // 출력: 반환값 없음. 편집 컨트롤러의 Hover·선택·활성 상태가 갱신된다.
         private static void Aim(BuildEditController edit, BuildStore store, NVector3 at, bool pressed, bool held = true, NVector3? eye = null)
         {
             NVector3 from = eye ?? Eye;
             edit.Update(true, store, from, 7f, from, at - from, pressed, held);
         }
 
+        // 기능: 시험용 벽(WallId)에 대해 편집 모드를 시작하고 Started로 시작됐는지 단언한다.
+        // 입력: edit - 대상 편집 컨트롤러, store - 벽이 들어 있는 조각 저장소.
+        // 출력: 편집 모드가 켜진 같은 컨트롤러.
         private static BuildEditController Begin(BuildEditController edit, BuildStore store)
         {
             Assert.AreEqual(EditBeginResult.Started, edit.TryBegin(WallId, store, Me, Eye, 7f));

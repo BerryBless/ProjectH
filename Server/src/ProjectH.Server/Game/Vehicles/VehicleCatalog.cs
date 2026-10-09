@@ -11,6 +11,10 @@ public sealed class VehicleCatalog
 {
     public const string FileName = "vehicles.json";
 
+    // 기능: 검증을 마친 값들로 카탈로그를 만든다(TryParse만 호출한다).
+    // 입력: simHz - Tick 속도, root - 파싱된 JSON, runOverCooldownTicks - 치임 피해 간격 Tick, wreckTicks - 잔해 유지 Tick,
+    //   wreckCreditTicks - 파괴 공로 인정 Tick.
+    // 출력: 모든 값이 채워진 불변 VehicleCatalog.
     private VehicleCatalog(int simHz, VehicleJson root, uint runOverCooldownTicks, uint wreckTicks, uint wreckCreditTicks)
     {
         SimHz = simHz;

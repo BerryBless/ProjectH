@@ -14,6 +14,10 @@ public sealed class SquadCatalog
 {
     public const string FileName = "squad.json";
 
+    // 기능: 검증을 마친 값들로 카탈로그를 만든다(TryParse만 호출한다).
+    // 입력: simHz - Tick 속도, root - 파싱된 JSON, bleedOutTicks - 출혈 Tick, reviveTicks - 소생 Tick, rebootTicks - 재투입 Tick,
+    //   cardLifetimeTicks - 카드 수명 Tick, stationCooldownTicks - 스테이션 쿨다운 Tick, rebootLoadout - 재투입 장비.
+    // 출력: 모든 값이 채워진 불변 SquadCatalog.
     private SquadCatalog(int simHz, SquadJson root, uint bleedOutTicks, uint reviveTicks, uint rebootTicks, uint cardLifetimeTicks,
         uint stationCooldownTicks, StartingLoadout rebootLoadout)
     {
@@ -124,7 +128,9 @@ public sealed class SquadCatalog
         return true;
     }
 
-    // Seconds within [min, max] to whole ticks (at least 1).
+    // 기능: [min, max] 안의 초를 정수 Tick으로 바꾼다(반올림, 최소 1).
+    // 입력: seconds - 초, min·max - 허용 범위, simHz - Tick 속도, ticks - 결과.
+    // 출력: 범위 안이면 true와 Tick 수, 아니면 false(ticks = 0).
     private static bool Seconds(double seconds, double min, double max, int simHz, out uint ticks)
     {
         ticks = 0;
@@ -133,6 +139,9 @@ public sealed class SquadCatalog
         return true;
     }
 
+    // 기능: 검증 실패 이유를 error에 담고 false를 돌려준다(TryParse의 한 줄 반환용).
+    // 입력: message - 실패 이유, error - 결과.
+    // 출력: 항상 false와 error = message.
     private static bool Fail(string message, out string? error)
     {
         error = message;

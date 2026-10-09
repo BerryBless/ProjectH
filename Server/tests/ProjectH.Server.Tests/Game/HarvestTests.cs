@@ -21,6 +21,9 @@ public class HarvestTests
 
     private readonly SandboxHarness _h = new();
 
+    // 기능: 플레이어를 들여보내 채집 도구를 들게 한다.
+    // 입력: peer - 연결 id, feet - 발 위치.
+    // 출력: 채집 도구를 든 플레이어. 도구가 바뀌지 않으면 테스트가 실패한다.
     private PlayerEntity WithTool(int peer, Vector3 feet)
     {
         PlayerEntity p = _h.Join(peer, feet);
@@ -29,6 +32,9 @@ public class HarvestTests
         return p;
     }
 
+    // 기능: 한 peer가 받은 마지막 HarvestHit을 읽는다.
+    // 입력: peer - 받는 연결 id.
+    // 출력: 마지막 HarvestHit 내용. 하나도 없거나 읽기에 실패하면 테스트가 실패한다.
     private HarvestHit LastHit(int peer)
     {
         SandboxHarness.Sent sent = _h.To(peer, PacketId.HarvestHit).Last();
@@ -37,6 +43,9 @@ public class HarvestTests
         return hit;
     }
 
+    // 기능: 채집 쿨다운만큼 기다린 뒤 한 점을 겨눠 한 번 휘두른다(누름 Tick과 뗌 Tick).
+    // 입력: p - 휘두르는 플레이어, at - 겨눌 월드 좌표.
+    // 출력: 반환값 없음. 경기가 쿨다운 + 2 Tick 진행된다.
     private void Swing(PlayerEntity p, Vector3 at)
     {
         // Past the cooldown, then one press.
@@ -151,6 +160,9 @@ public class HarvestTests
         Assert.DoesNotContain(new ColliderId(ColliderKind.Harvestable, Tree), world.BoxIds.ToArray());
     }
 
+    // 기능: 나무 남쪽 면에서 약점에서 먼 점을 고른다(낮은 왼쪽 구석과 높은 오른쪽 구석 중 먼 쪽).
+    // 입력: weak - 현재 약점 좌표.
+    // 출력: 약점에서 0.5 m 이상 떨어진 남쪽 면 위의 점.
     // A point on the trunk's south face at least 0.5 m from the weak point.
     private static Vector3 FarFrom(Vector3 weak)
     {

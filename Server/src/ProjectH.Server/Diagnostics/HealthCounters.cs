@@ -166,24 +166,75 @@ public sealed class HealthCounters
     // Phase 11 D8 counters of the statistics path (StatsQueryQueue). Set once by GameLoop's constructor.
     public Func<StatsQueryCounts>? StatsQueries { get; set; }
 
+    // 기능: 연결 요청 거절 하나를 이유별로 센다(수신 스레드).
+    // 입력: reason - 거절 이유(프로토콜의 RejectReason).
+    // 출력: 반환값 없음.
     public void AddReject(RejectReason reason) => Interlocked.Increment(ref _rejects[(int)reason]);
+    // 기능: 서버가 연결 하나를 끊은 횟수를 코드별로 센다.
+    // 입력: code - 끊은 이유(DisconnectCode).
+    // 출력: 반환값 없음.
     public void AddKick(DisconnectCode code) => Interlocked.Increment(ref _kicks[(int)code]);
+    // 기능: 잘못된 패킷 하나를 이유별로 센다(수신 스레드).
+    // 입력: reason - 잘못된 이유(BadPacketReason, Count 제외).
+    // 출력: 반환값 없음.
     public void AddBadPacket(BadPacketReason reason) => Interlocked.Increment(ref _badPackets[(int)reason]);
+    // 기능: 수락된 연결 하나를 센다.
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void AddConnection() => Interlocked.Increment(ref _connections);
+    // 기능: 경기 참가(Join) 하나를 센다.
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void AddJoin() => Interlocked.Increment(ref _joins);
+    // 기능: 유예 중 재접속(Resume) 하나를 센다.
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void AddResume() => Interlocked.Increment(ref _resumes);
+    // 기능: 재접속 유예 시작 하나를 센다.
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void AddGraceStart() => Interlocked.Increment(ref _graceStarts);
+    // 기능: 재접속하지 못하고 떠난 유예 플레이어 하나를 센다.
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     // A graced player that left without resuming: its grace ran out, it died while away, or the round reset.
     public void AddGraceExpiry() => Interlocked.Increment(ref _graceExpiries);
+    // 기능: 연결 종료 하나를 Timeout과 그 외로 나눠 센다.
+    // 입력: timeout - LiteNetLib Timeout으로 끊겼으면 true.
+    // 출력: 반환값 없음.
     public void AddDisconnect(bool timeout) => Interlocked.Increment(ref timeout ? ref _disconnectTimeouts : ref _disconnectOthers);
+    // 기능: 예외로 끝난 Tick 하나를 센다(Game Loop).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void AddTickFailure() => Interlocked.Increment(ref _tickFailures);
+    // 기능: Tick 밖(Loop 자체)에서 난 예외 하나를 센다(Game Loop).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void AddLoopFailure() => Interlocked.Increment(ref _loopFailures);
+    // 기능: 경기 객체를 새로 만든 리셋 하나를 센다(Game Loop).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void AddMatchReset() => Interlocked.Increment(ref _matchResets);
+    // 기능: Watchdog이 감지한 Game Loop 정지 하나를 센다(Timer 스레드).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void AddStall() => Interlocked.Increment(ref _stalls);
+    // 기능: 이동 모드 상한을 넘은 이동 하나를 센다(Game Loop, 0이어야 정상).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     // Phase 12 D12: a move faster than its mode allows (Match's self-check; should stay 0).
     public void AddMovementAnomaly() => Interlocked.Increment(ref _movementAnomalies);
+    // 기능: LiteNetLib가 보고한 소켓 오류 하나를 센다(서버 리뷰 M1, 수신 스레드).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void AddNetworkError() => Interlocked.Increment(ref _networkErrors);
+    // 기능: 주소별 연결 속도 제한으로 거절한 요청 하나를 센다(서버 리뷰 M2, 수신 스레드).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void AddConnectRateReject() => Interlocked.Increment(ref _connectRateRejects);
+    // 기능: 자기 Tick이 예외를 던져 경기에서 빠지고 연결이 닫힌 플레이어 하나를 센다(서버 리뷰 M7, Game Loop).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void AddPlayerFailure() => Interlocked.Increment(ref _playerFailures);
 
     // 기능: 동시 연결 상한(리뷰 수정 A2)으로 거절한 요청 하나를 센다(수신 스레드).
@@ -211,7 +262,7 @@ public sealed class HealthCounters
     // 출력: 반환값 없음.
     public void AddCookieChallenge() => Interlocked.Increment(ref _cookieChallenges);
 
-    // 기능: 벌점을 준 주소 하나를 센다(리뷰 수정 A6: 반복 플레이어 실패, Game Loop. 리뷰 B 1차: 복호되지 않는 세션 키 blob, 수신 스레드).
+    // 기능: 벌점을 준 주소 하나를 센다(리뷰 수정 A6: 반복 플레이어 실패, Game Loop. 리뷰 B 1·2차: 같은 칸의 1분 안 세 번째 복호되지 않는 세션 키 blob, 수신 스레드).
     // 입력: 없음.
     // 출력: 반환값 없음.
     public void AddPenalty() => Interlocked.Increment(ref _penalties);
@@ -235,9 +286,18 @@ public sealed class HealthCounters
     // 입력: 없음.
     // 출력: 반환값 없음.
     public void CarryInputSeqDrops() => _inputSeqDropBase = Volatile.Read(ref _inputSeqDrops);
+    // 기능: FatalStallSeconds를 넘긴 정지로 서버를 멈춘 횟수 하나를 센다(서버 리뷰 M8, 프로세스당 최대 1, Timer 스레드).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void AddStallExit() => Interlocked.Increment(ref _stallExits);
+    // 기능: 외부가 부르는 진입점(LiteNetLib 콜백, Watchdog Timer)에서 잡은 예외 하나를 센다(서버 리뷰 L9).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void AddCallbackError() => Interlocked.Increment(ref _callbackErrors);
 
+    // 기능: 매 Tick 끝의 현재값(Gauge)을 쓴다. Game Loop만 부른다.
+    // 입력: peers - 열린 연결 수, players - 경기 참가자 수(유예 포함), graced - 재접속 대기 중인 수, state - 경기 진행 상태.
+    // 출력: 반환값 없음. Health 줄과 Meter가 읽는 Gauge 네 개가 바뀐다.
     public void SetGauges(int peers, int players, int graced, MatchFlowState state)
     {
         Volatile.Write(ref _peers, peers);
@@ -246,6 +306,9 @@ public sealed class HealthCounters
         Volatile.Write(ref _matchState, (int)state);
     }
 
+    // 기능: 지금 경기의 건설·채집 수치를 시작부터의 합계로 쓴다(리셋으로 넘어온 기준값 + 이 경기 값, Pieces·Cells는 Gauge라 그대로). Game Loop만 부른다.
+    // 입력: c - 경기 객체의 수치, rejects - BuildResultCode별 거절 수를 돌려주는 함수(Ok 제외).
+    // 출력: 반환값 없음. Build 합계와 코드별 거절 합계가 바뀐다.
     // The current match's numbers, written as totals since the start: the carried base plus these (the gauges Pieces and
     // Cells as they are).
     public void SetBuild(in BuildCounts c, Func<BuildResultCode, long> rejects)
@@ -269,6 +332,9 @@ public sealed class HealthCounters
         for (int i = 1; i < _buildRejects.Length; i++) Volatile.Write(ref _buildRejects[i], _buildRejectBase[i] + rejects((BuildResultCode)i));
     }
 
+    // 기능: 경기 리셋 때 지금까지 쓴 건설 합계(Pieces·Cells 제외)와 코드별 거절 합계를 기준값으로 넘긴다(합계가 줄지 않게). Game Loop만, 새 경기의 첫 SetBuild 전에 부른다.
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     // Final review B12: a match reset replaces the match (whose numbers start at 0): what was written last becomes the
     // base, so the totals (and the Meter's counters) never go back. Game loop only, before the new match's first SetBuild.
     public void CarryBuildTotals()
@@ -367,14 +433,29 @@ public sealed class HealthCounters
     public void AddMarkerInboxDrop() => Interlocked.Increment(ref _markerInboxDrops);
     public long MarkerInboxDrops => Interlocked.Read(ref _markerInboxDrops);
 
+    // 기능: 가득 찬 건설 채널이 밀어낸(DropOldest) 요청 하나를 센다(수신 스레드).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     // Build requests the inbound channel dropped (full, DropOldest); written by LiteNetLib threads.
     public void AddBuildInboxDrop() => Interlocked.Increment(ref _buildInboxDrops);
     public long BuildInboxDrops => Interlocked.Read(ref _buildInboxDrops);
 
+    // 기능: 건설 요청 거절 합계를 결과 코드별로 읽는다.
+    // 입력: code - 거절 코드(BuildResultCode, Ok는 항상 0).
+    // 출력: 시작부터 그 코드로 거절한 수.
     public long BuildRejects(BuildResultCode code) => Volatile.Read(ref _buildRejects[(int)code]);
 
+    // 기능: 연결 요청 거절 합계를 이유별로 읽는다.
+    // 입력: reason - 거절 이유.
+    // 출력: 시작부터 그 이유로 거절한 수.
     public long Rejects(RejectReason reason) => Interlocked.Read(ref _rejects[(int)reason]);
+    // 기능: 서버가 끊은 연결 합계를 코드별로 읽는다.
+    // 입력: code - 끊은 이유.
+    // 출력: 시작부터 그 코드로 끊은 수.
     public long Kicks(DisconnectCode code) => Interlocked.Read(ref _kicks[(int)code]);
+    // 기능: 잘못된 패킷 합계를 이유별로 읽는다.
+    // 입력: reason - 잘못된 이유.
+    // 출력: 시작부터 그 이유로 센 수.
     public long BadPackets(BadPacketReason reason) => Interlocked.Read(ref _badPackets[(int)reason]);
     public long Connections => Interlocked.Read(ref _connections);
     public long Joins => Interlocked.Read(ref _joins);

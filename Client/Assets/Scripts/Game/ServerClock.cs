@@ -17,6 +17,9 @@ namespace ProjectH.Client.Game
         private double _lastRenderTick;
         private double _latestAt;        // local time LatestTick was taken
 
+        // 기능: 서버 시계를 만든다.
+        // 입력: simHz - 서버 시뮬레이션 Tick 속도(초당 Tick).
+        // 출력: 아직 준비되지 않은(IsReady=false) ServerClock.
         public ServerClock(int simHz)
         {
             _simHz = simHz;
@@ -60,6 +63,9 @@ namespace ProjectH.Client.Game
             return true;
         }
 
+        // 기능: 지금 로컬 시각에 원격 플레이어를 그릴 서버 Tick을 구한다. 뒤로는 가지 않는다(단조 증가).
+        // 입력: localTime - 현재 로컬 시각(초), delaySeconds - 보간 지연(초).
+        // 출력: 렌더 Tick(소수). 이전 값보다 작으면 이전 값을 돌려준다.
         public double RenderTick(double localTime, double delaySeconds)
         {
             double tick = (localTime + _offsetSeconds - delaySeconds) * _simHz;

@@ -100,6 +100,9 @@ public sealed class MatchStore
 
     private readonly string _connectionString;
 
+    // 기능: 연결 문자열을 받아 저장소를 만든다(연결은 호출마다 연다).
+    // 입력: connectionString - MySQL 연결 문자열(비어 있으면 ArgumentException).
+    // 출력: 연결을 열지 않은 MatchStore.
     public MatchStore(string connectionString)
     {
         if (string.IsNullOrWhiteSpace(connectionString)) throw new ArgumentException("A connection string is required.", nameof(connectionString));
@@ -262,6 +265,9 @@ public sealed class MatchStore
         return matchId;
     }
 
+    // 기능: 플레이어의 누적 통계 한 행을 읽는다. 연결은 반환된다.
+    // 입력: devPlayerId - 조회할 플레이어 id, cancellationToken - 취소.
+    // 출력: 조회된 PlayerStats. 계정이나 통계가 없으면 null.
     public async Task<PlayerStats?> GetStatsAsync(string devPlayerId, CancellationToken cancellationToken)
     {
         await using var connection = new MySqlConnection(_connectionString);
@@ -276,6 +282,9 @@ public sealed class MatchStore
             reader.GetInt64(4), reader.GetInt64(5));
     }
 
+    // 기능: 플레이어의 최근 경기 기록을 최신순으로 읽는다. 연결은 반환된다.
+    // 입력: devPlayerId - 조회할 플레이어 id, limit - 최대 행 수(1–100으로 자른다), cancellationToken - 취소.
+    // 출력: 최신순 MatchHistoryEntry 목록. 없으면 빈 목록.
     // Newest first, at most limit (1-100) entries.
     public async Task<IReadOnlyList<MatchHistoryEntry>> GetHistoryAsync(string devPlayerId, int limit, CancellationToken cancellationToken)
     {
@@ -298,9 +307,15 @@ public sealed class MatchStore
         return entries;
     }
 
+    // 기능: 같은 계정의 기록 중 어느 것을 쓸지 고르는 순위를 구한다(낮을수록 좋다).
+    // 입력: player - 참가자 기록.
+    // 출력: 순위값. 순위 없음(Placement 0)이면 int.MaxValue(가장 나쁨).
     // Lower is better. Placement 0 (unranked) sorts after every real placement.
     private static int PlacementRank(PlayerRecord player) => player.Placement == 0 ? int.MaxValue : player.Placement;
 
+    // 기능: DevPlayerId의 계정 id를 구한다(없으면 계정과 프로필을 만든다). Transaction 안에서 실행된다.
+    // 입력: connection - 열린 연결, transaction - 진행 중인 Transaction, devPlayerId - 플레이어 id, cancellationToken - 취소.
+    // 출력: 기존 또는 새로 만든 account.id.
     // The account id for a DevPlayerId, created (with its profile) on first sight. LAST_INSERT_ID(id) on the duplicate
     // path makes one statement return the existing id too.
     private static async Task<long> EnsureAccountAsync(MySqlConnection connection, MySqlTransaction transaction, string devPlayerId,

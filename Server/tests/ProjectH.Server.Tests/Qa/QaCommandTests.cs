@@ -94,6 +94,9 @@ public sealed class QaCommandTests
         Assert.Equal(0, h.Match.MovementAnomalies);
     }
 
+    // 기능: 명령 응답 본문에서 result 항목을 꺼낸다(QaHarness.Result와 같다).
+    // 입력: body - 명령 응답 본문.
+    // 출력: body의 result 요소.
     private static JsonElement HarnessResult(JsonElement body) => QaHarness.Result(body);
 
     [Fact]

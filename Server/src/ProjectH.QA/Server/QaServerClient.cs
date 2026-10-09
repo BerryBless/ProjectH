@@ -30,6 +30,9 @@ public sealed record CommandResponse(bool Ok, string? Error, JsonElement? Result
 // The API answered with an error status (anything but the documented ok/404 cases), or not at all.
 public sealed class QaApiException : Exception
 {
+    // 기능: QA API 오류 예외를 만든다.
+    // 입력: message - 오류 설명, statusCode - HTTP 상태 코드(응답이 없으면 0), inner - 원인 예외.
+    // 출력: StatusCode가 설정된 QaApiException.
     public QaApiException(string message, int statusCode = 0, Exception? inner = null) : base(message, inner)
     {
         StatusCode = statusCode;
@@ -47,6 +50,9 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
 
     private readonly HttpClient _http;
 
+    // 기능: QA Control API용 HttpClient를 만든다(전체 Timeout은 무한, 요청마다 Linked로 제한).
+    // 입력: baseAddress - 서버 QA API 기본 주소(http://127.0.0.1:port/).
+    // 출력: 응답 크기가 MaxResponseBytes로 제한된 QaServerClient.
     public QaServerClient(Uri baseAddress)
     {
         _http = new HttpClient
@@ -59,8 +65,14 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
 
     public Uri BaseAddress => _http.BaseAddress!;
 
+    // 기능: GET /qa/health를 부른다.
+    // 입력: token - 취소 토큰.
+    // 출력: 서버 상태 JSON. 오류 상태·전송 실패·시간 초과면 QaApiException.
     public Task<JsonElement> GetHealthAsync(CancellationToken token) => GetAsync("qa/health", token);
 
+    // 기능: POST /qa/command로 QA 명령을 보내고 응답을 CommandResponse로 정리한다.
+    // 입력: command - 명령 이름, player - 대상 플레이어 ID(없으면 null), args - 명령 인자 JSON, runId - 실행 ID, token - 취소 토큰.
+    // 출력: Ok(성공 상태이고 ok=false가 아님)·Error(실패 시 서버 메시지 또는 "HTTP n")·Result·StatusCode. 전송 실패·시간 초과면 QaApiException.
     public async Task<CommandResponse> CommandAsync(string command, string? player, JsonElement args, string runId, CancellationToken token)
     {
         var body = new Dictionary<string, object?> { ["runId"] = runId, ["command"] = command, ["args"] = args };
@@ -86,6 +98,9 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
         }
     }
 
+    // 기능: GET /qa/players/{id}로 플레이어 상태를 조회한다.
+    // 입력: devPlayerId - 조회할 Dev 플레이어 ID, token - 취소 토큰.
+    // 출력: 플레이어 JSON. 서버에 없으면(404) null. 그 밖의 오류는 QaApiException.
     public async Task<JsonElement?> GetPlayerAsync(string devPlayerId, CancellationToken token)
     {
         using CancellationTokenSource cts = Linked(token);
@@ -98,10 +113,19 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
         }
     }
 
+    // 기능: GET /qa/players를 부른다.
+    // 입력: token - 취소 토큰.
+    // 출력: 플레이어 목록 JSON. 실패하면 QaApiException.
     public Task<JsonElement> GetPlayersAsync(CancellationToken token) => GetAsync("qa/players", token);
 
+    // 기능: GET /qa/match를 부른다.
+    // 입력: token - 취소 토큰.
+    // 출력: Match 상태 JSON. 실패하면 QaApiException.
     public Task<JsonElement> GetMatchAsync(CancellationToken token) => GetAsync("qa/match", token);
 
+    // 기능: GET /qa/build를 부른다(x·z·radius·max가 있으면 쿼리로 붙인다).
+    // 입력: x·z·radius - 조각을 볼 원(없으면 전체), max - 최대 조각 수, token - 취소 토큰.
+    // 출력: 건설 조각 JSON. 실패하면 QaApiException.
     public Task<JsonElement> GetBuildAsync(float? x, float? z, float? radius, int? max, CancellationToken token)
     {
         var query = new List<string>();
@@ -134,12 +158,21 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
     // 출력: 응답 JSON의 data.
     public Task<JsonElement> GetVehiclesAsync(CancellationToken token) => GetAsync("qa/vehicles", token);
 
+    // 기능: GET /qa/metrics를 부른다.
+    // 입력: windowSeconds - 집계 창(초, null이면 서버 기본), token - 취소 토큰.
+    // 출력: 서버 지표 JSON. 실패하면 QaApiException.
     public Task<JsonElement> GetMetricsAsync(int? windowSeconds, CancellationToken token) =>
         GetAsync(windowSeconds == null ? "qa/metrics" : $"qa/metrics?windowSeconds={windowSeconds.Value}", token);
 
+    // 기능: GET /qa/events로 seq가 after보다 큰 이벤트를 max개까지 받는다.
+    // 입력: after - 마지막으로 받은 seq(exclusive), max - 최대 개수, token - 취소 토큰.
+    // 출력: events·next·dropped가 담긴 JSON. 실패하면 QaApiException.
     public Task<JsonElement> GetEventsAsync(long after, int max, CancellationToken token) =>
         GetAsync($"qa/events?after={after}&max={max}", token);
 
+    // 기능: POST /qa/server/stop으로 서버 종료를 요청한다.
+    // 입력: token - 취소 토큰.
+    // 출력: 반환값 없음. 성공 상태가 아니거나 전송 실패·시간 초과면 QaApiException.
     public async Task StopServerAsync(CancellationToken token)
     {
         using CancellationTokenSource cts = Linked(token);
@@ -154,8 +187,14 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
         }
     }
 
+    // 기능: HttpClient(와 그 Handler)를 해제한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 이후 요청은 ObjectDisposedException이 QaApiException으로 바뀌어 실패한다.
     public void Dispose() => _http.Dispose();
 
+    // 기능: 요청별 Timeout을 걸고 GET을 보낸 뒤 성공 응답의 JSON을 돌려준다.
+    // 입력: path - 상대 경로, token - 취소 토큰.
+    // 출력: 응답 JSON 루트. 오류 상태·빈 응답·전송 실패면 QaApiException.
     private async Task<JsonElement> GetAsync(string path, CancellationToken token)
     {
         using CancellationTokenSource cts = Linked(token);
@@ -163,6 +202,9 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
         return await ReadSuccess(response, path, cts.Token).ConfigureAwait(false);
     }
 
+    // 기능: GET 요청을 보내고 전송 실패·시간 초과를 QaApiException으로 바꾼다(호출자 취소는 그대로 전파).
+    // 입력: path - 상대 경로, linked - RequestTimeout이 묶인 토큰, caller - 호출자 토큰.
+    // 출력: 응답 메시지(상태 검사는 호출자 몫). 전송 실패면 QaApiException.
     private async Task<HttpResponseMessage> Send(string path, CancellationToken linked, CancellationToken caller)
     {
         try
@@ -175,6 +217,9 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
         }
     }
 
+    // 기능: 응답을 JSON으로 읽고, 성공 상태가 아니면 서버 error 메시지를 담아 예외를 던진다.
+    // 입력: response - 응답 메시지, path - 메시지용 경로, token - 취소 토큰.
+    // 출력: 응답 JSON 루트. 오류 상태이거나 본문이 비었으면 QaApiException.
     private static async Task<JsonElement> ReadSuccess(HttpResponseMessage response, string path, CancellationToken token)
     {
         JsonElement? json = await ReadJson(response, token).ConfigureAwait(false);
@@ -186,6 +231,9 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
         return json ?? throw new QaApiException($"GET /{path}: empty response", (int)response.StatusCode);
     }
 
+    // 기능: 응답 본문을 JSON으로 파싱한다.
+    // 입력: response - 응답 메시지, token - 취소 토큰.
+    // 출력: 파싱된 루트 요소 복제본. 본문이 비었거나 JSON이 아니면 null.
     private static async Task<JsonElement?> ReadJson(HttpResponseMessage response, CancellationToken token)
     {
         string text = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
@@ -201,6 +249,9 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
         }
     }
 
+    // 기능: 호출자 토큰에 RequestTimeout을 묶은 토큰 소스를 만든다.
+    // 입력: token - 호출자 토큰.
+    // 출력: 호출자가 Dispose해야 하는 CancellationTokenSource.
     private static CancellationTokenSource Linked(CancellationToken token)
     {
         var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -208,6 +259,9 @@ public sealed class QaServerClient : IQaServerClient, IDisposable
         return cts;
     }
 
+    // 기능: 전송 예외를 사람이 읽을 메시지로 바꾼다.
+    // 입력: e - 전송 중 잡은 예외.
+    // 출력: 시간 초과·Client 닫힘·그 외(e.Message) 설명 문자열.
     private static string Describe(Exception e) => e switch
     {
         OperationCanceledException => $"no answer within {RequestTimeout.TotalSeconds:0} s",

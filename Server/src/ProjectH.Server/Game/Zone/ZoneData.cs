@@ -9,6 +9,9 @@ namespace ProjectH.Server.Game.Zone;
 // the whole phase (its wait and its shrink). Tick values are already in simulation ticks.
 public readonly struct ZonePhase
 {
+    // 기능: 검증이 끝난 단계 하나를 담는다.
+    // 입력: waitTicks - 대기 Tick, shrinkTicks - 축소 Tick, targetRadius - 목표 반지름, damagePerSecond - 원 밖 초당 피해.
+    // 출력: 값이 채워진 ZonePhase.
     public ZonePhase(uint waitTicks, uint shrinkTicks, float targetRadius, ushort damagePerSecond)
     {
         WaitTicks = waitTicks;
@@ -32,6 +35,10 @@ public sealed class ZoneData
 
     private readonly ZonePhase[] _phases;
 
+    // 기능: 검증을 마친 값들로 자기장 데이터를 만든다(TryParse만 호출한다).
+    // 입력: initialCenter - 첫 원 중심(X, Z), initialRadius - 첫 원 반지름, arenaHalfSize - 중심이 머무는 경기장 반폭,
+    //   phases - 단계들, simHz - 변환에 쓴 Tick 속도.
+    // 출력: 바뀌지 않는 ZoneData.
     private ZoneData(Vector2 initialCenter, float initialRadius, float arenaHalfSize, ZonePhase[] phases, int simHz)
     {
         InitialCenter = initialCenter;
@@ -49,9 +56,14 @@ public sealed class ZoneData
     // Tick values were converted with this rate; GameData refuses zones built for another SimHz.
     public int SimHz { get; }
 
-    // index 0 = phase 1
+    // 기능: 단계 하나의 수치를 돌려준다.
+    // 입력: index - 단계 색인(0 = 단계 1).
+    // 출력: 그 단계의 ZonePhase.
     public ZonePhase Phase(int index) => _phases[index];
 
+    // 기능: zones.json 파일을 읽어 검증한 데이터를 만든다(시작 시 한 번).
+    // 입력: path - 파일 경로, simHz - Tick 속도.
+    // 출력: 검증된 ZoneData. 파일이 없거나 내용이 틀리면 InvalidOperationException.
     public static ZoneData LoadFile(string path, int simHz)
     {
         if (!File.Exists(path)) throw new InvalidOperationException($"Zone data not found: {path}");
@@ -60,6 +72,9 @@ public sealed class ZoneData
         return data!;
     }
 
+    // 기능: zones.json을 읽고 검증한다: 첫 원이 경기장 안, 단계 1..MaxPhases개, 반지름은 단계마다 줄고 마지막은 0에 피해 > 0(D7).
+    // 입력: json - 파일 내용, simHz - Tick 속도, data·error - 결과.
+    // 출력: 맞으면 true와 데이터, 틀리면 false와 이유.
     public static bool TryParse(string json, int simHz, out ZoneData? data, out string? error)
     {
         data = null;

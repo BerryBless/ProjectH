@@ -121,6 +121,9 @@ public static partial class UnityActions
         "crouch", "holdInteract", "build", "buildEdit", "pauseInput", "resumeInput", "playInputs",
     };
 
+    // 기능: name Literal이 1-64자의 영숫자·'_'·'-'인지 검사한다(PNG 파일 이름이 된다).
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckName(StepDefinition s)
     {
         if (s.Params.TryGetValue("name", out JsonElement n) && !Variables.HasReference(n)
@@ -128,6 +131,9 @@ public static partial class UnityActions
             yield return "'name' must be 1-64 characters of A-Z a-z 0-9 _ - (it becomes the PNG file name).";
     }
 
+    // 기능: command Literal이 UiCommands 중 하나인지 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckCommand(StepDefinition s)
     {
         if (s.Params.TryGetValue("command", out JsonElement c) && !Variables.HasReference(c)
@@ -135,10 +141,16 @@ public static partial class UnityActions
             yield return $"'command' must be one of {string.Join(", ", UiCommands)}.";
     }
 
+    // 기능: 단계의 Actor를 UnityActor로 가져온다.
+    // 입력: ctx - 단계 문맥(actor).
+    // 출력: UnityActor. Actor가 UnityClient가 아니면 QaStepException.
     private static UnityActor Unity(StepContext ctx) =>
         ctx.Actor() as UnityActor ?? throw new QaStepException($"'{ctx.Step.Action}' needs a UnityClient actor ('{ctx.ActorAlias}' is not one).");
 
-    // The file is <alias>_<name>.png in QA/Reports/<runId>/screenshots, listed in the report with a thumbnail.
+    // 기능: Unity Player에 Screenshot을 요청하고 받은 파일을 Run의 Screenshot 목록(보고서 폴더 기준 상대 경로)에 등록한다.
+    // 입력: ctx - 단계 문맥(name), token - 취소 토큰.
+    // 출력: 파일이 있으면 Pass(saveAs: path, file, bytes), Player가 거절하거나 파일이 없으면 Fail. 이름이 틀리거나 Screenshot 한도를 넘으면 QaStepException.
+    // The file is <step>_<alias>_<name>.png in QA/Reports/<runId>/screenshots, listed in the report with a thumbnail.
     private static async Task<StepOutcome> CaptureAsync(StepContext ctx, CancellationToken token)
     {
         UnityActor actor = Unity(ctx);
@@ -158,6 +170,9 @@ public static partial class UnityActions
         return StepOutcome.Pass($"{listed} ({bytes / 1024} KB)", JsonPath.From(new { path, file = listed, bytes }));
     }
 
+    // 기능: Unity Player에 UI 명령(openMenu, closeMap 등)을 보낸다.
+    // 입력: ctx - 단계 문맥(command), token - 취소 토큰.
+    // 출력: Player가 받아들이면 Pass(saveAs: 응답 JSON), 현재 화면에 맞지 않아 거절하면 화면 이름을 담은 Fail. 모르는 명령이면 QaStepException.
     private static async Task<StepOutcome> UiAsync(StepContext ctx, CancellationToken token)
     {
         UnityActor actor = Unity(ctx);
@@ -173,6 +188,9 @@ public static partial class UnityActions
 
     // condition: a field of the player's /qa/status (screen, joined, connected, statsOpen, debugVisible, alive, health,
     // fps, frame, tool, preview, cursorLocked), with or without "unity." in front. Polls the player itself (local, cheap) every UnityActor.PollMs.
+    // 기능: Player의 /qa/status 필드(condition)가 연산자 조건을 만족할 때까지 UnityActor.PollMs 간격으로 상태를 새로 읽는다.
+    // 입력: ctx - 단계 문맥(condition, 연산자 하나, tolerance), token - 취소 토큰.
+    // 출력: 조건이 성립하면 Pass(saveAs: 그 값), Player가 사라지거나 Timeout이면 마지막 값을 담은 Fail.
     private static async Task<StepOutcome> WaitForUnityAsync(StepContext ctx, CancellationToken token)
     {
         UnityActor actor = Unity(ctx);
@@ -339,6 +357,9 @@ public static partial class UnityActions
 
     // D30: the run waits for a person. UI: PASS/FAIL buttons and a note. CLI on a terminal: p/f/s and a note.
     // Nobody to ask (CI): SKIPPED for this step only, the run goes on (or FAIL with --manual fail).
+    // 기능: 사람에게 단계 description(변수 치환 뒤)을 보여주고 답을 기다려 Run의 수동 점검 기록에 남긴다(D30).
+    // 입력: ctx - 단계 문맥(description, Run Control), token - 취소 토큰.
+    // 출력: PASS면 Pass, FAIL이면 Fail, 답할 사람이 없으면 이 단계만 Skip. description이나 Run Control이 없으면 QaStepException.
     private static async Task<StepOutcome> ManualCheckAsync(StepContext ctx, CancellationToken token)
     {
         string description = Variables.SubstituteText(ctx.Step.Description ?? throw new QaStepException("'description' is required."), ctx.Run.Variables);
@@ -358,10 +379,16 @@ public static partial class UnityActions
 
     // <step>_<alias>_<name>, within the player's 64-character rule: the step number keeps two actors whose aliases
     // sanitize alike (non-ASCII → '-') or are cut short apart, and a counter keeps a retried step's shot.
+    // 기능: Screenshot 파일 이름(<step>_<alias>_<name>, 64자 이내, 이미 있으면 _2.. 접미사)을 만든다.
+    // 입력: stepIndex - 0부터 세는 단계 번호, alias - Actor 별칭, name - 단계의 name, taken - 이미 쓴 Screenshot 경로들.
+    // 출력: 확장자 없는 파일 이름.
     public static string ShotFileName(int stepIndex, string alias, string name, IReadOnlyCollection<string> taken)
     {
         string step = (stepIndex + 1).ToString("000", System.Globalization.CultureInfo.InvariantCulture);
         string safeAlias = NotShotChar().Replace(alias, "-");
+        // 기능: 접미사를 붙여 64자 이내의 파일 이름을 만든다(name을 먼저 자르고 별칭은 최소 한 글자를 남긴다).
+        // 입력: suffix - 중복 구분 접미사(없으면 빈 문자열).
+        // 출력: "<step>_<alias>_<name><suffix>".
         string Build(string suffix)
         {
             // 64 = step + '_' + alias + '_' + name + suffix; the alias keeps at least one character, then the name is cut,
@@ -378,6 +405,9 @@ public static partial class UnityActions
         return file;
     }
 
+    // 기능: Player 상태 JSON에서 screen 이름을 읽는다.
+    // 입력: status - /qa/status 응답(null 가능).
+    // 출력: screen 문자열, 없으면 "?".
     public static string Screen(JsonElement? status) =>
         status != null && JsonPath.Child(status.Value, "screen") is { ValueKind: JsonValueKind.String } s ? s.GetString()! : "?";
 }

@@ -27,6 +27,9 @@ namespace ProjectH.Shared.Protocol
         public ushort Round;
         public byte MinPlayers;
 
+        // 기능: MatchState 패킷(id, 상태, 종료 Tick, 생존·참가자 수, 라운드, 최소 인원)을 쓴다.
+        // 입력: writer - 대상, s - 매치 상태.
+        // 출력: 반환값 없음. writer에 Size(11)바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in MatchState s)
         {
             writer.WriteByte((byte)PacketId.MatchState);
@@ -38,6 +41,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte(s.MinPlayers);
         }
 
+        // 기능: MatchState 본문(PacketId 뒤)을 읽는다.
+        // 입력: reader - 본문, s - 읽은 상태를 받을 변수.
+        // 출력: 성공하면 true와 상태. 짧거나, 상태가 Closing보다 크거나, 생존 수가 참가자 수보다 많으면 false.
         public static bool TryRead(ref PacketReader reader, out MatchState s)
         {
             s = default;
@@ -53,6 +59,9 @@ namespace ProjectH.Shared.Protocol
             return s.Alive <= s.Participants;
         }
 
+        // 기능: 다른 매치 상태와 모든 필드가 같은지 비교한다(바뀌었을 때만 보내려고).
+        // 입력: other - 비교할 상태.
+        // 출력: 여섯 필드가 모두 같으면 true.
         public bool SameAs(in MatchState other) =>
             State == other.State && StateEndTick == other.StateEndTick && Alive == other.Alive &&
             Participants == other.Participants && Round == other.Round && MinPlayers == other.MinPlayers;
@@ -78,6 +87,9 @@ namespace ProjectH.Shared.Protocol
         public uint ShrinkEndTick;
         public ushort DamagePerSecond;
 
+        // 기능: ZoneState 패킷(id, 단계, 시작·목표 원, 축소 Tick 구간, 초당 피해)을 쓴다.
+        // 입력: writer - 대상, z - 안전 지대 상태.
+        // 출력: 반환값 없음. writer에 Size(36)바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in ZoneState z)
         {
             writer.WriteByte((byte)PacketId.ZoneState);
@@ -119,6 +131,9 @@ namespace ProjectH.Shared.Protocol
                    z.ShrinkEndTick >= z.ShrinkStartTick;
         }
 
+        // 기능: 다른 안전 지대 상태와 모든 필드가 같은지 비교한다(바뀌었을 때만 보내려고).
+        // 입력: other - 비교할 상태.
+        // 출력: 열 필드가 모두 같으면 true.
         public bool SameAs(in ZoneState other) =>
             Phase == other.Phase && FromX == other.FromX && FromZ == other.FromZ && FromRadius == other.FromRadius &&
             ToX == other.ToX && ToZ == other.ToZ && ToRadius == other.ToRadius &&
@@ -137,6 +152,9 @@ namespace ProjectH.Shared.Protocol
         public byte Kills;
         public byte Participants;
 
+        // 기능: MatchResult 패킷(id, 승자, 순위, 처치 수, 참가자 수)을 쓴다.
+        // 입력: writer - 대상, r - 받는 참가자의 결과.
+        // 출력: 반환값 없음. writer에 Size(6)바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in MatchResult r)
         {
             writer.WriteByte((byte)PacketId.MatchResult);
@@ -146,6 +164,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte(r.Participants);
         }
 
+        // 기능: MatchResult 본문(PacketId 뒤)을 읽는다.
+        // 입력: reader - 본문, r - 읽은 결과를 받을 변수.
+        // 출력: 성공하면 true와 결과. 짧거나 순위가 1..참가자 수 밖이면 false.
         public static bool TryRead(ref PacketReader reader, out MatchResult r)
         {
             r = default;

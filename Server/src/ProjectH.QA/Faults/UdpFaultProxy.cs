@@ -34,6 +34,9 @@ public sealed record NetworkFaultSettings
 
     public bool IsClean => !Blocked && LatencyMs == 0 && JitterMs == 0 && PacketLossPercent == 0 && DuplicatePercent == 0;
 
+    // 기능: 지연·지터가 0..MaxDelayMs, 손실·중복 확률이 0..100 안에 있는지 검사한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 범위를 벗어난 값이 있으면 ArgumentOutOfRangeException.
     public void Validate()
     {
         if (LatencyMs < 0 || LatencyMs > MaxDelayMs)
@@ -46,6 +49,9 @@ public sealed record NetworkFaultSettings
             throw new ArgumentOutOfRangeException(nameof(DuplicatePercent), DuplicatePercent, "must be 0..100");
     }
 
+    // 기능: 값이 유효한 백분율인지 검사한다.
+    // 입력: value - 검사할 값.
+    // 출력: NaN이 아니고 0..100이면 true.
     private static bool IsPercent(double value) => !double.IsNaN(value) && value >= 0 && value <= 100;
 }
 
@@ -119,6 +125,9 @@ public sealed class UdpFaultProxy : IAsyncDisposable
     private readonly Task _deliveryLoop;
     private int _disposed;
 
+    // 기능: 클라이언트 쪽(127.0.0.1 임시 포트)과 업스트림 소켓을 바인딩하고 수신 루프 2개와 지연 전달 루프를 시작한다.
+    // 입력: target - 게임 서버 endpoint, seed - 양방향 난수 시드의 바탕, maxQueuedDatagrams - 지연 큐 상한.
+    // 출력: 장애 없이 전달 중인 프록시. 포트·상한이 잘못되면 ArgumentOutOfRangeException, 바인딩 실패면 소켓을 정리하고 예외 전파.
     public UdpFaultProxy(IPEndPoint target, int seed, int maxQueuedDatagrams = DefaultMaxQueuedDatagrams)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -179,12 +188,18 @@ public sealed class UdpFaultProxy : IAsyncDisposable
         get { lock (_queueGate) return _queue.Count; }
     }
 
+    // 기능: 현재 적용 중인 한 방향의 장애 설정을 읽는다(락 없이 일관된 한 객체).
+    // 입력: direction - ToClient면 서버→액터 설정, 그 외는 액터→서버 설정.
+    // 출력: 해당 방향의 장애 설정.
     public NetworkFaultSettings GetFaults(FaultDirection direction)
     {
         var pair = Volatile.Read(ref _faults);
         return direction == FaultDirection.ToClient ? pair.ToClient : pair.ToServer;
     }
 
+    // 기능: 지정 방향의 장애 설정을 CAS로 교체한다. 다음 datagram부터 적용되고, Blocked는 이미 큐에 있는 것에도 적용된다.
+    // 입력: settings - 새 장애 설정, direction - 적용 방향(Both면 양쪽 모두 같은 설정).
+    // 출력: 반환값 없음. 값이 범위 밖이면 ArgumentOutOfRangeException이 나고 설정은 그대로다.
     // Thread-safe; takes effect for the next datagram (Blocked also for queued ones). Throws ArgumentOutOfRangeException
     // for invalid values, leaving the current settings unchanged.
     public void SetFaults(NetworkFaultSettings settings, FaultDirection direction = FaultDirection.Both)
@@ -204,12 +219,21 @@ public sealed class UdpFaultProxy : IAsyncDisposable
         }
     }
 
+    // 기능: 양방향 장애 설정을 모두 없앤다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 양방향이 None이 된다.
     public void ClearFaults() => SetFaults(NetworkFaultSettings.None);
 
+    // 기능: 고정된 액터 endpoint를 잊어 다음에 보내오는 쪽이 새 액터가 되게 한다(새 로컬 포트로 재접속하는 액터용).
+    // 입력: 없음.
+    // 출력: 반환값 없음. 다음 datagram이 올 때까지 서버 응답은 버려진다.
     // Forget the latched actor endpoint so the next sender becomes the actor (an actor that reconnects from a new
     // local port). Replies from the server are dropped until that next datagram arrives.
     public void ResetClient() => Volatile.Write(ref _client, null);
 
+    // 기능: 다른 장애 값은 유지한 채 지정 방향의 차단(Blocked)만 켜거나 끈다.
+    // 입력: blocked - 차단 여부, direction - 적용 방향.
+    // 출력: 반환값 없음. 해당 방향의 Blocked가 바뀐다.
     public void SetBlocked(bool blocked, FaultDirection direction = FaultDirection.Both)
     {
         // Read-modify-write per direction; a concurrent SetFaults may win the race, which is acceptable for QA steps
@@ -220,6 +244,9 @@ public sealed class UdpFaultProxy : IAsyncDisposable
             SetFaults(GetFaults(FaultDirection.ToClient) with { Blocked = blocked }, FaultDirection.ToClient);
     }
 
+    // 기능: 호스트 문자열과 포트를 DNS 조회 없이 endpoint로 만든다.
+    // 입력: host - "localhost" 또는 IP 리터럴, port - 1..65535.
+    // 출력: 게임 서버 endpoint. 호스트가 그 외 이름이면 ArgumentException, 포트가 범위 밖이면 ArgumentOutOfRangeException.
     // "localhost" and IP literals only: QA servers run locally, and this avoids a blocking DNS lookup.
     public static IPEndPoint ParseTarget(string host, int port)
     {
@@ -230,6 +257,9 @@ public sealed class UdpFaultProxy : IAsyncDisposable
         throw new ArgumentException($"host must be 'localhost' or an IP address: {host}", nameof(host));
     }
 
+    // 기능: 클라이언트 쪽 소켓을 수신해 첫 송신자를 액터로 고정하고, 다른 로컬 송신자는 거부(Foreign)하며 액터의 datagram을 ToServer 장애를 거쳐 서버로 보낸다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 취소·폐기로 끝나면 조용히, 예상 밖 오류로 멈추면 LastError에 기록된다.
     private async Task ClientReceiveLoopAsync()
     {
         var buffer = new byte[MaxDatagramSize];
@@ -271,6 +301,9 @@ public sealed class UdpFaultProxy : IAsyncDisposable
         }
     }
 
+    // 기능: 업스트림 소켓을 수신해 게임 서버에서 온 datagram만 ToClient 장애를 거쳐 고정된 액터에게 보낸다. 액터가 아직 없으면 버린다(Dropped).
+    // 입력: 없음.
+    // 출력: 반환값 없음. 취소·폐기로 끝나면 조용히, 예상 밖 오류로 멈추면 LastError에 기록된다.
     private async Task UpstreamReceiveLoopAsync()
     {
         var buffer = new byte[MaxDatagramSize];
@@ -312,6 +345,9 @@ public sealed class UdpFaultProxy : IAsyncDisposable
         }
     }
 
+    // 기능: datagram 하나에 방향의 장애(차단·손실·중복·지연+지터)를 적용해 즉시 보내거나 지연 큐에 넣거나 버린다. 장애가 없으면 난수를 쓰지 않고, 있으면 정확히 3번 뽑는다.
+    // 입력: datagram - 수신한 바이트, destination - 보낼 endpoint, direction - 적용할 장애 방향, random - 그 수신 루프 소유의 난수.
+    // 출력: 반환값 없음. 카운터(Forwarded/Dropped/Duplicated/Delayed)가 갱신된다.
     // Runs on the receive loop that owns `random`.
     private void Handle(ReadOnlySpan<byte> datagram, IPEndPoint destination, FaultDirection direction, Random random)
     {
@@ -354,6 +390,9 @@ public sealed class UdpFaultProxy : IAsyncDisposable
         }
     }
 
+    // 기능: datagram을 풀 배열에 복사해 만기 시각 순 지연 큐에 넣고 전달 루프를 깨운다. 큐가 가득 차면 버린다(QueueFull).
+    // 입력: datagram - 보낼 바이트, destination - 보낼 endpoint, direction - 방향, delayMs - 지연 시간(ms).
+    // 출력: 반환값 없음. 큐와 Delayed/QueueFull 카운터가 갱신된다.
     private void Enqueue(ReadOnlySpan<byte> datagram, IPEndPoint destination, FaultDirection direction, int delayMs)
     {
         long due = Stopwatch.GetTimestamp() + delayMs * Stopwatch.Frequency / 1000;
@@ -382,6 +421,9 @@ public sealed class UdpFaultProxy : IAsyncDisposable
         if (_wake.CurrentCount == 0) _wake.Release();
     }
 
+    // 기능: 지연 큐의 유일한 소비자. 만기가 된 datagram을 꺼내 보내고(전달 시점에 Blocked면 버림) 버퍼를 풀에 돌려주며, 다음 만기나 새 enqueue까지 기다린다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 취소·폐기로 끝나면 조용히, 예상 밖 오류로 멈추면 LastError에 기록된다.
     private async Task DeliveryLoopAsync()
     {
         var ct = _cts.Token;
@@ -439,6 +481,9 @@ public sealed class UdpFaultProxy : IAsyncDisposable
         }
     }
 
+    // 기능: 방향에 맞는 소켓으로 datagram을 동기 전송한다.
+    // 입력: datagram - 보낼 바이트, destination - 보낼 endpoint, direction - ToServer면 업스트림 소켓, 아니면 클라이언트 쪽 소켓.
+    // 출력: 반환값 없음. 성공하면 Forwarded, 소켓 오류면 Dropped가 증가하고 폐기 중이면 조용히 버려진다.
     private void SendNow(ReadOnlySpan<byte> datagram, IPEndPoint destination, FaultDirection direction)
     {
         var socket = direction == FaultDirection.ToServer ? _upstream : _clientSide;
@@ -458,6 +503,9 @@ public sealed class UdpFaultProxy : IAsyncDisposable
         }
     }
 
+    // 기능: 한 번만 실행되는 폐기. 취소 후 두 소켓을 닫고 세 루프를 ShutdownTimeout까지 기다린 뒤, 모두 멈췄으면 큐 버퍼를 풀에 돌려주고 동기화 객체를 해제한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 루프가 제때 멈추지 않으면 LastError에 기록하고 큐·세마포어·토큰은 GC에 맡긴다.
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
@@ -489,6 +537,9 @@ public sealed class UdpFaultProxy : IAsyncDisposable
         _cts.Dispose();
     }
 
+    // 기능: UDP 소켓을 만들고 Windows에서는 SIO_UDP_CONNRESET을 꺼 ICMP 도달 불가가 ConnectionReset으로 올라오지 않게 한다.
+    // 입력: family - 주소 체계(IPv4/IPv6).
+    // 출력: 바인딩되지 않은 UDP 소켓. IOControl 실패는 무시한다.
     private static Socket CreateSocket(AddressFamily family)
     {
         var socket = new Socket(family, SocketType.Dgram, ProtocolType.Udp);
@@ -506,6 +557,9 @@ public sealed class UdpFaultProxy : IAsyncDisposable
         return socket;
     }
 
+    // 기능: 업스트림 소켓을 바인딩할 로컬 주소를 대상 주소에 맞춰 고른다.
+    // 입력: target - 게임 서버 주소.
+    // 출력: 대상이 loopback이면 같은 체계의 loopback, 아니면 같은 체계의 Any 주소.
     private static IPAddress LocalAddressFor(IPAddress target)
     {
         if (IPAddress.IsLoopback(target))
@@ -513,10 +567,16 @@ public sealed class UdpFaultProxy : IAsyncDisposable
         return target.AddressFamily == AddressFamily.InterNetworkV6 ? IPAddress.IPv6Any : IPAddress.Any;
     }
 
+    // 기능: 소켓이 망가지지 않은 채 datagram 하나에서만 날 수 있는 수신 오류인지 판정한다.
+    // 입력: e - 수신 중 난 소켓 예외.
+    // 출력: ConnectionReset·MessageSize·NetworkReset이면 true.
     // Errors a UDP receive can report for one bad datagram without the socket being broken.
     private static bool IsTransient(SocketException e) => e.SocketErrorCode is
         SocketError.ConnectionReset or SocketError.MessageSize or SocketError.NetworkReset;
 
+    // 기능: 루프를 끝낸 예외가 정상 종료(취소·폐기) 때문인지 판정한다.
+    // 입력: e - 루프를 끝낸 예외, ct - 프록시의 취소 토큰.
+    // 출력: 취소·폐기 예외이거나 취소 후의 소켓 예외면 true.
     private static bool IsShutdown(Exception e, CancellationToken ct) =>
         e is OperationCanceledException or ObjectDisposedException
         || (ct.IsCancellationRequested && e is SocketException);

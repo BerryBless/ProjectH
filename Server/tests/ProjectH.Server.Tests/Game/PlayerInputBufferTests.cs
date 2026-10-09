@@ -6,6 +6,9 @@ namespace ProjectH.Server.Tests.Game;
 
 public class PlayerInputBufferTests
 {
+    // 기능: 순번만 가진 입력 명령을 만든다.
+    // 입력: seq - 입력 순번.
+    // 출력: Seq가 seq인 InputCommand.
     private static InputCommand Cmd(uint seq) => new InputCommand { Seq = seq };
 
     [Fact]

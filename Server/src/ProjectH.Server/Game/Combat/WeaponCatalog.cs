@@ -68,7 +68,9 @@ public sealed class WeaponCatalog
 
     public WeaponDefinition this[int index] => _weapons[index];
 
-    // Weapon items and inventory slots store the weapon id (Phase 4).
+    // 기능: 무기 id로 정의를 찾는다(무기 아이템과 인벤토리 칸은 id를 저장한다, Phase 4).
+    // 입력: id - 무기 id, weapon - 결과.
+    // 출력: 있으면 true와 정의, 모르는 id면 false(weapon = null).
     public bool TryGetById(byte id, out WeaponDefinition weapon)
     {
         int index = _indexById[id];
@@ -87,6 +89,9 @@ public sealed class WeaponCatalog
     public string? RequireGrenade() =>
         Projectile(ProjectileKind.Grenade) == null ? "weapons.json needs a \"Grenade\" entry in \"projectiles\" (Phase 17)." : null;
 
+    // 기능: weapons.json 파일을 읽어 검증한 카탈로그를 만든다(시작 시 한 번).
+    // 입력: path - 파일 경로, simHz - Tick 속도.
+    // 출력: 검증된 카탈로그. 파일이 없거나 내용이 틀리면 InvalidOperationException.
     public static WeaponCatalog LoadFile(string path, int simHz)
     {
         if (!File.Exists(path)) throw new InvalidOperationException($"Weapon data not found: {path}");

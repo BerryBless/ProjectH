@@ -18,8 +18,9 @@ namespace ProjectH.Client.Game
     // (Server/src/ProjectH.Server/Game/Zone/SafeZone.cs). Change both or neither; the parity test compares them.
     public static class ZoneMath
     {
-        // The circle at a (fractional) server tick: From until ShrinkStartTick, linear to To until ShrinkEndTick,
-        // then To.
+        // 기능: (소수) 서버 Tick에서의 원을 구한다. ShrinkStartTick까지 From, ShrinkEndTick까지 To로 선형 이동, 그 뒤 To.
+        // 입력: zone - 서버 ZoneState, tick - 서버 Tick, centerX·centerZ - 원 중심, radius - 반지름.
+        // 출력: 반환값 없음. 세 out 값이 채워진다.
         public static void Sample(in ZoneState zone, double tick, out float centerX, out float centerZ, out float radius)
         {
             float t;
@@ -31,7 +32,9 @@ namespace ProjectH.Client.Game
             radius = zone.FromRadius + (zone.ToRadius - zone.FromRadius) * t;
         }
 
-        // Horizontal distance above the radius; a radius-0 circle has no inside.
+        // 기능: 한 점이 그 Tick의 원 밖에 있는지 본다(수평 거리만, 서버 SafeZone.IsOutside와 같은 식).
+        // 입력: zone - 서버 ZoneState, x·z - 점의 수평 좌표, tick - 서버 Tick.
+        // 출력: 수평 거리가 반지름을 넘으면 true. 반지름이 0 이하인 원은 안이 없으므로 항상 true.
         public static bool IsOutside(in ZoneState zone, float x, float z, double tick)
         {
             Sample(zone, tick, out float centerX, out float centerZ, out float radius);
@@ -40,8 +43,9 @@ namespace ProjectH.Client.Game
             return radius <= 0f || dx * dx + dz * dz > radius * radius;
         }
 
-        // Phase 0 (no zone) says nothing. Before the shrink: whole seconds until it starts (rounded up); during
-        // the shrink: closing; after it (the last phase stays closed): nothing.
+        // 기능: HUD에 보일 존 안내를 정한다. Phase 0(존 없음)은 없음, 축소 전은 시작까지의 초(올림), 축소 중은 닫히는 중, 그 뒤(마지막 Phase는 닫힌 채)는 없음.
+        // 입력: zone - 서버 ZoneState, tick - 서버 Tick, simHz - 서버 Tick 속도(0 이하면 없음), seconds - 축소 시작까지 남은 초(ShrinksIn일 때만).
+        // 출력: None·ShrinksIn·Closing 중 하나.
         public static ZoneHint Hint(in ZoneState zone, double tick, int simHz, out int seconds)
         {
             seconds = 0;

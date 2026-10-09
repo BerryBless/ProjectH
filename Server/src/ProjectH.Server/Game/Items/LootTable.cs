@@ -26,6 +26,9 @@ public enum LootKind : byte
 // One rolled item, before it has an id or a position.
 public readonly struct LootRoll
 {
+    // 기능: 굴린 아이템 하나를 담는다.
+    // 입력: kind - 아이템 종류, defId - 정의 id(무기 id, 탄 종류, 소모품 종류, 재료 + 1), rarity - 등급(무기만), amount - 양.
+    // 출력: 값이 채워진 LootRoll.
     public LootRoll(ItemKind kind, byte defId, byte rarity, ushort amount)
     {
         Kind = kind;
@@ -126,7 +129,9 @@ public sealed class LootTable
     public ReadOnlySpan<double> SupplyDropSeconds => _supplyDropSeconds;
     public float SupplyDropFallSpeed { get; }
 
-    // Index of a table name, or -1. Resolved once when the spawner is built, not per roll.
+    // 기능: 표 이름으로 index를 찾는다(Spawner를 만들 때 한 번, 굴림마다가 아니다).
+    // 입력: name - 표 이름.
+    // 출력: 표 index. 없으면 -1.
     public int TableIndex(string name) => Array.IndexOf(_names, name);
 
     // 기능: 표들이 이름으로 고른 무기 id가 모두 무기 카탈로그에 있는지 본다(Phase 17 D13, GameData가 시작 때 부른다).
@@ -218,6 +223,9 @@ public sealed class LootTable
         }
     }
 
+    // 기능: loot.json 파일을 읽어 검증한 LootTable을 만든다(시작 시 한 번).
+    // 입력: path - 파일 경로, items - 등급 이름을 가진 아이템 카탈로그.
+    // 출력: 검증된 LootTable. 파일이 없거나 내용이 틀리면 InvalidOperationException.
     public static LootTable LoadFile(string path, ItemCatalog items)
     {
         if (!File.Exists(path)) throw new InvalidOperationException($"Loot data not found: {path}");
@@ -525,7 +533,9 @@ public sealed class LootTable
         }
     }
 
-    // Weighted choice: one Next(total), then walk the cumulative weights. No allocation. A zero weight is never picked.
+    // 기능: 가중치로 항목 하나를 고른다(Next(total) 한 번 뒤 누적 가중치를 걷는다. 가중치 0은 뽑히지 않는다. 할당 없음).
+    // 입력: weights - 항목별 가중치, total - 가중치 합, rng - Random.
+    // 출력: 고른 항목 index.
     private static int PickIndex(int[] weights, int total, Random rng)
     {
         int roll = rng.Next(total);

@@ -20,6 +20,9 @@ public static class BuildLayouts
     // a compact block (64 cells = 40 x 40 m) rather than one layer over the whole map.
     public const int FieldBatchCells = 64;
 
+    // 기능: 맵의 모든 셀에 바닥과 남·서 벽 기둥을 center에서 가까운 순으로, FieldBatchCells 셀씩 한 층씩 쌓는 파도 목록을 만든다.
+    // 입력: center - 가까운 순의 기준점.
+    // 출력: 파도마다 PieceSpec 목록(지연 열거, 빈 파도는 뺀다).
     // §24-26 (piece count): columns on every cell of the grid, nearest `center` first. Each column starts at the level of
     // the terrain under the cell centre (that floor is buried or on the ground, so it is grounded) and goes up to the
     // top level: per level a floor, then the south and west walls standing on its edges; the next level's floor rests
@@ -75,6 +78,9 @@ public static class BuildLayouts
     // see the foundation's centre. Null when no place within the map fits.
     public sealed record HangingStructure(PieceSpec Foundation, IReadOnlyList<IReadOnlyList<PieceSpec>> Waves, int Count, int Side, int FirstLevel, Vector3 Aim, Vector3 Shooter);
 
+    // 기능: center에서 가까운 모서리 셀부터 count개짜리 매달린 구조물이 들어갈 자리를 찾는다.
+    // 입력: center - 기준점, count - 조각 수(4 미만이면 null), side - 블록 변 길이(null이면 3..10 탐색).
+    // 출력: 조건을 만족하는 HangingStructure, 맵 안에 자리가 없으면 null.
     public static HangingStructure? Hanging(Vector2 center, int count, int? side = null)
     {
         if (count < 4) return null;
@@ -97,6 +103,9 @@ public static class BuildLayouts
         return null;
     }
 
+    // 기능: 한 모서리 셀에서 기초 벽 기둥 위에 side x side 블록을 쌓아 정확히 count개가 되는 구조물을 만들고, 기초만 땅에 닿고 사수 자리에서 기초가 보이는지 검사한다.
+    // 입력: cx·cz - 모서리 셀, count - 조각 수, sideWanted - 고정 변 길이(null이면 3..10).
+    // 출력: 조건을 만족하는 HangingStructure, 아니면 null.
     private static HangingStructure? TryHanging(int cx, int cz, int count, int? sideWanted)
     {
         // The foundation: the south wall of the corner cell, on the ground (level of the lowest terrain along its edge).
@@ -123,6 +132,9 @@ public static class BuildLayouts
             }
             var waves = new List<IReadOnlyList<PieceSpec>>();
             int total = 0;
+            // 기능: 비어 있지 않은 파도를 목록에 넣고 total을 늘린다.
+            // 입력: wave - 한 파도의 조각들.
+            // 출력: 반환값 없음. waves와 total이 갱신된다.
             void Add(List<PieceSpec> wave)
             {
                 if (wave.Count == 0) return;
@@ -187,6 +199,9 @@ public static class BuildLayouts
         return null;
     }
 
+    // 기능: 조각 바닥이 지형 위나 맵 박스 위에 놓이는지 판정한다(서버 BuildSupport.IsGrounded의 복사).
+    // 입력: p - 검사할 조각.
+    // 출력: 받쳐지면 true, 아니면(정규화 실패 포함) false.
     // Mirrors the server's BuildSupport.IsGrounded (Phase 13 D12): the piece's bottom touches the terrain (or lies under
     // it) within 0.5 m at one of its sample points, or lies within 0.5 m of a map box's top. Used only to choose a place;
     // the server decides (and the scenario checks the collapse it reports).
@@ -211,6 +226,9 @@ public static class BuildLayouts
         return false;
     }
 
+    // 기능: 조각의 경계가 맵 박스와 겹치는지 본다.
+    // 입력: p - 검사할 조각.
+    // 출력: 겹치면 true(정규화 실패도 true).
     // A map box overlapping the piece's bounds (the structure should hang in the open).
     private static bool Blocked(PieceSpec p)
     {

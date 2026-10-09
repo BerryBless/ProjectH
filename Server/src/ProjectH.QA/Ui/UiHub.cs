@@ -35,6 +35,9 @@ public sealed class UiHub
         get { lock (_gate) return _nextEvent - 1; }
     }
 
+    // 기능: 로그 한 줄을 Ring에 넣는다(MaxLineLength로 자르고, 모르는 category는 "QA", 가득 차면 가장 오래된 줄을 버린다).
+    // 입력: category - 분류 이름, text - 로그 내용.
+    // 출력: 반환값 없음. 줄이 seq를 받아 Ring에 들어간다.
     public void Log(string category, string text)
     {
         if (text.Length > MaxLineLength) text = text[..MaxLineLength] + "...";
@@ -46,6 +49,9 @@ public sealed class UiHub
         }
     }
 
+    // 기능: run 이벤트를 JSON으로 직렬화해 이벤트 Ring에 넣는다(가득 차면 가장 오래된 것을 버린다).
+    // 입력: type - 이벤트 이름, payload - 직렬화할 객체.
+    // 출력: 반환값 없음. 이벤트가 seq를 받아 Ring에 들어간다.
     public void Publish(string type, object payload)
     {
         string json = JsonSerializer.Serialize(payload, QaJson.Compact);
@@ -56,6 +62,9 @@ public sealed class UiHub
         }
     }
 
+    // 기능: after 이후의 로그 줄을 max개까지 읽되, 밀린 만큼 오래된 줄은 건너뛰고 센다.
+    // 입력: after - 마지막으로 읽은 seq, max - 최대 줄 수.
+    // 출력: 줄 목록·다음 커서(Next)·건너뛴 수(Skipped)를 담은 UiLogBatch.
     // Lines after `after`, at most `max`. When more are waiting (a flood, or lines the ring already dropped) the oldest
     // are skipped and counted, so a reader never falls further behind than one batch (D21).
     public UiLogBatch ReadLogs(long after, int max)
@@ -82,11 +91,17 @@ public sealed class UiHub
         }
     }
 
+    // 기능: 최근 로그 줄을 복사한다.
+    // 입력: count - 가져올 줄 수.
+    // 출력: 마지막 count줄(오래된 순).
     public IReadOnlyList<UiLogLine> TailLogs(int count)
     {
         lock (_gate) return _logs.Skip(Math.Max(0, _logs.Count - count)).ToArray();
     }
 
+    // 기능: after 이후의 이벤트를 모두 읽는다.
+    // 입력: after - 마지막으로 읽은 seq.
+    // 출력: 이벤트 목록, 다음 커서, 이미 버려진 이벤트가 있었으면 Lost=true.
     // Events after `after` (all of them: the ring is small and events are rare). lost = some were already dropped.
     public (IReadOnlyList<UiEvent> Events, long Next, bool Lost) ReadEvents(long after)
     {
@@ -108,6 +123,9 @@ internal sealed class HubWriter : TextWriter
     private readonly System.Text.StringBuilder _line = new();
     private readonly object _gate = new();
 
+    // 기능: orchestrator 출력용 TextWriter를 만든다.
+    // 입력: hub - 줄을 넘길 허브.
+    // 출력: 빈 줄 버퍼의 HubWriter.
     public HubWriter(UiHub hub)
     {
         _hub = hub;
@@ -115,6 +133,9 @@ internal sealed class HubWriter : TextWriter
 
     public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
 
+    // 기능: 문자 하나를 줄 버퍼에 모으고, 개행이면 한 줄을 QA 로그로 보낸다(MaxLineLength 초과분은 버린다).
+    // 입력: value - 쓸 문자.
+    // 출력: 반환값 없음. 개행에서 허브에 한 줄이 들어간다.
     public override void Write(char value)
     {
         string? done = null;
@@ -133,6 +154,9 @@ internal sealed class HubWriter : TextWriter
         if (done != null) _hub.Log("QA", done);
     }
 
+    // 기능: 버퍼에 남은 내용과 value를 한 줄로 QA 로그에 보낸다.
+    // 입력: value - 쓸 문자열.
+    // 출력: 반환값 없음. 버퍼가 비워진다.
     public override void WriteLine(string? value)
     {
         string done;

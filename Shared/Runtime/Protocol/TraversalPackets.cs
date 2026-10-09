@@ -12,6 +12,9 @@ namespace ProjectH.Shared.Protocol
         public const float MaxCoordinate = 127f;
         public const uint MaxDurationTicks = 128 * 600;
 
+        // 기능: 수송기 경로를 TransportRoute 패킷(id + 5 float + 2 uint32)으로 쓴다.
+        // 입력: writer - 쓸 Writer, route - 이 매치의 투입 경로.
+        // 출력: 반환값 없음. writer에 Size바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in DropRoute route)
         {
             writer.WriteByte((byte)PacketId.TransportRoute);
@@ -24,6 +27,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt32(route.DurationTicks);
         }
 
+        // 기능: 패킷 id 다음부터 TransportRoute 본문을 읽고 Client가 믿어도 되는 범위인지 검사한다.
+        // 입력: reader - 패킷 id를 지난 Reader, route - 읽은 경로를 받을 변수.
+        // 출력: 본문이 충분하고 좌표가 ±MaxCoordinate 안, 고도 0 이상, 길이 1..MaxDurationTicks면 true와 경로, 아니면 false.
         public static bool TryRead(ref PacketReader reader, out DropRoute route)
         {
             route = default;
@@ -40,6 +46,9 @@ namespace ProjectH.Shared.Protocol
                    route.DurationTicks >= 1 && route.DurationTicks <= MaxDurationTicks;
         }
 
+        // 기능: 좌표가 유한하고 Snapshot 범위(±MaxCoordinate) 안인지 본다.
+        // 입력: value - 검사할 좌표.
+        // 출력: 범위 안이면 true(NaN·Infinity는 false).
         // Finite and inside the snapshot range (NaN fails both comparisons).
         private static bool InRange(float value) => value >= -MaxCoordinate && value <= MaxCoordinate;
     }
@@ -50,12 +59,18 @@ namespace ProjectH.Shared.Protocol
     {
         public const int Size = 2;   // with the packet id
 
+        // 기능: 열린 문 비트 마스크를 DoorStates 패킷(id + 1바이트)으로 쓴다.
+        // 입력: writer - 쓸 Writer, openMask - 비트 i가 GameMap.Doors[i]의 열림 여부.
+        // 출력: 반환값 없음. writer에 2바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, byte openMask)
         {
             writer.WriteByte((byte)PacketId.DoorStates);
             writer.WriteByte(openMask);
         }
 
+        // 기능: 패킷 id 다음의 열린 문 비트 마스크를 읽는다.
+        // 입력: reader - 패킷 id를 지난 Reader, openMask - 읽은 마스크를 받을 변수.
+        // 출력: 바이트가 있고 맵에 없는 문의 비트가 꺼져 있으면 true와 마스크, 아니면 false.
         // A bit for a door the map does not have is refused.
         public static bool TryRead(ref PacketReader reader, out byte openMask)
         {

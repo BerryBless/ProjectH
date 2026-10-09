@@ -18,11 +18,20 @@ public sealed class DockerDbControllerTests
             return Task.FromResult(Answer(copy, ct));
         };
 
+        // 기능: 종료 코드 0으로 성공한 docker 명령 결과를 만든다.
+        // 입력: stdout - 명령의 표준 출력.
+        // 출력: 시간 초과·미설치가 아닌 성공 DockerCommandResult.
         public static DockerCommandResult Ok(string stdout) => new(0, stdout, "", false, false);
 
+        // 기능: docker inspect가 "이름|값" 한 줄을 출력한 성공 결과를 만든다.
+        // 입력: value - inspect 형식의 필드 값, name - 컨테이너 이름(기본 /projecth-mysql).
+        // 출력: 표준 출력이 "name|value\n"인 성공 DockerCommandResult.
         // What `docker inspect --format "{{.Name}}|<field>"` prints for the container.
         public static DockerCommandResult Inspect(string value, string name = "/projecth-mysql") => Ok(name + "|" + value + "\n");
 
+        // 기능: 실행 중이고 healthy한 projecth-mysql처럼 docker 명령에 답한다.
+        // 입력: args - docker 명령 인자(첫 요소가 하위 명령).
+        // 출력: inspect면 형식에 맞는 running/healthy/이름 결과, 그 외 명령은 빈 성공 결과.
         // A healthy, running projecth-mysql: answers every inspect the controller makes; other commands succeed.
         public static DockerCommandResult Running(string[] args) => args[0] switch
         {
@@ -36,6 +45,9 @@ public sealed class DockerDbControllerTests
     private static readonly DockerCommandResult TimedOut = new(-1, "", "", true, false);
     private static readonly DockerCommandResult NotFound = new(-1, "", "no docker", false, true);
 
+    // 기능: docker 명령 인자에서 --format 다음 값을 꺼낸다.
+    // 입력: args - docker 명령 인자.
+    // 출력: --format 인자의 값. --format이 없으면 args[0].
     private static string Format(string[] args) => args[Array.IndexOf(args, "--format") + 1];
 
     [Fact]
@@ -248,6 +260,9 @@ public sealed class DockerDbControllerTests
         Assert.Equal("hello", result.StdOut.Trim());
     }
 
+    // 기능: 기록된 docker 호출에 컨테이너·볼륨을 지우는 인자(down, rm, -v, --volumes)가 없는지 검사한다.
+    // 입력: fake - 호출을 기록한 가짜 docker.
+    // 출력: 반환값 없음. 파괴적 인자가 있으면 Assert 실패.
     private static void AssertNoDestructiveCommands(FakeDocker fake)
     {
         foreach (var (args, _) in fake.Calls)
@@ -281,6 +296,9 @@ public sealed class DockerDbControllerTests
 
 public sealed class DockerFactAttribute : FactAttribute
 {
+    // 기능: 환경 변수 QA_DOCKER_TESTS가 1이 아니면 테스트를 Skip으로 표시한다.
+    // 입력: 없음.
+    // 출력: Docker 통합 테스트를 옵트인으로 만드는 Fact Attribute.
     public DockerFactAttribute()
     {
         if (Environment.GetEnvironmentVariable("QA_DOCKER_TESTS") != "1")

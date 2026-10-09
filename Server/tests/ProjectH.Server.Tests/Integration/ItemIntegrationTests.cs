@@ -16,6 +16,9 @@ public sealed class ItemIntegrationTests : IDisposable
 {
     private readonly GameLoop _server;
 
+    // 기능: 무기만 나오는 Loot, 재보급 없음, Medkit 1개 시작 장비의 DevRespawn 샌드박스 서버를 포트 0에 띄운다.
+    // 입력: 없음.
+    // 출력: 서버가 시작된 테스트 Fixture(Dispose가 서버를 닫는다).
     public ItemIntegrationTests()
     {
         _server = new GameLoop(new ServerOptions
@@ -31,8 +34,14 @@ public sealed class ItemIntegrationTests : IDisposable
         _server.Start();
     }
 
+    // 기능: 테스트 서버를 멈춘다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 서버 스레드와 소켓이 닫힌다.
     public void Dispose() => _server.Dispose();
 
+    // 기능: 새 HeadlessClient로 서버에 접속해 Join을 보내고 Ok 응답을 확인한다.
+    // 입력: devId - 플레이어 이름.
+    // 출력: Join에 성공한 HeadlessClient(호출자가 Dispose한다). 3초 안에 접속·응답이 없으면 테스트가 실패한다.
     private HeadlessClient Join(string devId)
     {
         var client = new HeadlessClient();
@@ -44,8 +53,14 @@ public sealed class ItemIntegrationTests : IDisposable
         return client;
     }
 
+    // 기능: viewer의 마지막 Snapshot에서 엔티티의 발 위치를 읽는다.
+    // 입력: viewer - Snapshot을 받은 Client, entityId - 찾을 엔티티.
+    // 출력: 그 엔티티의 위치. Snapshot에 없으면 KeyNotFoundException.
     private static Vector3 Feet(HeadlessClient viewer, ushort entityId) => viewer.LastSnapshot[entityId].Position;
 
+    // 기능: 두 점의 수평(XZ) 거리를 구한다.
+    // 입력: a·b - 두 점.
+    // 출력: Y를 뺀 거리.
     private static float Horizontal(Vector3 a, Vector3 b)
     {
         Vector3 d = a - b;

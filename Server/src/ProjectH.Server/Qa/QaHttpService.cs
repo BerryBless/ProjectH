@@ -45,6 +45,9 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
     // QA-3: stops the server when the QA tool that launched it is gone. Disposed with this service.
     private QaParentWatchdog? _parentWatch;
 
+    // 기능: QA HTTP 서비스를 만든다(앱은 StartAsync에서 만든다).
+    // 입력: qa - QA Control, lifetime - 호스트 Lifetime(정지 요청용), logger - 로그.
+    // 출력: 아직 듣지 않는 QaHttpService.
     public QaHttpService(QaControl qa, IHostApplicationLifetime lifetime, ILogger<QaHttpService> logger)
     {
         _qa = qa;
@@ -55,6 +58,9 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
     // The listener's bound addresses (tests).
     public IReadOnlyList<string> BoundAddresses { get; private set; } = Array.Empty<string>();
 
+    // 기능: Kestrel 앱을 만들어 QA 경로를 등록하고 127.0.0.1(AllowRemote면 모든 인터페이스)에 묶은 뒤 QA_READY 줄을 출력한다.
+    // 입력: cancellationToken - 시작 취소 토큰.
+    // 출력: 반환값 없음. 앱이 듣기 시작하고 BoundAddresses·QaPort가 정해지며 ParentPid가 있으면 부모 감시가 시작된다.
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         QaOptions options = _qa.Options;
@@ -95,12 +101,18 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
         Console.Out.Flush();
     }
 
+    // 기능: 부모 감시를 멈추고 HTTP 앱을 멈춘다(게임 루프보다 먼저).
+    // 입력: cancellationToken - 정지 취소 토큰.
+    // 출력: 반환값 없음. 앱이 더 이상 요청을 받지 않는다.
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         _parentWatch?.Dispose();
         if (_app != null) await _app.StopAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    // 기능: 부모 감시와 HTTP 앱을 해제한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. _parentWatch와 _app이 null이 된다.
     public async ValueTask DisposeAsync()
     {
         _parentWatch?.Dispose();
@@ -111,7 +123,7 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
 
     // 기능: QA HTTP 경로를 모두 등록한다(Phase 16: GET /qa/loot, Phase 17: GET /qa/projectiles, Phase 19: GET /qa/vehicles).
     // 입력: app - Kestrel 앱.
-    // 출력: 반환값 없음.
+    // 출력: 반환값 없음. 앱에 GET·POST 경로가 등록된다.
     private void Map(WebApplication app)
     {
         app.MapGet("/qa/health", ctx => Run(ctx, t => QaResult.Data(QaQueries.Health(t))));
@@ -182,6 +194,9 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
         });
     }
 
+    // 기능: GET /qa/metrics 본문을 만든다(Tick 백분위, 패킷 속도, CPU, 메모리·GC, 세션·경기 수, DB 상태, Health 수치).
+    // 입력: t - QA Tick 문맥, windowSeconds - 측정 창(초).
+    // 출력: 익명 객체(게임 루프 스레드에서 만든 복사본).
     internal static object Metrics(QaTick t, int windowSeconds)
     {
         GameLoop loop = t.Loop;
@@ -229,6 +244,9 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
         };
     }
 
+    // 기능: 이유별 잘못된 패킷 수를 모두 더한다.
+    // 입력: h - 시작부터의 합계.
+    // 출력: 잘못된 패킷 총수.
     private static long BadPackets(Diagnostics.HealthCounters h)
     {
         long total = 0;
@@ -236,6 +254,9 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
         return total;
     }
 
+    // 기능: POST /qa/command를 처리한다(본문 크기·JSON 검증 후 게임 루프에 명령을 넘기고 결과를 쓴다).
+    // 입력: ctx - HTTP 요청 문맥(본문: command, player·runId·args 선택).
+    // 출력: 반환값 없음. 응답이 쓰인다(검증 실패는 400·413, 아니면 명령의 결과).
     private async Task Command(HttpContext ctx)
     {
         if (ctx.Request.ContentLength > QaOptions.MaxBodyBytes)
@@ -278,6 +299,9 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
         await Write(ctx, result).ConfigureAwait(false);
     }
 
+    // 기능: JSON 객체에서 문자열 속성을 읽는다.
+    // 입력: root - JSON 객체, name - 속성 이름, maxLength - 허용 길이.
+    // 출력: 읽은 문자열, 없거나 null이면 null. 문자열이 아니거나 길면 JsonException.
     private static string? String(JsonElement root, string name, int maxLength)
     {
         if (!root.TryGetProperty(name, out JsonElement value) || value.ValueKind == JsonValueKind.Null) return null;
@@ -287,6 +311,9 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
         return text;
     }
 
+    // 기능: Query String의 수 인자를 [min, max] 범위로 읽는다.
+    // 입력: ctx - HTTP 요청 문맥, name - 인자 이름, min·max - 허용 범위, value - 읽은 수(없으면 null), error - 오류 메시지.
+    // 출력: 없거나 올바르면 true, 수가 아니거나 범위 밖이면 false와 error.
     private static bool Query(HttpContext ctx, string name, double min, double max, out double? value, out string? error)
     {
         value = null;
@@ -303,12 +330,18 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
         return true;
     }
 
+    // 기능: 작업을 게임 루프에 넘기고 그 결과를 응답으로 쓴다.
+    // 입력: ctx - HTTP 요청 문맥, work - 게임 루프에서 실행할 작업.
+    // 출력: 반환값 없음. 응답이 쓰인다.
     private async Task Run(HttpContext ctx, QaWork work)
     {
         QaResult result = await _qa.SubmitAsync(work, ctx.RequestAborted).ConfigureAwait(false);
         await Write(ctx, result).ConfigureAwait(false);
     }
 
+    // 기능: QaResult를 HTTP 응답(상태 코드와 JSON 본문)으로 쓴다.
+    // 입력: ctx - HTTP 요청 문맥, result - 쓸 결과.
+    // 출력: 반환값 없음. 응답이 쓰인다.
     private static async Task Write(HttpContext ctx, QaResult result)
     {
         ctx.Response.StatusCode = result.Status;
@@ -319,7 +352,13 @@ public sealed class QaHttpService : IHostedService, IAsyncDisposable
     // An IHostLifetime that waits for nothing and hooks no signal.
     private sealed class PassiveLifetime : IHostLifetime
     {
+        // 기능: 호스트 시작을 기다리지 않는다(IHostLifetime).
+        // 입력: cancellationToken - 사용하지 않음.
+        // 출력: 바로 완료된 Task.
         public Task WaitForStartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        // 기능: 정지 시 아무것도 하지 않는다(IHostLifetime).
+        // 입력: cancellationToken - 사용하지 않음.
+        // 출력: 바로 완료된 Task.
         public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

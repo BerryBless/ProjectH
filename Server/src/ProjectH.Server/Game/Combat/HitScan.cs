@@ -11,9 +11,10 @@ public static class HitScan
     // Below this a direction component counts as parallel to the slab; 1 / d would overflow to infinity.
     private const float ParallelEpsilon = 1e-8f;
 
-    // Distance to the first solid thing along the ray: a map box, the terrain (Phase 6 D11) or the y = 0 floor
-    // plane. Returns range when nothing is closer. The plane stays because a shot from high ground can clear the
-    // outer wall and leave the terrain grid; inside the grid every height is >= 0, so the terrain is hit first.
+    // 기능: 광선이 처음 맞히는 고체(맵 상자, y = 0 바닥면, 지형 Phase 6 D11)까지의 거리를 구한다. 바닥면은 높은 곳에서 쏜 탄이
+    //   지형 격자를 벗어날 때를 위해 남긴다(격자 안은 높이가 0 이상이라 지형이 먼저 맞는다).
+    // 입력: origin - 시작점, direction - 단위 방향, range - 최대 거리, world - 맵 상자들, terrain - 지형 높이.
+    // 출력: 맞은 거리. 아무것도 더 가깝지 않으면 range.
     public static float TraceWorld(Vector3 origin, Vector3 direction, float range, ReadOnlySpan<Box> world, HeightField terrain)
     {
         float nearest = TraceBoxes(origin, direction, range, world);
@@ -25,8 +26,9 @@ public static class HitScan
         return TraceTerrain(origin, direction, nearest, terrain);
     }
 
-    // Distance to the first box along the ray, or range. The knee-height "is a box in the way" check of a drop uses
-    // only this: the terrain never blocks a walk, so it does not block a drop either (Phase 6 spec interpretation 4).
+    // 기능: 광선이 처음 맞히는 상자까지의 거리를 구한다(지형은 보지 않는다: 아이템 Drop의 무릎 높이 검사가 이것만 쓴다, Phase 6 해석 4).
+    // 입력: origin - 시작점, direction - 단위 방향, range - 최대 거리, world - 상자들.
+    // 출력: 맞은 거리. 없으면 range.
     public static float TraceBoxes(Vector3 origin, Vector3 direction, float range, ReadOnlySpan<Box> world)
     {
         float nearest = range;
@@ -38,6 +40,10 @@ public static class HitScan
         return nearest;
     }
 
+    // 기능: 광선이 처음 닿는 지형 삼각형까지의 거리를 구한다(Phase 6 D11). 지면 자취가 지나는 칸만 2D DDA로 걷고 가장 높은 꼭짓점
+    //   아래 구간만 본다. 표면 아래에서 시작한 광선은 시작점에서 맞는다.
+    // 입력: origin - 시작점, direction - 단위 방향, range - 최대 거리, terrain - 지형 높이.
+    // 출력: 맞은 거리. 없거나 입력이 유한하지 않으면 range.
     // Phase 6 D11: distance along the ray to the first terrain triangle it reaches, or range when none is closer.
     // Walks only the cells the ray's ground track crosses (2D DDA), and only the part of the ray at or below the
     // highest vertex. In each cell the diagonal splits the ray into at most two pieces, one per triangle; on each
@@ -107,11 +113,15 @@ public static class HitScan
         }
     }
 
-    // Player hit box: the movement AABB (HalfWidth 0.35 m, Height 1.8 m) with its feet at feet.
+    // 기능: 광선이 선 플레이어의 피격 상자(이동 AABB: 반폭 0.35 m, 높이 1.8 m)를 맞히는지 본다.
+    // 입력: origin - 시작점, direction - 단위 방향, maxDistance - 최대 거리, feet - 플레이어 발 위치, distance - 결과.
+    // 출력: 맞히면 true와 들어가는 거리, 아니면 false.
     public static bool TracePlayer(Vector3 origin, Vector3 direction, float maxDistance, Vector3 feet, out float distance) =>
         TracePlayer(origin, direction, maxDistance, feet, MoveSettings.Height, out distance);
 
-    // Phase 12 D13: the same box with the mode's height (MovementSimulation.CollisionHeight: 1.2 m crouched or sliding).
+    // 기능: 광선이 주어진 높이의 플레이어 피격 상자를 맞히는지 본다(Phase 12 D13: 웅크리기·슬라이드는 1.2 m).
+    // 입력: origin - 시작점, direction - 단위 방향, maxDistance - 최대 거리, feet - 발 위치, height - 상자 높이, distance - 결과.
+    // 출력: 맞히면 true와 들어가는 거리, 아니면 false.
     public static bool TracePlayer(Vector3 origin, Vector3 direction, float maxDistance, Vector3 feet, float height, out float distance)
     {
         var min = new Vector3(feet.X - MoveSettings.HalfWidth, feet.Y, feet.Z - MoveSettings.HalfWidth);
@@ -119,8 +129,9 @@ public static class HitScan
         return IntersectAabb(origin, direction, min, max, maxDistance, out distance);
     }
 
-    // Slab test. distance is where the ray enters the box, in [0, maxDistance]; a ray starting inside
-    // the box hits at distance 0.
+    // 기능: 광선과 축 정렬 상자의 교차를 판 검사로 구한다(시작점이 안이면 거리 0).
+    // 입력: origin - 시작점, direction - 단위 방향, min·max - 상자 모서리, maxDistance - 최대 거리, distance - 결과.
+    // 출력: maxDistance 안에서 들어가면 true와 들어가는 거리, 아니면(유한하지 않은 입력 포함) false.
     public static bool IntersectAabb(Vector3 origin, Vector3 direction, Vector3 min, Vector3 max, float maxDistance, out float distance)
     {
         distance = 0f;
@@ -135,6 +146,9 @@ public static class HitScan
         return true;
     }
 
+    // 기능: 광선 구간 [tMin, tMax]를 한 축의 [min, max] 판과 겹치는 부분으로 좁힌다.
+    // 입력: origin - 그 축의 시작 좌표, direction - 그 축의 방향 성분, min·max - 판 범위, tMin·tMax - 구간(갱신된다).
+    // 출력: 좁힌 구간이 비어 있지 않으면 true(축과 평행하면 시작점이 판 안일 때만 true).
     private static bool Slab(float origin, float direction, float min, float max, ref float tMin, ref float tMax)
     {
         if (MathF.Abs(direction) < ParallelEpsilon)
@@ -157,10 +171,15 @@ public static class HitScan
         return tMin <= tMax;
     }
 
+    // 기능: 광선이 한 축의 경계 좌표에 닿는 거리 t를 구한다(DDA의 다음 칸 경계).
+    // 입력: origin - 그 축의 시작 좌표, direction - 그 축의 방향 성분, boundary - 경계 좌표.
+    // 출력: 경계까지의 t. 축과 평행하면 무한대.
     private static float Boundary(float origin, float direction, float boundary) =>
         MathF.Abs(direction) < ParallelEpsilon ? float.PositiveInfinity : (boundary - origin) / direction;
 
-    // The ray inside cell (i, j) for t in [t0, t1], split where it crosses the cell diagonal (u = v).
+    // 기능: 지형 칸 (i, j) 안의 광선 구간 [t0, t1]을 대각선(u = v)에서 나눠 삼각형마다 교차를 본다.
+    // 입력: o - 시작점, d - 단위 방향, terrain - 지형 높이, i·j - 칸, t0·t1 - 칸 안 구간, hit - 결과.
+    // 출력: 맞히면 true와 거리, 아니면 false.
     private static bool TraceCell(Vector3 o, Vector3 d, HeightField terrain, int i, int j, float t0, float t1, out float hit)
     {
         float inverseCell = 1f / terrain.CellSize;
@@ -179,6 +198,10 @@ public static class HitScan
         return split < t1 && Piece(o, d, terrain, i, j, baseX, baseZ, inverseCell, split, t1, out hit);
     }
 
+    // 기능: 삼각형 하나 위의 광선 구간 [s0, s1]에서 "광선 높이 - 표면 높이"의 부호가 바뀌는 지점을 선형으로 구한다.
+    // 입력: o - 시작점, d - 단위 방향, terrain - 지형 높이, i·j - 칸, baseX·baseZ - 칸 원점, inverseCell - 1 / 칸 크기,
+    //   s0·s1 - 구간, hit - 결과.
+    // 출력: 구간 시작이 표면 아래이거나 구간 안에서 표면을 지나면 true와 거리, 아니면 false.
     private static bool Piece(Vector3 o, Vector3 d, HeightField terrain, int i, int j, float baseX, float baseZ, float inverseCell,
         float s0, float s1, out float hit)
     {
@@ -191,7 +214,9 @@ public static class HitScan
         return true;
     }
 
-    // Ray height minus surface height at t, the surface being the cell's triangle under that point.
+    // 기능: 거리 t에서 광선 높이와 그 아래 지형 삼각형 표면 높이의 차를 구한다.
+    // 입력: o - 시작점, d - 단위 방향, terrain - 지형 높이, i·j - 칸, baseX·baseZ - 칸 원점, inverseCell - 1 / 칸 크기, t - 거리.
+    // 출력: 광선 높이 - 표면 높이(0 이하면 표면에 닿음).
     private static float Above(Vector3 o, Vector3 d, HeightField terrain, int i, int j, float baseX, float baseZ, float inverseCell, float t)
     {
         float u = Math.Clamp((o.X + d.X * t - baseX) * inverseCell, 0f, 1f);
@@ -199,5 +224,8 @@ public static class HitScan
         return o.Y + d.Y * t - terrain.CellHeight(i, j, u, v);
     }
 
+    // 기능: 벡터의 세 성분이 모두 유한한지 본다.
+    // 입력: v - 검사할 벡터.
+    // 출력: NaN·무한대가 없으면 true.
     private static bool IsFinite(Vector3 v) => float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z);
 }

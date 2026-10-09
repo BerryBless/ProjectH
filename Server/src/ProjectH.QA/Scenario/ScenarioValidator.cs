@@ -5,6 +5,9 @@ namespace ProjectH.QA;
 
 public sealed record ValidationIssue(bool IsError, string Where, string Message)
 {
+    // 기능: 문제를 "error|warning 위치: 메시지" 한 줄로 만든다.
+    // 입력: 없음.
+    // 출력: 콘솔·보고서용 문자열.
     public override string ToString() => $"{(IsError ? "error" : "warning")} {Where}: {Message}";
 }
 
@@ -19,6 +22,9 @@ public static partial class ScenarioValidator
     [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_\-]*$")]
     private static partial Regex VariableName();
 
+    // 기능: --set / 스위트 항목으로 재정의한 변수 이름이 시나리오의 변수이거나 모든 파라미터 세트에 있는 이름인지 검사한다.
+    // 입력: s - 시나리오, names - 재정의한 변수 이름들.
+    // 출력: 내장 이름(runId·seed)이거나 모르는 이름마다 오류 ValidationIssue를 지연 열거.
     // --set / a suite entry's variables: only names the scenario already has (a variable or a parameter), so a typo is
     // an error instead of a silently ignored value.
     public static IEnumerable<ValidationIssue> CheckOverrides(ScenarioDefinition s, IEnumerable<string> names)
@@ -98,6 +104,9 @@ public static partial class ScenarioValidator
         {
             foreach (string name in parameterNames[0].Where(n => parameterNames.All(set => set.Contains(n)))) variables.Add(name);
         }
+        // 기능: 모르는 변수 참조의 오류 문구를 만든다. 일부 파라미터 세트에만 있으면 빠진 세트를 알려준다.
+        // 입력: root - 변수 루트 이름.
+        // 출력: 오류 메시지(호출자가 위치를 덧붙임).
         string UnknownVariable(string root)
         {
             var missing = parameterNames.Select((set, i) => (set, i)).Where(x => !x.set.Contains(root)).Select(x => $"parameters[{x.i}]").ToList();

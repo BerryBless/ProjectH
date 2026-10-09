@@ -16,9 +16,9 @@ public class VehicleSimulationTests
     private static InputCommand Drive(float throttle, float steer = 0f, InputButtons buttons = InputButtons.None) =>
         new() { MoveY = throttle, MoveX = steer, Buttons = buttons };
 
-    // 기능: 평지에서 상자·경사면 목록으로 n Tick 운전한다.
-    // 입력: state - 상태, input - 입력, ticks - Tick 수, boxes - 상자(null = 없음), hasDriver - 운전자 유무.
-    // 출력: 마지막 Tick 결과.
+    // 기능: 평지에서 상자 목록(경사면 없음)으로 같은 입력을 ticks Tick 동안 운전한다.
+    // 입력: state - 차량 상태, input - 매 Tick의 입력, ticks - Tick 수, boxes - 상자(null = 없음), hasDriver - 운전자 유무.
+    // 출력: 마지막 Tick의 VehicleStepResult(ticks가 0이면 기본값). state가 ticks Tick 진행된다.
     private static VehicleStepResult Run(ref VehicleMove state, InputCommand input, int ticks, Box[]? boxes = null, bool hasDriver = true)
     {
         VehicleStepResult result = default;

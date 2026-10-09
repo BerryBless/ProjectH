@@ -18,6 +18,9 @@ public sealed class CombatIntegrationTests : IDisposable
 {
     private readonly GameLoop _server;
 
+    // 기능: 전투 장비(30 피해 자동 무기)를 주는 DevRespawn 샌드박스 서버를 포트 0에 띄운다.
+    // 입력: 없음.
+    // 출력: 시작된 GameLoop를 가진 테스트 Fixture(Dispose가 서버를 닫는다).
     public CombatIntegrationTests()
     {
         _server = new GameLoop(new ServerOptions
@@ -31,8 +34,14 @@ public sealed class CombatIntegrationTests : IDisposable
         _server.Start();
     }
 
+    // 기능: 테스트 서버를 멈추고 정리한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 서버 소켓과 Loop 스레드가 닫힌다.
     public void Dispose() => _server.Dispose();
 
+    // 기능: HeadlessClient를 만들어 서버에 접속하고 Join 응답이 Ok로 올 때까지 기다린다.
+    // 입력: devId - 플레이어 이름(DevPlayerId).
+    // 출력: Join을 마친 HeadlessClient(호출자가 Dispose한다). 3초 안에 접속·Join이 안 되거나 Ok가 아니면 테스트가 실패한다.
     private HeadlessClient Join(string devId)
     {
         var client = new HeadlessClient();

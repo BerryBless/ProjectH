@@ -15,6 +15,9 @@ namespace ProjectH.Client.Game
         private readonly GameObject _root;
         private bool _visible;
 
+        // 기능: 조준점 캔버스(십자 막대 4개와 가운데 점)를 만든다(D14, 숨긴 채).
+        // 입력: 없음.
+        // 출력: 숨겨진 조준점(Dispose가 캔버스를 파괴한다).
         public Crosshair()
         {
             _root = new GameObject("Crosshair");
@@ -32,6 +35,9 @@ namespace ProjectH.Client.Game
             _root.SetActive(false);
         }
 
+        // 기능: 조준점을 보이거나 숨긴다(같은 값이면 아무것도 하지 않는다).
+        // 입력: visible - 보일지 여부.
+        // 출력: 반환값 없음. 캔버스 Root의 활성 상태가 바뀐다.
         public void SetVisible(bool visible)
         {
             // Unity null: on scene or play-mode teardown the root can be destroyed before its owner's
@@ -42,11 +48,17 @@ namespace ProjectH.Client.Game
             _root.SetActive(visible);
         }
 
+        // 기능: 조준점 캔버스를 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Root와 막대 객체가 파괴된다.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);
         }
 
+        // 기능: 화면 가운데를 기준으로 단색 막대 Image 하나를 Root 아래에 만든다(Raycast 대상 아님).
+        // 입력: offset - 화면 가운데 기준 위치, size - 막대 크기.
+        // 출력: 반환값 없음. 막대 객체가 Root 아래에 추가된다.
         private void AddBar(Vector2 offset, Vector2 size)
         {
             var bar = new GameObject("Bar");

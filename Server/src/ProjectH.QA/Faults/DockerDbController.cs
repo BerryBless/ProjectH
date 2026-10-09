@@ -10,6 +10,9 @@ public sealed record DockerCommandResult(int ExitCode, string StdOut, string Std
 {
     public bool Ok => ExitCode == 0 && !TimedOut && !NotFound;
 
+    // 기능: 결과를 로그·오류 메시지용 한 줄로 요약한다.
+    // 입력: 없음.
+    // 출력: 실행 파일 없음·시간 초과·"exit N: <stderr 또는 stdout>" 중 하나.
     public override string ToString() =>
         NotFound ? "docker not found" :
         TimedOut ? "docker timed out" :
@@ -56,6 +59,9 @@ public sealed partial class DockerDbController
 
     private readonly DockerCommandRunner _runner;
 
+    // 기능: 컨테이너 이름을 Docker 이름 규칙으로 검증하고 docker CLI 실행기를 정한다.
+    // 입력: containerName - 제어할 MySQL 컨테이너 이름, runner - docker 명령 실행기(null이면 실제 docker 프로세스).
+    // 출력: 아직 아무 컨테이너도 멈추지 않은 상태의 컨트롤러. 이름이 규칙에 어긋나면 ArgumentException.
     public DockerDbController(string containerName = DefaultContainerName, DockerCommandRunner? runner = null)
     {
         // ArgumentList already prevents shell injection; this also keeps a scenario value from turning into a flag.
@@ -71,6 +77,9 @@ public sealed partial class DockerDbController
     // times out or is cancelled) until a successful StartAsync.
     public bool StoppedByThisController { get; private set; }
 
+    // 기능: Docker가 PATH에 있고 데몬이 응답하며 정확히 이 이름의 컨테이너가 있는지 inspect로 확인한다.
+    // 입력: ct - 취소 토큰.
+    // 출력: 제어할 수 있으면 true, Docker 없음·컨테이너 없음·시간 초과면 false.
     // Docker is on PATH, the daemon answers and a container with exactly this name exists.
     public async Task<bool> IsAvailableAsync(CancellationToken ct = default)
     {
@@ -78,6 +87,9 @@ public sealed partial class DockerDbController
         return result.Ok;
     }
 
+    // 기능: 컨테이너가 지금 실행 중인지 이름 검증된 inspect로 확인한다.
+    // 입력: ct - 취소 토큰.
+    // 출력: inspect 결과와 실행 여부. 결과의 Ok가 false면 조회 자체가 실패한 것이고 Running은 false.
     // Whether the container is running now (name-checked inspect). Result.Ok=false: could not be inspected.
     public async Task<(DockerCommandResult Result, bool Running)> IsRunningAsync(CancellationToken ct = default)
     {
@@ -85,6 +97,9 @@ public sealed partial class DockerDbController
         return (state, state.Ok && string.Equals(running, "true", StringComparison.OrdinalIgnoreCase));
     }
 
+    // 기능: 컨테이너가 실행 중이면 `docker stop --time StopGraceSeconds`로 멈추고, 멈춤을 시도했음을 StoppedByThisController에 기록한다.
+    // 입력: ct - 취소 토큰.
+    // 출력: 실행 중이었으면 stop 명령 결과, 실행 중이 아니었거나 inspect에 실패했으면 그 inspect 결과(이때 기록은 바뀌지 않음).
     // Stops the container if it is running. Returns the stop result, or the inspect result when it was not running
     // (Ok, nothing recorded) or could not be inspected.
     public async Task<DockerCommandResult> StopAsync(CancellationToken ct = default)
@@ -101,6 +116,9 @@ public sealed partial class DockerDbController
             .ConfigureAwait(false);
     }
 
+    // 기능: 컨테이너 이름을 inspect로 확인한 뒤 `docker start`로 시작하고, 성공하면 StoppedByThisController 기록을 지운다.
+    // 입력: ct - 취소 토큰.
+    // 출력: start 명령 결과. inspect에 실패하면 그 inspect 결과.
     public async Task<DockerCommandResult> StartAsync(CancellationToken ct = default)
     {
         var (check, _) = await InspectAsync("{{.Name}}", QueryTimeout, ct).ConfigureAwait(false);
@@ -111,6 +129,9 @@ public sealed partial class DockerDbController
         return start;
     }
 
+    // 기능: 컨테이너 health 상태를 HealthPollInterval 간격으로 폴링해 "healthy"(health check가 없으면 "running")가 될 때까지 기다린다.
+    // 입력: timeout - 전체 대기 한도, ct - 취소 토큰.
+    // 출력: 건강해지면 Healthy=true와 그 상태, 시간이 다 되면 Healthy=false와 마지막 상태(또는 inspect 오류 요약). Docker가 없으면 즉시 false.
     // Polls the health status until "healthy" (or "running" for a container without a health check) or the timeout.
     // "starting" and a transient "unhealthy" keep polling; the last status is returned either way.
     public async Task<DockerHealthResult> WaitHealthyAsync(TimeSpan timeout, CancellationToken ct = default)
@@ -141,6 +162,9 @@ public sealed partial class DockerDbController
         }
     }
 
+    // 기능: `docker inspect`로 컨테이너의 한 필드를 읽되, 출력의 이름이 정확히 "/" + ContainerName일 때만 인정한다.
+    // 입력: field - Go template 필드 식("{{.State.Running}}" 등), timeout - 명령 시간 한도, ct - 취소 토큰.
+    // 출력: 명령 결과와 필드 값. 명령 실패나 다른 컨테이너로 해석됐으면(ExitCode 1로 바꿔) 빈 값.
     // `docker inspect <name>` also matches a container ID prefix, so a missing all-hex name could resolve to another
     // container. Every inspect therefore prints "{{.Name}}|<field>" and is refused (ExitCode 1) unless the name is
     // exactly "/" + ContainerName. Returns the field value on success.
@@ -158,6 +182,9 @@ public sealed partial class DockerDbController
         return (result, bar < 0 ? "" : text[(bar + 1)..].Trim());
     }
 
+    // 기능: 정리 단계에서 이 컨트롤러가 멈춘 컨테이너만 다시 시작하고 건강해질 때까지 기다린다.
+    // 입력: healthTimeout - health 대기 한도, ct - 취소 토큰(시나리오 토큰이 아닌 정리용 토큰).
+    // 출력: 멈춘 적이 없으면 Attempted=false·Ok=true, 시도했으면 start·health 결과에 따른 Ok와 상세 메시지.
     // Cleanup: starts the container again only if this controller stopped it, then waits until it is healthy.
     public async Task<DockerRestoreResult> RestoreAsync(TimeSpan healthTimeout, CancellationToken ct = default)
     {
@@ -172,6 +199,9 @@ public sealed partial class DockerDbController
             : new DockerRestoreResult(true, false, $"started but not healthy: {health.LastStatus}");
     }
 
+    // 기능: 외부 프로세스를 인자 목록으로 실행하고 stdout/stderr를 상한까지 받으며 종료를 기다린다. 시간 초과·취소 시 그 프로세스 트리만 죽인다.
+    // 입력: fileName - 실행 파일("docker"), args - 인자 목록, timeout - 종료 대기 한도, ct - 취소 토큰.
+    // 출력: 종료 코드·출력·시간 초과 여부가 담긴 결과. 실행 파일을 시작하지 못하면 NotFound=true. ct가 취소됐으면 kill 후 OperationCanceledException.
     // Default runner. On timeout or cancellation it kills only the process it started (and that process's own
     // children) and never touches other docker processes. Cancellation of `ct` is rethrown after the kill.
     internal static async Task<DockerCommandResult> RunProcessAsync(string fileName, IReadOnlyList<string> args, TimeSpan timeout, CancellationToken ct)
@@ -230,6 +260,9 @@ public sealed partial class DockerDbController
         return new DockerCommandResult(exitCode, output, error, timedOut, false);
     }
 
+    // 기능: 프로세스와 그 자식 트리를 강제 종료하며, 이미 끝났거나 접근이 거부된 경우는 무시한다.
+    // 입력: process - 이 컨트롤러가 시작한 프로세스.
+    // 출력: 반환값 없음. 프로세스 트리가 종료된다.
     private static void Kill(Process process)
     {
         try
@@ -246,6 +279,9 @@ public sealed partial class DockerDbController
         }
     }
 
+    // 기능: 스트림 읽기 Task가 끝나기를 KillWait까지만 기다린다.
+    // 입력: read - 진행 중인 출력 읽기 Task.
+    // 출력: 읽힌 텍스트. 제한 시간 안에 끝나지 않으면 빈 문자열.
     private static async Task<string> FinishReadAsync(Task<string> read)
     {
         try
@@ -258,6 +294,9 @@ public sealed partial class DockerDbController
         }
     }
 
+    // 기능: 스트림을 끝까지 읽어 비우되 처음 maxChars 문자만 보관한다(파이프가 가득 차 자식이 막히지 않게).
+    // 입력: reader - 자식 프로세스의 stdout 또는 stderr, maxChars - 보관할 최대 문자 수.
+    // 출력: 보관된 텍스트. IO 오류·스트림 폐기 시 그때까지 읽은 내용.
     private static async Task<string> ReadBoundedAsync(StreamReader reader, int maxChars)
     {
         var text = new StringBuilder();

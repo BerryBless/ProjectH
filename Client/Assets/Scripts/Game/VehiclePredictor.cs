@@ -170,6 +170,9 @@ namespace ProjectH.Client.Game
                    dh < HeadingEpsilon && Math.Abs(predicted.Speed - server.Speed) < SpeedEpsilon;
         }
 
+        // 기능: 값이 NaN도 무한대도 아닌지 본다.
+        // 입력: value - 검사할 값.
+        // 출력: 유한하면 true.
         private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
     }
 }

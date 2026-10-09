@@ -36,6 +36,9 @@ public class SquadMatchTests
         return h;
     }
 
+    // 기능: 맵 지형 높이 위의 점을 만든다.
+    // 입력: x - X 좌표, z - Z 좌표.
+    // 출력: (x, 지형 높이, z) 위치.
     private static Vector3 P(float x, float z) => SandboxHarness.Ground(x, z);
 
     // A circle over the whole map that waits 10 minutes: no zone damage (it would cancel revives and reboots far out).
@@ -83,15 +86,42 @@ public class SquadMatchTests
     }
 
     // Body readers of recorded packets (a refused body fails the test).
+    // 기능: 송신 기록을 PlayerDowned로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: s - 송신 기록.
+    // 출력: 읽은 PlayerDowned.
     private static PlayerDowned ReadPlayerDowned(RoyaleHarness.Sent s) { var r = RoyaleHarness.Reader(s); Assert.True(PlayerDowned.TryRead(ref r, out PlayerDowned v)); return v; }
+    // 기능: 송신 기록을 HitConfirmed로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: s - 송신 기록.
+    // 출력: 읽은 HitConfirmed.
     private static HitConfirmed ReadHitConfirmed(RoyaleHarness.Sent s) { var r = RoyaleHarness.Reader(s); Assert.True(HitConfirmed.TryRead(ref r, out HitConfirmed v)); return v; }
+    // 기능: 송신 기록을 MatchResult로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: s - 송신 기록.
+    // 출력: 읽은 MatchResult.
     private static MatchResult ReadMatchResult(RoyaleHarness.Sent s) { var r = RoyaleHarness.Reader(s); Assert.True(MatchResult.TryRead(ref r, out MatchResult v)); return v; }
+    // 기능: 송신 기록을 ChannelState로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: s - 송신 기록.
+    // 출력: 읽은 ChannelState.
     private static ChannelState ReadChannelState(RoyaleHarness.Sent s) { var r = RoyaleHarness.Reader(s); Assert.True(ChannelState.TryRead(ref r, out ChannelState v)); return v; }
+    // 기능: ItemSpawned 송신 기록을 WorldItemData로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: s - 송신 기록.
+    // 출력: 읽은 WorldItemData.
     private static WorldItemData ReadWorldItemData(RoyaleHarness.Sent s) { var r = RoyaleHarness.Reader(s); Assert.True(ItemSpawnedPacket.TryRead(ref r, out WorldItemData v)); return v; }
+    // 기능: 송신 기록을 InventoryState로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: s - 송신 기록.
+    // 출력: 읽은 InventoryState.
     private static InventoryState ReadInventoryState(RoyaleHarness.Sent s) { var r = RoyaleHarness.Reader(s); Assert.True(InventoryState.TryRead(ref r, out InventoryState v)); return v; }
+    // 기능: 송신 기록을 RebootStationsState로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: s - 송신 기록.
+    // 출력: 읽은 RebootStationsState.
     private static RebootStationsState ReadRebootStationsState(RoyaleHarness.Sent s) { var r = RoyaleHarness.Reader(s); Assert.True(RebootStationsState.TryRead(ref r, out RebootStationsState v)); return v; }
+    // 기능: 송신 기록을 TeamState로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: s - 송신 기록.
+    // 출력: 읽은 TeamState.
     private static TeamState ReadTeamState(RoyaleHarness.Sent s) { var r = RoyaleHarness.Reader(s); Assert.True(TeamState.TryRead(ref r, out TeamState v)); return v; }
 
+    // 기능: 특정 Peer에게 마지막으로 보낸 TeamState를 읽는다. 하나도 없으면 예외로 테스트가 실패한다.
+    // 입력: h - 경기, peer - 받은 Peer ID.
+    // 출력: 읽은 TeamState.
     private static TeamState LastTeamState(RoyaleHarness h, int peer) => ReadTeamState(h.SentTo(peer, PacketId.TeamState).Last());
 
     // ---- D1 teams ----
@@ -570,6 +600,9 @@ public class SquadMatchTests
         Assert.False(a2.ChannelActive);
     }
 
+    // 기능: (7.5, -7.5) 칸에 0단 경사면(+Z로 오르는)과 1단 바닥을 PlacePiece로 놓는다. 배치가 거부되면 테스트를 실패시킨다.
+    // 입력: h - 경기, center - 놓은 경사면 칸의 중심(출력).
+    // 출력: 반환값 없음. 경기 월드에 경사면과 바닥이 추가되고 center가 채워진다.
     // A ramp (rising towards +Z over the 5 m cell, 0 to 3 m) under a level-1 floor (its underside at 2.75 m). The downed
     // body settles on the ramp's highest point under it.
     private static void RampUnderFloor(RoyaleHarness h, out Vector3 center)
@@ -818,6 +851,9 @@ public class SquadMatchTests
         Assert.Equal(MovementMode.Ground, back.Mode);
     }
 
+    // 기능: 두 점의 수평(XZ) 거리를 잰다(높이는 무시).
+    // 입력: a - 첫 점, b - 둘째 점.
+    // 출력: XZ 평면 거리.
     private static float BotLikeDistance(Vector3 a, Vector3 b) => new Vector2(a.X - b.X, a.Z - b.Z).Length();
 
     [Fact]

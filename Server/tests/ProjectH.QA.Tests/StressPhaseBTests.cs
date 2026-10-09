@@ -16,12 +16,18 @@ public class StressPhaseBTests : IDisposable
     private readonly FakeQaServer _fake = new();
     private readonly List<MockActor> _actors = new();
 
+    // 기능: 테스트 출력을 보관하고 임시 저장소 루트 아래에 QA/Scenarios/T 폴더를 만든다.
+    // 입력: output - xUnit 테스트 출력.
+    // 출력: 임시 저장소 루트와 가짜 QA 서버가 준비된 StressPhaseBTests 객체.
     public StressPhaseBTests(ITestOutputHelper output)
     {
         _out = output;
         Directory.CreateDirectory(Path.Combine(_root, "QA", "Scenarios", "T"));
     }
 
+    // 기능: 테스트가 만든 임시 저장소 루트를 통째로 지운다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 임시 폴더가 삭제되며 IO 오류는 무시한다.
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
@@ -29,6 +35,9 @@ public class StressPhaseBTests : IDisposable
 
     private string Reports => Path.Combine(_root, "out");
 
+    // 기능: 임시 저장소 루트 아래 상대 경로에 폴더를 만들고 텍스트 파일을 쓴다.
+    // 입력: relative - 루트 기준 상대 경로, text - 파일 내용.
+    // 출력: 기록한 파일의 절대 경로.
     private string Write(string relative, string text)
     {
         string path = Path.Combine(_root, relative);
@@ -37,6 +46,9 @@ public class StressPhaseBTests : IDisposable
         return path;
     }
 
+    // 기능: 가짜 QA 서버와 MockActor를 꽂은 QaCli를 임시 저장소 루트(--repo)로 실행하고 출력을 테스트 로그에도 쓴다.
+    // 입력: args - CLI 인자(--repo는 자동으로 덧붙인다).
+    // 출력: CLI 종료 코드와 표준 출력 문자열. 만들어진 Actor는 _actors에 쌓인다.
     private async Task<(int Exit, string Output)> Cli(params string[] args)
     {
         var output = new StringWriter();
@@ -50,6 +62,9 @@ public class StressPhaseBTests : IDisposable
         return (exit, output.ToString());
     }
 
+    // 기능: 시나리오 JSON을 파싱하고 파싱 오류와 검증 결과를 하나의 목록으로 합친다.
+    // 입력: json - 시나리오 JSON 문자열.
+    // 출력: 파싱 오류(IsError)와 검증 지적을 합친 목록.
     private static IReadOnlyList<ValidationIssue> Validate(string json)
     {
         ScenarioLoadResult load = ScenarioLoader.Parse(json, "x.json");
@@ -58,6 +73,9 @@ public class StressPhaseBTests : IDisposable
         return issues;
     }
 
+    // 기능: 실행 ID 폴더의 report.json을 읽어 루트 요소의 복사본을 돌려준다.
+    // 입력: reports - 보고서 루트 폴더, runId - 실행 ID.
+    // 출력: 문서와 분리된 report.json 루트 JsonElement.
     private static JsonElement Report(string reports, string runId)
     {
         using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(reports, runId, "report.json")));
@@ -122,8 +140,14 @@ public class StressPhaseBTests : IDisposable
         Assert.Equal(s.Waves.Select(w => w.Count), BuildLayouts.Hanging(Vector2.Zero, count)!.Waves.Select(w => w.Count));   // deterministic
     }
 
+    // 기능: 두 조각이 격자 모서리를 하나라도 공유하는지 본다.
+    // 입력: a, b - 비교할 조각.
+    // 출력: 공유하는 모서리가 있으면 true.
     private static bool SharesEdge(PieceSpec a, PieceSpec b) => Edges(a).Intersect(Edges(b)).Any();
 
+    // 기능: 벽·바닥 조각이 차지하는 격자 모서리 네 개를 끝점 쌍 키로 만든다.
+    // 입력: p - 조각(정규화 전 좌표·회전).
+    // 출력: 모서리 키 목록(작은 점 | 큰 점 << 16).
     // Lattice edges of walls and floors (the server's BuildSupport.Edges for these two types): points (x, y, z) at cell
     // corners and levels.
     private static List<uint> Edges(PieceSpec p)
@@ -326,6 +350,9 @@ public class StressPhaseBTests : IDisposable
 
     // ---- matchLoop (soak) ----
 
+    // 기능: 관리 힙 크기와 Gen0 횟수만 채운 측정 샘플을 만든다.
+    // 입력: managed - 관리 힙 MB, gc - Gen0 GC 횟수.
+    // 출력: 채워진 MeasureSample.
     private static MeasureSample M(double managed, long gc) => new() { ManagedMB = managed, Gen0 = gc };
 
     [Fact]
@@ -405,6 +432,9 @@ public class StressPhaseBTests : IDisposable
         _fake.Match["state"] = "Playing";
         _fake.Match["round"] = 1;
         _fake.Metrics = new { tickP95Ms = 0.2, tickMaxMs = 50.0, managedMB = 5.0, gc = new { gen0 = 0, gen1 = 0, gen2 = 0 }, activeSessions = 2 };
+        // 기능: 가짜 Match를 Finished로 바꾸고 150 ms 뒤 라운드를 올려 다시 Playing으로 되돌린다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. _fake.Match의 state와 round가 바뀐다.
         void NextRound()
         {
             _fake.Match["state"] = "Finished";

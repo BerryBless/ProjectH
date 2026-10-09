@@ -48,6 +48,9 @@ public static class ServerCommandActions
         r.Add(Command("damageVehicle", ActorUse.None, new[] { "vehicleId", "amount" }));
     }
 
+    // 기능: 서버 QA 명령으로 전달되는 액션 정의를 만든다.
+    // 입력: name - 명령 이름, actor - Actor 필요 여부, required - 필수 Parameter, optional - 선택 Parameter, positions - position Parameter를 받는지, arrangeOnly - Arrange 단계 전용인지.
+    // 출력: ServerCommand = true인 DelegateAction.
     private static DelegateAction Command(string name, ActorUse actor, string[] required, string[]? optional = null,
         bool positions = false, bool arrangeOnly = false) =>
         new(new ActionSpec
@@ -61,6 +64,9 @@ public static class ServerCommandActions
             ArrangeOnly = arrangeOnly,
         }, (ctx, token) => RunAsync(name, ctx, token));
 
+    // 기능: 단계 Parameter를 명령 args로 만든다(zonePhase → phase, position → x·z·y, setPosition이면 마커의 yaw).
+    // 입력: ctx - 단계 문맥.
+    // 출력: args JSON 객체.
     public static JsonElement BuildArgs(StepContext ctx)
     {
         var args = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
@@ -79,6 +85,9 @@ public static class ServerCommandActions
         return JsonPath.From(args);
     }
 
+    // 기능: 명령을 POST /qa/command로 보낸다(503·504는 단계 Timeout 안에서 최대 MaxRetries 재시도).
+    // 입력: command - 명령 이름, ctx - 단계 문맥(Parameter, actor), token - 취소 토큰.
+    // 출력: 성공이면 Pass(saveAs: 명령 result), 거절이면 오류와 HTTP 코드를 담은 Fail.
     private static async Task<StepOutcome> RunAsync(string command, StepContext ctx, CancellationToken token)
     {
         string? player = ctx.Step.Actor != null ? ctx.Actor().DevPlayerId : null;

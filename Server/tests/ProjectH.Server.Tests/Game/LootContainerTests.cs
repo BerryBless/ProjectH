@@ -144,6 +144,9 @@ public class LootContainerMatchTests
     [Fact]
     public void SameSeed_SameContainers_NextRound_Differs()
     {
+        // 기능: 경기의 Container 생성 마스크와 모든 Container의 Loot 굴림을 문자열로 묶는다.
+        // 입력: h - 경기.
+        // 출력: (생성 마스크, Container별 Loot를 ;와 ,로 이은 문자열).
         static (ulong, string) Of(RoyaleHarness h)
         {
             string loot = string.Join(";", Enumerable.Range(0, LootContainers.Count).Select(i =>
@@ -622,6 +625,9 @@ public class LootContainerMatchTests
     // 출력: 떨어졌으면 true.
     private static bool MapThingsClear(float x, float z)
     {
+        // 기능: 점과 상자 발자국(XZ) 사이의 수평 거리를 구한다.
+        // 입력: x, z - 점, b - 상자.
+        // 출력: 점이 발자국 안이면 0, 밖이면 가장 가까운 변까지의 거리.
         static float Gap(float x, float z, in Box b)
         {
             float dx = MathF.Max(0f, MathF.Max(b.Min.X - x, x - b.Max.X));
@@ -728,6 +734,9 @@ public class LootContainerMatchTests
         h.Match.QaSpawnSupplyDrop(new Vector2(6f, 26f));
         h.Match.QaSpawnSupplyDrop(new Vector2(-30f, 30f));
         h.Place(a, InFront(LootContainers.All[Chest].Position, 2.8f));   // out of reach: E goes to a pickup
+        // 기능: E 한 번 누름(2 Tick)과 뗀 입력 뒤 9 Tick을 돌린다(한 바퀴 11 Tick).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 경기가 11 Tick 진행된다.
         void Round()
         {
             Press(h, a);

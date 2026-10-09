@@ -44,6 +44,9 @@ public class MapMatchTests
         return h;
     }
 
+    // 기능: 맵 지형 위에 놓인 발 위치를 만든다.
+    // 입력: x·z - 수평 좌표.
+    // 출력: 그 자리의 지형 높이를 Y로 가진 위치.
     private static Vector3 P(float x, float z) => SandboxHarness.Ground(x, z);
 
     // 기능: 기본값에서 한 줄을 바꾼 지도 수치를 만든다.
@@ -429,6 +432,9 @@ public class MapMatchTests
     public void MarkersAndTheirTicks_AllocateNothing()
     {
         var h = Duo(out var a1, out var a2, out var b1, out _, record: false);
+        // 기능: 두 팀이 Ping·Enemy·Danger·Waypoint 표시를 한 벌 보내고 10 Tick을 돌린다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 경기가 10 Tick 진행된다.
         void Round()
         {
             Mark(h, a1, MapMarkerKind.Location, P(5f, 5f));

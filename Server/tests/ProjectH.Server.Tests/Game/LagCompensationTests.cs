@@ -25,6 +25,9 @@ public class LagCompensationTests
     private uint _targetSeq;
     private readonly uint _latest;
 
+    // 기능: 2인 개발 모드 Match에 사수(0, 0, -6)와 대상(-2, 0, 0)을 세우고, 대상을 MovedTicks Tick 동안 +X로 달리게 하며 Tick마다의 위치를 기록한다.
+    // 입력: 없음.
+    // 출력: 대상 위치 이력(_targetAt)과 마지막 Tick(_latest)이 채워진 테스트 인스턴스.
     public LagCompensationTests()
     {
         _match = new Match(new ServerOptions { MaxPlayers = 2, DevRespawn = true },TestGameData.Create(), (_, _, _) => { }, TestGameData.CombatLoadout);
@@ -46,6 +49,9 @@ public class LagCompensationTests
         _latest = _match.ServerTick;
     }
 
+    // 기능: 대상(peer 2)의 +X 질주 입력 하나를 다음 순번으로 큐에 넣는다(Tick은 돌리지 않는다).
+    // 입력: 없음.
+    // 출력: 반환값 없음. 입력이 큐에 쌓이고 _targetSeq가 올라간다.
     private void MoveTarget()
     {
         var packet = new PlayerInputPacket { Count = 1 };
@@ -53,6 +59,9 @@ public class LagCompensationTests
         _match.EnqueueInput(2, packet);
     }
 
+    // 기능: 대상이 aimTick에 있던 자리의 가슴을 겨눈 Fire 입력을 viewTick 주장으로 넣고, 대상을 계속 달리게 하며 Tick을 한 번 돌린다.
+    // 입력: viewTick - 사수가 봤다고 주장하는 Tick, aimTick - 조준점을 가져올 대상 위치 이력의 Tick.
+    // 출력: 그 Tick에 대상의 보호막이 줄었으면(맞았으면) true, 아니면 false.
     // Fires once, aimed at where the target was at aimTick, claiming the shooter saw tick viewTick.
     private bool Shoot(uint viewTick, uint aimTick)
     {

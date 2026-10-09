@@ -27,16 +27,25 @@ public class PickupDropTests
     private readonly Dictionary<int, uint> _seq = new();
     private Match _match;
 
+    // 기능: CombatLoadout과 빈 월드(Loot 지점 없음)의 테스트 Match를 만든다.
+    // 입력: 없음.
+    // 출력: _match가 준비된 테스트 인스턴스.
     public PickupDropTests()
     {
         _match = NewMatch(TestGameData.CombatLoadout);
     }
 
+    // 기능: DevRespawn Match를 만든다. 보낸 패킷은 _sent에 기록한다.
+    // 입력: loadout - 시작 장비, lootPoints - Loot 지점(null이면 없음), data - 게임 데이터(null이면 테스트 데이터).
+    // 출력: 새 Match.
     private Match NewMatch(StartingLoadout loadout, LootPoint[]? lootPoints = null, GameData? data = null) =>
         new(new ServerOptions { MaxPlayers = 3, DevRespawn = true }, data ?? TestGameData.Create(),
             (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)), loadout,
             lootPoints ?? Array.Empty<LootPoint>());
 
+    // 기능: Peer를 "p<peer>" 이름으로 참가시키고 feet 위치·yaw로 둔다(Lag Compensation 기록 포함). 참가가 거부되면 테스트를 실패시킨다.
+    // 입력: peer - 참가할 Peer ID, feet - 발 위치, yaw - 바라보는 방향.
+    // 출력: 참가해 배치된 PlayerEntity.
     private PlayerEntity Join(int peer, Vector3 feet, float yaw = 0f)
     {
         Assert.Equal(JoinResult.Ok, _match.TryJoin(peer, "p" + peer));
@@ -47,6 +56,9 @@ public class PickupDropTests
         return player;
     }
 
+    // 기능: 플레이어별 다음 Seq를 붙여 버튼 입력 하나를 Match에 넣는다(AimPitch 10도, Tick은 돌리지 않는다).
+    // 입력: player - 입력을 보낼 플레이어, buttons - 누를 버튼, yaw - 바라보는 방향(NaN이면 현재 방향 유지).
+    // 출력: 반환값 없음. Match 입력 큐에 명령이 들어간다.
     private void Send(PlayerEntity player, InputButtons buttons, float yaw = float.NaN)
     {
         _seq.TryGetValue(player.PeerId, out uint seq);
@@ -57,20 +69,35 @@ public class PickupDropTests
         _match.EnqueueInput(player.PeerId, packet);
     }
 
+    // 기능: 버튼 입력을 넣고 한 Tick 돌린다(방향은 유지).
+    // 입력: player - 입력을 보낼 플레이어, buttons - 누를 버튼.
+    // 출력: 반환값 없음. 입력이 처리된 뒤 Match가 한 Tick 진행된다.
     private void Press(PlayerEntity player, InputButtons buttons)
     {
         Send(player, buttons);
         _match.Tick();
     }
 
+    // 기능: 월드에 아이템 하나를 떨어뜨린다(Loot 지점 없음).
+    // 입력: kind - 아이템 종류, defId - 정의 ID, amount - 수량, position - 위치, rarity - 희귀도.
+    // 출력: 생성된 아이템 ID.
     private ushort Put(ItemKind kind, byte defId, ushort amount, Vector3 position, byte rarity = 0) =>
         _match.SpawnItem(new LootRoll(kind, defId, rarity, amount), position, -1);
 
+    // 기능: 아이템 ID로 월드 아이템 인덱스를 찾는다.
+    // 입력: itemId - 아이템 ID.
+    // 출력: 월드 아이템 인덱스, 없으면 -1.
     private int IndexOf(ushort itemId) => _match.WorldItems.IndexOf(itemId);
 
+    // 기능: 월드 아이템 전부의 데이터를 인덱스 순으로 모은다.
+    // 입력: 없음.
+    // 출력: WorldItemData 목록.
     private List<WorldItemData> WorldList() =>
         Enumerable.Range(0, _match.WorldItems.Count).Select(i => _match.WorldItems[i].Data).ToList();
 
+    // 기능: 송신 기록의 PacketId를 건너뛴 본문 위치의 PacketReader를 만든다.
+    // 입력: s - 송신 기록.
+    // 출력: 본문 첫 바이트를 가리키는 PacketReader.
     private static PacketReader Reader(Sent s)
     {
         var reader = new PacketReader(s.Data);
@@ -78,9 +105,15 @@ public class PickupDropTests
         return reader;
     }
 
+    // 기능: 특정 Peer에게 보낸 PickupResult를 순서대로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: peer - 받은 Peer ID.
+    // 출력: 읽은 PickupResult 목록.
     private List<PickupResult> ResultsTo(int peer) => _sent.Where(s => s.PeerId == peer && s.Id == PacketId.PickupResult)
         .Select(s => { var r = Reader(s); Assert.True(PickupResult.TryRead(ref r, out var v)); return v; }).ToList();
 
+    // 기능: 특정 Peer에게 마지막으로 보낸 InventoryState를 읽는다. 없거나 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: peer - 받은 Peer ID.
+    // 출력: 읽은 InventoryState.
     private InventoryState LastInventoryTo(int peer)
     {
         var r = Reader(_sent.Last(s => s.PeerId == peer && s.Id == PacketId.InventoryState));
@@ -88,6 +121,9 @@ public class PickupDropTests
         return state;
     }
 
+    // 기능: 특정 Peer에게 보낸 ItemSpawned의 아이템 데이터를 순서대로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: peer - 받은 Peer ID.
+    // 출력: 읽은 WorldItemData 목록.
     private List<WorldItemData> SpawnedTo(int peer) => _sent.Where(s => s.PeerId == peer && s.Id == PacketId.ItemSpawned)
         .Select(s => { var r = Reader(s); Assert.True(ItemSpawnedPacket.TryRead(ref r, out var v)); return v; }).ToList();
 
@@ -372,6 +408,9 @@ public class PickupDropTests
         Assert.Equal(23.8f, item.Position.Z, 3);
     }
 
+    // 기능: 점이 맵 상자 중 하나의 안쪽(바닥면 포함, 윗면 제외, 옆면 제외)에 있는지 본다.
+    // 입력: p - 검사할 점.
+    // 출력: 어느 상자 안에든 있으면 true.
     // Inside = strictly within the footprint and at or above the bottom, below the top. The bottom face
     // counts: an item "on the floor" under a floor-standing box (y 0 = Min.Y) is inside it. The top face
     // does not: that is standing on the box.
@@ -775,9 +814,15 @@ public class PickupDropTests
         Put(ItemKind.Weapon, TestWeapons.AutoId, 3, new Vector3(0f, 0f, 1f), rarity: 4);
         Put(ItemKind.Ammo, (byte)AmmoType.Light, 60, new Vector3(0f, 0f, -1f));
 
+        // 기능: 두 플레이어의 인벤토리와 월드에 있는 무기 수·탄약(탄창 포함)·소모품을 종류별로 합산한다.
+        // 입력: 없음.
+        // 출력: (무기 수, Light, Medium, Heavy, Medkit, Shield Cell) 합계.
         (int weapons, int light, int medium, int heavy, int medkits, int cells) Count()
         {
             int w = 0, l = 0, m = 0, h = 0, mk = 0, c = 0;
+            // 기능: 무기 하나를 세고 그 탄창을 무기 종류에 맞는 탄약 합계에 더한다.
+            // 입력: id - 무기 ID, mag - 탄창 탄약 수.
+            // 출력: 반환값 없음. 바깥 합계 w와 l·m·h 중 하나가 늘어난다.
             void Weapon(byte id, int mag)
             {
                 w++;
@@ -947,6 +992,9 @@ public class PickupDropTests
         Assert.Equal(0, dropAllocated);
     }
 
+    // 기능: 사수가 대상의 가슴을 겨냥해 발사하는 입력(ViewTick = 현재 Tick)을 넣고 한 Tick 돌린다.
+    // 입력: shooter - 사수, target - 대상.
+    // 출력: 반환값 없음. 발사 입력이 처리된 뒤 Match가 한 Tick 진행된다.
     private void ShootAt(PlayerEntity shooter, PlayerEntity target)
     {
         TestAim.YawPitch(shooter.State.Position, target.State.Position + Chest, out float yaw, out float pitch);
@@ -958,6 +1006,9 @@ public class PickupDropTests
         _match.Tick();
     }
 
+    // 기능: 월드 아이템 수가 count가 될 때까지 멀리(20, 0, 20)에 스폰 지점 아이템을 넣는다. 생성에 실패하면 테스트를 실패시킨다.
+    // 입력: count - 채울 아이템 수.
+    // 출력: 반환값 없음. 월드에 퇴거되지 않는 아이템이 count개 있게 된다.
     // SpawnItem returns 0 only when every record is a spawn-point item, which production cannot reach (at
     // most Capacity / 2 loot points). The tests make that state by hand with spawn-point items far away.
     private void FillWorldWithSpawnPointItems(int count = WorldItems.Capacity)
@@ -966,6 +1017,9 @@ public class PickupDropTests
             Assert.NotEqual(0, PutAtSpawnPoint(ItemKind.Ammo, (byte)AmmoType.Light, 1, new Vector3(20f, 0f, 20f)));
     }
 
+    // 기능: 스폰 지점 0 소속(퇴거되지 않는) 아이템 하나를 월드에 넣는다.
+    // 입력: kind - 아이템 종류, defId - 정의 ID, amount - 수량, position - 위치, rarity - 희귀도.
+    // 출력: 생성된 아이템 ID, 자리가 없으면 0.
     // Spawn point 0: never evicted (D13).
     private ushort PutAtSpawnPoint(ItemKind kind, byte defId, ushort amount, Vector3 position, byte rarity = 0) =>
         _match.SpawnItem(new LootRoll(kind, defId, rarity, amount), position, 0);

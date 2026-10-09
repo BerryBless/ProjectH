@@ -20,6 +20,9 @@ public static partial class StressActions
     public const float MaxAbuseRate = 200f;            // per member per second; RateBudget caps one tick at 20
     public const float MaxConnectRate = 100f;
 
+    // 기능: Phase B Stress 액션(spawnBuildPieces, groupFireAt, groupConnect, groupInvalidPackets, groupBuildSpam)과 matchLoop을 Registry에 등록한다.
+    // 입력: r - 등록 대상 Registry.
+    // 출력: 반환값 없음. Registry에 Phase B Handler가 추가된다.
     private static void RegisterPhaseB(ActionRegistry r)
     {
         r.Add(new DelegateAction(new ActionSpec
@@ -40,6 +43,9 @@ public static partial class StressActions
         RegisterMatchLoop(r);
     }
 
+    // 기능: count Literal이 1-MaxBulkPieces의 정수인지 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckCount(StepDefinition s)
     {
         if (s.Params.TryGetValue("count", out JsonElement v) && !Variables.HasReference(v) && (!Comparison.TryNumber(v, out double d) || d < 1 || d > MaxBulkPieces || d != Math.Floor(d)))
@@ -48,6 +54,9 @@ public static partial class StressActions
 
     private static readonly string[] AbuseKinds = { "unknownId", "truncated", "garbage", "oversized" };
 
+    // 기능: kinds Literal이 AbuseKinds(unknownId, truncated, garbage, oversized)만 담은 비어 있지 않은 배열인지 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckInvalidKinds(StepDefinition s)
     {
         if (!s.Params.TryGetValue("kinds", out JsonElement k) || Variables.HasReference(k)) yield break;
@@ -61,6 +70,9 @@ public static partial class StressActions
 
     // ---- spawnBuildPieces ----
 
+    // 기능: BuildLayouts의 배치(field 또는 hanging)대로 조각을 count개까지 spawnBuildPiece 명령으로 최대 parallel개씩 동시에 놓는다(거절된 조각은 재시도하지 않고 다음 Wave가 메운다). 끝나면 서버 조각 수를 읽는다.
+    // 입력: ctx - 단계 문맥(count, layout, center, side, material, parallel), token - 취소 토큰.
+    // 출력: Pass(saveAs: requested, placed, serverPieces, budgetFull, refused, errors, layout, seconds, perSecond, structure), 명령 오류·hanging 구조 불완전·단계 Timeout이면 Fail. hanging 자리가 없으면 Fail, material·layout이 틀리면 QaStepException.
     private static async Task<StepOutcome> SpawnBuildPiecesAsync(StepContext ctx, CancellationToken token)
     {
         RunContext run = ctx.Run;
@@ -160,6 +172,9 @@ public static partial class StressActions
 
     // One spawnBuildPiece (503/504 retried twice). Returns the piece id, or the server's refusal code (BudgetFull,
     // Occupied, Unsupported from "The piece was refused: X.") or null for any other error.
+    // 기능: spawnBuildPiece 명령 하나를 보낸다(503·504는 PollIntervalMs 간격으로 최대 MaxRetries 재시도).
+    // 입력: run - Run, p - 조각 사양(종류, 칸, 회전), material - 재료 이름, token - 취소 토큰.
+    // 출력: 성공이면 (true, 조각 id, null, null), 서버가 409로 거절하면 (false, 0, 거절 코드, 메시지), 그 외 오류·QA API 예외면 (false, 0, null, 메시지).
     private static async Task<(bool Ok, uint Id, string? Code, string? Error)> SpawnPieceAsync(RunContext run, PieceSpec p, string material, CancellationToken token)
     {
         JsonElement args = JsonPath.From(new
@@ -196,6 +211,9 @@ public static partial class StressActions
 
     // ---- groupFireAt ----
 
+    // 기능: 그룹 구성원에게 지점(y가 없으면 지형 높이 + 1.2 m)을 조준해 slot 무기로 presses번 쏘는 FireAt Brain을 준다.
+    // 입력: ctx - 단계 문맥(group, at, presses, burst, slot), token - 취소 토큰.
+    // 출력: 모두 적용되면 Pass, 아니면 Fail. at이 없으면 QaStepException.
     private static async Task<StepOutcome> GroupFireAtAsync(StepContext ctx, CancellationToken token)
     {
         ActorGroup group = GroupOf(ctx);
@@ -216,6 +234,9 @@ public static partial class StressActions
     // §33-34: the members connect at perSecond (0 = all at once) in member order, as a background workload, so measure
     // can run during the ramp. Each one counts as joined (first snapshot) or failed (the connection closed, or no
     // snapshot within timeoutMs). The step returns at once; `waitFor server.activeSessions` or stopGroup waits.
+    // 기능: 그룹의 이전 connect 작업을 멈추고 구성원을 perSecond 속도(0이면 한꺼번에)로 접속시키는 Background 작업을 시작한다(§33-34).
+    // 입력: ctx - 단계 문맥(group, perSecond, timeoutMs), token - 취소 토큰.
+    // 출력: 작업이 시작되면 바로 Pass. 속도가 범위 밖이거나 이미 연결 중인 구성원이 있으면 QaStepException.
     private static async Task<StepOutcome> GroupConnectAsync(StepContext ctx, CancellationToken token)
     {
         RunContext run = ctx.Run;
@@ -236,6 +257,9 @@ public static partial class StressActions
         return StepOutcome.Pass($"{group.Members.Count} connecting {pace}");
     }
 
+    // 기능: 접속 작업 본체. 구성원을 순서대로 rate에 맞춰 접속시키고, 각각 Join(첫 Snapshot)과 실패(연결 닫힘 또는 timeoutMs 초과)를 통계에 센다.
+    // 입력: group - 대상 그룹, targets - 구성원별 (host, port), rate - 초당 접속 수(0 이하면 한꺼번에), timeoutMs - 구성원별 Join 한도(ms), token - 중단 토큰.
+    // 출력: 반환값 없음. 그룹 통계(Connects, ConnectMs, ConnectFailures)가 갱신되고, 중단 외의 예외로 끝나면 WorkloadFailed가 기록된다.
     internal static async Task ConnectLoopAsync(ActorGroup group, (string Host, int Port)[] targets, double rate, int timeoutMs, CancellationToken token)
     {
         GroupStats stats = group.Stats;
@@ -290,6 +314,9 @@ public static partial class StressActions
 
     // ---- abuse groups (D38 groupInvalidPackets, groupBuildSpam) ----
 
+    // 기능: 그룹 구성원에게 초당 ratePerSecond개의 잘못된 패킷(kinds)을 보내는 Brain을 주고, rejoin이면 Kick 뒤 재접속 작업을 시작한다(D38).
+    // 입력: ctx - 단계 문맥(group, ratePerSecond, kinds, rejoin), token - 취소 토큰.
+    // 출력: 모두 적용되면 Pass, 아니면 Fail. 속도가 범위 밖·모르는 종류·Proxy 구성원이면 QaStepException.
     private static async Task<StepOutcome> GroupInvalidPacketsAsync(StepContext ctx, CancellationToken token)
     {
         RunContext run = ctx.Run;
@@ -311,6 +338,9 @@ public static partial class StressActions
         return StepOutcome.Pass($"{group.Members.Count} sending {rate}/s invalid packets each ({string.Join(", ", kinds)}){(ctx.Bool("rejoin") ?? true ? ", rejoining after a kick" : "")}");
     }
 
+    // 기능: 그룹 구성원에게 자원을 Arrange한 뒤 초당 ratePerSecond개의 건설 요청을 보내는 Brain을 주고, rejoin이면 Kick 뒤 재접속 작업을 시작한다(D38).
+    // 입력: ctx - 단계 문맥(group, ratePerSecond, material, resources, rejoin), token - 취소 토큰.
+    // 출력: 모두 적용되면 Pass, giveResource 거절·Brain 미적용이면 Fail. 속도 범위 밖·모르는 재료·Proxy 구성원이면 QaStepException.
     private static async Task<StepOutcome> GroupBuildSpamAsync(StepContext ctx, CancellationToken token)
     {
         RunContext run = ctx.Run;
@@ -335,6 +365,9 @@ public static partial class StressActions
 
     // A kicked abuser comes back (a real attacker reconnects): the rejoin workload, unless rejoin is false. A group's
     // previous rejoin workload ends first (one per group).
+    // 기능: 그룹의 이전 rejoin 작업을 멈추고, rejoin이 false가 아니면 Kick된 구성원을 다시 접속시키는 Background 작업을 시작한다.
+    // 입력: ctx - 단계 문맥(rejoin), group - 대상 그룹.
+    // 출력: 반환값 없음. Run의 그룹 작업 목록에 rejoin 작업이 등록된다. Proxy 구성원이 있으면 QaStepException.
     private static async Task StartRejoinAsync(StepContext ctx, ActorGroup group)
     {
         RunContext run = ctx.Run;
@@ -354,6 +387,9 @@ public static partial class StressActions
     // Polls the members' published state every 250 ms: a member whose connection the server closed (Kicked or any other
     // close) is counted (kicks) and, RejoinDelay later, connected again as a new player (rejoins). At most one rejoin per
     // member per RejoinDelay; no server query.
+    // 기능: 재접속 작업 본체. 250 ms마다 구성원 상태를 보고 서버가 닫은 연결을 세며(Kicked는 kicks), RejoinDelay 뒤 새 플레이어로 다시 접속시킨다.
+    // 입력: group - 대상 그룹, host - 서버 호스트, port - 서버 포트, token - 중단 토큰.
+    // 출력: 반환값 없음. 그룹 통계(Kicks, Rejoins)가 갱신되고, 중단 외의 예외로 끝나면 WorkloadFailed가 기록된다.
     internal static async Task RejoinLoopAsync(ActorGroup group, string host, int port, CancellationToken token)
     {
         GroupStats stats = group.Stats;

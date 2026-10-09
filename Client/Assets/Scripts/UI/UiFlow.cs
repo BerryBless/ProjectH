@@ -54,14 +54,17 @@ namespace ProjectH.Client.UI
         // Phase 15 D4: the full map blocks them the same way (the player stops while it is open).
         public bool BlocksGameInput => Screen != UiScreen.InGame || MapOpen;
 
-        // The player asked to connect from the title or the disconnected screen (UiRoot already called Connect).
+        // 기능: 타이틀·끊김 화면에서 접속을 요청했을 때 Connecting 화면으로 바꾼다(UiRoot가 이미 Connect를 불렀다).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 바뀌면 Version이 오르고, 다른 화면이면 아무것도 하지 않는다.
         public void ConnectRequested()
         {
             if (Screen == UiScreen.Title || Screen == UiScreen.Disconnected) Set(UiScreen.Connecting);
         }
 
-        // The player left on purpose (UiRoot already disconnected): Menu "disconnect", Disconnected "to title",
-        // Connecting "cancel". Nothing that happens to the connection afterwards moves the title.
+        // 기능: 플레이어가 스스로 나갔을 때(메뉴 "접속 끊기", 끊김 "타이틀로", 접속 중 "취소"; UiRoot가 이미 끊었다) 타이틀 화면으로 바꾼다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 통계 창·지도가 닫히고 Version이 오른다. 이후 연결 변화는 타이틀을 움직이지 않는다.
         public void LeaveRequested()
         {
             Set(UiScreen.Title);
@@ -90,12 +93,17 @@ namespace ProjectH.Client.UI
             }
         }
 
-        // Menu "continue", Result "keep spectating".
+        // 기능: 메뉴 "계속"·결과 "관전 계속"을 처리해 게임 화면으로 돌아간다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 메뉴·결과 화면이 아니면 아무것도 하지 않는다.
         public void ContinuePressed()
         {
             if (Screen == UiScreen.Menu || Screen == UiScreen.Result) Set(UiScreen.InGame);
         }
 
+        // 기능: 통계 창을 연다(메뉴·결과 화면 위에서만).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 열리면 Version이 오르고, 이미 열렸거나 다른 화면이면 아무것도 하지 않는다.
         public void OpenStats()
         {
             if (StatsOpen || (Screen != UiScreen.Menu && Screen != UiScreen.Result)) return;
@@ -103,6 +111,9 @@ namespace ProjectH.Client.UI
             Version++;
         }
 
+        // 기능: 통계 창을 닫는다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 닫히면 Version이 오른다.
         public void CloseStats()
         {
             if (!StatsOpen) return;
@@ -139,9 +150,10 @@ namespace ProjectH.Client.UI
             Version++;
         }
 
-        // Once per frame. reconnecting: GameClient's automatic reconnect is running. results: how many MatchResults
-        // arrived so far (a new one opens the result screen once). hasMatch / matchState: the newest MatchState (a dev
-        // server sends none); the result screen closes by itself when the next round begins.
+        // 기능: 한 프레임의 연결 상태와 결과 수로 화면 전환을 정한다(접속 성공·실패, 연결 끊김, 새 MatchResult, 다음 판 시작 시 결과 화면 닫기).
+        // 입력: connection - 현재 연결 상태, reconnecting - GameClient의 자동 재접속이 진행 중인지, results - 지금까지 도착한 MatchResult 수(지난 값보다 클 때만 새 결과),
+        //   hasMatch - MatchState를 받았는지(개발 서버는 보내지 않음), matchState - 최신 MatchState.
+        // 출력: 반환값 없음. Screen이나 Reconnecting이 바뀌면 Version이 오른다.
         public void Update(UiConnection connection, bool reconnecting, int results, bool hasMatch, MatchFlowState matchState)
         {
             if (reconnecting != Reconnecting)
@@ -208,8 +220,14 @@ namespace ProjectH.Client.UI
         // be dropped; the extra half second covers network jitter between the two clocks.
         public const float ResendSeconds = 2.5f;
 
+        // 기능: 통계 요청을 새로 보내도 되는지 판단한다(보낸 적이 없거나 지난 요청이 ResendSeconds 이상 지났을 때).
+        // 입력: now - 현재 시각(초), lastSentAt - 지난 요청 시각(음수면 보낸 적 없음).
+        // 출력: 보내도 되면 true, 지난 요청을 다시 써야 하면 false.
         public static bool MaySend(float now, float lastSentAt) => lastSentAt < 0f || now - lastSentAt >= ResendSeconds;
 
+        // 기능: 통계 창의 대기 상태를 정한다.
+        // 입력: now - 현재 시각(초), sentAt - 요청 시각(음수면 보낸 적 없음), answeredAt - 마지막 응답 시각(음수면 없음).
+        // 출력: 보낸 적이 없거나 AnswerSeconds 안에 응답이 없으면 NoAnswer, 요청 뒤 응답이 왔으면 Answered, 아니면 Waiting.
         public static StatsWaitState Of(float now, float sentAt, float answeredAt)
         {
             if (sentAt < 0f) return StatsWaitState.NoAnswer;

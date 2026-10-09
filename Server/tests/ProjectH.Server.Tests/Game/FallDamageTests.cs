@@ -27,6 +27,9 @@ public class FallDamageTests
         Assert.Equal(damage, CombatRules.FallDamage(speed));
     }
 
+    // 기능: 광장 위 주어진 높이에서 떨어뜨려 착지 속도를 구한다(경기와 같은 이동 Step).
+    // 입력: height - 시작 높이.
+    // 출력: 착지 순간의 낙하 속도. 300 Tick 안에 착지하지 않으면 예외.
     // The landing speed of a fall from this height onto the flat plaza (the same Step the match runs).
     private static float LandingSpeed(float height)
     {
@@ -39,6 +42,9 @@ public class FallDamageTests
         throw new InvalidOperationException("never landed");
     }
 
+    // 기능: 전투 장비로 두 명이 들어온 경기를 시작까지 돌린다.
+    // 입력: 없음.
+    // 출력: (경기, 플레이어 1, 플레이어 2).
     private static (RoyaleHarness h, PlayerEntity a, PlayerEntity b) InMatch()
     {
         var h = new RoyaleHarness(TestGameData.CombatLoadout);
@@ -48,6 +54,9 @@ public class FallDamageTests
         return (h, a, b);
     }
 
+    // 기능: 플레이어를 광장 위 주어진 높이에 놓고 죽거나 땅에 멈출 때까지 돌린다(최대 400 Tick).
+    // 입력: h - 경기, p - 떨어뜨릴 플레이어, height - 시작 높이.
+    // 출력: 반환값 없음. 플레이어가 착지했거나 죽은 상태가 된다.
     private static void DropFrom(RoyaleHarness h, PlayerEntity p, float height)
     {
         h.Place(p, new Vector3(0f, height, -3f));

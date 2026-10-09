@@ -11,8 +11,14 @@ namespace ProjectH.Client.Tests
         private const int SimHz = 30;
         private const float Step = 1f / SimHz;
 
+        // 기능: 원점의 기본 MoveState로 30 Hz 예측기를 만든다.
+        // 입력: 없음.
+        // 출력: 입력이 하나도 없는 새 LocalPlayerPredictor.
         private static LocalPlayerPredictor NewPredictor() => new LocalPlayerPredictor(SimHz, new MoveState());
 
+        // 기능: 예측기를 정확히 steps 걸음만큼 한 프레임으로 진행시킨다(Yaw 0, 큐 입력 없음).
+        // 입력: predictor - 대상 예측기, steps - 진행할 시뮬레이션 걸음 수, move - 이동 입력, held - 누르고 있는 버튼.
+        // 출력: 반환값 없음. 예측기에 steps개의 입력이 쌓이고 위치가 갱신된다.
         private static void AdvanceSteps(LocalPlayerPredictor predictor, int steps, Vector2 move, InputButtons held = InputButtons.None)
         {
             InputButtons queued = InputButtons.None;
@@ -20,10 +26,16 @@ namespace ProjectH.Client.Tests
             predictor.Advance(steps * Step + 0.0005f, move, 0f, held, ref queued);
         }
 
+        // 기능: 살아 있는 플레이어의 Snapshot Entity를 만든다.
+        // 입력: position - 서버 위치, velocityY - 수직 속도, yaw - 서버 Yaw.
+        // 출력: AliveFlag가 켜진 SnapshotEntity.
         // Snapshot entities of a living player (the alive flag is bit 0 of Flags).
         private static SnapshotEntity Alive(System.Numerics.Vector3 position, float velocityY = 0f, float yaw = 0f)
             => new SnapshotEntity { Position = position, VelocityY = velocityY, Yaw = yaw, Flags = SnapshotEntity.AliveFlag };
 
+        // 기능: 서버 MoveState에서 Snapshot의 본인 블록(남은 에너지, 수평 속도, 모드·에너지 지연 Tick)을 만든다.
+        // 입력: s - 서버가 계산한 이동 상태.
+        // 출력: 그 상태와 일치하는 SnapshotSelf.
         // Phase 12: the snapshot's self block (the owner's horizontal velocity, energy and tick counters) of a server
         // state, and of a rested player standing still (for hand-made entities).
         private static SnapshotSelf SelfOf(in MoveState s) => new SnapshotSelf

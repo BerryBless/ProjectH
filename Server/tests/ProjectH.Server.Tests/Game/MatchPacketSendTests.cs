@@ -10,8 +10,17 @@ namespace ProjectH.Server.Tests.Game;
 // Phase 5 D11: when MatchState, ZoneState and MatchResult are sent, and to whom.
 public class MatchPacketSendTests
 {
+    // 기능: 보낸 패킷을 MatchState로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: s - 하네스가 기록한 송신 패킷.
+    // 출력: 읽은 MatchState.
     private static MatchState ReadState(RoyaleHarness.Sent s) { var r = RoyaleHarness.Reader(s); Assert.True(MatchState.TryRead(ref r, out var v)); return v; }
+    // 기능: 보낸 패킷을 ZoneState로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: s - 하네스가 기록한 송신 패킷.
+    // 출력: 읽은 ZoneState.
     private static ZoneState ReadZone(RoyaleHarness.Sent s) { var r = RoyaleHarness.Reader(s); Assert.True(ZoneState.TryRead(ref r, out var v)); return v; }
+    // 기능: 보낸 패킷을 MatchResult로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: s - 하네스가 기록한 송신 패킷.
+    // 출력: 읽은 MatchResult.
     private static MatchResult ReadResult(RoyaleHarness.Sent s) { var r = RoyaleHarness.Reader(s); Assert.True(MatchResult.TryRead(ref r, out var v)); return v; }
 
     [Fact]

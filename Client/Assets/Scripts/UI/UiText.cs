@@ -54,6 +54,9 @@ namespace ProjectH.Client.UI
 
         // ---- Disconnects (D6) ----
 
+        // 기능: 마지막 연결이 끝난 이유 문구를 고른다(시작 실패, 가득 찬 경기, 그다음 거절 이유·서버 코드·LiteNetLib 이유 순).
+        // 입력: s - GameClient가 보고한 끊김 요약.
+        // 출력: 상수 문자열(할당 없음).
         public static string Disconnect(in DisconnectSummary s)
         {
             if (s.StartFailed) return "접속을 시작할 수 없습니다. 주소와 포트를 확인하세요.";
@@ -69,6 +72,9 @@ namespace ProjectH.Client.UI
             }
         }
 
+        // 기능: 서버의 접속 거절 이유 문구를 고른다.
+        // 입력: reason - 서버가 보낸 거절 이유.
+        // 출력: 상수 문자열. 모르는 값은 일반 거절 문구.
         public static string Reject(RejectReason reason)
         {
             switch (reason)
@@ -80,6 +86,9 @@ namespace ProjectH.Client.UI
             }
         }
 
+        // 기능: 서버가 연결을 닫으며 보낸 코드의 문구를 고른다.
+        // 입력: code - 서버의 끊김 코드.
+        // 출력: 상수 문자열. 모르는 값(None 포함)은 일반 끊김 문구.
         public static string Code(DisconnectCode code)
         {
             switch (code)
@@ -94,6 +103,9 @@ namespace ProjectH.Client.UI
             }
         }
 
+        // 기능: LiteNetLib의 끊김 이유 문구를 고른다.
+        // 입력: reason - LiteNetLib 끊김 이유.
+        // 출력: 상수 문자열. 모르는 값은 일반 끊김 문구.
         public static string Reason(DisconnectReason reason)
         {
             switch (reason)
@@ -114,6 +126,9 @@ namespace ProjectH.Client.UI
             }
         }
 
+        // 기능: 자동 재접속 진행 줄을 만든다("재접속 중 (1/3) - 2초 뒤 다시 시도", 시도 중이면 "... - 연결하는 중").
+        // 입력: attempt - 현재 시도 번호, maxAttempts - 최대 시도 수, secondsLeft - 다음 시도까지 남은 초(0 이하면 시도 중).
+        // 출력: 줄 문자열. 같은 숫자로 다시 부르면 캐시된 같은 문자열(한 칸 캐시, 할당 없음).
         // "재접속 중 (1/3) - 2초 뒤 다시 시도", or "... - 연결하는 중" while an attempt runs (secondsLeft <= 0).
         // Asked again with the same numbers, it returns the same string (a one-slot cache), so a caller that asks every
         // frame allocates only when a number changes.
@@ -130,18 +145,34 @@ namespace ProjectH.Client.UI
 
         // ---- Result (D7) ----
 
+        // 기능: 결과 화면 제목을 고른다.
+        // 입력: won - 우승했는지.
+        // 출력: "승리!" 또는 "탈락"(상수).
         public static string ResultTitle(bool won) => won ? "승리!" : "탈락";
 
+        // 기능: Solo 결과 화면의 순위 줄을 만든다.
+        // 입력: placement - 순위, participants - 참가자 수.
+        // 출력: "순위 2 / 8명".
         public static string Placement(int placement, int participants) => "순위 " + Int(placement) + " / " + Int(participants) + "명";
 
+        // 기능: 결과 화면의 처치 줄을 만든다.
+        // 입력: kills - 처치 수.
+        // 출력: "처치 3".
         public static string Kills(int kills) => "처치 " + Int(kills);
 
-        // winnerName null = no winner among the connected players (WinnerId 0).
+        // 기능: Solo 결과 화면의 승자 줄을 만든다.
+        // 입력: winnerName - 승자 이름(null이면 접속한 플레이어 중 승자 없음, WinnerId 0).
+        // 출력: "승자: alice" 또는 "승자 없음"(상수).
         public static string Winner(string winnerName) => winnerName == null ? "승자 없음" : "승자: " + winnerName;
 
-        // Who ended this player's match: a player, the zone, or nobody yet (won, or still alive).
+        // 기능: 이 플레이어의 경기를 끝낸 것을 적는다(원인이 자기장뿐이던 때의 호환 판: 4인자 KilledBy에 DeathCause.Zone을 넘긴다).
+        // 입력: died - 탈락했는지, byZone - 자기장(처치자 없음)인지, killerName - 처치자 이름.
+        // 출력: 4인자 KilledBy와 같다.
         public static string KilledBy(bool died, bool byZone, string killerName) => KilledBy(died, byZone, DeathCause.Zone, killerName);
 
+        // 기능: 결과 화면의 탈락 원인 줄을 만든다.
+        // 입력: died - 탈락했는지, noKiller - 처치자 없음(KillerId 0: 자기장·낙하·폭발), cause - 원인, killerName - 처치자 이름.
+        // 출력: "탈락 원인: 낙하" 또는 "나를 처치한 플레이어: alice". 탈락하지 않았으면(우승했거나 아직 살아 있음) 빈 문자열.
         // Phase 12 D10: noKiller (KillerId 0) is the zone or a fall, as the cause says.
         public static string KilledBy(bool died, bool noKiller, DeathCause cause, string killerName)
         {
@@ -156,7 +187,9 @@ namespace ProjectH.Client.UI
         public static string CauseName(DeathCause cause) =>
             cause == DeathCause.Fall ? FallName : cause == DeathCause.Explosion ? ExplosionName : ZoneName;
 
-        // One-slot cache like Reconnecting.
+        // 기능: 결과 화면의 다음 판 카운트다운 줄을 만든다.
+        // 입력: secondsLeft - 다음 판까지 남은 초.
+        // 출력: "다음 판까지 12초", 0 이하면 "다음 판을 준비하는 중"(상수). 같은 초로 다시 부르면 캐시된 같은 문자열(Reconnecting과 같은 한 칸 캐시).
         public static string NextRound(int secondsLeft)
         {
             if (secondsLeft <= 0) return "다음 판을 준비하는 중";
@@ -176,6 +209,9 @@ namespace ProjectH.Client.UI
             public readonly int C;
             public readonly string Text;
 
+            // 기능: 문자열을 만든 숫자 세 개와 그 문자열을 한 불변 객체로 묶는다.
+            // 입력: a·b·c - 문자열을 만든 숫자(쓰지 않는 자리는 0), text - 만든 문자열.
+            // 출력: 읽기 전용 Cached.
             public Cached(int a, int b, int c, string text)
             {
                 A = a;
@@ -190,10 +226,14 @@ namespace ProjectH.Client.UI
 
         // ---- Names (D9, D10) ----
 
-        // A name from PlayerSpawned, or "플레이어 3" when that player's spawn is not known (it already left).
+        // 기능: 표시할 플레이어 이름을 고른다.
+        // 입력: name - PlayerSpawned로 받은 이름(null이면 스폰을 모르는 플레이어: 이미 나갔다), entityId - 그 플레이어의 entity id.
+        // 출력: 이름, 없으면 "플레이어 3".
         public static string NameOr(string name, ushort entityId) => name ?? "플레이어 " + Int(entityId);
 
-        // "가해자 ▸ 피해자"; killer null = the zone (KillerId 0).
+        // 기능: Kill Feed의 탈락 줄을 만든다(원인이 자기장뿐이던 때의 호환 판: 3인자 KillLine에 DeathCause.Zone을 넘긴다).
+        // 입력: killer - 처치자 이름(null이면 자기장, KillerId 0), victim - 피해자 이름.
+        // 출력: "가해자 ▸ 피해자".
         public static string KillLine(string killer, string victim) => KillLine(killer, victim, DeathCause.Zone);
 
         // Phase 12 D10: killer null = the zone or a fall ("낙하 ▸ 피해자").
@@ -287,7 +327,9 @@ namespace ProjectH.Client.UI
 
         // ---- Statistics (D8) ----
 
-        // Ok has no status line; the summary and the rows say it all.
+        // 기능: 통계 창의 상태 줄 문구를 고른다.
+        // 입력: status - 서버 응답의 상태.
+        // 출력: 상수 문자열. Ok면 빈 문자열(요약과 행이 다 말해 준다), 모르는 값은 "응답 없음".
         public static string StatsStatusText(StatsStatus status)
         {
             switch (status)
@@ -300,12 +342,16 @@ namespace ProjectH.Client.UI
             }
         }
 
+        // 기능: 통계 요약 두 줄을 만든다(경기·승리·처치·사망 / 피해·생존 시간).
+        // 입력: s - 누적 통계 요약.
+        // 출력: 요약 문자열(새 응답이 왔을 때만 부른다).
         public static string StatsSummaryText(in StatsSummary s) =>
             "경기 " + Int(s.Matches) + "   승리 " + Int(s.Wins) + "   처치 " + Int(s.Kills) + "   사망 " + Int(s.Deaths) +
             "\n피해 " + Int(s.Damage) + "   생존 시간 " + Duration(s.SurvivalSeconds);
 
-        // One line per match, newest first: "10-01 21:00   3위 / 16명   처치 2   피해 340   생존 4:05".
-        // utcOffset: the viewer's time zone (UiRoot passes the local one).
+        // 기능: 경기별 통계 행을 한 줄씩 줄바꿈으로 잇는다(배열 순서대로: 서버가 최신 먼저 보낸다).
+        // 입력: rows - 경기 행 배열(null이나 비면 빈 문자열), utcOffset - 보는 사람의 시간대(UiRoot가 로컬 시간대를 넘긴다).
+        // 출력: "10-01 21:00   3위 / 16명   처치 2   피해 340   생존 4:05" 같은 줄들을 이은 문자열.
         public static string StatsRowsText(StatsRow[] rows, TimeSpan utcOffset)
         {
             if (rows == null || rows.Length == 0) return string.Empty;
@@ -318,6 +364,9 @@ namespace ProjectH.Client.UI
             return text.ToString();
         }
 
+        // 기능: 경기 한 판의 통계 행을 만든다(끝난 시각, 순위, 처치, 피해, 생존 시간).
+        // 입력: row - 경기 행, utcOffset - 끝난 시각을 보일 시간대.
+        // 출력: 한 줄 문자열. 순위 0이면 "순위 없음".
         public static string StatsRowText(in StatsRow row, TimeSpan utcOffset)
         {
             string when = DateTimeOffset.FromUnixTimeSeconds(row.EndedUnixSeconds).ToOffset(utcOffset)
@@ -327,7 +376,9 @@ namespace ProjectH.Client.UI
                    "   생존 " + Duration(row.SurvivalMs / 1000);
         }
 
-        // "4:05" below an hour, "1:02:03" from an hour on.
+        // 기능: 초를 시간 표시 문자열로 만든다.
+        // 입력: totalSeconds - 총 초(음수는 0으로).
+        // 출력: 한 시간 미만이면 "4:05", 한 시간부터는 "1:02:03".
         public static string Duration(long totalSeconds)
         {
             if (totalSeconds < 0) totalSeconds = 0;
@@ -341,7 +392,9 @@ namespace ProjectH.Client.UI
 
         // ---- Building (Phase 13 D16) ----
 
-        // Constant names: no allocation.
+        // 기능: 건설 조각 종류의 이름을 고른다.
+        // 입력: piece - 조각 종류.
+        // 출력: "벽"·"바닥"·"경사로", 그 밖은 "지붕"(상수, 할당 없음).
         public static string PieceName(BuildPieceType piece)
         {
             switch (piece)
@@ -353,6 +406,9 @@ namespace ProjectH.Client.UI
             }
         }
 
+        // 기능: 건설 재료의 이름을 고른다.
+        // 입력: material - 재료 종류.
+        // 출력: "나무"·"돌", 그 밖은 "금속"(상수, 할당 없음).
         public static string MaterialName(BuildMaterialType material)
         {
             switch (material)
@@ -363,6 +419,9 @@ namespace ProjectH.Client.UI
             }
         }
 
+        // 기능: 손에 든 도구의 이름을 고른다.
+        // 입력: tool - 도구 종류.
+        // 출력: "채집"·"건축", 그 밖은 "무기"(상수, 할당 없음).
         public static string ToolName(ToolKind tool)
         {
             switch (tool)
@@ -373,11 +432,15 @@ namespace ProjectH.Client.UI
             }
         }
 
-        // The resources line (the server's numbers minus pending placements). Rebuilt only when a number changes.
+        // 기능: 자원 줄을 만든다(호출자가 서버 수치에서 대기 중 배치를 뺀 값을 넘긴다).
+        // 입력: wood - 나무, stone - 돌, metal - 금속 수.
+        // 출력: "나무 10   돌 5   금속 0"(숫자가 바뀔 때만 부른다).
         public static string ResourcesLine(int wood, int stone, int metal) =>
             "나무 " + Int(wood) + "   돌 " + Int(stone) + "   금속 " + Int(metal);
 
-        // Build mode: the chosen piece and material.
+        // 기능: 건축 모드 줄을 만든다(고른 조각과 재료).
+        // 입력: piece - 고른 조각, material - 고른 재료.
+        // 출력: "건축: 벽 · 나무".
         public static string BuildModeLine(BuildPieceType piece, BuildMaterialType material) =>
             "건축: " + PieceName(piece) + " · " + MaterialName(material);
 
@@ -407,7 +470,10 @@ namespace ProjectH.Client.UI
             }
         }
 
-        // F1: the tool, the selection, the stored and shown pieces, refusals and requests per second.
+        // 기능: F1 건축 줄을 만든다(도구, 선택, 저장·표시·무시한 구조물 수, 요청·거절 수).
+        // 입력: tool - 현재 도구, piece·material - 고른 조각·재료, stored - 저장된 구조물 수, drawn - 표시 중인 수, ignored - 무시한 수, sent - 보낸 요청 수,
+        //   refused - 거절된 수, lastRefusal - 마지막 거절 코드, requestsPerSecond - 최근 초당 요청 수.
+        // 출력: 한 줄 문자열.
         public static string BuildDebugLine(ToolKind tool, BuildPieceType piece, BuildMaterialType material, int stored, int drawn,
             int ignored, int sent, int refused, BuildResultCode lastRefusal, int requestsPerSecond) =>
             "도구 " + ToolName(tool) + "   " + PieceName(piece) + "/" + MaterialName(material) + "   구조물 " + Int(stored) + " (표시 " + Int(drawn) +
@@ -415,6 +481,9 @@ namespace ProjectH.Client.UI
 
         // ---- Debug line (D4, F1) ----
 
+        // 기능: F1 기본 줄을 만든다.
+        // 입력: state - 연결 상태 이름, roundTripMs - 왕복 지연(ms), entityId - 내 entity id.
+        // 출력: "상태 Joined   RTT 32 ms   Entity 5   (F1)".
         public static string DebugLine(string state, int roundTripMs, ushort entityId) =>
             "상태 " + state + "   RTT " + Int(roundTripMs) + " ms   Entity " + Int(entityId) + "   (F1)";
 
@@ -434,18 +503,31 @@ namespace ProjectH.Client.UI
             return line.Append("   (F1)").ToString();
         }
 
+        // 기능: F1 이동 줄을 만든다.
+        // 입력: mode - 이동 모드 이름, horizontalTenths - 수평 속도(0.1 m/s 단위), verticalTenths - 수직 속도(0.1 m/s 단위), energy - 기력,
+        //   correctionCentimetres - 서버 보정 거리(cm).
+        // 출력: "이동 걷기   수평 4.2 m/s   수직 0.0 m/s   기력 100   보정 0.05 m".
         // Phase 12 D14: the movement line. Speeds and the correction in tenths and hundredths, so the caller can rebuild it
         // only when a shown digit changes (DebugOverlay).
         public static string MovementLine(string mode, int horizontalTenths, int verticalTenths, int energy, int correctionCentimetres) =>
             "이동 " + mode + "   수평 " + Tenths(horizontalTenths) + " m/s   수직 " + Tenths(verticalTenths) + " m/s   기력 " + Int(energy) +
             "   보정 " + Hundredths(correctionCentimetres) + " m";
 
+        // 기능: F1 수송기 경로 줄을 만든다.
+        // 입력: startX·startZ - 경로 시작 좌표, endX·endZ - 경로 끝 좌표.
+        // 출력: 좌표를 정수로 반올림한 "수송기 (x, z) → (x, z)".
         // D14: the drop transport's route (there is no map UI).
         public static string RouteLine(float startX, float startZ, float endX, float endZ) =>
             "수송기 (" + Int(RoundToInt(startX)) + ", " + Int(RoundToInt(startZ)) + ") → (" + Int(RoundToInt(endX)) + ", " + Int(RoundToInt(endZ)) + ")";
 
+        // 기능: 가장 가까운 정수로 반올림한다(Math.Round: .5는 짝수 쪽).
+        // 입력: value - 반올림할 값.
+        // 출력: 반올림한 정수.
         private static int RoundToInt(float value) => (int)Math.Round(value);
 
+        // 기능: 0.1 단위 정수를 소수 한 자리 문자열로 만든다.
+        // 입력: tenths - 0.1 단위 값(음수 허용).
+        // 출력: "-1.5" 같은 문자열.
         private static string Tenths(int tenths)
         {
             string sign = tenths < 0 ? "-" : string.Empty;
@@ -453,6 +535,9 @@ namespace ProjectH.Client.UI
             return sign + Int(a / 10) + "." + Int(a % 10);
         }
 
+        // 기능: 0.01 단위 정수를 소수 두 자리 문자열로 만든다.
+        // 입력: hundredths - 0.01 단위 값(음수 허용).
+        // 출력: "0.05" 같은 문자열.
         private static string Hundredths(int hundredths)
         {
             string sign = hundredths < 0 ? "-" : string.Empty;
@@ -462,6 +547,9 @@ namespace ProjectH.Client.UI
 
         // ---- Title input (D4) ----
 
+        // 기능: 타이틀에 입력한 이름을 앞뒤 공백을 떼고 서버의 접속 요청 규칙으로 검사한다.
+        // 입력: input - 입력한 글자(null 허용).
+        // 출력: 유효하면 true와 다듬은 이름, 아니면 false와 null.
         // The name typed on the title screen: trimmed, then the server's connect-request rule
         // (ProtocolConstants.IsValidPlayerName: 1-32 bytes of valid UTF-8, no control characters).
         public static bool TryNormalizeName(string input, out string name)
@@ -472,6 +560,9 @@ namespace ProjectH.Client.UI
             return false;
         }
 
+        // 기능: 타이틀에 입력한 주소를 앞뒤 공백을 떼고 길이(1-253자)만 검사한다.
+        // 입력: input - 입력한 글자(null 허용).
+        // 출력: 유효하면 true와 다듬은 주소, 아니면 false와 null.
         public static bool TryNormalizeHost(string input, out string host)
         {
             host = input == null ? string.Empty : input.Trim();
@@ -480,6 +571,9 @@ namespace ProjectH.Client.UI
             return false;
         }
 
+        // 기능: 타이틀에 입력한 포트를 1-65535 정수로 파싱한다(부호·공백·구분자 없는 숫자만).
+        // 입력: input - 입력한 글자(null 허용).
+        // 출력: 유효하면 true와 포트, 아니면 false와 0.
         public static bool TryParsePort(string input, out int port)
         {
             if (int.TryParse(input == null ? null : input.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out port) &&
@@ -489,8 +583,14 @@ namespace ProjectH.Client.UI
             return false;
         }
 
+        // 기능: 정수를 문화권 영향 없이 문자열로 만든다.
+        // 입력: value - 정수.
+        // 출력: 십진 문자열.
         private static string Int(long value) => value.ToString(CultureInfo.InvariantCulture);
 
+        // 기능: 분·초 자리를 두 자리로 만든다.
+        // 입력: value - 0 이상 정수.
+        // 출력: 10 미만이면 "05"처럼 앞에 0을 붙인 문자열, 아니면 그대로.
         private static string Two(long value) => value < 10 ? "0" + Int(value) : Int(value);
     }
 }

@@ -103,6 +103,9 @@ public class MatchStartTests
     [Fact]
     public void MatchLoot_IsSeededByTheRound()
     {
+        // 기능: 월드 아이템을 위치 순으로 정렬해 ItemId를 0으로 지운 목록으로 만든다(두 서버 비교용).
+        // 입력: h - 경기 하네스.
+        // 출력: 비교할 아이템 데이터 배열.
         static WorldItemData[] LootOf(RoyaleHarness h) =>
             Enumerable.Range(0, h.Match.WorldItems.Count).Select(i => h.Match.WorldItems[i].Data)
                 .OrderBy(d => d.Position.X).ThenBy(d => d.Position.Z).ThenBy(d => d.Position.Y)

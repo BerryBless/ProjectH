@@ -50,9 +50,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt16(r.Health);
         }
 
-        // 기능: 기록 하나를 읽는다(호출자가 길이를 확인했다).
-        // 입력: reader - 기록 위치의 본문.
-        // 출력: 성공하면 true와 기록. Id 0이거나 모르는 상태면 false.
+        // 기능: 기록 하나(19바이트)를 읽어 양자화를 되돌린다(조향은 -1..1로 자른다).
+        // 입력: reader - 기록 위치의 본문, r - 결과.
+        // 출력: 성공하면 true와 기록. 짧거나, Id 0이거나, 모르는 상태면 false.
         public static bool TryRead(ref PacketReader reader, out VehicleRecord r)
         {
             r = default;

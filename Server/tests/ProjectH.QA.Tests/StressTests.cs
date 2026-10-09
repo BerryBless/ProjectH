@@ -16,6 +16,9 @@ public class StressTests : IDisposable
     private readonly FakeQaServer _fake = new();
     private readonly List<MockActor> _actors = new();
 
+    // 기능: 테스트 출력을 보관하고 임시 저장소 루트 아래에 QA/Scenarios/T와 QA/Suites 폴더를 만든다.
+    // 입력: output - xUnit 테스트 출력.
+    // 출력: 임시 저장소 루트와 가짜 QA 서버가 준비된 StressTests 객체.
     public StressTests(ITestOutputHelper output)
     {
         _out = output;
@@ -23,6 +26,9 @@ public class StressTests : IDisposable
         Directory.CreateDirectory(Path.Combine(_root, "QA", "Suites"));
     }
 
+    // 기능: 테스트가 만든 임시 저장소 루트를 통째로 지운다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 임시 폴더가 삭제되며 IO 오류는 무시한다.
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
@@ -30,6 +36,9 @@ public class StressTests : IDisposable
 
     private string Reports => Path.Combine(_root, "out");
 
+    // 기능: 임시 저장소 루트 아래 상대 경로에 폴더를 만들고 텍스트 파일을 쓴다.
+    // 입력: relative - 루트 기준 상대 경로, text - 파일 내용.
+    // 출력: 기록한 파일의 절대 경로.
     private string Write(string relative, string text)
     {
         string path = Path.Combine(_root, relative);
@@ -38,6 +47,9 @@ public class StressTests : IDisposable
         return path;
     }
 
+    // 기능: 주어진 QA 서버 Client와 MockActor를 꽂은 QaCli를 임시 저장소 루트(--repo)로 실행하고 출력을 테스트 로그에도 쓴다.
+    // 입력: server - CLI가 쓸 QA 서버 Client, token - 취소 토큰, args - CLI 인자(--repo는 자동으로 덧붙인다).
+    // 출력: CLI 종료 코드와 표준 출력 문자열. 만들어진 Actor는 _actors에 쌓인다.
     private async Task<(int Exit, string Output)> Cli(IQaServerClient server, CancellationToken token, params string[] args)
     {
         var output = new StringWriter();
@@ -51,8 +63,14 @@ public class StressTests : IDisposable
         return (exit, output.ToString());
     }
 
+    // 기능: 기본 가짜 서버로, 취소 없이 CLI를 실행한다.
+    // 입력: args - CLI 인자.
+    // 출력: CLI 종료 코드와 표준 출력 문자열.
     private Task<(int Exit, string Output)> Cli(params string[] args) => Cli(_fake, default, args);
 
+    // 기능: 시나리오 JSON을 파싱하고 파싱 오류와 검증 결과를 하나의 목록으로 합친다.
+    // 입력: json - 시나리오 JSON 문자열.
+    // 출력: 파싱 오류(IsError)와 검증 지적을 합친 목록.
     private static IReadOnlyList<ValidationIssue> Validate(string json)
     {
         ScenarioLoadResult load = ScenarioLoader.Parse(json, "x.json");
@@ -61,12 +79,18 @@ public class StressTests : IDisposable
         return issues;
     }
 
+    // 기능: 보고서 폴더의 실행 ID 아래 report.json을 읽어 루트 요소의 복사본을 돌려준다.
+    // 입력: runId - 실행 ID.
+    // 출력: 문서와 분리된 report.json 루트 JsonElement.
     private JsonElement Report(string runId)
     {
         using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(Reports, runId, "report.json")));
         return doc.RootElement.Clone();
     }
 
+    // 기능: 보고서 폴더에서 qa-로 시작하는 실행 ID 폴더 이름을 모은다.
+    // 입력: 없음.
+    // 출력: 실행 ID를 이름순으로 정렬한 배열.
     private string[] RunIds() => Directory.GetDirectories(Reports).Select(Path.GetFileName).Where(n => n!.StartsWith("qa-", StringComparison.Ordinal)).OrderBy(n => n).ToArray()!;
 
     // ---- group distribution (D38) ----
@@ -199,6 +223,9 @@ public class StressTests : IDisposable
         Assert.True(14_400 / interval <= MeasureMath.MaxSamples);
     }
 
+    // 기능: p95를 기준으로 Tick 백분위(p50=절반, p99=1.5배, max=3배)와 자원 수치를 채운 측정 샘플을 만든다.
+    // 입력: p95 - Tick p95 ms, cpu - CPU %, managed - 관리 힙 MB(WorkingSet은 4배, 누적 할당은 10배), gen0 - Gen0 GC 횟수, sendBytes - 초당 송신 바이트(수신은 절반), players - 플레이어 수(세션·생존도 같음), stalls - Stall 수.
+    // 출력: 채워진 MeasureSample.
     private static MeasureSample Sample(double p95, double cpu = 1, double managed = 10, long gen0 = 0, double sendBytes = 1024, int players = 5, long stalls = 0) =>
         new() { TickP50Ms = p95 / 2, TickP95Ms = p95, TickP99Ms = p95 * 1.5, TickMaxMs = p95 * 3, CpuPercent = cpu, ManagedMB = managed, WorkingSetMB = managed * 4,
             Gen0 = gen0, BytesOutPerSec = sendBytes, BytesInPerSec = sendBytes / 2, Players = players, ActiveSessions = players, Alive = players, Stalls = stalls,
@@ -259,11 +286,17 @@ public class StressTests : IDisposable
         private readonly FakeQaServer _inner;
         private int _calls;
 
+        // 기능: Metrics 외의 요청을 넘길 가짜 서버를 감싼다.
+        // 입력: inner - 위임 대상 가짜 서버.
+        // 출력: 호출 수 0인 SequenceServer.
         public SequenceServer(FakeQaServer inner) => _inner = inner;
 
         public int MetricCalls => _calls;
         public List<int?> Windows { get; } = new();
 
+        // 기능: 호출 횟수 n과 요청 창을 기록하고 n에 따라 달라지는 Metrics(세 번째 읽기 또는 3초 이상 창부터 tickMax 40과 Stall 1)를 돌려준다.
+        // 입력: windowSeconds - 집계 창(초), token - 취소 토큰(쓰지 않음).
+        // 출력: 서버 /qa/metrics 형식의 JSON.
         public Task<JsonElement> GetMetricsAsync(int? windowSeconds, CancellationToken token)
         {
             int n = Interlocked.Increment(ref _calls);
@@ -278,16 +311,49 @@ public class StressTests : IDisposable
             }));
         }
 
+        // 기능: health 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 안쪽 서버의 health JSON.
         public Task<JsonElement> GetHealthAsync(CancellationToken token) => _inner.GetHealthAsync(token);
+        // 기능: QA 명령을 안쪽 가짜 서버에 넘긴다.
+        // 입력: command - 명령 이름, player - 대상 플레이어, args - 명령 인자, runId - 실행 ID, token - 취소 토큰.
+        // 출력: 안쪽 서버의 CommandResponse.
         public Task<CommandResponse> CommandAsync(string command, string? player, JsonElement args, string runId, CancellationToken token) => _inner.CommandAsync(command, player, args, runId, token);
+        // 기능: 플레이어 한 명 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: devPlayerId - 플레이어 Dev ID, token - 취소 토큰.
+        // 출력: 안쪽 서버의 플레이어 JSON. 없으면 null.
         public Task<JsonElement?> GetPlayerAsync(string devPlayerId, CancellationToken token) => _inner.GetPlayerAsync(devPlayerId, token);
+        // 기능: 플레이어 목록 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 안쪽 서버의 플레이어 배열 JSON.
         public Task<JsonElement> GetPlayersAsync(CancellationToken token) => _inner.GetPlayersAsync(token);
+        // 기능: Match 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 안쪽 서버의 Match JSON.
         public Task<JsonElement> GetMatchAsync(CancellationToken token) => _inner.GetMatchAsync(token);
+        // 기능: 건설 상태 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: x, z, radius, max - 조회 범위, token - 취소 토큰.
+        // 출력: 안쪽 서버의 건설 JSON.
         public Task<JsonElement> GetBuildAsync(float? x, float? z, float? radius, int? max, CancellationToken token) => _inner.GetBuildAsync(x, z, radius, max, token);
+        // 기능: Loot 상태 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: x, z, radius - 조회 범위, token - 취소 토큰.
+        // 출력: 안쪽 서버의 Loot JSON.
         public Task<JsonElement> GetLootAsync(float? x, float? z, float? radius, CancellationToken token) => _inner.GetLootAsync(x, z, radius, token);
+        // 기능: 투사체 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 안쪽 서버의 투사체 JSON.
         public Task<JsonElement> GetProjectilesAsync(CancellationToken token) => _inner.GetProjectilesAsync(token);
+        // 기능: 차량 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 안쪽 서버의 차량 JSON.
         public Task<JsonElement> GetVehiclesAsync(CancellationToken token) => _inner.GetVehiclesAsync(token);
+        // 기능: 이벤트 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: after - 마지막으로 받은 순번, max - 최대 개수, token - 취소 토큰.
+        // 출력: 안쪽 서버의 이벤트 JSON.
         public Task<JsonElement> GetEventsAsync(long after, int max, CancellationToken token) => _inner.GetEventsAsync(after, max, token);
+        // 기능: 서버 정지 요청을 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 반환값 없음. 안쪽 서버의 Stopped가 true가 된다.
         public Task StopServerAsync(CancellationToken token) => _inner.StopServerAsync(token);
     }
 
@@ -451,6 +517,9 @@ public class StressTests : IDisposable
         private readonly Func<int, Exception?> _fail;
         private int _calls;
 
+        // 기능: /qa/players 호출 n번째에 던질 예외를 정하는 함수와 함께 가짜 서버를 감싼다.
+        // 입력: inner - 위임 대상 가짜 서버, fail - 호출 번호를 받아 던질 예외(없으면 null)를 돌려주는 함수.
+        // 출력: 호출 수 0인 PlayersServer.
         public PlayersServer(FakeQaServer inner, Func<int, Exception?> fail)
         {
             _inner = inner;
@@ -459,22 +528,58 @@ public class StressTests : IDisposable
 
         public int PlayerCalls => _calls;
 
+        // 기능: 호출 번호를 올리고 fail 함수가 예외를 주면 그 예외로 실패하는 Task를, 아니면 안쪽 서버의 플레이어 목록을 돌려준다.
+        // 입력: token - 취소 토큰.
+        // 출력: 플레이어 배열 JSON 또는 fail이 정한 예외로 실패한 Task.
         public Task<JsonElement> GetPlayersAsync(CancellationToken token)
         {
             Exception? e = _fail(Interlocked.Increment(ref _calls));
             return e != null ? Task.FromException<JsonElement>(e) : _inner.GetPlayersAsync(token);
         }
 
+        // 기능: Metrics 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: windowSeconds - 집계 창, token - 취소 토큰.
+        // 출력: 안쪽 서버의 Metrics JSON.
         public Task<JsonElement> GetMetricsAsync(int? windowSeconds, CancellationToken token) => _inner.GetMetricsAsync(windowSeconds, token);
+        // 기능: health 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 안쪽 서버의 health JSON.
         public Task<JsonElement> GetHealthAsync(CancellationToken token) => _inner.GetHealthAsync(token);
+        // 기능: QA 명령을 안쪽 가짜 서버에 넘긴다.
+        // 입력: command - 명령 이름, player - 대상 플레이어, args - 명령 인자, runId - 실행 ID, token - 취소 토큰.
+        // 출력: 안쪽 서버의 CommandResponse.
         public Task<CommandResponse> CommandAsync(string command, string? player, JsonElement args, string runId, CancellationToken token) => _inner.CommandAsync(command, player, args, runId, token);
+        // 기능: 플레이어 한 명 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: devPlayerId - 플레이어 Dev ID, token - 취소 토큰.
+        // 출력: 안쪽 서버의 플레이어 JSON. 없으면 null.
         public Task<JsonElement?> GetPlayerAsync(string devPlayerId, CancellationToken token) => _inner.GetPlayerAsync(devPlayerId, token);
+        // 기능: Match 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 안쪽 서버의 Match JSON.
         public Task<JsonElement> GetMatchAsync(CancellationToken token) => _inner.GetMatchAsync(token);
+        // 기능: 건설 상태 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: x, z, radius, max - 조회 범위, token - 취소 토큰.
+        // 출력: 안쪽 서버의 건설 JSON.
         public Task<JsonElement> GetBuildAsync(float? x, float? z, float? radius, int? max, CancellationToken token) => _inner.GetBuildAsync(x, z, radius, max, token);
+        // 기능: Loot 상태 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: x, z, radius - 조회 범위, token - 취소 토큰.
+        // 출력: 안쪽 서버의 Loot JSON.
         public Task<JsonElement> GetLootAsync(float? x, float? z, float? radius, CancellationToken token) => _inner.GetLootAsync(x, z, radius, token);
+        // 기능: 투사체 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 안쪽 서버의 투사체 JSON.
         public Task<JsonElement> GetProjectilesAsync(CancellationToken token) => _inner.GetProjectilesAsync(token);
+        // 기능: 차량 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 안쪽 서버의 차량 JSON.
         public Task<JsonElement> GetVehiclesAsync(CancellationToken token) => _inner.GetVehiclesAsync(token);
+        // 기능: 이벤트 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: after - 마지막으로 받은 순번, max - 최대 개수, token - 취소 토큰.
+        // 출력: 안쪽 서버의 이벤트 JSON.
         public Task<JsonElement> GetEventsAsync(long after, int max, CancellationToken token) => _inner.GetEventsAsync(after, max, token);
+        // 기능: 서버 정지 요청을 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 반환값 없음. 안쪽 서버의 Stopped가 true가 된다.
         public Task StopServerAsync(CancellationToken token) => _inner.StopServerAsync(token);
     }
 
@@ -513,28 +618,67 @@ public class StressTests : IDisposable
         private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
         private readonly int _holdMs;
 
+        // 기능: 끊긴 Bot을 holdMs 동안 접속 중으로 보고할 가짜 서버를 감싸고 시계를 시작한다.
+        // 입력: inner - 위임 대상 가짜 서버, holdMs - 접속 중으로 보고하는 시간(ms).
+        // 출력: 시계가 시작된 SlowDropServer.
         public SlowDropServer(FakeQaServer inner, int holdMs)
         {
             _inner = inner;
             _holdMs = holdMs;
         }
 
+        // 기능: Bot 네 명(qa-bot-001~004)을 시계가 holdMs를 넘기 전까지는 접속 중으로, 그 뒤에는 끊긴 것으로 보고한다.
+        // 입력: token - 취소 토큰(쓰지 않음).
+        // 출력: devPlayerId와 connected만 가진 플레이어 배열 JSON.
         public Task<JsonElement> GetPlayersAsync(CancellationToken token)
         {
             bool connected = _clock.ElapsedMilliseconds < _holdMs;
             return Task.FromResult(JsonSerializer.SerializeToElement(Enumerable.Range(1, 4).Select(i => new { devPlayerId = $"qa-bot-00{i}", connected })));
         }
 
+        // 기능: Metrics 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: windowSeconds - 집계 창, token - 취소 토큰.
+        // 출력: 안쪽 서버의 Metrics JSON.
         public Task<JsonElement> GetMetricsAsync(int? windowSeconds, CancellationToken token) => _inner.GetMetricsAsync(windowSeconds, token);
+        // 기능: health 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 안쪽 서버의 health JSON.
         public Task<JsonElement> GetHealthAsync(CancellationToken token) => _inner.GetHealthAsync(token);
+        // 기능: QA 명령을 안쪽 가짜 서버에 넘긴다.
+        // 입력: command - 명령 이름, player - 대상 플레이어, args - 명령 인자, runId - 실행 ID, token - 취소 토큰.
+        // 출력: 안쪽 서버의 CommandResponse.
         public Task<CommandResponse> CommandAsync(string command, string? player, JsonElement args, string runId, CancellationToken token) => _inner.CommandAsync(command, player, args, runId, token);
+        // 기능: 플레이어 한 명 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: devPlayerId - 플레이어 Dev ID, token - 취소 토큰.
+        // 출력: 안쪽 서버의 플레이어 JSON. 없으면 null.
         public Task<JsonElement?> GetPlayerAsync(string devPlayerId, CancellationToken token) => _inner.GetPlayerAsync(devPlayerId, token);
+        // 기능: Match 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 안쪽 서버의 Match JSON.
         public Task<JsonElement> GetMatchAsync(CancellationToken token) => _inner.GetMatchAsync(token);
+        // 기능: 건설 상태 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: x, z, radius, max - 조회 범위, token - 취소 토큰.
+        // 출력: 안쪽 서버의 건설 JSON.
         public Task<JsonElement> GetBuildAsync(float? x, float? z, float? radius, int? max, CancellationToken token) => _inner.GetBuildAsync(x, z, radius, max, token);
+        // 기능: Loot 상태 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: x, z, radius - 조회 범위, token - 취소 토큰.
+        // 출력: 안쪽 서버의 Loot JSON.
         public Task<JsonElement> GetLootAsync(float? x, float? z, float? radius, CancellationToken token) => _inner.GetLootAsync(x, z, radius, token);
+        // 기능: 투사체 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 안쪽 서버의 투사체 JSON.
         public Task<JsonElement> GetProjectilesAsync(CancellationToken token) => _inner.GetProjectilesAsync(token);
+        // 기능: 차량 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 안쪽 서버의 차량 JSON.
         public Task<JsonElement> GetVehiclesAsync(CancellationToken token) => _inner.GetVehiclesAsync(token);
+        // 기능: 이벤트 조회를 안쪽 가짜 서버에 넘긴다.
+        // 입력: after - 마지막으로 받은 순번, max - 최대 개수, token - 취소 토큰.
+        // 출력: 안쪽 서버의 이벤트 JSON.
         public Task<JsonElement> GetEventsAsync(long after, int max, CancellationToken token) => _inner.GetEventsAsync(after, max, token);
+        // 기능: 서버 정지 요청을 안쪽 가짜 서버에 넘긴다.
+        // 입력: token - 취소 토큰.
+        // 출력: 반환값 없음. 안쪽 서버의 Stopped가 true가 된다.
         public Task StopServerAsync(CancellationToken token) => _inner.StopServerAsync(token);
     }
 
@@ -729,5 +873,8 @@ public class StressTests : IDisposable
         Assert.Equal(3, ScenarioCatalog.Select(repo, "suite:stress").Files.Count);
     }
 
+    // 기능: 테스트 실행 폴더에서 저장소 루트를 찾는다.
+    // 입력: 없음.
+    // 출력: 저장소 루트 경로. 못 찾으면 InvalidOperationException.
     private static string RepoRoot() => ServerLocator.FindRepoRoot(AppContext.BaseDirectory) ?? throw new InvalidOperationException("repo root");
 }

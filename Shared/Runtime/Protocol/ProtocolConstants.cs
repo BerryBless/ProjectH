@@ -34,6 +34,9 @@ namespace ProjectH.Shared.Protocol
 
         public const int MaxDevPlayerIdBytes = 32;
 
+        // 기능: 플레이어 이름(DevPlayerId)이 프로토콜의 이름 규칙에 맞는지 검사한다(서버 연결 요청·타이틀 화면·봇 공용).
+        // 입력: name - 검사할 이름.
+        // 출력: 1..MaxDevPlayerIdBytes 바이트의 UTF-8이고 제어·형식·줄 구분 문자, U+FFFD, 홀로 남은 Surrogate가 없으면 true, 아니면(null·빈 문자열 포함) false.
         // Phase 11: the one player-name (DevPlayerId) rule. The server checks it on every connect request, the title
         // screen and the bots check it before sending. A name is 1-MaxDevPlayerIdBytes bytes of valid UTF-8 without
         // control characters (C0, DEL, C1), format characters or line/paragraph separators. Every other client shows the name in PlayerSpawned, which carries at most
@@ -68,6 +71,9 @@ namespace ProjectH.Shared.Protocol
             return true;
         }
 
+        // 기능: 문자가 이름에 넣을 수 없는 보이지 않는 형식 문자이거나 줄·문단 구분 문자인지 본다.
+        // 입력: c - 검사할 문자.
+        // 출력: Unicode 범주가 Format, LineSeparator, ParagraphSeparator 중 하나면 true, 아니면 false.
         // Format characters (zero-width spaces and joiners, bidi overrides, BOM) are invisible, so one name could pose
         // as another; line and paragraph separators break the UI's lines like control characters do.
         private static bool IsInvisibleOrBreaking(char c)

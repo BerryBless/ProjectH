@@ -9,6 +9,9 @@ public class ItemPacketTests
 {
     private readonly byte[] _buffer = new byte[ProtocolConstants.MaxPacketSize];
 
+    // 기능: 테스트 버퍼의 앞 length 바이트로 Reader를 만들고 Packet Id가 expected인지 확인한 뒤 Id 다음 위치의 Reader를 돌려준다.
+    // 입력: length - 버퍼에 쓰인 바이트 수, expected - 기대하는 Packet Id.
+    // 출력: Packet Id를 읽은 뒤의 PacketReader. Id가 다르면 Assert 실패.
     private PacketReader ReaderAfterId(int length, PacketId expected)
     {
         var reader = new PacketReader(_buffer.AsSpan(0, length));
@@ -17,6 +20,9 @@ public class ItemPacketTests
         return reader;
     }
 
+    // 기능: 희귀도 5종, 탄약 5종, 소모품 3종이 모두 같은 이름을 쓰는 테스트용 아이템 Catalog를 만든다.
+    // 입력: name - 모든 항목에 넣을 이름(기본 "Name").
+    // 출력: 고정 수치의 ItemCatalogData.
     private static ItemCatalogData Catalog(string name = "Name") => new ItemCatalogData
     {
         Rarities = new[]
@@ -43,6 +49,9 @@ public class ItemPacketTests
         },
     };
 
+    // 기능: 테스트용 월드 무기 아이템(무기 정의 2, 희귀도 4, 탄창 0, 고정 위치)을 만든다.
+    // 입력: id - 아이템 ID.
+    // 출력: 지정 ID의 Weapon 종류 WorldItemData.
     private static WorldItemData Weapon(ushort id) => new WorldItemData
     {
         ItemId = id,

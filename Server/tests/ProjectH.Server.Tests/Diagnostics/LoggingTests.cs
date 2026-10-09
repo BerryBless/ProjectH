@@ -83,5 +83,8 @@ public class LoggingTests
         Assert.Equal(2, Logged());
     }
 
+    // 기능: 조건이 참이 될 때까지 제한 시간 안에서 Spin 대기한다.
+    // 입력: condition - 기다릴 조건, timeoutMs - 최대 대기 시간.
+    // 출력: 제한 시간 안에 조건이 참이 되면 true.
     private static bool SpinWaitUntil(Func<bool> condition, int timeoutMs) => System.Threading.SpinWait.SpinUntil(condition, timeoutMs);
 }

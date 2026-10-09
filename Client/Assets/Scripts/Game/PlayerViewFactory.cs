@@ -23,6 +23,9 @@ namespace ProjectH.Client.Game
         private PlayerPose _pose;
         private bool _hasPose;
 
+        // 기능: PlayerViewFactory.Create가 만든 객체들을 묶어 캐릭터 뷰를 만든다.
+        // 입력: root - 발 위치의 뿌리(회전하지 않음), body - 캡슐, wings - 글라이더 객체, collider - 원격 피격 상자(내 뷰면 null), isLocal - 내 캐릭터인지.
+        // 출력: 살아 있고 자세가 아직 없는 뷰(첫 Place가 모양을 적용한다).
         internal PlayerView(Transform root, Transform body, GameObject wings, BoxCollider collider, bool isLocal)
         {
             Root = root;
@@ -132,6 +135,10 @@ namespace ProjectH.Client.Game
         private static Material _deadMaterial;
         private static Material _wingMaterial;
 
+        // 기능: 캐릭터 뷰(뿌리 + 충돌체 없는 캡슐 + 숨긴 글라이더)를 만든다. 원격이면 뿌리에 RemoteHitLayer의 BoxCollider를 둔다(D7: 서버 AABB와
+        //   같은 피격 상자). 공유 Material이 없으면 만든다.
+        // 입력: name - 뿌리 GameObject 이름, isLocal - 내 캐릭터인지(내 뷰는 피격 상자 없음: 조준 광선이 옆에서 시작한다).
+        // 출력: 원점에 Ground 자세로 놓인 뷰.
         public static PlayerView Create(string name, bool isLocal)
         {
             var root = new GameObject(name);
@@ -204,7 +211,9 @@ namespace ProjectH.Client.Game
             if (_wingMaterial == null) _wingMaterial = Tinted(template, new Color(0.95f, 0.85f, 0.25f));
         }
 
-        // Copies the Lit material (LitMaterial), so the shader is guaranteed to be in the build.
+        // 기능: Lit Material(LitMaterial)을 복사해 색을 입힌다(Shader가 빌드에 들어 있음이 보장된다).
+        // 입력: template - 복사할 Material, color - 입힐 색.
+        // 출력: 새 Material(호출자가 파괴한다).
         private static Material Tinted(Material template, Color color)
         {
             return new Material(template) { color = color };

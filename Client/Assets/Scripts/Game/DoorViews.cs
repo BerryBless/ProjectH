@@ -15,6 +15,9 @@ namespace ProjectH.Client.Game
         private readonly Material _material;
         private int _shownVersion = -1;
 
+        // 기능: GameMap.Doors마다 충돌체 있는 큐브(갈색, 그림자 없음)를 만들고 공유 Material 하나를 쓰게 한다(Phase 12 D9, D14).
+        // 입력: 없음.
+        // 출력: 모든 문이 보이는(닫힌) 상태의 뷰(Tick이 PredictedDoors에 맞춰 바꾼다, Dispose가 해제한다).
         public DoorViews()
         {
             Material source = null;
@@ -34,6 +37,9 @@ namespace ProjectH.Client.Game
             for (int i = 0; i < _doors.Length; i++) _doors[i].GetComponent<Renderer>().sharedMaterial = _material;
         }
 
+        // 기능: 예측 문 상태를 뷰에 반영한다(Version이 바뀌었을 때만; 닫힌 문만 보이고 열린 문은 비활성).
+        // 입력: doors - 예측된 문 상태.
+        // 출력: 반환값 없음. 문 객체의 활성 상태가 바뀐다.
         public void Tick(PredictedDoors doors)
         {
             if (doors.Version == _shownVersion) return;
@@ -45,6 +51,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 문 객체와 Material을 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void Dispose()
         {
             for (int i = 0; i < _doors.Length; i++)

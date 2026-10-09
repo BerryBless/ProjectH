@@ -185,6 +185,9 @@ internal static class QaQueries
         };
     }
 
+    // 기능: 경기의 모든 플레이어를 QA DTO 배열로 만든다(GET /qa/players).
+    // 입력: m - 경기.
+    // 출력: PlayerAt 순서의 QaPlayerDto 배열.
     public static QaPlayerDto[] Players(Match m)
     {
         var players = new QaPlayerDto[m.PlayerCount];
@@ -455,6 +458,9 @@ internal static class QaQueries
         return list;
     }
 
+    // 기능: 자기장의 지금 원(Tick 보간)과 목표 원을 DTO로 만든다.
+    // 입력: m - 경기, zone - 받을 곳.
+    // 출력: 반환값 없음. zone이 채워진다.
     private static void SafeZoneView(Match m, out QaZoneDto zone)
     {
         var z = m.Zone;
@@ -464,6 +470,9 @@ internal static class QaQueries
             z.ShrinkStartTick, z.ShrinkEndTick, z.DamagePerSecond);
     }
 
+    // 기능: 건설 조각 목록을 만든다(GET /qa/build). x·z·radius를 모두 주면 중심이 그 원 안인 조각만, 아니면 전부.
+    // 입력: m - 경기, x·z·radius - 조각을 볼 원(모두 주어야 적용), max - 목록 상한.
+    // 출력: 익명 객체(count, truncated, total, pieces).
     // Pieces whose centre lies within radius (across the ground) of (x, z); all of them without a centre. At most max.
     public static object Build(Match m, float? x, float? z, float? radius, int max)
     {

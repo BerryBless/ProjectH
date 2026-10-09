@@ -7,6 +7,9 @@ namespace ProjectH.Server.Tests.Shared;
 // Phase 6 D2-D3: the terrain grid. Each cell is two triangles split along its (0,0)-(1,1) diagonal.
 public class HeightFieldTests
 {
+    // 기능: 테스트용 3 x 3 정점, 2 m 셀, 원점 (10, 20)의 높이 격자를 만든다.
+    // 입력: 없음.
+    // 출력: 가운데 정점이 4 m로 가장 높은 고정 높이값의 HeightField.
     // 3 x 3 vertices, 2 m cells, origin (10, 20). Row j = 0 first.
     private static HeightField Sample() => new HeightField(10f, 20f, 2f, 3, 3, new float[]
     {

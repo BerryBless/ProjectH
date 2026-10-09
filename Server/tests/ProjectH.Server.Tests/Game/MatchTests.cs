@@ -19,12 +19,18 @@ public class MatchTests
     private readonly List<Sent> _sent = new();
     private readonly Match _match;
 
+    // 기능: 테스트용 Match를 만든다(최대 3명, Snapshot 2 Tick마다, DevRespawn). 보낸 패킷은 _sent에 기록한다.
+    // 입력: 없음.
+    // 출력: 참가자가 없는 Match가 준비된 테스트 인스턴스.
     public MatchTests()
     {
         _match = new Match(new ServerOptions { MaxPlayers = 3, SnapshotEveryTicks = 2, DevRespawn = true },TestGameData.Create(),
             (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)));
     }
 
+    // 기능: 여러 입력 명령을 한 PlayerInputPacket에 담는다.
+    // 입력: commands - 패킷에 순서대로 넣을 입력 명령들.
+    // 출력: Count와 명령이 채워진 PlayerInputPacket.
     private static PlayerInputPacket Inputs(params InputCommand[] commands)
     {
         var packet = new PlayerInputPacket { Count = (byte)commands.Length };
@@ -32,8 +38,14 @@ public class MatchTests
         return packet;
     }
 
+    // 기능: 앞으로 전진하는 입력 명령을 만든다.
+    // 입력: seq - 입력 순번.
+    // 출력: MoveY = 1인 InputCommand.
     private static InputCommand Forward(uint seq) => new InputCommand { Seq = seq, MoveY = 1f };
 
+    // 기능: 특정 Peer가 받은 PlayerSpawned 패킷 중 index번째의 EntityId를 읽는다.
+    // 입력: recipientPeer - 패킷을 받은 Peer ID, index - 그 Peer가 받은 PlayerSpawned 중 순번.
+    // 출력: 해당 스폰 패킷의 EntityId.
     private ushort SpawnedEntityIdFor(int recipientPeer, int index)
     {
         var spawns = _sent.Where(s => s.PeerId == recipientPeer && s.Id == PacketId.PlayerSpawned).ToList();
@@ -43,6 +55,9 @@ public class MatchTests
         return spawned.EntityId;
     }
 
+    // 기능: 특정 Peer에게 마지막으로 보낸 WorldSnapshot을 Header와 Entity 목록으로 읽는다. 헤더 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: peer - 패킷을 받은 Peer ID.
+    // 출력: Snapshot Header와 그 안의 Entity 목록.
     private (WorldSnapshotHeader header, List<SnapshotEntity> entities) LastSnapshotFor(int peer)
     {
         var data = _sent.Last(s => s.PeerId == peer && s.Id == PacketId.WorldSnapshot).Data;

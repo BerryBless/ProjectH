@@ -15,9 +15,15 @@ public class VaultTests
     private static readonly InputCommand Walk = new() { MoveY = 1f, Yaw = 90f };
     private static readonly InputCommand Sprint = new() { MoveY = 1f, Yaw = 90f, Buttons = InputButtons.Sprint };
 
+    // 기능: 최소·최대 모서리 좌표 여섯 값으로 충돌 상자를 만든다.
+    // 입력: minX/minY/minZ - 최소 모서리 좌표, maxX/maxY/maxZ - 최대 모서리 좌표.
+    // 출력: 지정한 범위의 Box.
     private static Box B(float minX, float minY, float minZ, float maxX, float maxY, float maxZ)
         => new(new Vector3(minX, minY, minZ), new Vector3(maxX, maxY, maxZ));
 
+    // 기능: x 2..4, z -1..1에 선 높이 height의 상자와 추가 상자들로 충돌 세계를 만든다.
+    // 입력: height - 첫 상자의 높이, more - 뒤에 덧붙일 상자들.
+    // 출력: 첫 상자가 0번인 Box 배열.
     // A 2 x 2 m box (x 2..4) of the given height, and optionally more boxes.
     private static Box[] World(float height, params Box[] more)
     {
@@ -27,12 +33,18 @@ public class VaultTests
         return world;
     }
 
+    // 기능: 입력 복사본에 Jump 버튼을 더한다.
+    // 입력: input - 바탕 입력(값 복사).
+    // 출력: Jump가 눌린 새 InputCommand. 원본은 바뀌지 않는다.
     private static InputCommand Jump(InputCommand input)
     {
         input.Buttons |= InputButtons.Jump;
         return input;
     }
 
+    // 기능: startX에서 input으로 상자 앞면(x = 2)에 gap 이내로 다가간 뒤 Jump를 한 번 누른 Tick까지 돌린다.
+    // 입력: world - 충돌 상자들, input - 접근 입력, gap - 앞면까지 허용 간격, startX - 시작 X 좌표.
+    // 출력: Jump Tick 직후의 MoveState(Vault가 시작됐으면 Mode가 Vault).
     // Moves with input until the front face is within gap of x = 2 (at full speed from the first step: the ground sets
     // the velocity every tick), then presses jump once. Returns the state right after the jump tick.
     private static MoveState ApproachAndJump(Box[] world, InputCommand input, float gap = 0.5f, float startX = -3f)
@@ -43,6 +55,9 @@ public class VaultTests
         return s;
     }
 
+    // 기능: Vault가 끝날 때까지(최대 30 Tick) 돌린 뒤 서 있는 Tick 하나를 더 돌려 발을 표면에 붙인다.
+    // 입력: s - Vault 중인 이동 상태, world - 충돌 상자들, input - Vault 동안 줄 입력.
+    // 출력: 반환값 없음. s가 Vault를 마치고 바닥에 선 상태가 된다.
     // The rest of the vault, then one standing tick: the vault ends MoveSettings.Skin above the surface and the ground
     // check of the next tick snaps the feet onto it.
     private static void RunVault(ref MoveState s, Box[] world, InputCommand input)
@@ -279,6 +294,9 @@ public class VaultTests
         Assert.InRange(high.Position.X, 33f, 35f);
     }
 
+    // 기능: 실제 맵에서 start부터 +X로 달려 faceX의 상자 앞면 0.5 m 안에서 Jump를 눌러 Vault가 일어나는지 본다.
+    // 입력: start - 시작 위치(Y는 지형 높이로 맞춘다), faceX - 상자 앞면의 X 좌표, input - 접근 입력, s - Vault가 끝난 직후(또는 120 Tick 뒤)의 상태.
+    // 출력: Vault 모드에 들어갔으면 true, 아니면 false.
     private static bool VaultsOnMap(Vector3 start, float faceX, InputCommand input, out MoveState s)
     {
         s = new MoveState { Position = new Vector3(start.X, GameMap.Terrain.Height(start.X, start.Z), start.Z), Yaw = 90f };

@@ -14,7 +14,9 @@ public static class ConsumableRules
     private const InputButtons Interrupts = InputButtons.Fire | InputButtons.Slot1 | InputButtons.Slot2 |
                                             InputButtons.Slot3 | InputButtons.Drop | InputButtons.ToolHarvest | InputButtons.ToolBuild;
 
-    // Step 2, real inputs only. Returns true when a running use was cancelled.
+    // 기능: 진행 중인 사용을 중단 버튼(발사·칸·도구·버리기·다른 회복)이 눌렸으면 취소한다(spec §2 2단계, 실제 입력만).
+    // 입력: player - 플레이어, buttons - 눌린 버튼.
+    // 출력: 진행 중인 사용을 취소했으면 true.
     public static bool CancelIfInterrupted(PlayerEntity player, InputButtons buttons)
     {
         Inventory inventory = player.Inventory;
@@ -25,8 +27,10 @@ public static class ConsumableRules
         return true;
     }
 
-    // Step 8, real inputs only: exactly one heal button, none running, one in the inventory, and not
-    // already at the maximum it restores. Pressing the running heal again changes nothing.
+    // 기능: 회복 사용을 시작한다(spec §2 8단계, 실제 입력만): 회복 버튼이 정확히 하나, 진행 중인 사용 없음, 소지 1개 이상, 회복할
+    //   것이 남아 있을 때만. 진행 중인 회복을 다시 눌러도 아무것도 바뀌지 않는다.
+    // 입력: player - 플레이어, items - 아이템 데이터, buttons - 눌린 버튼, now - 마지막 Tick.
+    // 출력: 시작했으면 true(Using·UseEndTick·Changed가 바뀐다).
     public static bool TryStart(PlayerEntity player, ItemCatalog items, InputButtons buttons, uint now)
     {
         ConsumableType type;
@@ -51,8 +55,9 @@ public static class ConsumableRules
         return true;
     }
 
-    // Step 9, every tick of a living player: the channel ends, one item is used up, the values rise to
-    // at most the maximum.
+    // 기능: 채널이 끝난 사용을 마무리한다(spec §2 9단계, 살아 있는 플레이어마다 매 Tick): 아이템 하나를 쓰고 체력·보호막을 최대까지 올린다.
+    // 입력: player - 플레이어, items - 아이템 데이터, now - 마지막 Tick.
+    // 출력: 아이템을 써서 회복했으면 true. 진행 중이 아니거나 아직 끝나지 않았으면 false.
     public static bool Complete(PlayerEntity player, ItemCatalog items, uint now)
     {
         Inventory inventory = player.Inventory;
@@ -70,6 +75,9 @@ public static class ConsumableRules
         return true;
     }
 
+    // 기능: 진행 중인 사용을 취소한다.
+    // 입력: inventory - 인벤토리.
+    // 출력: 반환값 없음. 진행 중이었으면 Using = None, UseEndTick = 0, Changed가 켜진다.
     public static void Cancel(Inventory inventory)
     {
         if (inventory.Using == ConsumableType.None) return;
@@ -78,6 +86,9 @@ public static class ConsumableRules
         inventory.Changed = true;
     }
 
+    // 기능: 회복 소모품의 소지 수를 돌려준다.
+    // 입력: inventory - 인벤토리, type - Medkit 또는 ShieldCell.
+    // 출력: Medkit이면 Medkits, 아니면 ShieldCells.
     private static int Count(Inventory inventory, ConsumableType type) =>
         type == ConsumableType.Medkit ? inventory.Medkits : inventory.ShieldCells;
 }

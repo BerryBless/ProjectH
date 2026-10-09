@@ -9,6 +9,9 @@ namespace ProjectH.Server.Tests.Game;
 // DevRespawn) has no loot until the match starts.
 public class MatchFlowMatchTests
 {
+    // 기능: 패킷을 버리는 4인 Match를 만든다.
+    // 입력: devRespawn - true면 개발 모드(흐름 전환 없음, Loot 즉시 채움).
+    // 출력: 참가자 없는 Match.
     private static Match Create(bool devRespawn) =>
         new(new ServerOptions { MaxPlayers = 4, DevRespawn = devRespawn }, TestGameData.Create(), static (_, _, _) => { });
 

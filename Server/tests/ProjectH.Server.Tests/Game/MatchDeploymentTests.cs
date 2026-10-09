@@ -27,9 +27,15 @@ public class MatchDeploymentTests
         }
         """;
 
+    // 기능: 공중 투입을 켠 전투 장비 경기 하네스를 만든다.
+    // 입력: zones - 존 설정 JSON(기본 WideZones).
+    // 출력: 참가자 없는 RoyaleHarness.
     private static RoyaleHarness Harness(string zones = WideZones) =>
         new(TestGameData.CombatLoadout, zonesJson: zones, airDrop: true);
 
+    // 기능: 공중 투입 경기에 두 명을 들여보내 경기 시작까지 돌린다.
+    // 입력: zones - 존 설정 JSON(기본 WideZones).
+    // 출력: (경기, 플레이어 1, 플레이어 2).
     private static (RoyaleHarness h, PlayerEntity a, PlayerEntity b) Started(string zones = WideZones)
     {
         RoyaleHarness h = Harness(zones);
@@ -39,9 +45,15 @@ public class MatchDeploymentTests
         return (h, a, b);
     }
 
+    // 기능: 플레이어의 이동 모드가 주어진 모드가 될 때까지 Tick을 돌린다.
+    // 입력: h - 경기, p - 지켜볼 플레이어, mode - 기다릴 모드, max - 최대 Tick 수(기본 2000).
+    // 출력: 반환값 없음. max 안에 그 모드가 되지 않으면 테스트가 실패한다.
     private static void TickUntilMode(RoyaleHarness h, PlayerEntity p, MovementMode mode, int max = 2000) =>
         h.TickUntil(() => p.State.Mode == mode, max);
 
+    // 기능: 수송기 경로의 점프 창이 열리는 Tick까지 돌린다.
+    // 입력: h - 경기.
+    // 출력: 반환값 없음. 1000 Tick 안에 창이 열리지 않으면 테스트가 실패한다.
     // Ticks with an empty input for every player until the window opens (so jump presses count).
     private static void TickToTheWindow(RoyaleHarness h)
     {

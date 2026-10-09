@@ -16,11 +16,17 @@ namespace ProjectH.Client.Tests
     {
         private const int SimHz = 30;
 
+        // 기능: 시험용 차량 레코드를 만든다.
+        // 입력: id - 차량 ID, x - 위치 x, z - 위치 z, heading - 방향(도), speed - 속도, driver - 운전자 ID(0이면 빈 자리), passenger - 동승자 ID(0이면 빈 자리), state - 차량 상태, health - 체력.
+        // 출력: 높이 0에 놓인 VehicleRecord.
         private static VehicleRecord Car(byte id, float x, float z = 0f, float heading = 0f, float speed = 0f, ushort driver = 0,
             ushort passenger = 0, VehicleState state = VehicleState.Active, ushort health = VehiclePrompt.MaxHealth) =>
             new VehicleRecord { Id = id, State = state, Position = new Num.Vector3(x, 0f, z), Heading = heading, Speed = speed,
                 Driver = driver, Passenger = passenger, Health = health };
 
+        // 기능: VehicleStates 패킷 하나(ack 0, 30 Hz)를 상점에 적용한다.
+        // 입력: store - 대상 상점, tick - 패킷의 서버 Tick, now - 받은 시각(초), records - 패킷의 차량 레코드들.
+        // 출력: 적용했으면 true, 오래되었거나 너무 앞선 Tick이라 버렸으면 false.
         private static bool Apply(VehicleStore store, uint tick, float now, params VehicleRecord[] records) =>
             store.Apply(tick, 0, records, records.Length, now, SimHz);
 
@@ -284,6 +290,9 @@ namespace ProjectH.Client.Tests
             var model = new FootstepModel();
             float t = 0f;
             Num.Vector3 feet = Num.Vector3.Zero;
+            // 기능: 한 프레임(0.1 s)을 진행시키며 발을 step만큼 +X로 옮겨 플레이어 7의 발소리를 표본한다.
+            // 입력: seated - 탑승 중 여부, step - 이 프레임의 이동 거리(m).
+            // 출력: 발소리가 났으면 1, 아니면 0.
             int Sample(bool seated, float step)
             {
                 model.BeginFrame();

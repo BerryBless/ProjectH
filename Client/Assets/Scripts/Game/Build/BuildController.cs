@@ -57,6 +57,9 @@ namespace ProjectH.Client.Game
         public BuildPieceShape Candidate { get; private set; }
         public BuildPreviewState CandidateState { get; private set; }
         public int PendingCount => _pendingCount;
+        // 기능: i번째 대기 배치를 돌려준다(미리보기가 그린다).
+        // 입력: i - 0..PendingCount-1.
+        // 출력: 그 대기 배치.
         public PendingBuild PendingAt(int i) => _pending[i];
         // Debug (F1): requests sent, refusals heard, and the newest refusal's reason.
         public int Sent { get; private set; }
@@ -65,6 +68,9 @@ namespace ProjectH.Client.Game
         // Changes whenever the pending set does (views redraw only then).
         public int PendingVersion { get; private set; }
 
+        // 기능: 화면에 보일 재료 수를 낸다(request §107): 서버 수치에서 아직 답이 없는 대기 배치의 비용을 뺀다(Ok를 받은 것은 빼지 않는다).
+        // 입력: material - 재료.
+        // 출력: 0 이상의 보이는 수. 카탈로그가 없으면 서버 수치 그대로.
         // Wood, stone and metal as shown: the server's numbers minus what pending placements will cost.
         public int ShownResource(BuildMaterialType material)
         {
@@ -113,6 +119,9 @@ namespace ProjectH.Client.Game
             return true;
         }
 
+        // 기능: 서버보다 먼저 Client가 알 수 있는 것으로 후보를 판정한다: 사거리 밖, 자리 차지, 재료 부족.
+        // 입력: shape - 후보 모양, eye - 서버 기준 눈 위치, store - 확정 조각(null이면 자리 검사를 건너뛴다).
+        // 출력: 사거리 밖이거나 자리가 차 있으면 Invalid, 보이는 재료가 비용보다 적으면 NoResource, 아니면 Valid.
         // What the client can tell before the server: out of reach, taken, or not affordable.
         public BuildPreviewState Judge(in BuildPieceShape shape, Vector3 eye, BuildStore store)
         {
@@ -124,6 +133,10 @@ namespace ProjectH.Client.Game
             return ShownResource(Selection.Material) < cost ? BuildPreviewState.NoResource : BuildPreviewState.Valid;
         }
 
+        // 기능: 배치 요청의 BuildResult를 그 순번의 대기 배치에 반영한다.
+        // 입력: result - 서버 결과.
+        // 출력: 반환값 없음. 거절이면 Refused·LastRefusal이 갱신되고 대기 배치가 빠진다. Ok(조각 id 있음)면 확정 조각이 올 때까지
+        //   AcceptedId를 적어 두고 남긴다. 모르는 순번이면 대기 배치는 그대로다.
         // BuildResult: the pending placement with this sequence goes (an accepted one comes back as a confirmed piece).
         public void OnResult(in BuildResult result)
         {
@@ -158,6 +171,9 @@ namespace ProjectH.Client.Game
             Resources = default;
         }
 
+        // 기능: Ok를 받은 대기 배치 중 확정 조각이 저장소에 들어온 것을 뺀다(깜빡임 없이 확정 조각으로 바뀐다).
+        // 입력: store - 확정 조각 저장소(null이면 아무것도 하지 않는다).
+        // 출력: 반환값 없음. 뺀 것이 있으면 PendingVersion이 오른다.
         private void DropConfirmed(BuildStore store)
         {
             if (store == null) return;
@@ -167,6 +183,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 같은 모양의 배치가 이미 답을 기다리고 있는지 본다.
+        // 입력: shape - 후보 모양.
+        // 출력: 대기 중이면 true.
         private bool IsPending(in BuildPieceShape shape)
         {
             for (int i = 0; i < _pendingCount; i++)
@@ -176,6 +195,9 @@ namespace ProjectH.Client.Game
             return false;
         }
 
+        // 기능: 보낸 지 TimeoutSeconds가 지난 대기 배치를 뺀다(답이 오지 않은 경우).
+        // 입력: now - 현재 시각(초).
+        // 출력: 반환값 없음. 뺀 것이 있으면 PendingVersion이 오른다.
         private void Expire(float now)
         {
             for (int i = _pendingCount - 1; i >= 0; i--)
@@ -184,6 +206,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 대기 배치 하나를 뺀다(마지막 것을 그 자리로 옮긴다: 순서는 의미가 없다).
+        // 입력: i - 대기 배열의 위치.
+        // 출력: 반환값 없음. 대기 수가 하나 줄고 PendingVersion이 오른다.
         private void RemoveAt(int i)
         {
             _pending[i] = _pending[--_pendingCount];

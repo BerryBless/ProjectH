@@ -170,8 +170,8 @@ public sealed class HeadlessClient : IDisposable
     }
 
     // 기능: 이번 접속의 세션 키·blob·키를 만들고, Resume 키가 있으면 증명을 만든다.
-    // 입력: resume - Resume 표를 쓸지.
-    // 출력: 반환값 없음.
+    // 입력: resume - Resume 표를 쓸지(false면 표를 찾지도 만들지도 않는다).
+    // 출력: 반환값 없음. _keys·_keyBlob·_ticket이 새로 정해지고 증명을 만들었으면 _hasResume가 true가 된다.
     private void PrepareKeys(bool resume)
     {
         byte[] sessionKey;
@@ -233,6 +233,9 @@ public sealed class HeadlessClient : IDisposable
         _peer = _net.Connect("127.0.0.1", port, data);
     }
 
+    // 기능: Join 요청을 보낸다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. ReliableOrdered로 JoinMatchRequest 패킷 하나가 나간다.
     public void SendJoin()
     {
         var writer = new PacketWriter(_buffer);
@@ -240,11 +243,17 @@ public sealed class HeadlessClient : IDisposable
         _peer.Send(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 이동·조준 값으로 입력 하나를 만들어 보낸다.
+    // 입력: moveX·moveY - 이동 축, yaw - 바라보는 각도, buttons - 누른 버튼.
+    // 출력: 반환값 없음. 다음 Seq가 붙은 입력 패킷 하나가 나간다.
     public void SendMove(float moveX, float moveY, float yaw, InputButtons buttons = InputButtons.None)
     {
         SendInput(new InputCommand { MoveX = moveX, MoveY = moveY, Yaw = yaw, Buttons = buttons });
     }
 
+    // 기능: 입력 하나에 다음 Seq를 붙여 보낸다.
+    // 입력: command - 보낼 입력(Seq는 여기서 덮어쓴다).
+    // 출력: 반환값 없음. Unreliable 입력 패킷 하나가 나가고 _nextSeq가 1 는다.
     // Sends one input; Seq is assigned here.
     public void SendInput(InputCommand command)
     {
@@ -268,8 +277,14 @@ public sealed class HeadlessClient : IDisposable
         _peer.Send(writer.WrittenSpan, DeliveryMethod.Unreliable);
     }
 
+    // 기능: 바이트를 그대로 채널 0에 보낸다(잘못된 패킷 시험).
+    // 입력: data - 보낼 패킷 바이트.
+    // 출력: 반환값 없음. ReliableOrdered 패킷 하나가 나간다.
     public void SendRaw(byte[] data) => _peer.Send(data, DeliveryMethod.ReliableOrdered);
 
+    // 기능: 건설 요청을 건설 채널로 보낸다(Phase 13 D8).
+    // 입력: request - 건설 요청.
+    // 출력: 반환값 없음. 건설 채널에 ReliableOrdered 패킷 하나가 나간다.
     // Phase 13 D8: a build request on the building channel.
     public void SendBuild(in BuildRequest request)
     {
@@ -278,6 +293,9 @@ public sealed class HeadlessClient : IDisposable
         _peer.Send(writer.WrittenSpan, ProtocolConstants.BuildChannel, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 건설 편집 요청을 건설 채널로 보낸다(Phase 13.5 D4).
+    // 입력: request - 편집 요청.
+    // 출력: 반환값 없음. 건설 채널에 ReliableOrdered 패킷 하나가 나간다.
     // Phase 13.5 D4: an edit request on the building channel.
     public void SendBuildEdit(in BuildEditRequest request)
     {
@@ -288,7 +306,7 @@ public sealed class HeadlessClient : IDisposable
 
     // 기능: Phase 15: 지도 표시 요청을 채널 0으로 보낸다.
     // 입력: marker - 요청.
-    // 출력: 반환값 없음.
+    // 출력: 반환값 없음. 채널 0에 ReliableOrdered 패킷 하나가 나간다.
     public void SendMapMarker(in MapMarker marker)
     {
         var writer = new PacketWriter(_buffer);
@@ -296,6 +314,9 @@ public sealed class HeadlessClient : IDisposable
         _peer.Send(writer.WrittenSpan, ProtocolConstants.ReliableChannel, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 전적 조회 요청을 보낸다(Phase 11 D8).
+    // 입력: 없음.
+    // 출력: 반환값 없음. ReliableOrdered로 StatsRequest 패킷 하나가 나간다.
     public void SendStatsRequest()
     {
         var writer = new PacketWriter(_buffer);
@@ -303,6 +324,9 @@ public sealed class HeadlessClient : IDisposable
         _peer.Send(writer.WrittenSpan, DeliveryMethod.ReliableOrdered);
     }
 
+    // 기능: 쌓인 네트워크 이벤트를 이 스레드에서 처리한다(연결·끊김·수신 상태가 여기서 갱신된다).
+    // 입력: 없음.
+    // 출력: 반환값 없음. Connected·Disconnected·수신 목록이 갱신된다.
     public void Poll() => _net.PollEvents();
 
     // 기능: 서버에 끊는다고 알리고 연결을 닫는다(소켓은 열어 둔 채, 같은 로컬 포트로 다시 Connect할 수 있다).
@@ -310,14 +334,20 @@ public sealed class HeadlessClient : IDisposable
     // 출력: 반환값 없음.
     public void Leave() => _peer.Disconnect();
 
+    // 기능: 서버에 알리지 않고 소켓을 닫아 Client 크래시를 흉내 낸다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 소켓이 닫히고 서버는 Timeout으로만 끊김을 안다.
     // Simulates a crash: the socket closes without telling the server.
     public void Kill() => _net.Stop(false);
 
+    // 기능: 서버에 끊김을 알리고 소켓을 닫는다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 이 Client는 더 쓸 수 없다.
     public void Dispose() => _net.Stop();
 
     // 기능: 받은 서버 패킷을 테스트가 보는 목록에 기록한다(리뷰 수정 B4: Join 성공이면 이 서버·이름의 Resume 키를 바꾼다)(Phase 16: ContainerStates, SupplyDrops).
     // 입력: peer·reader·channel·method - LiteNetLib 수신 정보.
-    // 출력: 반환값 없음.
+    // 출력: 반환값 없음. 패킷 종류에 맞는 속성·목록이 갱신되고, 패킷 id를 읽지 못하면 무시한다.
     private void OnReceive(NetPeer peer, NetPacketReader reader, byte channel, DeliveryMethod method)
     {
         var r = new PacketReader(reader.GetRemainingBytesSpan());
@@ -444,6 +474,9 @@ public sealed class HeadlessClient : IDisposable
 
 public static class Pump
 {
+    // 기능: 주어진 Client들을 5ms마다 Poll하며 조건이 참이 될 때까지 기다린다(끝에 한 번 더 Poll하고 확인한다).
+    // 입력: condition - 기다릴 조건, timeoutMs - 제한 시간(ms), clients - Poll할 Client들.
+    // 출력: 제한 시간 안에(또는 마지막 확인에서) 조건이 참이면 true, 아니면 false.
     public static bool Until(Func<bool> condition, int timeoutMs, params HeadlessClient[] clients)
     {
         var clock = Stopwatch.StartNew();

@@ -22,9 +22,18 @@ public sealed class ListLogger : ILogger
         get { lock (_gate) return _entries.ToList(); }
     }
 
+    // 기능: 로그 범위를 열지 않는다(범위는 기록하지 않는다).
+    // 입력: state - 범위 상태(쓰지 않음).
+    // 출력: 항상 null.
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    // 기능: 모든 로그 수준을 켠 것으로 답한다.
+    // 입력: logLevel - 묻는 로그 수준(쓰지 않음).
+    // 출력: 항상 true.
     public bool IsEnabled(LogLevel logLevel) => true;
 
+    // 기능: 로그 항목을 수준과 형식화된 메시지로 목록에 기록한다.
+    // 입력: logLevel - 로그 수준, eventId - 이벤트 ID(쓰지 않음), state - 로그 상태, exception - 예외(없으면 null), formatter - 메시지 형식화 함수.
+    // 출력: 반환값 없음. Entries에 항목이 하나 늘어난다(Lock으로 보호).
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
     {
         lock (_gate) _entries.Add((logLevel, formatter(state, exception)));

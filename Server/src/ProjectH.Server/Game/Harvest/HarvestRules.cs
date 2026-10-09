@@ -10,10 +10,10 @@ namespace ProjectH.Server.Game.Harvest;
 // decides when to call them and sends the packets.
 public static class HarvestRules
 {
-    // D5: one input's tool keys. A weapon slot key (1-3) takes the weapons out (request §112: at once, whichever tool is
-    // in hand), F the harvest tool, Q build mode or, from build mode, back to the tool before it. When several are
-    // pressed together the slot key wins, then F. Changing tools cancels a reload (the weapon is put away). Returns true
-    // when the tool changed.
+    // 기능: 입력의 도구 키로 손에 든 도구를 바꾼다(D5): 무기 칸 키(1-3) → 무기, F → 채집 도구, Q → 건설 모드(건설 모드에서는 이전
+    //   도구로). 함께 눌리면 칸 키, 그다음 F가 이긴다. 도구가 바뀌면 재장전을 취소한다.
+    // 입력: player - 플레이어, buttons - 이번 입력에서 눌린 버튼.
+    // 출력: 도구가 바뀌었으면 true(Inventory.Tool·PreviousTool·Reloading이 바뀐다), 아니면 false.
     public static bool SelectTool(PlayerEntity player, InputButtons buttons)
     {
         var inventory = player.Inventory;
@@ -30,9 +30,11 @@ public static class HarvestRules
         return true;
     }
 
-    // D7: the first thing a swing from origin along direction (unit) meets within range: a standing harvestable (returns
-    // its id), or anything else in blockers (the map boxes, closed doors, other standing harvestables) or the terrain
-    // (returns -1). distance: where the ray met the harvestable. Allocates nothing.
+    // 기능: 채집 휘두르기가 사거리 안에서 처음 닿는 것을 찾는다(D7): 서 있는 채집물이면 그 id, 그보다 먼저 맵 상자·닫힌 문·지형이
+    //   막히면 없음. 할당 없음.
+    // 입력: origin - 시작점, direction - 단위 방향, range - 사거리, destroyed - 파괴된 채집물 비트 마스크, blockers - 막는 상자들
+    //   (채집물 포함), terrain - 지형 높이, distance - 결과.
+    // 출력: 맞힌 채집물 id(GameMap.Harvestables 색인)와 그 거리. 없거나 막히면 -1(distance는 range 또는 채집물까지 거리).
     public static int Trace(Vector3 origin, Vector3 direction, float range, ulong destroyed, ReadOnlySpan<Box> blockers, HeightField terrain,
         out float distance)
     {

@@ -13,7 +13,9 @@ namespace ProjectH.Client.Game
         private static Material s_source;
         private static bool s_warned;
 
-        // fallback: the primitive's own material, used only when the resource is missing (it still renders in the Editor).
+        // 기능: 런타임 Material의 복사 원본(Resources/ProjectHLit)을 돌려준다(한 번 읽어 보관; 없으면 경고를 한 번만 내고 fallback을 쓴다).
+        // 입력: fallback - Primitive 자체의 Material(리소스가 없을 때만 쓰며 Editor에서는 그대로 그려진다).
+        // 출력: 에셋 Material(복사해서 쓰고 파괴·변경하지 않는다), 리소스가 없으면 fallback.
         public static Material Source(Material fallback)
         {
             if (s_source == null) s_source = Resources.Load<Material>(ResourcePath);

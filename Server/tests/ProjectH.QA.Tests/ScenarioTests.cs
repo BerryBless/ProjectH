@@ -62,6 +62,9 @@ public class ScenarioValidatorTests
 {
     private static readonly ActionRegistry Registry = ActionRegistry.CreateDefault();
 
+    // 기능: 단계·Actor·추가 필드를 끼운 시나리오를 파싱한 뒤 QA_Combat_A 마커 하나로 검증한다.
+    // 입력: steps - steps 배열 JSON, actors - actors 배열 JSON, extra - 루트에 끼울 추가 필드 JSON.
+    // 출력: 검증 지적 목록. 파싱 오류가 있으면 Assert 실패.
     private static IReadOnlyList<ValidationIssue> Validate(string steps, string actors = """[ { "id": "playerA" } ]""", string extra = "")
     {
         ScenarioLoadResult r = ScenarioLoader.Parse($$"""{ "schemaVersion": 1, "name": "t", {{extra}} "actors": {{actors}}, "steps": {{steps}} }""");
@@ -70,6 +73,9 @@ public class ScenarioValidatorTests
         return ScenarioValidator.Validate(r.Scenario!, Registry, markers);
     }
 
+    // 기능: 지적 목록에 주어진 문구를 담은 오류가 있는지 검사한다.
+    // 입력: issues - 검증 지적 목록, text - 오류 메시지에 들어 있어야 하는 문구(대소문자 무시).
+    // 출력: 반환값 없음. 없으면 Assert 실패.
     private static void HasError(IReadOnlyList<ValidationIssue> issues, string text) =>
         Assert.Contains(issues, i => i.IsError && i.Message.Contains(text, StringComparison.OrdinalIgnoreCase));
 
@@ -209,8 +215,14 @@ public class VariablesTests
 
 public class ComparisonTests
 {
+    // 기능: 객체를 JsonElement로 직렬화한다.
+    // 입력: o - 직렬화할 값.
+    // 출력: 직렬화된 JsonElement.
     private static JsonElement J(object? o) => JsonSerializer.SerializeToElement(o);
 
+    // 기능: 비교 연산자를 기대값·실제값에 적용해 통과 여부만 본다.
+    // 입력: op - 연산자 이름, expected - 기대값, actual - 실제값(null이면 값 없음), tolerance - approximately의 허용 오차, hint - enum 비교용 타입.
+    // 출력: 비교가 통과하면 true.
     private static bool Eval(string op, object? expected, object? actual, object? tolerance = null, Type? hint = null) =>
         Comparison.Evaluate(op, J(expected), tolerance == null ? null : J(tolerance), actual == null ? null : J(actual), hint).Passed;
 

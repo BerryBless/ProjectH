@@ -55,6 +55,9 @@ public static partial class BaselineHistory
     [GeneratedRegex(@"[^A-Za-z0-9_\-]")]
     private static partial Regex Unsafe();
 
+    // 기능: 히스토리 줄에 기록할 시나리오 파일 표기를 만든다.
+    // 입력: repoRoot - 저장소 루트, scenarioPath - 시나리오 파일 경로.
+    // 출력: QA/Scenarios 아래면 '/' 구분의 상대 경로, 밖이면 절대 경로.
     // The scenario file as recorded in every history line: relative to QA/Scenarios with '/' ("Stress/load_bots_10.json"),
     // or the full path for a file outside QA/Scenarios.
     public static string ScenarioFile(string repoRoot, string scenarioPath)
@@ -64,6 +67,9 @@ public static partial class BaselineHistory
         return full.StartsWith(scenarios, StringComparison.OrdinalIgnoreCase) ? full[scenarios.Length..].Replace('\\', '/') : full;
     }
 
+    // 기능: 시나리오 파일의 히스토리 파일 키(읽을 수 있는 부분 + 경로 해시 8자)를 만든다.
+    // 입력: repoRoot - 저장소 루트, scenarioPath - 시나리오 파일 경로.
+    // 출력: 파일 이름으로 안전한 키 문자열(최대 110자 + "_" + 해시).
     // A readable part (the relative path without ".json", every other character '_') plus a hash of the path itself, so
     // two files whose readable parts collapse to the same text ("Stress/a.json", "Stress_a.json") never share a history
     // ("Stress/load_bots_10.json" -> "Stress_load_bots_10_<8 hex>"). Outside QA/Scenarios: "external_<name>_<hash>".
@@ -86,6 +92,9 @@ public static partial class BaselineHistory
         return readable + "_" + hash;
     }
 
+    // 기능: 파라미터 세트를 비교용 키로 만든다(같은 compact JSON이면 같은 세트).
+    // 입력: parameters - 실행에 쓴 파라미터 세트.
+    // 출력: 512자 이하면 compact JSON, 길면 "sha256:<해시>", 파라미터가 없으면 null.
     // Same parameter set = same canonical (compact) JSON; long sets compare by hash.
     public static string? ParametersKey(JsonElement? parameters)
     {
@@ -94,8 +103,14 @@ public static partial class BaselineHistory
         return text.Length <= 512 ? text : "sha256:" + Hash(text);
     }
 
+    // 기능: 텍스트의 SHA-256 해시를 구한다.
+    // 입력: text - 해시할 문자열.
+    // 출력: 소문자 16진수 64자.
     private static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
 
+    // 기능: 끝난 실행의 보고서에서 히스토리 한 줄(실행 정보·서버 지표·스트레스 지표·baselineValues 변수)을 만든다.
+    // 입력: report - 실행 보고서, scenario - 시나리오 정의, scenarioFile - ScenarioFile로 만든 파일 표기, variables - 실행이 끝났을 때의 변수.
+    // 출력: 기록할 HistoryEntry. 스칼라 값만 담고 문자열은 MaxStringValueChars로 자른다.
     public static HistoryEntry EntryFor(RunReport report, ScenarioDefinition scenario, string scenarioFile, IReadOnlyDictionary<string, JsonElement> variables)
     {
         var entry = new HistoryEntry
@@ -141,6 +156,9 @@ public static partial class BaselineHistory
         return entry;
     }
 
+    // 기능: 파일 락 아래에서 히스토리를 읽어 entry를 덧붙이고 마지막 MaxEntries줄만 남겨 임시 파일로 바꿔치기한다.
+    // 입력: historyDir - 히스토리 폴더, key - 시나리오 키, entry - 기록할 줄.
+    // 출력: 같은 파일·같은 파라미터 세트의 가장 최근 PASSED 항목(없으면 null)과 경고 문자열(락 실패·IO 오류·파일 재시작 시, 아니면 null). 예외는 던지지 않는다.
     // Appends `entry` to the scenario's history (keeping the last MaxEntries) and returns the latest earlier PASSED
     // entry with the same parameter set. Never throws: a failure is the warning.
     public static (HistoryEntry? Previous, string? Warning) Record(string historyDir, string key, HistoryEntry entry)
@@ -188,6 +206,9 @@ public static partial class BaselineHistory
         }
     }
 
+    // 기능: 히스토리 파일을 락 없이 읽어 파싱되는 줄만 모은다.
+    // 입력: historyDir - 히스토리 폴더, key - 시나리오 키.
+    // 출력: 항목 목록. 파일이 없거나 MaxFileBytes보다 크면 빈 목록.
     // Reads the history file without the lock (tests and tools): a reader may see the old or the new file, never half
     // of one, because writers replace it whole.
     public static IReadOnlyList<HistoryEntry> Read(string historyDir, string key)
@@ -197,6 +218,9 @@ public static partial class BaselineHistory
         return File.ReadAllLines(file, Encoding.UTF8).Select(Parse).Where(e => e != null).Select(e => e!).ToArray();
     }
 
+    // 기능: 히스토리 한 줄을 역직렬화한다.
+    // 입력: line - JSON 한 줄.
+    // 출력: HistoryEntry. 깨진 줄이면 null.
     private static HistoryEntry? Parse(string line)
     {
         try
@@ -209,6 +233,9 @@ public static partial class BaselineHistory
         }
     }
 
+    // 기능: .lock 파일을 FileShare.None으로 열어 OS 파일 락을 잡는다. 다른 프로세스가 쥐고 있으면 LockWait 동안 25ms 간격으로 재시도한다.
+    // 입력: path - 락 파일 경로.
+    // 출력: 잡았으면 열린 FileStream(Dispose가 해제), 제한 시간 안에 못 잡으면 null.
     private static FileStream? AcquireLock(string path)
     {
         var clock = Stopwatch.StartNew();
@@ -231,6 +258,9 @@ public static partial class BaselineHistory
         }
     }
 
+    // 기능: 이번 실행과 이전 PASSED 실행의 소요 시간·서버 지표·스트레스 지표·baselineValues를 행으로 비교한다.
+    // 입력: current - 이번 실행 항목, previous - 비교할 이전 항목(null이면 첫 기준), scenario - 시나리오 정의(경고 비율·임계값 판단).
+    // 출력: Baseline 보고서. 이전 항목이 없으면 Note만 채운다. 임계값 없는 지표가 WarnPercent보다 나빠지면 Warnings에 추가된다.
     // The report's Baseline table: every metric and saved value that both runs have. A metric with an explicit
     // threshold (an assert / waitFor on it) is judged by that step; one without is a Warning when it is worse (higher)
     // by more than warnPercent. Duration is shown but never warned about (it follows waits and timeouts).
@@ -273,6 +303,9 @@ public static partial class BaselineHistory
         return report;
     }
 
+    // 기능: 비교 행 하나를 보고서에 넣고, 경고 대상이면 변화율이 WarnPercent를 넘는지 판정한다.
+    // 입력: report - 채울 보고서, name - 지표 이름, before - 이전 값, now - 이번 값, threshold - 임계값 설명 텍스트, warn - 경고 판정 대상인지.
+    // 출력: 반환값 없음. 둘 다 null이면 아무것도 넣지 않고, 경고면 Rows와 Warnings에 추가된다.
     private static void AddRow(BaselineReport report, string name, double? before, double? now, string threshold, bool warn)
     {
         if (before == null && now == null) return;
@@ -283,11 +316,20 @@ public static partial class BaselineHistory
             report.Warnings.Add($"Baseline: {name} {Fmt(before)} -> {Fmt(now)} (+{change:0.#}%, more than {report.WarnPercent:0.#}% worse than run {report.PreviousRunId}). No threshold in the scenario, so this is a warning, not a failure (§136).");
     }
 
+    // 기능: 지표 값을 표시용 문자열로 만든다.
+    // 입력: v - 지표 값.
+    // 출력: 100 이상이면 소수 1자리, 아니면 3자리까지. null이면 "-".
     public static string Fmt(double? v) => v is double d ? d.ToString(Math.Abs(d) >= 100 ? "0.#" : "0.###", CultureInfo.InvariantCulture) : "-";
 
+    // 기능: 저장된 변수 값 중 유한한 숫자만 읽는다.
+    // 입력: values - 항목의 변수 사전, name - 변수 이름.
+    // 출력: 숫자 값. 없거나 숫자가 아니면 null.
     private static double? Number(Dictionary<string, JsonElement> values, string name) =>
         values.TryGetValue(name, out JsonElement v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out double d) && double.IsFinite(d) ? d : null;
 
+    // 기능: 시나리오에서 연산자로 검사되는 assert / waitFor의 경로와 그 단계의 saveAs("var.<이름>")를 모은다.
+    // 입력: scenario - 시나리오 정의.
+    // 출력: 자체 임계값이 있는 경로 집합(대소문자 무시).
     // Paths that an assert / waitFor checks with an operator, plus `var.<saveAs>` of an assert that saved its actual
     // value (the value already has its own threshold then).
     private static HashSet<string> ThresholdPaths(ScenarioDefinition scenario)

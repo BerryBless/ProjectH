@@ -21,6 +21,9 @@ public class BuildReplicationTests
     private readonly List<(int Peer, byte[] Data, bool BuildChannel)> _sent = new();
     private readonly Match _match;
 
+    // 기능: 일반 채널과 건설 채널로 보낸 패킷을 _sent에 모으는 8인 개발 모드 Match를 만든다.
+    // 입력: 없음.
+    // 출력: 참가자 없이 시작한 Match를 든 테스트 인스턴스.
     public BuildReplicationTests()
     {
         _match = new Match(new ServerOptions { MaxPlayers = 8, DevRespawn = true }, TestGameData.Create(),
@@ -28,6 +31,9 @@ public class BuildReplicationTests
             sendBuild: (peer, data, _) => _sent.Add((peer, data.ToArray(), true)));
     }
 
+    // 기능: 플레이어를 경기에 들여보내고 주어진 자리에 세운다(이동 이력도 그 자리로 맞춘다).
+    // 입력: peer - 연결 id, feet - 발 위치.
+    // 출력: 들어온 플레이어. 입장이 거절되면 테스트가 실패한다.
     private PlayerEntity Join(int peer, Vector3 feet)
     {
         Assert.Equal(JoinResult.Ok, _match.TryJoin(peer, "p" + peer));
@@ -46,6 +52,9 @@ public class BuildReplicationTests
         public int Resets;
         public int EditedRecords;
 
+        // 기능: 건설 채널 패킷 하나를 BuildStore가 하듯 거울에 적용한다(Sync·Events·Interest, 그 밖은 무시).
+        // 입력: data - 패킷 id를 포함한 바이트열.
+        // 출력: 반환값 없음. Pieces·Cells·Version과 계수기가 갱신된다. 읽기에 실패하거나 버전이 줄면 테스트가 실패한다.
         public void Apply(byte[] data)
         {
             var r = new PacketReader(data);
@@ -108,8 +117,14 @@ public class BuildReplicationTests
         }
     }
 
+    // 기능: 조각이 속한 관심 셀 번호를 구한다(건설 셀 4개 = 관심 셀 1개, 8 x 8).
+    // 입력: s - 조각 모양.
+    // 출력: 관심 셀 번호 0..63.
     private static int Cell(BuildPieceShape s) => s.X / 4 + 8 * (s.Z / 4);
 
+    // 기능: 한 Client가 건설 채널로 받은 패킷을 순서대로 Client의 실제 BuildStore에 적용한다(NetClient와 같은 방식).
+    // 입력: peer - 받는 연결 id.
+    // 출력: 그 패킷을 모두 적용한 새 BuildStore.
     // What NetClient does with the building stream, into the client's real store.
     private BuildStore StoreOf(int peer)
     {
@@ -118,6 +133,9 @@ public class BuildReplicationTests
         return store;
     }
 
+    // 기능: 건설 채널 패킷 하나를 Client BuildStore에 적용한다(Sync·Events·Interest, 그 밖은 무시).
+    // 입력: store - 적용할 저장소, data - 패킷 id를 포함한 바이트열.
+    // 출력: 반환값 없음. 저장소의 조각·관심 창이 갱신된다. 읽기에 실패하면 테스트가 실패한다.
     private static void ApplyToStore(BuildStore store, byte[] data)
     {
         var r = new PacketReader(data);
@@ -163,6 +181,9 @@ public class BuildReplicationTests
         }
     }
 
+    // 기능: 한 Client가 건설 채널로 받은 패킷을 순서대로 적용한 거울을 만든다.
+    // 입력: peer - 받는 연결 id.
+    // 출력: 그 Client가 들고 있을 조각·관심 창·버전을 담은 Mirror.
     private Mirror MirrorOf(int peer)
     {
         var m = new Mirror();
@@ -170,6 +191,9 @@ public class BuildReplicationTests
         return m;
     }
 
+    // 기능: 서버 격자에서 주어진 관심 셀 창 안의 조각을 모은다.
+    // 입력: cells - 관심 셀 비트 집합.
+    // 출력: 조각 id → 모양.
     // The server's pieces in a window of cells.
     private Dictionary<uint, BuildPieceShape> ServerPieces(ulong cells)
     {
@@ -184,6 +208,9 @@ public class BuildReplicationTests
         return result;
     }
 
+    // 기능: 한 Client의 거울과 실제 BuildStore가 서버의 관심 창·조각·모양·피해와 같은지 확인한다.
+    // 입력: peer - 확인할 연결 id.
+    // 출력: 반환값 없음. 창이나 조각이 하나라도 다르면 테스트가 실패한다.
     private void AssertMirrorMatches(int peer)
     {
         Mirror m = MirrorOf(peer);
@@ -206,6 +233,9 @@ public class BuildReplicationTests
         }
     }
 
+    // 기능: 서버 경기에 조각 하나를 바로 세운다(요청·검증 없이).
+    // 입력: x·y·z - 격자 칸, type - 조각 종류(기본 바닥), rotation - 회전(기본 0).
+    // 출력: 세운 조각의 id.
     private uint Add(int x, int y, int z, BuildPieceType type = BuildPieceType.Floor, int rotation = 0) =>
         SandboxHarness.AddPiece(_match, new BuildPieceShape(type, x, y, z, rotation));
 

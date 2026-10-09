@@ -23,6 +23,10 @@ public sealed class MatchFlow
     private readonly uint _countdownTicks;
     private readonly uint _resultTicks;
 
+    // 기능: 경기 상태 기계를 만든다.
+    // 입력: minPlayers - 시작에 필요한 플레이어 수(1 이상), countdownTicks - Starting 길이, resultTicks - Finished(결과 화면) 길이,
+    //   devRespawn - 개발 샌드박스(전환 없음, 피해·부활 항상 허용).
+    // 출력: WaitingForPlayers 상태, Round 1인 MatchFlow. minPlayers가 1보다 작으면 ArgumentOutOfRangeException.
     public MatchFlow(int minPlayers, uint countdownTicks, uint resultTicks, bool devRespawn)
     {
         if (minPlayers < 1) throw new ArgumentOutOfRangeException(nameof(minPlayers));
@@ -108,8 +112,10 @@ public sealed class MatchFlow
         else Enter(MatchFlowState.WaitingForPlayers, 0);
     }
 
-    // QA-1 (forceMatchState start): the countdown ends at `now` (the next Update starts the match). From
-    // WaitingForPlayers the countdown starts already over when enough players are here. False otherwise.
+    // 기능: 카운트다운을 now에 끝나게 한다(QA-1 forceMatchState start: 다음 Update가 경기를 시작한다). WaitingForPlayers에서는
+    //   플레이어가 충분하면 이미 끝난 카운트다운으로 들어간다.
+    // 입력: now - 마지막 Tick, playerCount - 연결된 플레이어 수.
+    // 출력: 바꿨으면 true. DevRespawn, 플레이어 부족, 다른 상태면 false.
     internal bool SkipCountdown(uint now, int playerCount)
     {
         if (DevRespawn || playerCount < MinPlayers) return false;
@@ -121,7 +127,9 @@ public sealed class MatchFlow
         return false;
     }
 
-    // The zone reached its last phase (D7).
+    // 기능: 자기장이 마지막 단계에 닿았음을 반영한다(D7).
+    // 입력: 없음.
+    // 출력: 반환값 없음. Playing이면 FinalPhase로 바뀐다(다른 상태면 그대로).
     public void EnterFinalPhase()
     {
         if (State == MatchFlowState.Playing) State = MatchFlowState.FinalPhase;
@@ -166,8 +174,8 @@ public sealed class MatchFlow
     }
 
     // 기능: Phase 14 D1: 경기 시작 Tick에 Match가 묶은 팀 수를 정한다(Update가 둔 Solo 값 대신).
-    // 입력: teams - 팀 수(1..참가자 수).
-    // 출력: 반환값 없음. Teams와 TeamsAlive가 바뀐다.
+    // 입력: teams - 팀 수(0..참가자 수로 자른다).
+    // 출력: 반환값 없음. 경기 중이면 Teams와 TeamsAlive가 그 값이 된다(경기 밖이면 그대로).
     public void SetTeams(int teams)
     {
         if (!InMatch) return;
@@ -178,13 +186,18 @@ public sealed class MatchFlow
     // Step 5 of Match.Tick (D9): one or no participant left. Phase 14 D6: one or no team left.
     public bool ShouldFinish => InMatch && TeamsAlive <= 1;
 
+    // 기능: 경기를 끝내고 결과 화면 시간을 시작한다.
+    // 입력: now - 마지막 Tick.
+    // 출력: 반환값 없음. 경기 중이면 Finished 상태가 되고 now + resultTicks에 끝난다(경기 밖이면 그대로).
     public void Finish(uint now)
     {
         if (!InMatch) return;
         Enter(MatchFlowState.Finished, now + _resultTicks);
     }
 
-    // The MatchState packet (D11). Before the match Alive and Participants are the connected count.
+    // 기능: MatchState 패킷 값을 만든다(D11). 경기 전·Closing에는 Alive와 Participants가 연결된 수다.
+    // 입력: playerCount - 연결된 플레이어 수.
+    // 출력: 상태·종료 Tick·생존·참가자·라운드·최소 인원을 담은 MatchState.
     public MatchState ToWire(int playerCount)
     {
         bool counting = State == MatchFlowState.WaitingForPlayers || State == MatchFlowState.Starting || State == MatchFlowState.Closing;
@@ -200,6 +213,9 @@ public sealed class MatchFlow
         };
     }
 
+    // 기능: 상태와 그 상태의 종료 Tick을 바꾼다.
+    // 입력: state - 새 상태, endTick - 상태가 끝나는 Tick(타이머가 없으면 0).
+    // 출력: 반환값 없음. State·StateEndTick이 바뀐다.
     private void Enter(MatchFlowState state, uint endTick)
     {
         State = state;

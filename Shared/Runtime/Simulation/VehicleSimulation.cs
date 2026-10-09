@@ -47,7 +47,7 @@ namespace ProjectH.Shared.Simulation
             Run(ref state, input, hasDriver, deltaTime, world.Boxes, world.BoxIds, world.Slopes, world.SlopeIds, terrain, out result);
         }
 
-        // 기능: 상자·경사면 목록으로 한 Tick을 계산한다(테스트용, 충돌체 이름은 Static i).
+        // 기능: 상자·경사면 목록으로 한 Tick을 계산한다(테스트용. 상자 이름은 Static i, 경사면 이름은 None).
         // 입력: state - 상태, input - 운전자 입력, hasDriver - 운전자 유무, deltaTime - Tick 길이, boxes·slopes - 충돌체, terrain - 지형.
         // 출력: 반환값 없음. state와 result가 채워진다.
         public static void Step(ref VehicleMove state, in InputCommand input, bool hasDriver, float deltaTime, ReadOnlySpan<Box> boxes,
@@ -57,7 +57,8 @@ namespace ProjectH.Shared.Simulation
         }
 
         // 기능: 속도·회전·이동을 계산하고 경계·경사·발자국 겹침이면 이동과 회전을 되돌리고 멈춘다(D2).
-        // 입력: state·input·hasDriver·deltaTime·terrain - Step과 같다, boxes·boxIds·slopes·slopeIds - 충돌체와 이름(이름이 없으면 Static i).
+        // 입력: state·input·hasDriver·deltaTime·terrain - Step과 같다, boxes·boxIds·slopes·slopeIds - 충돌체와 이름(상자 이름이 없으면 Static i,
+        //   경사면 이름이 없으면 None).
         // 출력: 반환값 없음. state와 result가 채워진다.
         private static void Run(ref VehicleMove state, in InputCommand input, bool hasDriver, float deltaTime, ReadOnlySpan<Box> boxes,
             ReadOnlySpan<ColliderId> boxIds, ReadOnlySpan<Slope> slopes, ReadOnlySpan<ColliderId> slopeIds, HeightField terrain,

@@ -35,6 +35,9 @@ namespace ProjectH.Shared.Protocol
         public byte Z;
         public byte Rotation;   // a wall's edge (0-3) or a ramp's direction (0-3)
 
+        // 기능: 건설 요청을 BuildRequest 패킷(id, 순번, 조각, 재료, 격자 x·y·z, 회전)으로 쓴다.
+        // 입력: writer - 쓸 곳, r - 요청.
+        // 출력: 반환값 없음. writer에 Size(9)바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in BuildRequest r)
         {
             writer.WriteByte((byte)PacketId.BuildRequest);
@@ -47,6 +50,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte(r.Rotation);
         }
 
+        // 기능: 건설 요청을 읽는다(PacketId 다음부터). 길이만 확인하고 값 검증은 서버(BuildRules)가 한다.
+        // 입력: reader - 남은 바이트가 정확히 8이어야 한다, r - 결과.
+        // 출력: 길이가 맞으면 true와 요청, 아니면 false.
         public static bool TryRead(ref PacketReader reader, out BuildRequest r)
         {
             r = default;
@@ -61,6 +67,9 @@ namespace ProjectH.Shared.Protocol
             return true;
         }
 
+        // 기능: 순번 a가 b보다 뒤인지 u16 순환 산술로 판단한다(서버의 중복 요청 걸러내기).
+        // 입력: a - 비교할 순번, b - 기준 순번.
+        // 출력: a가 b보다 1..32767만큼 앞서면 true, 같거나 뒤처지면 false.
         // Sequence a is after b (u16 serial number arithmetic: up to 32767 ahead).
         public static bool IsNewer(ushort a, ushort b)
         {
@@ -118,6 +127,9 @@ namespace ProjectH.Shared.Protocol
         public BuildResultCode Code;
         public uint PieceId;
 
+        // 기능: 건설·편집 요청의 결과를 BuildResult 패킷(id, 순번, 결과 코드, 조각 id)으로 쓴다.
+        // 입력: writer - 쓸 곳, r - 결과(거절이면 PieceId 0).
+        // 출력: 반환값 없음. writer에 Size(8)바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in BuildResult r)
         {
             writer.WriteByte((byte)PacketId.BuildResult);
@@ -126,6 +138,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt32(r.PieceId);
         }
 
+        // 기능: BuildResult 본문(PacketId 뒤)을 읽는다.
+        // 입력: reader - 본문, r - 결과.
+        // 출력: 성공하면 true와 결과. 짧거나, 코드가 NotFound보다 크거나, (Ok) == (PieceId != 0)이 깨지면 false.
         public static bool TryRead(ref PacketReader reader, out BuildResult r)
         {
             r = default;
@@ -154,6 +169,9 @@ namespace ProjectH.Shared.Protocol
         public uint CreatedTick;      // construction progress = (now - CreatedTick) / the material's construction ticks
         public ushort Damage;         // sync only (events carry it as Health records)
 
+        // 기능: Placed 기록(id, 격자 단어(x·z·y·회전·종류·재료·편집 상태), 주인, 생성 Tick)을 쓴다.
+        // 입력: writer - 쓸 곳, p - 조각 기록(Damage는 쓰지 않는다).
+        // 출력: 반환값 없음. writer에 PlacedSize(14)바이트가 쓰인다.
         public static void WritePlaced(ref PacketWriter writer, in BuildPieceRecord p)
         {
             writer.WriteUInt32(p.Id);
@@ -165,6 +183,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt32(p.CreatedTick);
         }
 
+        // 기능: Sync 기록(Placed 기록 뒤에 지금까지 받은 피해)을 쓴다.
+        // 입력: writer - 쓸 곳, p - 조각 기록.
+        // 출력: 반환값 없음. writer에 SyncSize(16)바이트가 쓰인다.
         public static void WriteSync(ref PacketWriter writer, in BuildPieceRecord p)
         {
             WritePlaced(ref writer, p);
@@ -200,6 +221,9 @@ namespace ProjectH.Shared.Protocol
             return true;
         }
 
+        // 기능: Sync 기록(Placed 기록 + 피해)을 읽는다.
+        // 입력: reader - 기록이 시작되는 곳, p - 결과.
+        // 출력: Placed 기록이 검증되고 피해 2바이트가 있으면 true와 기록, 아니면 false.
         public static bool TryReadSync(ref PacketReader reader, out BuildPieceRecord p)
         {
             if (!TryReadPlaced(ref reader, out p)) return false;
@@ -264,6 +288,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt16(state);
         }
 
+        // 기능: Health 기록 하나를 쓴다.
+        // 입력: writer - 쓸 곳, id - 조각 id, damage - 지금까지 받은 피해.
+        // 출력: 반환값 없음. writer에 6바이트가 쓰인다.
         public static void WriteHealth(ref PacketWriter writer, uint id, ushort damage)
         {
             writer.WriteUInt32(id);
@@ -308,6 +335,9 @@ namespace ProjectH.Shared.Protocol
             return reader.TryReadUInt32(out id) && reader.TryReadUInt16(out state) && id != 0 && (state >> (BuildEdit.RotationShift + 2)) == 0;
         }
 
+        // 기능: Health 기록 하나를 읽는다.
+        // 입력: reader - 기록이 시작되는 곳, id·damage - 결과.
+        // 출력: 6바이트가 읽혔고 id가 0이 아니면 true.
         public static bool TryReadHealth(ref PacketReader reader, out uint id, out ushort damage)
         {
             damage = 0;
@@ -342,6 +372,9 @@ namespace ProjectH.Shared.Protocol
         public const byte ResetFlag = 1;
         public const int MaxRecords = (ProtocolConstants.MaxPacketSize - HeaderSize) / BuildPieceRecord.SyncSize;   // 74
 
+        // 기능: BuildSync 헤더(id, 버전, 플래그, 기록 수)를 쓴다. 뒤에 count개의 Sync 기록이 따른다.
+        // 입력: writer - 쓸 곳, version - 경기의 건설 이벤트 수, reset - 받는 쪽이 가진 조각을 먼저 다 버릴지, count - 기록 수(MaxRecords 이하).
+        // 출력: 반환값 없음. writer에 HeaderSize(7)바이트가 쓰인다.
         public static void WriteHeader(ref PacketWriter writer, uint version, bool reset, int count)
         {
             writer.WriteByte((byte)PacketId.BuildSync);
@@ -350,6 +383,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte((byte)count);
         }
 
+        // 기능: BuildSync 헤더를 읽는다(PacketId 다음부터).
+        // 입력: reader - 패킷, version·reset·count - 결과.
+        // 출력: 헤더가 있고, 모르는 플래그가 없고, 기록 수가 MaxRecords 이하이며, 남은 길이가 정확히 count x 16이면 true.
         public static bool TryReadHeader(ref PacketReader reader, out uint version, out bool reset, out int count)
         {
             version = 0;
@@ -372,6 +408,9 @@ namespace ProjectH.Shared.Protocol
     {
         public const int Size = 9;   // with the packet id
 
+        // 기능: 관심 영역 칸 비트 마스크를 BuildInterest 패킷(id + 하위·상위 uint32)으로 쓴다.
+        // 입력: writer - 쓸 곳, cells - 비트 = cellX + 8 x cellZ.
+        // 출력: 반환값 없음. writer에 Size(9)바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, ulong cells)
         {
             writer.WriteByte((byte)PacketId.BuildInterest);
@@ -379,6 +418,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt32((uint)(cells >> 32));
         }
 
+        // 기능: BuildInterest 본문(PacketId 뒤)의 칸 마스크를 읽는다.
+        // 입력: reader - 본문, cells - 결과.
+        // 출력: 8바이트가 있으면 true와 마스크(값 검사는 없다), 짧으면 false.
         public static bool TryRead(ref PacketReader reader, out ulong cells)
         {
             cells = 0;
@@ -413,6 +455,9 @@ namespace ProjectH.Shared.Protocol
     {
         public const int Size = 49;
 
+        // 기능: 건설 카탈로그를 BuildCatalog 패킷(재료별 비용·체력·초기 체력·건설 Tick, 그 뒤 공통 값)으로 쓴다.
+        // 입력: writer - 쓸 곳, c - 서버의 건설 수치(배열은 재료 3종).
+        // 출력: 반환값 없음. writer에 Size(49)바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, BuildCatalogData c)
         {
             writer.WriteByte((byte)PacketId.BuildCatalog);
@@ -470,6 +515,9 @@ namespace ProjectH.Shared.Protocol
             return true;
         }
 
+        // 기능: 카탈로그의 거리·각도 값이 양수이고 터무니없이 크지 않은지 본다.
+        // 입력: value - 검사할 값.
+        // 출력: 0 초과 1000 미만이면 true(NaN·Infinity는 false).
         private static bool Positive(float value) => value > 0f && value < 1000f;   // also refuses NaN
     }
 }

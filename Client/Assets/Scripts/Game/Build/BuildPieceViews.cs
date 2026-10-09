@@ -59,6 +59,9 @@ namespace ProjectH.Client.Game
         private readonly Dictionary<GameObject, PieceView> _byRoot = new Dictionary<GameObject, PieceView>();
         private readonly Box[] _parts = new Box[BuildGrid.MaxPartsPerPiece];
 
+        // 기능: 조각 뷰의 뿌리 Object, 재료 3 × 피해 단계 3의 공유 Material, 종류별 풀을 만든다.
+        // 입력: meshes - 공유 Mesh(이 객체보다 오래 산다), source - 복사할 Lit Material.
+        // 출력: 조각이 없는 뷰 집합(Dispose가 Object와 Material을 파괴한다).
         public BuildPieceViews(PieceMeshes meshes, Material source)
         {
             _meshes = meshes;
@@ -79,6 +82,9 @@ namespace ProjectH.Client.Game
 
         public int Count => _active.Count;
 
+        // 기능: 저장소의 변경 목록(BuildStore.Changed, ClearChanged 전에 부른다)을 화면에 반영하고 짓는 중인 조각을 다시 그린다.
+        // 입력: store - 확정 조각 저장소, catalog - 건설 수치(null 가능), serverTick - 추정 서버 Tick.
+        // 출력: 반환값 없음. 추가·변경된 조각은 보이고, 사라진 조각은 풀로 돌아간다.
         public void Apply(BuildStore store, BuildCatalogData catalog, double serverTick)
         {
             if (_root == null) return;
@@ -92,6 +98,9 @@ namespace ProjectH.Client.Game
             Tick(store, catalog, serverTick);
         }
 
+        // 기능: 보이는 조각의 월드 위치(루트 = PivotOf)를 낸다(파괴 효과 위치).
+        // 입력: id - 조각 id, center - 결과.
+        // 출력: 보이는 조각이면 true와 위치, 아니면 false.
         // The world position of a shown piece (for a destruction effect), false when it is not shown.
         public bool TryGetCenter(uint id, out Vector3 center)
         {
@@ -116,6 +125,9 @@ namespace ProjectH.Client.Game
             return true;
         }
 
+        // 기능: 보이는 조각을 모두 풀로 돌려보낸다(경기 상태를 비울 때).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 활성·짓는 중 목록이 빈다.
         public void Clear()
         {
             _building.Clear();
@@ -135,6 +147,9 @@ namespace ProjectH.Client.Game
             _byRoot.Clear();
         }
 
+        // 기능: 짓는 중인 조각만 서버 Tick에 맞춰 다시 그린다(높이·피해 단계가 자란다).
+        // 입력: store - 확정 조각 저장소, catalog - 건설 수치(null 가능), serverTick - 추정 서버 Tick.
+        // 출력: 반환값 없음. 다 지었거나 사라진 조각은 짓는 중 목록에서 빠진다.
         private void Tick(BuildStore store, BuildCatalogData catalog, double serverTick)
         {
             for (int i = _building.Count - 1; i >= 0; i--)
@@ -241,6 +256,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 조각 하나를 화면에서 치우고 뷰를 풀로 돌려보낸다.
+        // 입력: id - 조각 id(보이지 않으면 아무것도 하지 않는다).
+        // 출력: 반환값 없음.
         private void Hide(uint id)
         {
             if (!_active.TryGetValue(id, out PieceView view)) return;
@@ -248,6 +266,9 @@ namespace ProjectH.Client.Game
             Release(view);
         }
 
+        // 기능: 짓는 중 목록에서 하나를 뺀다(마지막 것을 그 자리로 옮긴다: 순서는 의미가 없다).
+        // 입력: i - 목록의 위치.
+        // 출력: 반환값 없음.
         private void RemoveBuildingAt(int i)
         {
             int last = _building.Count - 1;

@@ -88,6 +88,9 @@ public sealed partial class Match
     internal ulong ContainerSpawnedMask => _containerSpawned;
     internal ulong ContainerOpenedMask => _containerOpened;
     internal int SupplyDropCount => _dropCount;
+    // 기능: Supply Drop 한 칸의 상태를 돌려준다(테스트·QA용).
+    // 입력: slot - Supply Drop 칸(0 ≤ slot < SupplyDropCount).
+    // 출력: 그 칸의 SupplyDropInfo 복사본.
     internal SupplyDropInfo SupplyDropAt(int slot) => _drops[slot];
     internal uint ZoneClockStart => _zoneClockStart;
 

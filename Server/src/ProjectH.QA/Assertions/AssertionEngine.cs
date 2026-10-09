@@ -30,14 +30,23 @@ public static class AssertionEngine
         ["activeSessions"] = new[] { new[] { "activeSessions" }, new[] { "sessions" } },
     };
 
+    // 기능: 경로의 값이 Protocol enum이면 그 타입을 알려준다(숫자와 이름 비교용).
+    // 입력: path - 검증 경로.
+    // 출력: enum Type, 해당 없으면 null.
     public static Type? EnumHint(string path) => s_enumPaths.TryGetValue(path, out Type? t) ? t : null;
 
+    // 기능: 경로의 루트가 단계의 actor를 요구하는지 본다(player, network, actor).
+    // 입력: path - 검증 경로.
+    // 출력: actor가 필요하면 true, 아니면 false.
     public static bool NeedsActor(string path)
     {
         string root = path.Split('.')[0];
         return root is "player" or "network" or "actor";
     }
 
+    // 기능: 경로의 루트가 아는 것이고 event·var·group 뒤에 이름이 있는지 검사한다.
+    // 입력: path - 검증 경로.
+    // 출력: 문제가 없으면 null, 아니면 오류 문장.
     public static string? CheckPath(string path)
     {
         string root = path.Split('.')[0];
@@ -165,6 +174,9 @@ public static class AssertionEngine
         }
     }
 
+    // 기능: build.* 경로를 GET /qa/build(at·radius 선택)로 푼다. build.exists·build.piece.*는 pieceId로 조각을 찾는다.
+    // 입력: rest - "build." 뒤의 경로 조각들, ctx - 단계 문맥(at, radius, pieceId), token - 취소 토큰.
+    // 출력: 그 경로의 JSON 값, 없으면 null. exists·piece에 pieceId가 없으면 QaStepException.
     private static async Task<JsonElement?> ResolveBuildAsync(string[] rest, StepContext ctx, CancellationToken token)
     {
         QaPosition? at = ctx.Position("at");
@@ -189,6 +201,9 @@ public static class AssertionEngine
         return JsonPath.Get(build, rest);
     }
 
+    // 기능: server.* 경로를 푼다(running은 /qa/health 응답 여부, health.*는 /qa/health, 그 외는 /qa/metrics(windowSeconds)이며 tickP95Ms·memoryMB 같은 별칭은 후보 경로를 차례로 찾고 activeSessions는 health로 대체).
+    // 입력: rest - "server." 뒤의 경로 조각들, ctx - 단계 문맥(windowSeconds), token - 취소 토큰.
+    // 출력: 그 경로의 JSON 값, 없으면 null. 필드가 없으면 QaStepException.
     private static async Task<JsonElement?> ResolveServerAsync(string[] rest, StepContext ctx, CancellationToken token)
     {
         RunContext run = ctx.Run;
@@ -238,6 +253,9 @@ public static class AssertionEngine
         return Flag("alive") ? "Alive" : "Dead";
     }
 
+    // 기능: enum 값(이름 문자열 또는 0-255 숫자)을 enum 이름으로 바꾼다.
+    // 입력: value - 서버가 보낸 값, enumType - 대상 enum 타입.
+    // 출력: 이름 문자열(문자열은 그대로, 모르는 숫자는 숫자 문자열, 그 외는 원문 JSON).
     private static string NameOf(JsonElement value, Type enumType)
     {
         if (value.ValueKind == JsonValueKind.String) return value.GetString()!;

@@ -24,11 +24,17 @@ public sealed class UdpFaultProxyTests
         public IPEndPoint Upstream = null!;   // the proxy's upstream endpoint as the server sees it
         private UdpFaultProxyCounters _baseline;
 
+        // 기능: 가짜 서버 소켓을 향하는 UdpFaultProxy를 만든다.
+        // 입력: seed - Proxy 난수 시드, maxQueued - 지연 큐 최대 길이.
+        // 출력: Proxy가 가짜 서버 끝점을 바라보는 Harness 객체(아직 워밍업 전).
         private Harness(int seed, int maxQueued)
         {
             Proxy = new UdpFaultProxy((IPEndPoint)Server.Client.LocalEndPoint!, seed, maxQueued);
         }
 
+        // 기능: Harness를 만들고 네 방향 UDP 흐름을 워밍업한다. 워밍업에 실패하면 자원을 해제하고 예외를 다시 던진다.
+        // 입력: seed - Proxy 난수 시드, maxQueued - 지연 큐 최대 길이.
+        // 출력: 워밍업을 마치고 Counters 기준점이 잡힌 Harness.
         public static async Task<Harness> CreateAsync(int seed = 1, int maxQueued = UdpFaultProxy.DefaultMaxQueuedDatagrams)
         {
             var h = new Harness(seed, maxQueued);
@@ -44,6 +50,9 @@ public sealed class UdpFaultProxyTests
             return h;
         }
 
+        // 기능: 서버와 클라이언트 양쪽으로 워밍업 Datagram이 도달할 때까지 보내고, 남은 것을 비운 뒤 Counters 기준점을 기록한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Upstream 끝점과 _baseline이 설정된다. 40회 안에 도달하지 못하면 TimeoutException.
         private async Task WarmUpAsync()
         {
             for (int i = 0; ; i++)
@@ -86,16 +95,28 @@ public sealed class UdpFaultProxyTests
             }
         }
 
+        // 기능: 클라이언트 소켓에서 Proxy의 수신 끝점으로 Datagram을 보낸다.
+        // 입력: data - 보낼 바이트.
+        // 출력: 반환값 없음. Proxy를 거쳐 서버 소켓으로 전달될 Datagram이 송신된다.
         public Task SendToServerAsync(byte[] data) => Client.SendAsync(data, data.Length, Proxy.ListenEndPoint);
 
+        // 기능: 서버 소켓에서 Proxy의 Upstream 끝점으로 Datagram을 보낸다.
+        // 입력: data - 보낼 바이트.
+        // 출력: 반환값 없음. Proxy를 거쳐 클라이언트 소켓으로 전달될 Datagram이 송신된다.
         public Task SendToClientAsync(byte[] data) => Server.SendAsync(data, data.Length, Upstream);
 
+        // 기능: 소켓에 도착해 있는 Datagram을 모두 읽어 버린다.
+        // 입력: udp - 비울 UDP 소켓.
+        // 출력: 반환값 없음. 소켓 수신 버퍼가 비워진다.
         private static void Drain(UdpClient udp)
         {
             IPEndPoint? any = null;
             while (udp.Available > 0) udp.Receive(ref any);
         }
 
+        // 기능: Proxy를 멈추고 서버·클라이언트 소켓을 닫는다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Proxy와 두 소켓이 해제된다.
         public async ValueTask DisposeAsync()
         {
             await Proxy.DisposeAsync();
@@ -104,6 +125,9 @@ public sealed class UdpFaultProxyTests
         }
     }
 
+    // 기능: 제한 시간 안에 소켓에서 Datagram 하나를 받는다.
+    // 입력: udp - 수신할 UDP 소켓, timeout - 대기 시간.
+    // 출력: 받은 Datagram. 제한 시간 안에 오지 않으면 null.
     private static async Task<UdpReceiveResult?> TryReceiveAsync(UdpClient udp, TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);
@@ -117,6 +141,9 @@ public sealed class UdpFaultProxyTests
         }
     }
 
+    // 기능: 조건이 참이 될 때까지 10 ms 간격으로 기다린다.
+    // 입력: condition - 기다릴 조건, timeout - 최대 대기 시간.
+    // 출력: 반환값 없음. 제한 시간을 넘기면 TimeoutException.
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {
         var clock = Stopwatch.StartNew();
@@ -327,6 +354,9 @@ public sealed class UdpFaultProxyTests
         Assert.InRange(first.Count, 1, 99);
     }
 
+    // 기능: 손실 50 %인 Proxy로 0~99 번호 Datagram 100개를 보내고 서버에 도착한 번호를 모은다.
+    // 입력: seed - Proxy 난수 시드.
+    // 출력: 도착한 Datagram 번호를 오름차순으로 정렬한 목록.
     private static async Task<List<int>> ArrivalsWithLossAsync(int seed)
     {
         const int count = 100;

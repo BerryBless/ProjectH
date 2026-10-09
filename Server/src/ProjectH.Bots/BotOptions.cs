@@ -97,6 +97,9 @@ public sealed class BotOptions
         return error == null;
     }
 
+    // 기능: 문자열 값을 그대로 넘긴다.
+    // 입력: value - 명령줄 값, set - 받을 곳.
+    // 출력: 항상 true.
     private static bool Set(string value, Action<string> set)
     {
         set(value);
@@ -123,6 +126,9 @@ public sealed class BotOptions
         }
     }
 
+    // 기능: 문자열을 bool로 읽어 넘긴다.
+    // 입력: value - 명령줄 값("true"/"false"), set - 받을 곳.
+    // 출력: 읽혔으면 true, 아니면 false(set은 부르지 않는다).
     private static bool SetBool(string value, Action<bool> set)
     {
         if (!bool.TryParse(value, out bool parsed)) return false;
@@ -130,6 +136,9 @@ public sealed class BotOptions
         return true;
     }
 
+    // 기능: 문자열을 정수(불변 문화권)로 읽어 넘긴다.
+    // 입력: value - 명령줄 값, set - 받을 곳.
+    // 출력: 읽혔으면 true, 아니면 false(set은 부르지 않는다).
     private static bool SetInt(string value, Action<int> set)
     {
         if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed)) return false;
@@ -154,6 +163,8 @@ public sealed class BotOptions
         }
     }
 
-    // DevPlayerId of bot i (0-based): "bot-001". Within ProtocolConstants.MaxDevPlayerIdBytes.
+    // 기능: 봇 번호의 DevPlayerId를 만든다("bot-001" 꼴, Validate가 ProtocolConstants.MaxDevPlayerIdBytes 안임을 확인한다).
+    // 입력: index - 봇 번호(0부터).
+    // 출력: "{NamePrefix}-{번호+1:000}" 이름.
     public string BotName(int index) => $"{NamePrefix}-{index + 1:000}";
 }

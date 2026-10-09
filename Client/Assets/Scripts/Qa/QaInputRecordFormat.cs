@@ -19,6 +19,9 @@ namespace ProjectH.Client.Qa
         // D29: at most 30 minutes at 30 Hz, counted in input lines (the header is not counted).
         public const int MaxInputLines = 54000;
 
+        // 기능: 녹화 파일의 첫 줄(header: version, simHz, devPlayerId)을 JSON Lines 한 줄로 쓴다.
+        // 입력: sb - 이어 쓸 StringBuilder, simHz - 시뮬레이션 Hz, devPlayerId - 녹화한 플레이어 이름.
+        // 출력: 반환값 없음. sb 끝에 header 객체와 줄바꿈이 붙는다.
         public static void AppendHeader(StringBuilder sb, int simHz, string devPlayerId)
         {
             sb.Append("{\"type\":\"header\",\"version\":");
@@ -30,8 +33,15 @@ namespace ProjectH.Client.Qa
             sb.Append("}\n");
         }
 
+        // 기능: 파일 안 몇 번째 단계인지로 녹화 시계의 초를 구한다.
+        // 입력: stepIndex - 0부터 세는 단계 번호, simHz - 시뮬레이션 Hz.
+        // 출력: stepIndex / simHz 초. simHz가 0 이하면 0.
         public static double StepTime(long stepIndex, int simHz) => simHz > 0 ? (double)stepIndex / simHz : 0.0;
 
+        // 기능: 시뮬레이션 단계 하나의 입력을 JSON Lines 한 줄로 쓴다(t 5자리, 나머지 4자리 고정소수).
+        // 입력: sb - 이어 쓸 StringBuilder, t - 녹화 시계 초, moveX·moveY - 이동 축, yaw - 이동 Yaw(도), buttons - InputButtons 비트,
+        //   aimYaw·aimPitch - 조준 각(도).
+        // 출력: 반환값 없음. sb 끝에 입력 객체와 줄바꿈이 붙는다.
         public static void AppendInput(StringBuilder sb, double t, float moveX, float moveY, float yaw, int buttons, float aimYaw,
             float aimPitch)
         {

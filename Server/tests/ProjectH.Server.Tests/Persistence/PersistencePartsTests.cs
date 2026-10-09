@@ -7,6 +7,9 @@ namespace ProjectH.Server.Tests.Persistence;
 // Phase 9 D6-D8: the queue between the game loop and the writer, and the options.
 public class PersistencePartsTests
 {
+    // 기능: 참가자도 우승자도 없는 빈 경기 기록을 만든다.
+    // 입력: round - 라운드 번호.
+    // 출력: 지금 시작해 지금 끝난 MatchRecord.
     private static MatchRecord Record(int round) => new(round, DateTime.UtcNow, DateTime.UtcNow, null, Array.Empty<PlayerRecord>());
 
     [Fact]

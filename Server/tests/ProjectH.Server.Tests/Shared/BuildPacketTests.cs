@@ -12,6 +12,9 @@ public class BuildPacketTests
 {
     private readonly byte[] _buffer = new byte[ProtocolConstants.MaxPacketSize];
 
+    // 기능: 테스트 버퍼의 앞 length 바이트로 Reader를 만들고 Packet Id가 expected인지 확인한 뒤 Id 다음 위치의 Reader를 돌려준다.
+    // 입력: length - 버퍼에 쓰인 바이트 수, expected - 기대하는 Packet Id.
+    // 출력: Packet Id를 읽은 뒤의 PacketReader. Id가 다르면 Assert 실패.
     private PacketReader After(int length, PacketId expected)
     {
         var reader = new PacketReader(new ReadOnlySpan<byte>(_buffer, 0, length));
@@ -20,6 +23,9 @@ public class BuildPacketTests
         return reader;
     }
 
+    // 기능: 테스트용 건설 조각 Record를 만든다 (Owner 77, CreatedTick 123456, Damage 40 고정).
+    // 입력: id - 조각 ID, type - 조각 종류, x/y/z - 격자 좌표, rotation - 회전, material - 재질.
+    // 출력: 지정한 모양·재질과 고정 소유자·생성 Tick·피해량을 가진 BuildPieceRecord.
     private static BuildPieceRecord Piece(uint id, BuildPieceType type, int x, int y, int z, int rotation, BuildMaterialType material) =>
         new() { Id = id, Shape = new BuildPieceShape(type, x, y, z, rotation), Material = material, Owner = 77, CreatedTick = 123456, Damage = 40 };
 

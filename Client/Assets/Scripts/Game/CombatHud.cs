@@ -173,6 +173,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: HUD 전체를 보이거나 숨긴다(같은 값이면 아무것도 하지 않는다).
+        // 입력: visible - 보일지 여부.
+        // 출력: 반환값 없음. 캔버스 Root의 활성 상태가 바뀐다.
         public void SetVisible(bool visible)
         {
             // Unity null: the root can be destroyed on teardown before the owner's OnDestroy runs this.
@@ -181,6 +184,9 @@ namespace ProjectH.Client.Game
             _root.SetActive(visible);
         }
 
+        // 기능: 체력·실드 줄을 값이 바뀔 때만 다시 만든다.
+        // 입력: health - 현재 체력, shield - 현재 실드.
+        // 출력: 반환값 없음. 왼쪽 아래 Vitals 문자열이 갱신된다.
         public void SetVitals(int health, int shield)
         {
             if (_root == null || (health == _health && shield == _shield)) return;
@@ -209,6 +215,9 @@ namespace ProjectH.Client.Game
             _weapon.text = ammoName == null ? line : line + "  " + ammoName;
         }
 
+        // 기능: 무기 줄을 비운다(이미 비어 있으면 아무것도 하지 않는다).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 무기 이름 기억과 오른쪽 아래 문자열이 지워진다.
         public void ClearWeapon()
         {
             if (_root == null || _weaponName == null) return;
@@ -216,8 +225,9 @@ namespace ProjectH.Client.Game
             _weapon.text = string.Empty;
         }
 
-        // Phase 12 D14: energy 0..1; hidden when full and not sprinting. Exhausted (no sprint until 20) shows orange. The
-        // bar only changes size when a whole pixel changes.
+        // 기능: 에너지 막대를 보이거나 숨기고 채움 폭·색을 갱신한다(Phase 12 D14; 폭은 픽셀 단위로 바뀔 때만, 탈진이면 주황).
+        // 입력: fraction - 에너지 비율(0..1), visible - 막대를 보일지(가득 차고 달리지 않으면 숨김), exhausted - 탈진 상태(20까지 달리기 불가).
+        // 출력: 반환값 없음. 막대의 활성·크기·색이 바뀐다.
         public void SetEnergy(float fraction, bool visible, bool exhausted)
         {
             if (_root == null) return;
@@ -236,7 +246,9 @@ namespace ProjectH.Client.Game
             }
         }
 
-        // Phase 12 D14: one of UiText's constant hints, or null. Set only when the reference changes.
+        // 기능: 가운데 아래의 안내 줄을 참조가 바뀔 때만 바꾼다(Phase 12 D14).
+        // 입력: hint - UiText의 상수 안내 문자열, 없으면 null(줄을 비움).
+        // 출력: 반환값 없음. 안내 문자열이 갱신된다.
         public void SetHint(string hint)
         {
             if (_root == null || ReferenceEquals(hint, _hintText)) return;
@@ -244,7 +256,9 @@ namespace ProjectH.Client.Game
             _hint.text = hint ?? string.Empty;
         }
 
-        // HitConfirmed: white cross, red on a kill.
+        // 기능: 명중 표시(HitConfirmed)를 HitMarkerSeconds 동안 켠다(흰 십자, 처치면 빨강).
+        // 입력: killed - 처치했는지, now - 현재 로컬 시간(초).
+        // 출력: 반환값 없음. 명중 표시가 켜지고 숨길 시각이 기록된다.
         public void ShowHit(bool killed, float now)
         {
             if (_root == null) return;
@@ -254,7 +268,9 @@ namespace ProjectH.Client.Game
             _hitHideTime = now + HitMarkerSeconds;
         }
 
-        // DamageTaken: a bar around the crosshair pointing to where the shot came from.
+        // 기능: 피격 방향 표시(DamageTaken)를 DamageIndicatorSeconds 동안 켠다(조준선 둘레의 막대가 공격자 쪽을 가리킴).
+        // 입력: fromDirection - 공격자 쪽 월드 방향(수평 성분이 거의 0이면 무시), now - 현재 로컬 시간(초).
+        // 출력: 반환값 없음. 공격자 yaw와 숨길 시각이 기록되고 표시가 켜진다.
         public void ShowDamage(Vector3 fromDirection, float now)
         {
             if (_root == null) return;
@@ -264,12 +280,18 @@ namespace ProjectH.Client.Game
             _damageHideTime = now + DamageIndicatorSeconds;
         }
 
+        // 기능: 사망 카운트다운을 시작한다(표시용 RespawnSeconds 뒤 부활; 실제 시각은 서버가 정한다).
+        // 입력: now - 현재 로컬 시간(초).
+        // 출력: 반환값 없음. 부활 예정 시각이 기록되고 Tick이 가운데 문자열을 갱신하기 시작한다.
         public void ShowDeath(float now)
         {
             _respawnAt = now + RespawnSeconds;
             _countdown = -1;
         }
 
+        // 기능: 사망 카운트다운을 끝내고 가운데 문자열을 비운다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 부활 예정 시각이 지워진다.
         public void HideDeath()
         {
             _respawnAt = -1f;
@@ -277,7 +299,9 @@ namespace ProjectH.Client.Game
             if (_center != null) _center.text = string.Empty;
         }
 
-        // Once per frame (LateUpdate, after the camera): timers, indicator direction, countdown.
+        // 기능: 프레임마다(LateUpdate, 카메라 뒤) 명중·피격 표시 시간 만료, 피격 막대 방향, 사망 카운트다운 문자열을 갱신한다.
+        // 입력: cameraYaw - 카메라 yaw(도), now - 현재 로컬 시간(초).
+        // 출력: 반환값 없음. 표시의 활성·위치·회전과 카운트다운 문자열이 바뀐다.
         public void Tick(float cameraYaw, float now)
         {
             if (_root == null) return;
@@ -309,11 +333,17 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: HUD 캔버스를 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Root와 그 아래 모든 UI 객체가 파괴된다.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);
         }
 
+        // 기능: 캔버스 Root 아래에 평문 UGUI Text 하나를 만든다(Raycast 대상 아님, 가로 Overflow).
+        // 입력: name - 객체 이름, font - 사용할 폰트, anchor - 앵커이자 피벗(0..1), offset - 앵커 기준 위치, alignment - 글자 정렬.
+        // 출력: 빈 문자열로 초기화된 Text.
         private Text CreateText(string name, Font font, Vector2 anchor, Vector2 offset, TextAnchor alignment)
         {
             var go = new GameObject(name, typeof(RectTransform));
@@ -337,6 +367,9 @@ namespace ProjectH.Client.Game
             return text;
         }
 
+        // 기능: 부모 아래에 Sprite 없는 단색 사각형 Image 하나를 만든다(Raycast 대상 아님).
+        // 입력: parent - 부모 RectTransform, offset - 앵커 기준 위치, size - 크기, angle - Z 회전(도).
+        // 출력: 만든 Image(색은 호출자가 정한다).
         private static Image CreateBar(RectTransform parent, Vector2 offset, Vector2 size, float angle)
         {
             var go = new GameObject("Bar", typeof(RectTransform));

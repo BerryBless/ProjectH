@@ -98,5 +98,8 @@ public sealed class StepDefinition
     public string? Description { get; init; }
     public IReadOnlyDictionary<string, JsonElement> Params { get; init; } = new Dictionary<string, JsonElement>();
 
+    // 기능: 단계에 이 이름의 파라미터가 적혀 있는지 확인한다.
+    // 입력: name - 파라미터 이름(대소문자 구분).
+    // 출력: 있으면 true.
     public bool Has(string name) => Params.ContainsKey(name);
 }

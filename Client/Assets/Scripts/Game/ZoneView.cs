@@ -41,6 +41,9 @@ namespace ProjectH.Client.Game
         private float _drawnZ;
         private float _drawnRadius;
 
+        // 기능: 원 둘레 표, 선 Material 2개, 벽 Material(Sprites/Default, 없으면 Lit 대체), LineRenderer 2개, 벽 통 Mesh와 벽 Object를 만든다(숨긴 채).
+        // 입력: 없음.
+        // 출력: 존이 없고 숨겨진 ZoneView(Dispose가 해제한다).
         public ZoneView()
         {
             for (int i = 0; i < Segments; i++)
@@ -91,7 +94,9 @@ namespace ProjectH.Client.Game
             _root.SetActive(false);
         }
 
-        // A new ZoneState (phase change, join). Phase 0 = no zone: nothing is drawn.
+        // 기능: 새 ZoneState(Phase 변화, 입장)를 받아 목표 원을 그리고 보이기를 정한다. Phase 0은 존 없음: 아무것도 그리지 않는다.
+        // 입력: zone - 서버 ZoneState.
+        // 출력: 반환값 없음. 목표 원이 다시 그려지고 현재 원은 다음 Tick에 다시 그린다.
         public void SetZone(in ZoneState zone)
         {
             if (_root == null) return;
@@ -103,6 +108,9 @@ namespace ProjectH.Client.Game
             DrawCircle(_target, zone.ToX, zone.ToZ, zone.ToRadius);
         }
 
+        // 기능: 존을 잊고 모두 숨긴다(끊김).
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void Clear()
         {
             if (_root == null) return;
@@ -111,8 +119,9 @@ namespace ProjectH.Client.Game
             _root.SetActive(false);
         }
 
-        // Once per frame with the estimated server tick. The circle points and the wall scale change only while the
-        // circle moves (during a shrink).
+        // 기능: 매 프레임 추정 서버 Tick의 현재 원을 그리고 벽의 위치·크기를 맞춘다. 원이 움직일 때(축소 중)만 바뀐다.
+        // 입력: serverTick - 추정 서버 Tick.
+        // 출력: 반환값 없음. 보이지 않으면 아무것도 하지 않는다.
         public void Tick(double serverTick)
         {
             if (!_visible || _root == null) return;
@@ -131,6 +140,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 뿌리 Object(선·벽 포함), 통 Mesh, Material 3개를 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);
@@ -140,6 +152,9 @@ namespace ProjectH.Client.Game
             if (_wallMaterial != null) Object.Destroy(_wallMaterial);
         }
 
+        // 기능: 원 둘레 점들을 지형 높이 위에 놓아 선에 쓴다. 반지름이 MinWallRadius 이하면 선을 끈다(점으로 뭉치지 않게).
+        // 입력: line - 그릴 LineRenderer, x·z - 원 중심, radius - 반지름.
+        // 출력: 반환값 없음. 할당 없음(점 배열 재사용).
         private void DrawCircle(LineRenderer line, float x, float z, float radius)
         {
             // Phase 6 spec interpretation 10: on the terrain, so the line is not buried in a hill.
@@ -155,6 +170,9 @@ namespace ProjectH.Client.Game
             line.enabled = radius > MinWallRadius;
         }
 
+        // 기능: 닫힌 원 LineRenderer 하나를 뿌리 아래에 만든다(월드 좌표, Segments개 점, 그림자 없음).
+        // 입력: name - Object 이름, material - 공유 Material.
+        // 출력: 만든 LineRenderer.
         private LineRenderer CreateLine(string name, Material material)
         {
             var go = new GameObject(name);
@@ -171,7 +189,9 @@ namespace ProjectH.Client.Game
             return line;
         }
 
-        // Radius 1, height 1, open at both ends.
+        // 기능: 반지름 1, 높이 1, 양 끝이 뚫린 통 Mesh를 만든다(벽: Transform 크기로 늘린다).
+        // 입력: 없음.
+        // 출력: 새 Mesh(Dispose가 파괴한다).
         private static Mesh BuildTube()
         {
             var vertices = new Vector3[(Segments + 1) * 2];
@@ -201,8 +221,9 @@ namespace ProjectH.Client.Game
             return mesh;
         }
 
-        // Fallback only (Sprites/Default missing). URP Lit surface options set from code: alpha blended, no depth
-        // write, both faces. Works in the Editor; in a build the transparent variant may be stripped.
+        // 기능: URP Lit Material을 코드로 알파 블렌드·깊이 쓰기 없음·양면으로 바꾼다(Sprites/Default가 없을 때의 대체).
+        // 입력: material - 바꿀 Lit Material.
+        // 출력: 반환값 없음. Editor에서는 투명하게 보이나 빌드에서는 투명 변형이 제거되어 불투명할 수 있다.
         private static void MakeTransparentTwoSided(Material material)
         {
             material.SetFloat("_Surface", 1f);

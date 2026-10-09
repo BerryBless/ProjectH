@@ -12,6 +12,9 @@ namespace ProjectH.Server.Tests.Qa;
 // QA-3: the parent watch (no orphan server) and the database numbers the fault scenarios read.
 public sealed class QaFaultSupportTests
 {
+    // 기능: 짧은 프로세스(dotnet --version)를 끝까지 돌려 이미 끝난 프로세스의 id를 얻는다.
+    // 입력: 없음.
+    // 출력: 종료된 프로세스의 id.
     private static int ExitedProcessId()
     {
         using var process = Process.Start(new ProcessStartInfo("dotnet", "--version")

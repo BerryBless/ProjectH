@@ -14,6 +14,9 @@ namespace ProjectH.Server.Tests.Integration;
 // answer whose connection left. The database itself is in MySqlTests and StatsQueryTests.
 public sealed class StatsQueryIntegrationTests
 {
+    // 기능: 전적 조회 큐를 단 4인 실제 UDP 서버를 포트 0에 띄운다.
+    // 입력: queue - 서버가 요청을 넣고 답을 꺼낼 전적 조회 큐.
+    // 출력: 스레드가 시작된 GameLoop(호출자가 Dispose한다).
     private static GameLoop StartServer(StatsQueryQueue queue)
     {
         var loop = new GameLoop(new ServerOptions
@@ -27,6 +30,9 @@ public sealed class StatsQueryIntegrationTests
         return loop;
     }
 
+    // 기능: 큐를 읽는 StatsQueryService를 만들어 동기로 시작한다.
+    // 입력: queue - 읽을 전적 조회 큐, options - 영속 설정(null = 영속 끔: 모든 요청이 바로 Unavailable).
+    // 출력: 시작된 StatsQueryService(호출자가 Stop으로 끝낸다).
     // Persistence off: every request is answered Unavailable at once.
     internal static StatsQueryService StartService(StatsQueryQueue queue, PersistenceOptions? options = null)
     {
@@ -36,6 +42,9 @@ public sealed class StatsQueryIntegrationTests
         return service;
     }
 
+    // 기능: StatsQueryService를 동기로 멈추고 해제한다.
+    // 입력: service - 멈출 서비스.
+    // 출력: 반환값 없음. 서비스의 작업이 끝나고 자원이 해제된다.
     internal static void Stop(StatsQueryService service)
     {
         service.StopAsync(CancellationToken.None).GetAwaiter().GetResult();

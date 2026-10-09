@@ -44,6 +44,9 @@ namespace ProjectH.Client.Game
         public Mesh RoofSlope { get; }
         public int CachedCount => _edited.Count;
 
+        // 기능: 편집하지 않은 조각 종류의 공유 Mesh를 낸다.
+        // 입력: type - 조각 종류.
+        // 출력: 경사로는 Ramp, 지붕은 Roof, 벽·바닥은 Box.
         public Mesh MeshOf(BuildPieceType type) => type == BuildPieceType.Ramp ? Ramp : type == BuildPieceType.Roof ? Roof : Box;
 
         // 기능: 조각의 실제 모양(편집 포함)을 그릴 Mesh를 낸다. 편집된 상자 모양은 처음 쓸 때 만들어 CacheKey(종류·Edit·벽 회전)로 캐시한다.
@@ -91,6 +94,9 @@ namespace ProjectH.Client.Game
             return new Vector3((slope.MinX + slope.MaxX) * 0.5f, slope.BaseY, (slope.MinZ + slope.MaxZ) * 0.5f);
         }
 
+        // 기능: 조각의 루트 자세와 몸체 크기·높이를 한 번에 정한다(PlaceRoot + PlaceBody: 미리보기·유령이 쓴다).
+        // 입력: root - 루트 Transform, body - 몸체(자식) Transform, shape - 조각 모양, height - 건설 높이 비율(0–1].
+        // 출력: 반환값 없음.
         // root: position and rotation; body: a child, scaled (box: to the piece's size) and lowered to height (0-1].
         public void Place(Transform root, Transform body, in BuildPieceShape shape, float height)
         {
@@ -141,6 +147,9 @@ namespace ProjectH.Client.Game
             _edited.Clear();
         }
 
+        // 기능: 원점 중심의 단위 정육면체 Mesh를 만든다(면마다 사각형 하나, 평평한 법선).
+        // 입력: 없음.
+        // 출력: 새 Mesh(Dispose가 파괴한다).
         // A unit cube centred on the origin, one quad per face (flat normals).
         private static Mesh BuildBox()
         {
@@ -149,6 +158,9 @@ namespace ProjectH.Client.Game
             return Hull("PieceBox", c);
         }
 
+        // 기능: 경사로 판 Mesh를 만든다(+Z로 오른다: 윗면은 낮은 끝 0에서 RampRise까지, 아랫면은 SlopeThickness 아래). 단위는 미터.
+        // 입력: 없음.
+        // 출력: 기준점이 칸 중심·낮은 끝 높이인 새 Mesh(Dispose가 파괴한다).
         // Rising toward +Z: the top from (z -2.5, y 0) to (z +2.5, y RampRise), the bottom SlopeThickness lower.
         private static Mesh BuildRamp()
         {
@@ -248,6 +260,9 @@ namespace ProjectH.Client.Game
             0, 1, 5, 4, 2, 6, 7, 3,   // -y, +y
         };
 
+        // 기능: 사각뿔 지붕 Mesh를 만든다: 처마에서 RoofRise 높이의 꼭짓점으로 오르는 경사면 4개, 처마 아래 SlopeThickness 치마, 평평한 천장.
+        // 입력: 없음.
+        // 출력: 기준점이 칸 중심·처마 높이인 새 Mesh(Dispose가 파괴한다).
         // Four sloped faces to the apex (RoofRise over the eaves), a SlopeThickness skirt under the eaves and a flat
         // ceiling. Separate vertices per face for flat normals; clockwise seen from outside (Unity's front face).
         private static Mesh BuildRoof()

@@ -167,6 +167,9 @@ public class ProtocolFuzzTests
         Assert.True(clientParsed > 0, "no client-side body ever parsed");
     }
 
+    // 기능: NetworkListener가 Client 바이트에 돌리는 모든 Parser(Connect·PlayerInput·BuildRequest·MapMarker·DisconnectCodes)에 같은 바이트를 넣어 본다.
+    // 입력: data - 임의 바이트.
+    // 출력: 본문 파싱에 성공한 Parser 수. 어느 Parser도 예외를 던지면 안 된다.
     // What NetworkListener runs on client bytes. Counts the bodies that parsed.
     private static int ServerSide(ReadOnlySpan<byte> data)
     {
@@ -189,6 +192,9 @@ public class ProtocolFuzzTests
         return ok;
     }
 
+    // 기능: NetClient와 봇이 서버 바이트에 돌리는 모든 본문 Parser에 같은 바이트를 넣어 본다.
+    // 입력: data - 임의 바이트(Packet Id 다음의 본문으로 취급).
+    // 출력: 파싱에 성공한 본문·항목 수. 어느 Parser도 예외를 던지면 안 된다.
     // What NetClient (and the bots) run on server bytes, body only (the id byte already read).
     private static int ClientSide(ReadOnlySpan<byte> data)
     {

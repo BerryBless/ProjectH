@@ -10,6 +10,9 @@ namespace ProjectH.Server.Tests.Integration;
 // does not get the grace.
 public sealed class ReconnectIntegrationTests
 {
+    // 기능: Client가 받은 마지막 MatchState가 경기 중(Playing 또는 FinalPhase)인지 본다.
+    // 입력: c - 확인할 Client.
+    // 출력: MatchState를 하나라도 받았고 마지막이 경기 중이면 true, 아니면 false.
     private static bool InMatch(HeadlessClient c) =>
         c.MatchStates.Count > 0 && c.MatchStates[^1].State is MatchFlowState.Playing or MatchFlowState.FinalPhase;
 

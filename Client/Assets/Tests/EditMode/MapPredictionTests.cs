@@ -17,6 +17,9 @@ namespace ProjectH.Client.Tests
         // Low crate (0, 0.5, 22) size 2 x 1 x 2: top at y = 1, x -1..1, z 21..23.
         private static readonly Num.Vector3 OnLowBox = new Num.Vector3(0f, 1f, 22f);
 
+        // 기능: 예측기를 정확히 한 걸음(Step 초)만 진행시키고 걸음 수가 1인지 단언한다(Yaw 0, 버튼 없음).
+        // 입력: predictor - 대상 예측기, move - 이동 입력.
+        // 출력: 반환값 없음. 예측기에 입력 하나가 쌓이고 위치가 갱신된다.
         // Exactly one step per call: from a zero accumulator, Step - Step leaves exactly 0, so long
         // loops never gain an extra step from rounding slop (Advance also caps one call at 0.25 s).
         private static void AdvanceOneStep(LocalPlayerPredictor predictor, Vector2 move)
@@ -25,9 +28,15 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual(1, predictor.Advance(Step, move, 0f, InputButtons.None, ref queued));
         }
 
+        // 기능: 서버 MoveState에서 살아 있는 플레이어의 Snapshot Entity를 만든다.
+        // 입력: s - 서버가 계산한 이동 상태.
+        // 출력: 위치·수직 속도·Yaw를 복사하고 AliveFlag가 켜진 SnapshotEntity.
         private static SnapshotEntity ToEntity(in MoveState s)
             => new SnapshotEntity { Position = s.Position, VelocityY = s.VelocityY, Yaw = s.Yaw, Flags = SnapshotEntity.AliveFlag };
 
+        // 기능: 서버 MoveState에서 Snapshot의 본인 블록(남은 에너지, 수평 속도, 모드·에너지 지연 Tick)을 만든다.
+        // 입력: s - 서버가 계산한 이동 상태.
+        // 출력: 그 상태와 일치하는 SnapshotSelf.
         // Phase 12: the owner's half of the snapshot (horizontal velocity, energy, tick counters).
         private static SnapshotSelf ToSelf(in MoveState s) => new SnapshotSelf
         {
@@ -37,6 +46,9 @@ namespace ProjectH.Client.Tests
             EnergyDelayTicks = s.EnergyDelayTicks,
         };
 
+        // 기능: Unity Vector3를 System.Numerics Vector3로 바꾼다.
+        // 입력: v - 변환할 Unity 벡터.
+        // 출력: 같은 성분의 System.Numerics 벡터.
         private static Num.Vector3 ToNumerics(Vector3 v) => new Num.Vector3(v.x, v.y, v.z);
 
         [Test]

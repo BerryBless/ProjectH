@@ -9,6 +9,9 @@ public class MatchPacketTests
 {
     private readonly byte[] _buffer = new byte[ProtocolConstants.MaxPacketSize];
 
+    // 기능: 테스트 버퍼의 앞 length 바이트로 Reader를 만들고 Packet Id가 expected인지 확인한 뒤 Id 다음 위치의 Reader를 돌려준다.
+    // 입력: length - 버퍼에 쓰인 바이트 수, expected - 기대하는 Packet Id.
+    // 출력: Packet Id를 읽은 뒤의 PacketReader. Id가 다르면 Assert 실패.
     private PacketReader ReaderAfterId(int length, PacketId expected)
     {
         var reader = new PacketReader(_buffer.AsSpan(0, length));
@@ -17,6 +20,9 @@ public class MatchPacketTests
         return reader;
     }
 
+    // 기능: 3단계, 반지름 12 m에서 6 m로 Tick 1000..1300 동안 줄어드는 테스트용 Zone 상태를 만든다.
+    // 입력: 없음.
+    // 출력: 고정 수치의 ZoneState.
     private static ZoneState SampleZone() => new ZoneState
     {
         Phase = 3,

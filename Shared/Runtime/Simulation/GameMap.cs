@@ -20,6 +20,9 @@ namespace ProjectH.Shared.Simulation
         public readonly Box Bounds;
         public readonly HarvestKind Kind;
 
+        // 기능: 채집 대상 하나를 만든다.
+        // 입력: bounds - 서 있는 동안의 충돌 상자, kind - 종류(주는 자원을 정한다).
+        // 출력: 두 값을 담은 채집 대상.
         public Harvestable(Box bounds, HarvestKind kind)
         {
             Bounds = bounds;
@@ -58,6 +61,9 @@ namespace ProjectH.Shared.Simulation
         private static readonly Box[] s_doors;
         private static readonly Harvestable[] s_harvestables;
 
+        // 기능: 맵을 만든다. 언덕으로 지형을 먼저 짓고, 외벽·POI 건물·엄폐물 상자와 문, 채집 대상을 고정 순서로 채운다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Terrain·Boxes·Doors·Harvestables가 채워진다(이후 불변).
         // Static constructor: the hills must exist before the terrain is built from them (field initializers would run
         // in textual order).
         static GameMap()
@@ -130,6 +136,9 @@ namespace ProjectH.Shared.Simulation
         // Phase 13 D6: 41 harvestables on flat ground, clear of the boxes, the doors, the loot and drop points and the plaza
         // (HarvestableMapTests). Trees and rocks are new; four crates without a loot point on top (the high crate at
         // Gearworks and three open-ground crates) moved here from the boxes. Never reorder: the index is the id.
+        // 기능: 채집 대상 목록(나무, 바위, 잔해, 상자 순)을 고정 순서로 만든다. 순서가 곧 id라 바꾸지 않는다.
+        // 입력: 없음(Terrain이 먼저 만들어져 있어야 한다).
+        // 출력: 채집 대상 배열(MaxHarvestables 이하).
         private static Harvestable[] BuildHarvestables()
         {
             var list = new List<Harvestable>(MaxHarvestables);
@@ -157,6 +166,9 @@ namespace ProjectH.Shared.Simulation
             return list.ToArray();
         }
 
+        // 기능: 지형 위에 서 있는 채집 대상을 만든다(그 자리는 평평해야 한다: HarvestableMapTests).
+        // 입력: kind - 종류, x·z - 바닥 중심의 평면 위치, size - 상자 크기.
+        // 출력: 바닥이 지형 높이에 놓인 채집 대상.
         // A harvestable standing on the terrain at (x, z) (flat there: HarvestableMapTests).
         private static Harvestable OnGround(HarvestKind kind, float x, float z, Vector3 size)
         {
@@ -179,6 +191,10 @@ namespace ProjectH.Shared.Simulation
         // D6: a one-storey building of width (X) x depth (Z), walls 3 m high and 0.5 m thick, a 1.5 m door in the middle
         // of the south and/or north wall, and a roof slab stacked on the walls. The east and west walls stop CornerSlit
         // short of the north and south walls, so no two walls touch side by side.
+        // 기능: 단층 건물 하나(남·북 긴 벽, 동·서 짧은 벽, 지붕 판)를 상자 목록에 넣고 문이 있는 벽은 문 상자도 넣는다(D6).
+        // 입력: boxes - 정적 상자 목록, doors - 문 상자 목록, cx·cz - 건물 중심, width·depth - X·Z 크기,
+        //   doorSouth·doorNorth - 남·북 벽 가운데에 문을 낼지.
+        // 출력: 반환값 없음. boxes에 벽·지붕이, doors에 문이 추가된다(북쪽 문이 남쪽 문보다 먼저).
         private static void AddHouse(List<Box> boxes, List<Box> doors, float cx, float cz, float width, float depth, bool doorSouth, bool doorNorth = false)
         {
             float halfW = width * 0.5f;
@@ -191,6 +207,9 @@ namespace ProjectH.Shared.Simulation
             boxes.Add(new Box(new Vector3(cx - halfW, WallHeight, cz - halfD), new Vector3(cx + halfW, WallHeight + RoofThickness, cz + halfD)));
         }
 
+        // 기능: X 방향으로 긴 벽 하나를 넣는다. 문이 있으면 벽을 둘로 나누고 그 틈에 문 상자를 넣는다.
+        // 입력: boxes - 정적 상자 목록, doors - 문 상자 목록, cx - 벽 중심 X, z - 벽 중심 Z, halfW - 벽 반폭, door - 문을 낼지.
+        // 출력: 반환값 없음. boxes에 벽 1개(문 없음) 또는 2개, door면 doors에 문 1개가 추가된다.
         private static void AddLongWall(List<Box> boxes, List<Box> doors, float cx, float z, float halfW, bool door)
         {
             float zMin = z - WallThickness * 0.5f;

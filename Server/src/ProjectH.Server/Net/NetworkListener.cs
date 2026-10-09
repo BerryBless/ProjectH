@@ -116,9 +116,15 @@ public sealed class NetworkListener : INetEventListener
     // Set once by GameLoop right after creating the NetManager (the two reference each other).
     public NetManager Manager { get; set; } = null!;
 
+    // 기능: 끊기 패킷에 실을 코드 1 B 배열을 돌려준다(코드마다 하나씩 미리 만든 공유 배열, D1).
+    // 입력: code - 끊는 이유.
+    // 출력: 그 코드 1 B가 든 배열(수정하지 않는다).
     // The disconnect data that carries code (D1).
     public static byte[] DataOf(DisconnectCode code) => CloseData[(int)code];
 
+    // 기능: 서버가 연결 하나를 코드와 함께 닫는다(모든 서버 쪽 닫기의 단일 경로, Phase 10 D1). 코드를 PeerState에 먼저 적어 Game Loop가 유예를 주지 않게 한다. 어느 스레드든.
+    // 입력: peer - 닫을 연결, code - 끊는 이유.
+    // 출력: 반환값 없음. 연결에 끊기 패킷이 가고 PeerState.CloseCode가 정해진다(먼저 적힌 코드가 남는다).
     // Phase 10 D1: every server-side close of one peer goes through here. The code is stored before Disconnect is
     // called (see PeerState.CloseCode). Safe from any thread: NetPeer.Disconnect is thread-safe.
     public static void Close(NetPeer peer, DisconnectCode code)
@@ -127,6 +133,9 @@ public sealed class NetworkListener : INetEventListener
         peer.Disconnect(DataOf(code));
     }
 
+    // 기능: 구간당 한 번만 남기는 로그 제한(수신 처리기 예외, 소켓 오류, 콜백 예외)을 되돌린다. Game Loop가 Stats 줄마다 부른다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 다음 예외·오류는 다시 로그된다.
     // Called by the game loop at each stats line: the next receive-handler exception is logged again.
     public void ResetLogLimits()
     {
@@ -137,6 +146,9 @@ public sealed class NetworkListener : INetEventListener
 
     // Server review L9: an exception caught in a callback (a server bug) is counted and logged once per stats interval,
     // like a receive-handler exception. Never throws: the logger call is guarded too, it runs on LiteNetLib's thread.
+    // 기능: 콜백에서 잡은 예외를 callbackErrors로 세고 구간당 한 번만 Error로 남긴다(서버 리뷰 L9). 절대 던지지 않는다.
+    // 입력: ex - 잡은 예외, callback - 어느 콜백인지(로그용).
+    // 출력: 반환값 없음.
     private void OnCallbackError(Exception ex, string callback)
     {
         _health.AddCallbackError();
@@ -153,6 +165,9 @@ public sealed class NetworkListener : INetEventListener
 
     // From now on every connection request is refused (as ServerFull: no protocol change, and the client does not
     // retry a reject). A request already accepted is closed by Stop's DisconnectAll like every other connection.
+    // 기능: 이후의 모든 연결 요청을 ServerFull로 거절하게 한다(되돌리지 않는다). Game Loop나 호스트 스레드가 부른다.
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void BeginStopping() => _stopping = true;
     internal bool IsStopping => _stopping;
 
@@ -356,12 +371,18 @@ public sealed class NetworkListener : INetEventListener
         request.RejectForce(data);
     }
 
+    // 기능: LiteNetLib 연결 완료 콜백. 아무것도 하지 않는다(Connected 알림은 HandleConnectionRequest가 Tag를 붙인 뒤 보낸다).
+    // 입력: peer - 연결된 peer(아직 Tag가 없다).
+    // 출력: 반환값 없음.
     public void OnPeerConnected(NetPeer peer)
     {
         // Runs inside request.Accept() (see OnConnectionRequest); peer.Tag is not set yet here.
         // The server never connects out, so there is nothing else to handle.
     }
 
+    // 기능: LiteNetLib 연결 종료 콜백. HandleDisconnect를 부르고 예외를 밖으로 내보내지 않는다(서버 리뷰 L9).
+    // 입력: peer - 끊긴 연결, disconnectInfo - LiteNetLib 끊김 정보.
+    // 출력: 반환값 없음. 연결 수·키·합계가 정리되고 Game Loop에 Disconnected가 간다(예외면 stale-peer 정리가 대신한다).
     // Server review L9: guarded like OnConnectionRequest. A Disconnected message that is not written because of a throw is
     // covered by the game loop's stale-peer sweep (the peer is no longer Connected).
     public void OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo)
@@ -400,6 +421,9 @@ public sealed class NetworkListener : INetEventListener
             _logger.LogWarning("Control channel full; disconnect of peer {PeerId} will be detected by the stale-peer sweep", peer.Id);
     }
 
+    // 기능: LiteNetLib 패킷 수신 콜백. Receive를 부르고, 예외는 구간당 한 번 Error로 남긴 뒤 그 연결의 잘못된 패킷(HandlerException)으로 센다(D5).
+    // 입력: peer - 보낸 연결, reader - 받은 바이트(이 호출 뒤 재사용된다), channelNumber·deliveryMethod - 쓰지 않는다.
+    // 출력: 반환값 없음. 채널에 메시지가 들어가거나 잘못된 패킷으로 세어진다.
     public void OnNetworkReceive(NetPeer peer, NetPacketReader reader, byte channelNumber, DeliveryMethod deliveryMethod)
     {
         // D5: nothing a packet does may escape into LiteNetLib's thread, which serves every connection. A throw is a
@@ -576,6 +600,9 @@ public sealed class NetworkListener : INetEventListener
 
     // Server review M1: counted (networkErrors) and logged once per stats interval, so a burst of socket errors cannot
     // flood the log. Server review L9: guarded like the other callbacks.
+    // 기능: LiteNetLib 소켓 오류 콜백. networkErrors로 세고 구간당 한 번만 Warning으로 남긴다. 예외를 밖으로 내보내지 않는다.
+    // 입력: endPoint - 오류가 난 상대 주소, socketError - 소켓 오류 코드.
+    // 출력: 반환값 없음.
     public void OnNetworkError(IPEndPoint endPoint, SocketError socketError)
     {
         try
@@ -591,15 +618,24 @@ public sealed class NetworkListener : INetEventListener
         }
     }
 
+    // 기능: LiteNetLib 비연결 메시지 콜백. NetManager에서 꺼 두어 아무것도 하지 않는다.
+    // 입력: remoteEndPoint - 보낸 주소, reader - 받은 바이트, messageType - 메시지 종류(모두 쓰지 않는다).
+    // 출력: 반환값 없음.
     public void OnNetworkReceiveUnconnected(IPEndPoint remoteEndPoint, NetPacketReader reader, UnconnectedMessageType messageType)
     {
         // Unconnected messages are disabled on the NetManager; nothing to do.
     }
 
+    // 기능: LiteNetLib 지연 갱신 콜백. 아무것도 하지 않는다(RTT는 Game Loop의 SweepPeers가 peer.RoundTripTime에서 읽는다).
+    // 입력: peer - 연결, latency - 지연(ms). 쓰지 않는다.
+    // 출력: 반환값 없음.
     public void OnNetworkLatencyUpdate(NetPeer peer, int latency)
     {
     }
 
+    // 기능: 잘못된 패킷 하나를 통계와 Health에 세고 연결별 수를 올리며, BadPacketDisconnectThreshold에 이르면 한 번만 Kicked로 닫는다.
+    // 입력: peer - 보낸 연결, reason - 잘못된 이유.
+    // 출력: 반환값 없음. 임계에 이르면 연결이 Kicked로 닫힌다.
     private void OnBadPacket(NetPeer peer, BadPacketReason reason)
     {
         _stats.AddBadPacket();

@@ -11,7 +11,7 @@ public class BotSquadTests
 {
     // 기능: BotView에 팀 1의 TeamState를 넣는다.
     // 입력: view - 봇 View, members - 구성원 Entity id.
-    // 출력: 반환값 없음.
+    // 출력: 반환값 없음. view.Team과 HasTeam이 설정된다.
     private static void SetTeam(BotView view, params ushort[] members)
     {
         var team = new TeamState { TeamId = 1, Count = (byte)members.Length };

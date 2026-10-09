@@ -89,6 +89,9 @@ namespace ProjectH.Shared.Protocol
     {
         public const int MaxSize = 284;
 
+        // 기능: 아이템 카탈로그를 ItemCatalog 패킷(등급 목록, 탄 목록, 소모품 목록, 각각 개수 1바이트 뒤 항목들)으로 쓴다.
+        // 입력: writer - 쓸 곳, data - 등급·탄·소모품 정보(배열은 null이 아니어야 한다).
+        // 출력: 반환값 없음. writer에 패킷이 쓰인다(최대 MaxSize = 284바이트).
         public static void Write(ref PacketWriter writer, ItemCatalogData data)
         {
             writer.WriteByte((byte)PacketId.ItemCatalog);
@@ -183,6 +186,9 @@ namespace ProjectH.Shared.Protocol
         public ushort Amount;
         public Vector3 Position;
 
+        // 기능: 월드 아이템 하나(id, 종류, 정의 id, 등급, 수량, 위치)를 PacketId 없이 쓴다.
+        // 입력: writer - 쓸 곳, item - 아이템.
+        // 출력: 반환값 없음. writer에 Size(19)바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in WorldItemData item)
         {
             writer.WriteUInt16(item.ItemId);
@@ -193,6 +199,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteVector3(item.Position);
         }
 
+        // 기능: 월드 아이템 하나(19바이트)를 읽고 종류별 값 규칙을 검사한다.
+        // 입력: reader - 아이템 기록이 시작되는 곳, item - 결과.
+        // 출력: 성공하면 true와 아이템. 짧거나, id 0, 모르는 종류·정의 id, 무기가 아닌데 등급이 있거나, 탄·소모품·재료·카드 수량 0, 위치가 유한하지 않으면 false.
         // Rejects values the server never sends: id 0, an unknown kind or type, a rarity on a
         // non-weapon, an empty ammo or consumable stack, a non-finite position.
         public static bool TryRead(ref PacketReader reader, out WorldItemData item)
@@ -233,6 +242,9 @@ namespace ProjectH.Shared.Protocol
         public const int MaxItems = 50;
         public const int MaxSize = 2 + MaxItems * WorldItemData.Size;   // 952 bytes
 
+        // 기능: WorldItems 헤더(id + 아이템 수)를 쓴다. 뒤에 정확히 count번의 WorldItemData.Write가 따라야 한다.
+        // 입력: writer - 쓸 곳, count - 이 패킷의 아이템 수(MaxItems 이하).
+        // 출력: 반환값 없음. writer에 2바이트가 쓰인다.
         // Follow with exactly count WorldItemData.Write calls.
         public static void WriteHeader(ref PacketWriter writer, int count)
         {
@@ -240,6 +252,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte((byte)count);
         }
 
+        // 기능: WorldItems 헤더(PacketId 뒤)의 아이템 수를 읽는다.
+        // 입력: reader - 본문, count - 결과.
+        // 출력: 수가 1..MaxItems이고 남은 바이트가 count x 19 이상이면 true와 count, 아니면 false와 0.
         public static bool TryReadHeader(ref PacketReader reader, out int count)
         {
             count = 0;
@@ -255,12 +270,18 @@ namespace ProjectH.Shared.Protocol
     {
         public const int Size = 1 + WorldItemData.Size;   // 20 bytes
 
+        // 기능: ItemSpawned 패킷(id + 월드 아이템 하나)을 쓴다.
+        // 입력: writer - 쓸 곳, item - 나타났거나 수량이 바뀐 아이템.
+        // 출력: 반환값 없음. writer에 Size(20)바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in WorldItemData item)
         {
             writer.WriteByte((byte)PacketId.ItemSpawned);
             WorldItemData.Write(ref writer, item);
         }
 
+        // 기능: ItemSpawned 본문(PacketId 뒤)의 월드 아이템을 읽는다.
+        // 입력: reader - 본문, item - 결과.
+        // 출력: WorldItemData.TryRead와 같다(검증 통과면 true와 아이템).
         public static bool TryRead(ref PacketReader reader, out WorldItemData item) => WorldItemData.TryRead(ref reader, out item);
     }
 
@@ -269,12 +290,18 @@ namespace ProjectH.Shared.Protocol
     {
         public ushort ItemId;
 
+        // 기능: ItemRemoved 패킷(id + 아이템 id)을 쓴다.
+        // 입력: writer - 쓸 곳, r - 사라진 아이템.
+        // 출력: 반환값 없음. writer에 3바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in ItemRemoved r)
         {
             writer.WriteByte((byte)PacketId.ItemRemoved);
             writer.WriteUInt16(r.ItemId);
         }
 
+        // 기능: ItemRemoved 본문(PacketId 뒤)의 아이템 id를 읽는다.
+        // 입력: reader - 본문, r - 결과.
+        // 출력: 2바이트가 있고 id가 0이 아니면 true, 아니면 false.
         public static bool TryRead(ref PacketReader reader, out ItemRemoved r)
         {
             r = default;
@@ -315,6 +342,9 @@ namespace ProjectH.Shared.Protocol
         public ushort RocketsAmmo;          // Phase 17 D13
         public byte Grenades;               // Phase 17 D9
 
+        // 기능: 무기 칸 하나의 상태를 돌려준다.
+        // 입력: slot - 0, 1, 2(그 밖의 값은 Slot2로 본다).
+        // 출력: 그 칸의 InventorySlotState 복사본.
         public InventorySlotState GetSlot(int slot)
         {
             switch (slot)
@@ -325,6 +355,9 @@ namespace ProjectH.Shared.Protocol
             }
         }
 
+        // 기능: 무기 칸 하나의 상태를 바꾼다.
+        // 입력: slot - 0, 1, 2(그 밖의 값은 Slot2로 본다), value - 새 칸 상태.
+        // 출력: 반환값 없음. 그 칸의 상태가 바뀐다.
         public void SetSlot(int slot, in InventorySlotState value)
         {
             switch (slot)
@@ -436,6 +469,9 @@ namespace ProjectH.Shared.Protocol
         public PickupResultCode Result;
         public ushort ItemId;   // 0 with NothingInRange
 
+        // 기능: PickupResult 패킷(id, 결과 코드, 아이템 id)을 쓴다.
+        // 입력: writer - 쓸 곳, r - 줍기 결과(NothingInRange면 ItemId 0).
+        // 출력: 반환값 없음. writer에 4바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in PickupResult r)
         {
             writer.WriteByte((byte)PacketId.PickupResult);
@@ -443,6 +479,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt16(r.ItemId);
         }
 
+        // 기능: PickupResult 본문(PacketId 뒤)을 읽는다.
+        // 입력: reader - 본문, r - 결과.
+        // 출력: 3바이트가 있고 결과 코드가 Full 이하면 true와 결과, 아니면 false.
         public static bool TryRead(ref PacketReader reader, out PickupResult r)
         {
             r = default;

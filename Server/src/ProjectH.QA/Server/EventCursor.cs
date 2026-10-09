@@ -17,6 +17,9 @@ public sealed class EventCursor
     private long _consumedSeq;
     private long _baselineSeq;
 
+    // 기능: 서버 QA 이벤트 Ring을 읽을 커서를 만든다.
+    // 입력: client - 이벤트를 조회할 QA Control API Client.
+    // 출력: seq 0부터 읽는 빈 Ring 상태의 EventCursor.
     public EventCursor(IQaServerClient client)
     {
         _client = client;
@@ -26,6 +29,9 @@ public sealed class EventCursor
     public long RingDropped { get; private set; }
     public IReadOnlyCollection<QaEvent> Recent => _ring;
 
+    // 기능: 서버에 이미 쌓인 이벤트를 보관하지 않고 끝까지(최대 MaxPagesPerFetch 페이지) 읽어 넘기고 그 지점을 기준선으로 잡는다.
+    // 입력: token - 취소 토큰.
+    // 출력: 반환값 없음. _next·_baselineSeq·_consumedSeq가 서버의 마지막 seq 다음으로 맞춰진다.
     // Attach mode: events from before this run belong to someone else; skip them.
     public async Task SkipExistingAsync(CancellationToken token)
     {
@@ -39,6 +45,9 @@ public sealed class EventCursor
         _consumedSeq = _next;
     }
 
+    // 기능: 마지막으로 읽은 seq 이후의 서버 이벤트를 페이지 단위(최대 MaxPagesPerFetch)로 받아 Ring에 쌓는다.
+    // 입력: token - 취소 토큰.
+    // 출력: 반환값 없음. Ring에 새 이벤트가 들어가고 넘친 만큼 RingDropped가 늘며 _next가 전진한다.
     public async Task FetchAsync(CancellationToken token)
     {
         for (int page = 0; page < MaxPagesPerFetch; page++)
@@ -48,6 +57,9 @@ public sealed class EventCursor
         }
     }
 
+    // 기능: 아직 소비하지 않은 이벤트 중 조건에 맞는 첫 이벤트를 찾아 그 seq까지를 소비 처리한다.
+    // 입력: match - 이벤트 선택 조건.
+    // 출력: 찾은 QaEvent, 없으면 null. 찾으면 _consumedSeq가 그 seq로 올라간다.
     // The first not yet consumed event matching the filter; it and everything before it count as consumed, so the
     // next waitForEvent looks after it (waits read events in order).
     public QaEvent? TakeFirst(Func<QaEvent, bool> match)
@@ -61,8 +73,14 @@ public sealed class EventCursor
         return null;
     }
 
+    // 기능: 기준선 이후 Ring에 있는 이벤트 중 조건에 맞는 수를 센다(소비 여부와 무관).
+    // 입력: match - 이벤트 선택 조건.
+    // 출력: 조건에 맞는 이벤트 수.
     public int Count(Func<QaEvent, bool> match) => _ring.Count(e => e.Seq > _baselineSeq && match(e));
 
+    // 기능: /qa/events 응답 한 페이지를 해석해 ServerDropped와 다음 조회 시작 seq(_next)를 갱신하고, keep이면 Ring에 넣는다.
+    // 입력: batch - 응답 JSON(dropped·events·next), keep - true면 Ring에 보관, false면 세기만 한다.
+    // 출력: 이 페이지의 이벤트 수. keep이면 Ring이 바뀌고 넘친 만큼 RingDropped가 는다.
     private int ReadBatch(JsonElement batch, bool keep)
     {
         if (JsonPath.Child(batch, "dropped") is { ValueKind: JsonValueKind.Number } d && d.TryGetInt64(out long dropped)) ServerDropped = Math.Max(ServerDropped, dropped);
@@ -95,6 +113,9 @@ public sealed class EventCursor
 
 public sealed record QaEvent(long Seq, long Tick, string Utc, string Type, string? Player, JsonElement Raw)
 {
+    // 기능: 서버 이벤트 JSON 한 건을 QaEvent로 바꾼다(없거나 타입이 다른 필드는 0·빈 문자열·null).
+    // 입력: e - 이벤트 JSON 요소.
+    // 출력: 필드를 채우고 원본 JSON 복제본(Raw)을 가진 QaEvent.
     public static QaEvent From(JsonElement e)
     {
         long seq = JsonPath.Child(e, "seq") is { ValueKind: JsonValueKind.Number } s && s.TryGetInt64(out long sv) ? sv : 0;

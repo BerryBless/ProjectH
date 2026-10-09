@@ -22,6 +22,9 @@ namespace ProjectH.Shared.Protocol
         public ushort Stone;
         public ushort Metal;
 
+        // 기능: 건설 재료 종류에 해당하는 보유량을 돌려준다.
+        // 입력: material - Wood, Stone, Metal(그 밖의 값은 Metal로 본다).
+        // 출력: 그 재료의 보유량.
         public ushort Get(BuildMaterialType material)
         {
             switch (material)
@@ -32,6 +35,9 @@ namespace ProjectH.Shared.Protocol
             }
         }
 
+        // 기능: ResourcesState 패킷(id + 재료 세 가지 uint16)을 쓴다.
+        // 입력: writer - 대상, s - 세 재료의 보유량.
+        // 출력: 반환값 없음. writer에 Size(7)바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in ResourcesState s)
         {
             writer.WriteByte((byte)PacketId.ResourcesState);
@@ -40,6 +46,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt16(s.Metal);
         }
 
+        // 기능: ResourcesState 본문(PacketId 뒤)을 읽는다.
+        // 입력: reader - 본문, s - 읽은 보유량을 받을 변수.
+        // 출력: 본문이 6바이트 이상이면 true와 보유량, 짧으면 false.
         public static bool TryRead(ref PacketReader reader, out ResourcesState s)
         {
             s = default;
@@ -70,6 +79,9 @@ namespace ProjectH.Shared.Protocol
         public bool Destroyed => (Flags & DestroyedFlag) != 0;
         public bool HasWeakPoint => (Flags & HasWeakPointFlag) != 0;
 
+        // 기능: HarvestHit 패킷(id, 대상, 남은 체력, 약점 위치, 얻은 자원, 플래그)을 쓴다.
+        // 입력: writer - 대상, h - 채집 타격 결과.
+        // 출력: 반환값 없음. writer에 Size(18)바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in HarvestHit h)
         {
             writer.WriteByte((byte)PacketId.HarvestHit);
@@ -80,6 +92,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte(h.Flags);
         }
 
+        // 기능: HarvestHit 본문(PacketId 뒤)을 읽는다.
+        // 입력: reader - 본문, h - 읽은 결과를 받을 변수.
+        // 출력: 성공하면 true와 결과. 짧거나, 맵에 없는 대상이거나, 모르는 플래그 비트가 있거나, 약점 위치가 유한하지 않으면 false.
         // A target the map does not have, an unknown flag bit or a non-finite weak point is refused.
         public static bool TryRead(ref PacketReader reader, out HarvestHit h)
         {
@@ -148,6 +163,9 @@ namespace ProjectH.Shared.Protocol
     {
         public const int Size = 9;   // with the packet id
 
+        // 기능: 파괴된 채집물 비트 마스크를 HarvestStates 패킷(id + 하위·상위 uint32)으로 쓴다.
+        // 입력: writer - 대상, destroyedMask - 비트 i가 GameMap.Harvestables[i]의 파괴 여부.
+        // 출력: 반환값 없음. writer에 Size(9)바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, ulong destroyedMask)
         {
             writer.WriteByte((byte)PacketId.HarvestStates);
@@ -155,6 +173,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteUInt32((uint)(destroyedMask >> 32));
         }
 
+        // 기능: HarvestStates 본문(PacketId 뒤)의 파괴 마스크를 읽는다.
+        // 입력: reader - 본문, destroyedMask - 읽은 마스크를 받을 변수.
+        // 출력: 8바이트가 있고 맵에 없는 채집물의 비트가 꺼져 있으면 true와 마스크, 아니면 false.
         // A bit for a harvestable the map does not have is refused.
         public static bool TryRead(ref PacketReader reader, out ulong destroyedMask)
         {

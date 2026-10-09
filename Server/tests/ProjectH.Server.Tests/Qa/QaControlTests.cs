@@ -170,6 +170,9 @@ public sealed class QaHttpTests
         public CancellationToken ApplicationStopping => CancellationToken.None;
         public CancellationToken ApplicationStopped => CancellationToken.None;
         public int StopRequests;
+        // 기능: 호스트 중단 요청을 멈추지 않고 횟수만 센다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. StopRequests가 1 는다.
         public void StopApplication() => Interlocked.Increment(ref StopRequests);
     }
 

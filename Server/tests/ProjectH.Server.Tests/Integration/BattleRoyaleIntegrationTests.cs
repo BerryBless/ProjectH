@@ -19,6 +19,9 @@ public sealed class BattleRoyaleIntegrationTests : IDisposable
 
     private readonly GameLoop _server;
 
+    // 기능: 두 명이면 시작하는 1초 카운트다운·1초 결과 화면의 Battle Royale 서버를 전투 장비와 두 투입 지점으로 포트 0에 띄운다(Phase 12: AirDrop 끔).
+    // 입력: 없음.
+    // 출력: 시작된 GameLoop를 가진 테스트 Fixture(Dispose가 서버를 닫는다).
     public BattleRoyaleIntegrationTests()
     {
         _server = new GameLoop(new ServerOptions
@@ -37,8 +40,14 @@ public sealed class BattleRoyaleIntegrationTests : IDisposable
         _server.Start();
     }
 
+    // 기능: 테스트 서버를 멈추고 정리한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 서버 소켓과 Loop 스레드가 닫힌다.
     public void Dispose() => _server.Dispose();
 
+    // 기능: HeadlessClient를 만들어 서버에 접속하고 Join 응답이 Ok로 올 때까지 기다린다.
+    // 입력: devId - 플레이어 이름(DevPlayerId).
+    // 출력: Join을 마친 HeadlessClient(호출자가 Dispose한다). 3초 안에 접속·Join이 안 되거나 Ok가 아니면 테스트가 실패한다.
     private HeadlessClient Join(string devId)
     {
         var client = new HeadlessClient();
@@ -50,6 +59,9 @@ public sealed class BattleRoyaleIntegrationTests : IDisposable
         return client;
     }
 
+    // 기능: Client가 특정 라운드의 Match 흐름 상태를 받은 적이 있는지 확인한다.
+    // 입력: c - 확인할 Client, state - 찾을 Match 흐름 상태, round - 라운드 번호(기본 1).
+    // 출력: 그 라운드의 그 상태를 받았으면 true, 아니면 false.
     private static bool Saw(HeadlessClient c, MatchFlowState state, int round = 1) =>
         c.MatchStates.Any(s => s.State == state && s.Round == round);
 

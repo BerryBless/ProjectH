@@ -27,6 +27,9 @@ public static partial class StressActions
     public const int DefaultTrendMatches = 5;
     public const double DefaultTrendPercent = 10;
 
+    // 기능: matchLoop 액션을 Registry에 등록한다.
+    // 입력: r - 등록 대상 Registry.
+    // 출력: 반환값 없음. Registry에 matchLoop Handler가 추가된다.
     private static void RegisterMatchLoop(ActionRegistry r)
     {
         r.Add(new DelegateAction(new ActionSpec
@@ -39,6 +42,9 @@ public static partial class StressActions
         }, MatchLoopAsync));
     }
 
+    // 기능: matchLoop 단계의 Literal 인자(matches 정수 범위와 나머지 숫자 범위)를 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckMatchLoop(StepDefinition s)
     {
         if (s.Params.TryGetValue("matches", out JsonElement m) && !Variables.HasReference(m) && (!Comparison.TryNumber(m, out double d) || d < 1 || d > MaxLoopMatches || d != Math.Floor(d)))
@@ -48,6 +54,9 @@ public static partial class StressActions
             yield return error;
     }
 
+    // 기능: 여러 숫자 Parameter의 Literal 값이 각각의 범위(정수 여부 포함) 안인지 검사한다.
+    // 입력: s - 단계 정의, ranges - (이름, 최소, 최대, 정수 여부) 목록.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckRanges(StepDefinition s, params (string Name, double Min, double Max, bool Whole)[] ranges)
     {
         foreach (var r in ranges)
@@ -62,8 +71,14 @@ public static partial class StressActions
     // wait + 10 s for the finish and readings; a ${variable} counts at its bound (the scenario timeout still bounds the run).
     // The validator's estimate of the whole loop: matches x (matchSeconds + MatchOverheadSeconds), from literals or the
     // scenario's variable defaults (null when either is unknown). --set values are not seen here.
+    // 기능: 검증기용 matchLoop 전체 예상 시간(matches x (matchSeconds + MatchOverheadSeconds))을 구한다.
+    // 입력: s - 단계 정의, variables - 시나리오 변수 기본값(${var} 해석용).
+    // 출력: 예상 초. matches나 matchSeconds를 알 수 없으면 null.
     public static double? LoopSeconds(StepDefinition s, IReadOnlyDictionary<string, JsonElement> variables)
     {
+        // 기능: Parameter 값을 Literal 또는 ${var} 변수 기본값에서 숫자로 읽는다.
+        // 입력: name - Parameter 이름.
+        // 출력: 숫자 값. 없거나 해석할 수 없으면 null.
         double? Value(string name)
         {
             if (!s.Params.TryGetValue(name, out JsonElement v)) return null;
@@ -78,6 +93,9 @@ public static partial class StressActions
         return Value("matches") is double m && Value("matchSeconds") is double sec ? m * (sec + MatchOverheadSeconds) : null;
     }
 
+    // 기능: matchLoop 단계의 기본 Timeout을 매치 수 x (플레이 + 시작 대기 2회 + 종료 대기 + 10초) + 30초로 구한다(변수는 상한값).
+    // 입력: s - 단계 정의.
+    // 출력: Timeout(ms, int 상한 이내).
     internal static int LoopTimeoutMs(StepDefinition s)
     {
         double matches = Seconds(s, "matches", MaxLoopMatches);
@@ -85,6 +103,9 @@ public static partial class StressActions
         return (int)Math.Min(int.MaxValue - 10_000, (matches * perMatch + 30) * 1000);
     }
 
+    // 기능: 매치를 matches번 반복한다. 매치마다 Playing 대기 → matchSeconds 측정 → finish → 종료·다음 Playing 대기 → Metrics 읽기 → MatchRow 기록, Post-GC Floor 추세를 경고한다.
+    // 입력: ctx - 단계 문맥(matches, matchSeconds, sampleEveryMatches, sampleSeconds, startTimeoutMs, finishTimeoutMs, trendMatches, trendPercent), token - 취소 토큰.
+    // 출력: 모든 매치가 끝나면 Pass(saveAs: Loop 요약), 서버 미응답·Playing 미도달·종료 미도달·finish 거절이면 Fail. run.Stress.MatchLoop에 보고가 쌓인다.
     private static async Task<StepOutcome> MatchLoopAsync(StepContext ctx, CancellationToken token)
     {
         RunContext run = ctx.Run;
@@ -194,12 +215,18 @@ public static partial class StressActions
         return StepOutcome.Pass(text, Value(loop));
     }
 
+    // 기능: 보고에 행을 더한다(MaxRows를 넘으면 버린 수만 센다).
+    // 입력: loop - matchLoop 보고, row - 더할 행.
+    // 출력: 반환값 없음. Rows 또는 RowsDropped가 바뀐다.
     private static void AddRow(MatchLoopReport loop, MatchRow row)
     {
         if (loop.Rows.Count < MatchLoopReport.MaxRows) loop.Rows.Add(row);
         else loop.RowsDropped++;
     }
 
+    // 기능: 한 매치의 메모리·GC·Tick·인원 수치를 MatchRow로 만든다.
+    // 입력: label - 행 이름, match - 매치 번호, milestone - 이정표 행 여부, clock - Loop 시작부터의 시계, start - 매치 시작 표본, end - 매치 뒤 표본, span - 시작부터 끝까지의 표본, phase - 측정 결과(start 행은 null).
+    // 출력: 채워진 MatchRow.
     private static MatchRow Row(string label, int match, bool milestone, Stopwatch clock, MeasureSample start, MeasureSample end, IReadOnlyList<MeasureSample> span, MeasureResult? phase) => new()
     {
         Label = label, Match = match, Milestone = milestone, Seconds = Math.Round(clock.Elapsed.TotalSeconds, 1),
@@ -211,6 +238,9 @@ public static partial class StressActions
         BuildPieces = phase?.BuildPiecesEnd ?? end.BuildPieces, Sessions = end.ActiveSessions, Players = end.Players, AliveAtEnd = phase?.AliveMin ?? end.Alive,
     };
 
+    // 기능: saveAs용으로 Loop 요약(행 수, 첫·마지막 행, 이정표 20개, 추세 경고)을 JSON으로 만든다.
+    // 입력: loop - matchLoop 보고.
+    // 출력: 요약 JsonElement.
     // saveAs: the loop without the rows' bulk (first, last, the milestones, the trend).
     private static JsonElement Value(MatchLoopReport loop) => JsonPath.From(new
     {
@@ -220,6 +250,9 @@ public static partial class StressActions
 
     // Playing = Playing or FinalPhase (match.playing). Polls /qa/match at the run's poll interval. Returns the match that
     // satisfied the wait (null on timeout).
+    // 기능: /qa/match를 Poll하며 매치의 Playing 여부가 playing과 같아질 때까지 기다린다(503·504는 무시하고 계속).
+    // 입력: run - Run, playing - 기다릴 상태(true면 Playing·FinalPhase), timeoutMs - 한도(ms), token - 취소 토큰.
+    // 출력: 조건을 만족한 /qa/match 응답, Timeout이면 null.
     private static async Task<JsonElement?> WaitPlayingAsync(RunContext run, bool playing, int timeoutMs, CancellationToken token)
     {
         var clock = Stopwatch.StartNew();
@@ -238,6 +271,9 @@ public static partial class StressActions
         }
     }
 
+    // 기능: /qa/match를 Poll하며 해당 Round가 끝날 때까지(Playing이 아니거나 다른 Round가 될 때까지) 기다린다(503·504는 무시하고 계속).
+    // 입력: run - Run, round - 끝나기를 기다릴 Round 번호, timeoutMs - 한도(ms), token - 취소 토큰.
+    // 출력: Round가 끝났으면 true, Timeout까지 같은 Round가 Playing이면 false.
     // The round is over: not playing, or a later round (it ended and the next one already started).
     private static async Task<bool> WaitRoundOverAsync(RunContext run, int round, int timeoutMs, CancellationToken token)
     {
@@ -257,10 +293,16 @@ public static partial class StressActions
         }
     }
 
+    // 기능: /qa/match 응답에서 Round 번호를 읽는다.
+    // 입력: match - /qa/match 응답.
+    // 출력: Round 번호, 서버가 주지 않으면 -1.
     // /qa/match "round" (-1 when the server does not say).
     internal static int RoundOf(JsonElement match) =>
         JsonPath.Get(match, "round") is JsonElement r && Comparison.TryNumber(r, out double d) ? (int)d : -1;
 
+    // 기능: /qa/match 응답의 state가 Playing 또는 FinalPhase인지 본다(숫자면 MatchFlowState 이름으로 바꿔 비교).
+    // 입력: match - /qa/match 응답.
+    // 출력: 플레이 중이면 true, 아니거나 state가 없으면 false.
     internal static bool IsPlaying(JsonElement match)
     {
         JsonElement? state = JsonPath.Get(match, "state");
@@ -276,6 +318,9 @@ public static partial class StressActions
     // the match ended by itself (EndedNaturally, nothing sent). 503 / 504 are retried twice. A 504's command may still have
     // run, so a refusal is checked against /qa/match: the round no longer playing means it is over (by an earlier attempt
     // after a 504, or by itself), not an error.
+    // 기능: 해당 Round가 아직 Playing이면 forceMatchState finish를 보낸다(503·504는 최대 MaxRetries 재시도, 거절은 /qa/match로 재확인).
+    // 입력: run - Run, round - 끝낼 Round 번호, token - 취소 토큰.
+    // 출력: 명령이 받아들여지면 (false, null), 스스로 끝났으면 (true, null), 거절이면 (false, 오류). QA API 예외는 그대로 전파.
     internal static async Task<FinishOutcome> FinishRoundAsync(RunContext run, int round, CancellationToken token)
     {
         if (!await RoundPlayingAsync(run, round, token).ConfigureAwait(false)) return new FinishOutcome(true, null);
@@ -296,6 +341,9 @@ public static partial class StressActions
         }
     }
 
+    // 기능: 해당 Round가 지금 Playing인지 /qa/match로 한 번 확인한다.
+    // 입력: run - Run, round - 확인할 Round 번호, token - 취소 토큰.
+    // 출력: 같은 Round가 Playing이면 true, 아니면 false.
     private static async Task<bool> RoundPlayingAsync(RunContext run, int round, CancellationToken token)
     {
         JsonElement match = await run.Server.GetMatchAsync(token).ConfigureAwait(false);

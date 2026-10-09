@@ -18,6 +18,9 @@ public class AuthPacketLayerTests
     private static readonly IPEndPoint Alice = new(IPAddress.Parse("10.0.0.1"), 5000);
     private static readonly IPEndPoint Bob = new(IPAddress.Parse("10.0.0.2"), 5000);
 
+    // 기능: seed로 정해지는 세션 키 바이트를 만든다(같은 seed면 같은 키).
+    // 입력: seed - 키를 정하는 값.
+    // 출력: SessionKeyBytes 길이의 키.
     private static byte[] Key(byte seed)
     {
         var key = new byte[ProtocolLimits.SessionKeyBytes];
@@ -36,9 +39,9 @@ public class AuthPacketLayerTests
     }
 
     // 기능: 계층 하나로 보낸 뒤 다른 계층으로 받는다.
-    // 입력: from - 보내는 계층, to - 받는 계층, fromEndPoint·toEndPoint - 각 계층이 보는 상대, n - 페이로드 길이,
+    // 입력: from - 보내는 계층, to - 받는 계층, fromSees·toSees - 각 계층이 보는 상대 주소, n - 페이로드 길이,
     //   header - 첫 바이트(LiteNetLib 헤더, null = Payload의 1 = Channeled).
-    // 출력: 받은 뒤의 길이(0 = 버림).
+    // 출력: 받은 뒤의 길이(0 = 버림). 보낸 뒤 길이가 n + AuthTagBytes가 아니면 테스트가 실패한다.
     private static int Send(PacketLayerBaseAdapter from, PacketLayerBaseAdapter to, IPEndPoint fromSees, IPEndPoint toSees, int n = 40,
         byte? header = null)
     {
@@ -55,11 +58,14 @@ public class AuthPacketLayerTests
     private sealed class PacketLayerBaseAdapter
     {
         private readonly LiteNetLib.Layers.PacketLayerBase _layer;
+        // 기능: 감쌀 패킷 계층을 받아 둔다.
+        // 입력: layer - 서버 또는 Client 인증 계층.
+        // 출력: 그 계층의 콜백을 부르는 Adapter.
         public PacketLayerBaseAdapter(LiteNetLib.Layers.PacketLayerBase layer) => _layer = layer;
 
         // 기능: 송신 콜백을 부른다.
         // 입력: endPoint·data·offset·length - 콜백 인자.
-        // 출력: 반환값 없음.
+        // 출력: 반환값 없음. 계층이 data에 꼬리를 붙이고 length를 늘린다.
         public void Out(IPEndPoint endPoint, ref byte[] data, ref int offset, ref int length)
         {
             IPEndPoint ep = endPoint;
@@ -68,7 +74,7 @@ public class AuthPacketLayerTests
 
         // 기능: 수신 콜백을 부른다.
         // 입력: endPoint·data·length - 콜백 인자.
-        // 출력: 반환값 없음.
+        // 출력: 반환값 없음. 계층이 꼬리를 검사해 length를 줄이거나(통과) 0으로 만든다(버림).
         public void In(IPEndPoint endPoint, ref byte[] data, ref int length)
         {
             IPEndPoint ep = endPoint;
@@ -76,6 +82,9 @@ public class AuthPacketLayerTests
         }
     }
 
+    // 기능: 새 HealthCounters를 단 서버 인증 계층을 만든다(퇴역 키 보관 6초).
+    // 입력: maxRetired - 보관할 퇴역 키 수의 상한.
+    // 출력: 서버 계층과 그 계층이 세는 HealthCounters.
     private static (AuthPacketLayer Server, HealthCounters Health) Server(int maxRetired = 8)
     {
         var health = new HealthCounters();
@@ -239,6 +248,9 @@ public class AuthPacketLayerTests
         private readonly LiteNetLib.Layers.PacketLayerBase _inner;
         public readonly System.Collections.Concurrent.ConcurrentQueue<byte> Inbound = new();
 
+        // 기능: 감쌀 계층을 받아 두고 꼬리 크기를 AuthTagBytes로 신고한다.
+        // 입력: inner - 실제 처리를 맡길 계층.
+        // 출력: 수신 첫 바이트를 Inbound에 쌓는 Recorder.
         public FirstByteRecorder(LiteNetLib.Layers.PacketLayerBase inner) : base(ProtocolLimits.AuthTagBytes) => _inner = inner;
 
         // 기능: 첫 바이트를 기록하고 감싼 계층의 수신 처리를 부른다.
@@ -317,6 +329,9 @@ public class AuthPacketLayerTests
         client.Use(new SessionKeys(Key(12), isServer: false));
         IPEndPoint ep = Alice;
         byte[] data = Payload(100);
+        // 기능: 같은 버퍼로 Client → 서버, 서버 → Client 한 바퀴를 보내고 받는다.
+        // 입력: 없음(바깥의 client·server·ep·data를 쓴다).
+        // 출력: 반환값 없음. data가 봉인·개봉을 두 번 거친다.
         void RoundTrip()
         {
             int offset = 0, length = 100;

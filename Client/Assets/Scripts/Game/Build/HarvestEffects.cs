@@ -48,6 +48,9 @@ namespace ProjectH.Client.Game
         private Vector3 _swingFeet;
         private float _swingYaw;
 
+        // 기능: 약점 표식, 도구 머리, 먼지 뭉치 PuffCount개(뭉치마다 알갱이 MotesPerPuff개)와 Material 2개를 만든다(모두 숨긴 채).
+        // 입력: source - 복사할 Lit Material(표식·도구, 먼지의 대체 Material).
+        // 출력: 숨겨진 효과(Dispose가 Object와 Material을 파괴한다).
         public HarvestEffects(Material source)
         {
             _root = new GameObject("HarvestEffects");
@@ -73,6 +76,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 내 HarvestHit를 효과로 바꾼다: 파괴면 그 자리에 먼지와 표식 제거, 약점이 있으면 표식을 그 자리에(약점 명중이면 번쩍), 없으면 표식 제거.
+        // 입력: hit - 받은 HarvestHit, now - 현재 시각(초).
+        // 출력: 반환값 없음. 표식은 MarkerSeconds 뒤에 사라진다.
         public void OnHit(in HarvestHit hit, float now)
         {
             if (_root == null) return;
@@ -98,12 +104,18 @@ namespace ProjectH.Client.Game
             _marker.gameObject.SetActive(true);
         }
 
+        // 기능: HarvestStates로 다른 플레이어가 부순 채집 대상에 걸린 표식을 지운다.
+        // 입력: destroyed - 부서진 채집 대상 비트(id = 비트 위치).
+        // 출력: 반환값 없음.
         // A harvestable gone by another player's hit (HarvestStates) loses its marker too.
         public void OnStates(ulong destroyed)
         {
             if (_markerTarget >= 0 && _markerTarget < 64 && (destroyed & (1UL << _markerTarget)) != 0) HideMarker();
         }
 
+        // 기능: 먼지 뭉치 하나를 시작한다(풀을 돌려 쓴다: 가장 오래된 것을 덮는다).
+        // 입력: center - 뭉치 중심, size - 사라진 것의 크기(m, 0.5..5로 자른다), now - 현재 시각(초).
+        // 출력: 반환값 없음. PuffSeconds 동안 Tick이 움직인다.
         public void Puff(Vector3 center, float size, float now)
         {
             if (_root == null) return;
@@ -115,6 +127,9 @@ namespace ProjectH.Client.Game
             _puffs[i].gameObject.SetActive(true);
         }
 
+        // 기능: 내 휘두르기 하나를 시작한다(도구 머리가 SwingSeconds 동안 앞에서 쓸린다).
+        // 입력: feet - 내 발 위치, yaw - 시점 방향(도), now - 현재 시각(초).
+        // 출력: 반환값 없음.
         public void Swing(Vector3 feet, float yaw, float now)
         {
             if (_root == null) return;
@@ -124,6 +139,9 @@ namespace ProjectH.Client.Game
             _tool.gameObject.SetActive(true);
         }
 
+        // 기능: 효과를 한 프레임 진행한다: 표식 만료·번쩍 크기, 먼지 퍼짐·상승·축소·종료, 도구 휘두르기 궤적·종료.
+        // 입력: now - 현재 시각(초).
+        // 출력: 반환값 없음. 할당 없음.
         public void Tick(float now)
         {
             if (_root == null) return;
@@ -173,6 +191,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 표식·먼지·도구를 모두 숨긴다(경기 상태를 비울 때).
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void HideAll()
         {
             if (_root == null) return;
@@ -182,6 +203,9 @@ namespace ProjectH.Client.Game
             _tool.gameObject.SetActive(false);
         }
 
+        // 기능: 효과 Object와 Material을 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);
@@ -189,12 +213,18 @@ namespace ProjectH.Client.Game
             if (_puffMaterial != null) Object.Destroy(_puffMaterial);
         }
 
+        // 기능: 약점 표식을 숨기고 대상을 잊는다.
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         private void HideMarker()
         {
             _markerTarget = -1;
             _marker.gameObject.SetActive(false);
         }
 
+        // 기능: Collider를 뗀 정육면체 하나를 뿌리 아래에 꺼진 채 만든다(그림자 없음).
+        // 입력: name - 이름, material - 공유 Material, size - 한 변(m).
+        // 출력: 정육면체의 Transform.
         private Transform CreateCube(string name, Material material, float size)
         {
             var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);

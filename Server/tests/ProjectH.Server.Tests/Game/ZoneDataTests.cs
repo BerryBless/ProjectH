@@ -10,10 +10,16 @@ namespace ProjectH.Server.Tests.Game;
 // Spec §1: zones.json loading and validation. A bad file stops the server at startup.
 public class ZoneDataTests
 {
+    // 기능: 존 설정 JSON 문자열을 만든다.
+    // 입력: phases - phases 배열 안에 넣을 단계 JSON들, initialRadius - 첫 원 반지름, center - 첫 원 중심 배열, half - 중심 경계 반폭.
+    // 출력: 그 값들로 채운 zones JSON.
     private static string Json(string phases, string initialRadius = "30", string center = "[0, 0]", string half = "19.5") => $$"""
         { "initialCenter": {{center}}, "initialRadius": {{initialRadius}}, "arenaHalfSize": {{half}}, "phases": [ {{phases}} ] }
         """;
 
+    // 기능: 대기 1초·축소 1초·초당 피해 1인 단계 JSON 하나를 만든다(뒤에 쉼표 포함).
+    // 입력: radius - 목표 반지름.
+    // 출력: 그 단계의 JSON 객체 문자열과 ", ".
     private static string Phase(int radius) => $$"""{"waitSeconds":1,"shrinkSeconds":1,"targetRadius":{{radius}},"damagePerSecond":1}, """;
 
     private const string Last = """{"waitSeconds":8,"shrinkSeconds":8,"targetRadius":0,"damagePerSecond":20}""";

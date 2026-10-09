@@ -22,7 +22,7 @@ public class AudioPhase18Tests
 
     // 기능: 운영 무기 데이터와 주어진 장비로 개발 모드 경기를 만든다.
     // 입력: a·b·c - 칸 0·1·2의 무기 id.
-    // 출력: SandboxHarness.
+    // 출력: 그 장비와 운영 무기 데이터로 만든 개발 모드 경기(SandboxHarness).
     private static SandboxHarness Armed(byte a, byte b, byte c) => new(WeaponsPhase17Tests.Loadout(a, b, c), data: WeaponsPhase17Tests.Data());
 
     // 기능: 한 peer가 받은 ShotFired를 모두 읽는다.
@@ -37,7 +37,7 @@ public class AudioPhase18Tests
 
     // 기능: 한 peer가 받은 마지막 DamageTaken을 읽는다.
     // 입력: h - 경기, peer - 받는 연결.
-    // 출력: DamageTaken.
+    // 출력: 그 peer가 마지막으로 받은 DamageTaken 내용. 하나도 없으면 실패한다.
     private static DamageTaken LastDamage(SandboxHarness h, int peer)
     {
         PacketReader r = SandboxHarness.Body(h.To(peer, PacketId.DamageTaken).Last());

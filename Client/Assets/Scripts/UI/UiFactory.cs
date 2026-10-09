@@ -20,6 +20,9 @@ namespace ProjectH.Client.UI
         public static readonly Color ErrorColor = new Color(1f, 0.55f, 0.45f, 1f);
         public static readonly Color AccentColor = new Color(1f, 0.85f, 0.3f, 1f);
 
+        // 기능: 버튼·입력 칸에 필요한 EventSystem을 Input System UI 모듈과 함께 만든다(비활성 포함 하나라도 있으면 만들지 않는다).
+        // 입력: 없음.
+        // 출력: 만든 EventSystem GameObject(DontDestroyOnLoad). 이미 있으면 null(그때는 호출자가 파괴할 것이 아니다).
         // D1: the EventSystem the buttons and fields need, with the Input System's UI module (the project runs the Input
         // System only). The module assigns its default UI actions in OnEnable when it has none and releases them in
         // OnDisable (Input System 1.20). Returns the object it made, or null when one already exists (then it is not the
@@ -33,6 +36,9 @@ namespace ProjectH.Client.UI
             return go;
         }
 
+        // 기능: 1920x1080 기준으로 스케일되는 Screen Space Overlay 캔버스를 만든다.
+        // 입력: name - GameObject 이름, sortingOrder - 캔버스 그리기 순서, interactive - GraphicRaycaster를 붙일지(버튼·입력 칸이 있는 화면만).
+        // 출력: 만든 캔버스 GameObject(호출자가 소유하고 파괴한다).
         // D1: a Screen Space Overlay canvas scaled from 1920 x 1080 (width and height weighted equally). interactive adds
         // the GraphicRaycaster: only screens with buttons or fields have one.
         public static GameObject CreateCanvas(string name, int sortingOrder, bool interactive)
@@ -50,6 +56,9 @@ namespace ProjectH.Client.UI
             return go;
         }
 
+        // 기능: 부모 아래에 RectTransform만 있는 자식 사각형을 만든다.
+        // 입력: name - 이름, parent - 부모, anchor - 앵커이자 피벗, position - 앵커 기준 위치, size - 크기.
+        // 출력: 만든 RectTransform.
         // A child rectangle: anchor is also its pivot; position is from that anchor.
         public static RectTransform CreateRect(string name, Transform parent, Vector2 anchor, Vector2 position, Vector2 size)
         {
@@ -64,6 +73,9 @@ namespace ProjectH.Client.UI
             return rect;
         }
 
+        // 기능: 부모를 가득 채우는 화면 층을 만든다.
+        // 입력: name - 이름, parent - 부모 캔버스, dim - 반투명하게 어둡게 하는 Image를 붙일지.
+        // 출력: 만든 RectTransform. dim이면 raycast 대상이라 패널 옆 클릭이 아래로 가지 않는다.
         // A full-screen dim layer. It is a raycast target, so a click beside a panel does not reach anything under it.
         public static RectTransform CreateScreen(string name, Transform parent, bool dim)
         {
@@ -82,6 +94,9 @@ namespace ProjectH.Client.UI
             return rect;
         }
 
+        // 기능: 부모 가운데에 패널 색 배경이 있는 사각형을 만든다.
+        // 입력: name - 이름, parent - 부모, size - 크기.
+        // 출력: 만든 RectTransform(배경 Image는 raycast 대상이 아니다).
         public static RectTransform CreatePanel(string name, Transform parent, Vector2 size)
         {
             RectTransform rect = CreateRect(name, parent, new Vector2(0.5f, 0.5f), Vector2.zero, size);
@@ -91,6 +106,9 @@ namespace ProjectH.Client.UI
             return rect;
         }
 
+        // 기능: UI 폰트로 글자 Text를 만든다(rich text 끔, 가로 줄바꿈, 세로 넘침 허용).
+        // 입력: name - 이름, parent - 부모, text - 글자, fontSize - 글자 크기, alignment - 정렬, anchor - 앵커이자 피벗, position - 앵커 기준 위치, size - 크기.
+        // 출력: 만든 Text(raycast 대상이 아니다).
         public static Text CreateText(string name, Transform parent, string text, int fontSize, TextAnchor alignment,
             Vector2 anchor, Vector2 position, Vector2 size)
         {
@@ -128,6 +146,9 @@ namespace ProjectH.Client.UI
             return button;
         }
 
+        // 기능: 레거시 UGUI InputField를 한 줄 입력으로 만든다(글자·placeholder Text 포함).
+        // 입력: name - 이름, parent - 부모, position - 가운데 기준 위치, size - 크기, characterLimit - 글자 수 상한, contentType - 입력 종류.
+        // 출력: 만든 InputField.
         // The legacy UGUI InputField (D1: no TextMeshPro), laid out like DefaultControls.CreateInputField.
         public static InputField CreateInputField(string name, Transform parent, Vector2 position, Vector2 size, int characterLimit,
             InputField.ContentType contentType)
@@ -151,6 +172,9 @@ namespace ProjectH.Client.UI
             return field;
         }
 
+        // 기능: 입력 칸 안을 채우는 글자 Text를 만든다(좌우 12·상하 6 여백, 왼쪽 가운데 정렬, 가로 넘침 허용).
+        // 입력: name - 이름, parent - 입력 칸 RectTransform, fontSize - 글자 크기.
+        // 출력: 빈 글자의 Text(raycast 대상이 아니다).
         private static Text CreateFieldText(string name, RectTransform parent, int fontSize)
         {
             var go = new GameObject(name, typeof(RectTransform));

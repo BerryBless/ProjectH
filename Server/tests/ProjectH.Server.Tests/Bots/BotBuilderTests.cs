@@ -15,6 +15,9 @@ public class BotBuilderTests
 {
     private const float Dt = 1f / 30f;
 
+    // 기능: 광장 셀 16(2.5, 0, 2.5)에 선 체력 100의 BotView를 만든다.
+    // 입력: tool - 손에 든 도구.
+    // 출력: Self.Tool이 설정된 BotView.
     private static BotView View(ToolKind tool = ToolKind.Weapon)
     {
         BotView view = BotTestView.Create(new Vector3(2.5f, 0f, 2.5f));   // plaza cell 16
@@ -22,6 +25,9 @@ public class BotBuilderTests
         return view;
     }
 
+    // 기능: BotRunner처럼 Builder를 1/30초마다 Tick하고 도구 전환 버튼을 다음 Snapshot의 Tool에 반영한다.
+    // 입력: builder - 시험할 BotBuilder, view - 봇 View, start - 시작 시각(초), ticks - Tick 수, target - 조준 대상 Entity(0이면 없음).
+    // 출력: Tick마다의 입력 명령과 그 Tick에 보낸 건설 요청(없으면 null) 목록.
     // Steps the builder like BotRunner: the brain's command (empty here) plus the builder's additions.
     private static List<(InputCommand Command, BuildRequest? Request)> Run(BotBuilder builder, BotView view, float start, int ticks, ushort target = 0)
     {

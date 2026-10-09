@@ -20,6 +20,9 @@ public sealed class BuildSitePool
     private readonly StressMap.BuildSite[] _sites;
     private readonly int[] _holders;
 
+    // 기능: 사이트 목록으로 pool을 만든다.
+    // 입력: sites - run의 건설 사이트.
+    // 출력: 모든 사이트의 보유자가 0인 BuildSitePool.
     public BuildSitePool(IReadOnlyList<StressMap.BuildSite> sites)
     {
         _sites = sites.ToArray();
@@ -40,6 +43,9 @@ public sealed class BuildSitePool
         get { lock (_gate) return _holders.Sum(h => Math.Max(0, h - 1)); }
     }
 
+    // 기능: avoid를 뺀 사이트 중 보유자가 가장 적고 near에 가장 가까운 것을 잡아 보유자 수를 늘린다.
+    // 입력: near - 기준 XZ 위치, avoid - 피할 사이트(유일한 사이트면 무시).
+    // 출력: 잡은 사이트. pool이 비어 있으면 null.
     // The least-held site nearest `near` (not `avoid`, unless it is the only one). Null only when the pool is empty.
     public StressMap.BuildSite? Claim(Vector2 near, StressMap.BuildSite? avoid = null)
     {
@@ -65,6 +71,9 @@ public sealed class BuildSitePool
         }
     }
 
+    // 기능: 사이트의 보유자 수를 하나 줄인다.
+    // 입력: site - 놓을 사이트.
+    // 출력: 반환값 없음. pool의 사이트면 보유자 수가 1 준다(0 밑으로는 안 간다).
     // The builder no longer holds this site (it gave it up). A site the builder built on stays held.
     public void Release(StressMap.BuildSite site)
     {
@@ -75,6 +84,9 @@ public sealed class BuildSitePool
         }
     }
 
+    // 기능: 사이트 조각 중 요청한 종류만 골라 재질을 바꾼다.
+    // 입력: site - 사이트, types - 포함할 조각 종류, material - 재질.
+    // 출력: 사이트 순서의 BuildPlan 배열.
     // A site's pieces of the given types, in the site's order, in the given material.
     public static BuildPlan[] PiecesOf(StressMap.BuildSite site, IReadOnlyCollection<BuildPieceType> types, BuildMaterialType material) =>
         site.Pieces.Where(p => types.Contains(p.Piece)).Select(p => p with { Material = material }).ToArray();

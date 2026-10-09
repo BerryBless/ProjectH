@@ -16,6 +16,9 @@ public enum ControlKind : byte
 // to ignore messages from a previous connection that had the same id.
 public readonly struct ControlMessage
 {
+    // 기능: 연결 사건(연결·Join 요청·끊김)을 Game Loop로 넘길 메시지로 만든다.
+    // 입력: kind - 사건 종류, peerId - 연결 id, peer - 연결(같은 id 재사용 구분용), devPlayerId - 연결 요청의 이름(없으면 null).
+    // 출력: 메시지.
     public ControlMessage(ControlKind kind, int peerId, NetPeer peer, string? devPlayerId)
     {
         Kind = kind;
@@ -68,6 +71,9 @@ public readonly struct MarkerMessage
 
 public readonly struct InputMessage
 {
+    // 기능: 파싱된 플레이어 입력을 Game Loop로 넘길 메시지로 만든다.
+    // 입력: peerId - 연결 id, peer - 연결(같은 id 재사용 구분용), packet - 입력 패킷.
+    // 출력: 메시지.
     public InputMessage(int peerId, NetPeer peer, in PlayerInputPacket packet)
     {
         PeerId = peerId;

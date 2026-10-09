@@ -12,6 +12,9 @@ public class SnapshotSplitTests
 {
     private sealed record Sent(int PeerId, byte[] Data, DeliveryMethod Method);
 
+    // 기능: 최대 인원이 MaxSnapshotEntities인 DevRespawn Match(Loot 지점 없음)를 만들어 Peer 1..players를 참가시킨다. WorldSnapshot 패킷만 기록하며, 참가가 거부되면 테스트를 실패시킨다.
+    // 입력: players - 참가시킬 인원.
+    // 출력: 만든 Match와 WorldSnapshot 송신 기록 목록.
     private static (Match match, List<Sent> sent) MatchWith(int players)
     {
         var sent = new List<Sent>();
@@ -22,6 +25,9 @@ public class SnapshotSplitTests
         return (match, sent);
     }
 
+    // 기능: 송신 기록을 WorldSnapshot Header와 Entity 목록으로 읽는다. 읽기에 실패하거나 바이트가 남으면 테스트를 실패시킨다.
+    // 입력: s - WorldSnapshot 송신 기록.
+    // 출력: Snapshot Header와 그 안의 Entity 목록.
     private static (WorldSnapshotHeader header, List<SnapshotEntity> entities) Read(Sent s)
     {
         var reader = new PacketReader(s.Data);

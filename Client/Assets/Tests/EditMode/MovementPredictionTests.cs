@@ -30,6 +30,9 @@ namespace ProjectH.Client.Tests
             public readonly CollisionWorld World = new CollisionWorld();
             public PieceGrid Pieces;
 
+            // 기능: 서버의 한 Tick을 흉내 낸다. 수송기 경로를 타고 있으면 Ride, 아니면 문·조각을 모은 월드에서 Step을 돌리고 돌진으로 막힌 문을 연다.
+            // 입력: input - 이 Tick에 처리할 입력.
+            // 출력: 반환값 없음. Tick이 1 늘고 State·Sprinting·Doors가 갱신된다.
             public void Run(in InputCommand input)
             {
                 Tick++;
@@ -55,6 +58,9 @@ namespace ProjectH.Client.Tests
         private LocalPlayerPredictor _predictor;
         private byte _sentDoors;
 
+        // 기능: 서버 복제본·예측 문·예측기를 같은 시작 상태로 만들고 ack 0의 합류 Snapshot을 보낸다.
+        // 입력: spawn - 양쪽의 시작 이동 상태, route - 수송기 경로(null이면 경로 없음).
+        // 출력: 반환값 없음. _server·_doors·_predictor·_sentDoors가 새로 만들어진다.
         private void Start(MoveState spawn, DropRoute? route = null)
         {
             _server = new ServerReplica { State = spawn };
@@ -70,6 +76,9 @@ namespace ProjectH.Client.Tests
             Snapshot(0);   // the join snapshot: nothing acked yet, it gives the tick
         }
 
+        // 기능: 양쪽에서 정확히 한 걸음을 진행한다. 예측기가 만든 입력을 서버 복제본이 그대로 돌리고, 짝수 Tick마다 Snapshot을 보낸다.
+        // 입력: move - 이동 입력, yaw - 시선 Yaw(도), held - 누르고 있는 버튼, press - 이 걸음에만 넣는 버튼.
+        // 출력: 반환값 없음. 예측기와 서버 복제본이 한 Tick 진행된다.
         // One frame of exactly one step on both sides, then every second tick a snapshot.
         private void Frame(Vector2 move, float yaw, InputButtons held = InputButtons.None, InputButtons press = InputButtons.None)
         {
@@ -80,11 +89,17 @@ namespace ProjectH.Client.Tests
             if (_server.Tick % 2 == 0) Snapshot(_predictor.LastSeq);
         }
 
+        // 기능: 같은 입력으로 Frame을 count번 반복한다.
+        // 입력: count - 반복할 걸음 수, move - 이동 입력, yaw - 시선 Yaw(도), held - 누르고 있는 버튼.
+        // 출력: 반환값 없음. 예측기와 서버 복제본이 count Tick 진행된다.
         private void Frames(int count, Vector2 move, float yaw, InputButtons held = InputButtons.None)
         {
             for (int i = 0; i < count; i++) Frame(move, yaw, held);
         }
 
+        // 기능: 서버 복제본의 상태를 실제 Snapshot 쓰기·읽기(양자화)로 통과시켜 예측기에 Reconcile하고, 문 상태가 바뀌었으면 DoorStates를 먼저 적용한다.
+        // 입력: ack - Snapshot이 확인하는 마지막 입력 Seq.
+        // 출력: 반환값 없음. 예측기가 서버 상태와 대조되고 _sentDoors가 갱신된다.
         private void Snapshot(uint ack)
         {
             MoveState s = _server.State;
@@ -114,6 +129,9 @@ namespace ProjectH.Client.Tests
             _predictor.Reconcile(entity, self, ack, _server.Tick);
         }
 
+        // 기능: 예측이 한 번도 교정되지 않았고 모드·위치가 서버 복제본과 같은지 단언한다.
+        // 입력: what - 실패 메시지에 붙일 장면 이름.
+        // 출력: 반환값 없음. 다르면 테스트가 실패한다.
         private void AssertAgrees(string what)
         {
             Assert.AreEqual(0, _predictor.Corrections, what + ": corrections");
@@ -123,6 +141,9 @@ namespace ProjectH.Client.Tests
             Assert.AreEqual(_server.State.Position.Z, _predictor.PredictedPosition.z, 1e-5f, what);
         }
 
+        // 기능: 지형 높이에 발을 붙인 시작 이동 상태를 만든다.
+        // 입력: x - 월드 x, z - 월드 z, yaw - 시작 Yaw(도).
+        // 출력: 지형 위 (x, z)에 선 MoveState.
         private static MoveState At(float x, float z, float yaw = 0f) =>
             new MoveState { Position = new Num.Vector3(x, GameMap.Terrain.Height(x, z), z), Yaw = yaw };
 
@@ -309,6 +330,9 @@ namespace ProjectH.Client.Tests
 
         // ---- Phase 13 D2, D3: moving on building pieces ----
 
+        // 기능: 건설 조각들을 한 PieceGrid에 넣어 서버 복제본과 예측기가 같은 격자를 보게 한다.
+        // 입력: shapes - 넣을 조각 모양들(ID는 1부터 차례로).
+        // 출력: 반환값 없음. _server.Pieces와 _predictor.Pieces가 같은 격자를 가리킨다.
         // The server and the prediction both know these pieces (the predictor's Pieces is the client's store of confirmed
         // pieces; here the same grid), so they gather the same world and agree with no correction. Plaza cell 16:
         // x 0..5, z 0..5.
@@ -320,6 +344,9 @@ namespace ProjectH.Client.Tests
             _predictor.Pieces = grid;
         }
 
+        // 기능: 격자 좌표를 BuildGrid.TryNormalize로 정규화한 조각 모양을 만들고 성공을 단언한다.
+        // 입력: type - 조각 종류, x - 격자 x 칸, y - 층, z - 격자 z 칸, rotation - 회전(0..3).
+        // 출력: 정규화된 BuildPieceShape.
         private static BuildPieceShape Shape(BuildPieceType type, int x, int y, int z, int rotation = 0)
         {
             Assert.IsTrue(BuildGrid.TryNormalize(type, x, y, z, rotation, out BuildPieceShape shape));

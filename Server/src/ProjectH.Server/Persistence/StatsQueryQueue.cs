@@ -43,6 +43,9 @@ public sealed class StatsQueryQueue
     private long _unavailable;
     private long _undelivered;
 
+    // 기능: 요청 큐와 응답 큐(둘 다 유한, 읽는 쪽 하나·쓰는 쪽 여럿)를 만든다.
+    // 입력: capacity - 각 큐가 기다릴 수 있는 항목 수.
+    // 출력: 두 큐가 빈 StatsQueryQueue.
     public StatsQueryQueue(int capacity = DefaultCapacity)
     {
         Capacity = capacity;
@@ -68,6 +71,9 @@ public sealed class StatsQueryQueue
     public StatsQueryCounts Counts => new(Interlocked.Read(ref _accepted), Interlocked.Read(ref _limited),
         Interlocked.Read(ref _busy), Interlocked.Read(ref _unavailable), Interlocked.Read(ref _undelivered));
 
+    // 기능: 통계 요청 하나를 요청 큐에 넣는다(수신 스레드, 기다리지 않는다). 들어가면 Requests로 센다.
+    // 입력: query - 연결·플레이어 id·넣은 시각이 든 요청.
+    // 출력: 들어갔으면 true, 요청 큐가 가득 차면 false(호출자가 Busy로 답한다).
     // Network thread. False = the request queue is full: the caller answers Busy.
     public bool TryEnqueue(in StatsQuery query)
     {
@@ -76,6 +82,9 @@ public sealed class StatsQueryQueue
         return true;
     }
 
+    // 기능: 응답 하나를 응답 큐에 넣는다(StatsQueryService 또는 수신 스레드). Busy·Unavailable 상태는 그 합계로 센다.
+    // 입력: reply - 연결과 보낼 StatsResponse.
+    // 출력: 들어갔으면 true, 응답 큐가 가득 차면 false(응답은 버려지고 Undelivered로 센다).
     // StatsQueryService or a network thread. False = the reply queue is full: the reply is dropped and counted.
     public bool TryReply(in StatsReply reply)
     {
@@ -86,9 +95,18 @@ public sealed class StatsQueryQueue
         return false;
     }
 
+    // 기능: 응답 큐에서 응답 하나를 꺼낸다(Game Loop 전용, 기다리지 않는다).
+    // 입력: reply - 꺼낸 응답을 받을 곳.
+    // 출력: 꺼냈으면 true와 응답, 비어 있으면 false.
     // Game loop only.
     public bool TryTakeReply(out StatsReply reply) => _replies.Reader.TryRead(out reply);
 
+    // 기능: 답 없이 버린 요청(Join 전, 또는 간격 안의 재요청) 하나를 센다(수신 스레드).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void AddLimited() => Interlocked.Increment(ref _limited);
+    // 기능: 연결이 사라져 보내지 못한 응답 하나를 센다(Game Loop).
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void AddUndelivered() => Interlocked.Increment(ref _undelivered);
 }

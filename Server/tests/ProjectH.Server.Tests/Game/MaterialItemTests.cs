@@ -15,6 +15,9 @@ public class MaterialItemTests
     private readonly SandboxHarness _h = new();
     private static readonly Vector3 Spot = new(2f, 0f, -6f);
 
+    // 기능: 자원만 가진 피해자(Peer 1)를 Spot에 두고 사수(Peer 2)가 한 발로 죽여 자원 아이템이 떨어지게 한다. 피해자는 부활하지 않게 둔다.
+    // 입력: wood - 피해자의 나무 수, metal - 피해자의 금속 수.
+    // 출력: 죽은 상태의 피해자 PlayerEntity.
     private PlayerEntity KillWithResources(int wood, int metal)
     {
         PlayerEntity victim = _h.Join(1, Spot);
@@ -31,6 +34,9 @@ public class MaterialItemTests
         return victim;
     }
 
+    // 기능: 월드 아이템 중 Material 종류만 모은다.
+    // 입력: 없음.
+    // 출력: Material 아이템 데이터 배열.
     private WorldItemData[] Materials() =>
         Enumerable.Range(0, _h.Match.WorldItems.Count).Select(i => _h.Match.WorldItems[i].Data).Where(d => d.Kind == ItemKind.Material).ToArray();
 

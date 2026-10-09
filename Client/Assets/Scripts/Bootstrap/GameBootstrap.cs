@@ -6,6 +6,9 @@ namespace ProjectH.Client.Bootstrap
 {
     public static class GameBootstrap
     {
+        // 기능: 첫 Scene 로드 뒤 GameClient·UiRoot(개발 빌드에서 QA 포트가 있으면 QaCommandReceiver도)를 가진 GameObject를 한 번만 만든다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. runInBackground가 켜지고 세션 동안 살아 있는 GameClient GameObject가 생긴다(이미 있으면 아무것도 하지 않는다).
         // Runs after the first scene loads, in any scene, so the prototype needs no scene or prefab
         // edits. Creates exactly one GameClient that lives for the whole session, and its game UI (Phase 11).
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]

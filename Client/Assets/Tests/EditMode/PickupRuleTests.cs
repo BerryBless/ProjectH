@@ -9,6 +9,9 @@ namespace ProjectH.Client.Tests
     // WorldItemsTests.FindNearest_* (2 m on the ground plane, 2 m up or down, nearest, ties to the lower id).
     public class PickupRuleTests
     {
+        // 기능: 주어진 위치에 놓인 Light 탄약 10개짜리 시험용 월드 아이템을 만든다.
+        // 입력: id - 아이템 ID, position - 월드 위치.
+        // 출력: Ammo 종류의 WorldItemData.
         private static WorldItemData Item(ushort id, NVector3 position) => new WorldItemData
         {
             ItemId = id,
@@ -18,6 +21,9 @@ namespace ProjectH.Client.Tests
             Position = position,
         };
 
+        // 기능: 아이템들을 차례로 Upsert한 WorldItemList를 만든다.
+        // 입력: items - 넣을 아이템들.
+        // 출력: 아이템이 들어 있는 WorldItemList.
         private static WorldItemList ListOf(params WorldItemData[] items)
         {
             var list = new WorldItemList();

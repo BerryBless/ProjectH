@@ -166,7 +166,9 @@ public static class PieceTrace
         return t0 <= t1;
     }
 
-    // Narrows [t0, t1] to where value0 + rate x t <= limit.
+    // 기능: 광선 구간 [t0, t1]을 value0 + rate x t <= limit인 부분으로 좁힌다(반평면 하나와의 교차).
+    // 입력: value0 - t = 0에서의 값, rate - t당 변화량, limit - 상한, t0·t1 - 구간(갱신된다).
+    // 출력: 좁힌 구간이 비어 있지 않으면 true.
     private static bool Below(float value0, float rate, float limit, ref float t0, ref float t1)
     {
         if (MathF.Abs(rate) < ParallelEpsilon) return value0 <= limit;
@@ -182,6 +184,9 @@ public static class PieceTrace
         return t0 <= t1;
     }
 
+    // 기능: 광선 구간 [tMin, tMax]를 한 축의 [min, max] 판과 겹치는 부분으로 좁힌다.
+    // 입력: origin - 그 축의 시작 좌표, direction - 그 축의 방향 성분, min·max - 판 범위, tMin·tMax - 구간(갱신된다).
+    // 출력: 좁힌 구간이 비어 있지 않으면 true(축과 평행하면 시작점이 판 안일 때만 true).
     private static bool Slab(float origin, float direction, float min, float max, ref float tMin, ref float tMax)
     {
         if (MathF.Abs(direction) < ParallelEpsilon) return origin >= min && origin <= max;
@@ -199,8 +204,14 @@ public static class PieceTrace
         return tMin <= tMax;
     }
 
+    // 기능: 광선이 한 축의 경계 좌표에 닿는 거리 t를 구한다(DDA의 다음 칸 경계).
+    // 입력: origin - 그 축의 시작 좌표, direction - 그 축의 방향 성분, boundary - 경계 좌표.
+    // 출력: 경계까지의 t. 축과 평행하면 무한대.
     private static float Boundary(float origin, float direction, float boundary) =>
         MathF.Abs(direction) < ParallelEpsilon ? float.PositiveInfinity : (boundary - origin) / direction;
 
+    // 기능: 벡터의 세 성분이 모두 유한한지 본다.
+    // 입력: v - 검사할 벡터.
+    // 출력: NaN·무한대가 없으면 true.
     private static bool IsFinite(Vector3 v) => float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z);
 }

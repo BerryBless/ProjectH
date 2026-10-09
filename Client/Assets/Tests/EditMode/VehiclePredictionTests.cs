@@ -19,6 +19,9 @@ namespace ProjectH.Client.Tests
         private static Num.Vector3 SpawnPoint => VehicleSpawns.All[0];
         private static float SpawnHeading => VehicleSpawns.Heading(0);
 
+        // 기능: 예측기를 한 번에 한 걸음씩 steps번 진행시킨다(Yaw 0). press는 마지막 걸음에만 실린다.
+        // 입력: predictor - 대상 예측기, steps - 걸음 수(0이면 걸음 없이 Render 위치만 갱신), move - 이동 입력, held - 누르고 있는 버튼, press - 마지막 걸음에 넣는 버튼.
+        // 출력: 반환값 없음. 예측기에 steps개의 입력이 쌓이고 상태가 갱신된다.
         private static void AdvanceSteps(LocalPlayerPredictor predictor, int steps, Vector2 move, InputButtons held = InputButtons.None,
             InputButtons press = InputButtons.None)
         {
@@ -35,6 +38,9 @@ namespace ProjectH.Client.Tests
             }
         }
 
+        // 기능: 서버의 차량 Step을 fromSeq..toSeq 입력에 대해 돌린다(걸음마다 그 위치에서 Gather, 문 모두 닫힘, 조각 없음).
+        // 입력: state - 시작 차량 상태, inputs - 입력을 꺼낼 예측기, fromSeq - 첫 입력 Seq, toSeq - 마지막 입력 Seq.
+        // 출력: 입력을 모두 돌린 뒤의 VehicleMove.
         // The server's vehicle step for the same inputs: Gather at the position before the step, every door closed, nothing
         // destroyed, no pieces.
         private static VehicleMove ServerRun(VehicleMove state, LocalPlayerPredictor inputs, uint fromSeq, uint toSeq)
@@ -48,6 +54,9 @@ namespace ProjectH.Client.Tests
             return state;
         }
 
+        // 기능: 차량 상태를 Me가 운전하는 Active 차량 레코드로 만든다(위치·방향·속도는 wire 양자화).
+        // 입력: move - 차량 운동 상태, id - 차량 ID.
+        // 출력: 체력이 가득한 VehicleRecord.
         private static VehicleRecord RecordOf(in VehicleMove move, byte id = 1) => new VehicleRecord
         {
             Id = id,
@@ -68,6 +77,9 @@ namespace ProjectH.Client.Tests
             Heading = SpawnHeading,
         };
 
+        // 기능: 운전석에 앉아 차량 예측이 켜진 예측기를 만든다. 양쪽 다 양자화된 레코드에서 시작한다.
+        // 입력: start - 결과: 서버 복제에 쓸 양자화된 시작 차량 상태.
+        // 출력: 첫 레코드를 Reconcile한 LocalPlayerPredictor.
         private static LocalPlayerPredictor Driving(out VehicleMove start)
         {
             // Both sides start from the record as the wire carries it (quantized).
@@ -334,6 +346,9 @@ namespace ProjectH.Client.Tests
             Assert.Greater(predictor.VerticalSpeed, 0f);
         }
 
+        // 기능: 차량 레코드의 위치·방향·속도·조향을 운동 상태로 옮긴다.
+        // 입력: r - 변환할 차량 레코드.
+        // 출력: 그 값을 가진 VehicleMove.
         private static VehicleMove RecordToMove(in VehicleRecord r) =>
             new VehicleMove { Position = r.Position, Heading = r.Heading, Speed = r.Speed, Steer = r.Steer };
     }

@@ -44,6 +44,9 @@ namespace ProjectH.Client.UI
         private float _rateFrom = -1f;
         private int _rate;
 
+        // 기능: F1 줄 네 개(연결·이동·수송기 경로·건설)를 가진 Canvas를 만들고 숨긴다.
+        // 입력: 없음.
+        // 출력: 숨겨진 DebugOverlay(Dispose가 Canvas를 파괴한다).
         public DebugOverlay()
         {
             _root = UiFactory.CreateCanvas("DebugOverlay", 120, interactive: false);
@@ -65,6 +68,9 @@ namespace ProjectH.Client.UI
 
         public bool Visible => _visible;
 
+        // 기능: F1 줄을 보이거나 숨긴다. 다시 보일 때 모든 줄이 다음 Tick에 새로 만들어지도록 보인 값을 지운다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Visible이 뒤집히고 Canvas가 켜지거나 꺼진다(Canvas가 이미 파괴됐으면 아무것도 하지 않는다).
         public void Toggle()
         {
             if (_root == null) return;
@@ -96,6 +102,10 @@ namespace ProjectH.Client.UI
             _text.text = UiText.DebugLine(state.ToString(), roundTripMs, entityId, authDrops, tickRejects, spawnRejects);
         }
 
+        // 기능: 이동 줄과 수송기 경로 줄을 갱신한다(Phase 12 D14). 경로는 바뀔 때, 이동 줄은 보이는 자릿수가 바뀔 때 0.1초에 한 번만 다시 만든다.
+        // 입력: now - 현재 시각(초), alive - 살아 있는지(아니면 이동 줄을 비운다), mode - 이동 모드, horizontal·vertical - 수평·수직 속도(m/s),
+        //   energy - 기력, correction - 마지막 예측 보정 거리(m), hasRoute·route - 수송기 경로가 있는지와 그 경로.
+        // 출력: 반환값 없음. 숨겨져 있으면 아무것도 하지 않는다.
         // Phase 12 D14: the local player's mode, speeds, energy and the last prediction correction, and the transport route.
         public void TickMovement(float now, bool alive, MovementMode mode, float horizontal, float vertical, float energy, float correction,
             bool hasRoute, in DropRoute route)
@@ -128,6 +138,10 @@ namespace ProjectH.Client.UI
             _movement.text = UiText.MovementLine(ModeName(mode), h, v, e, c);
         }
 
+        // 기능: 건설 줄을 갱신한다(Phase 13 D16). 요청 속도는 1초 단위로 세고, 보이는 값이 바뀌었을 때 0.25초에 한 번만 다시 만든다.
+        // 입력: now - 현재 시각(초), tool - 도구, piece·material - 고른 조각·재료, stored·drawn - 확정 조각의 저장·표시 수,
+        //   ignored - 무시한 사건 수, sent·refused - 보낸·거절된 요청 수, lastRefusal - 마지막 거절 코드.
+        // 출력: 반환값 없음. 숨겨져 있으면 아무것도 하지 않는다(요청 속도 계산도 멈춘다).
         // Phase 13 D16: the tool, the selection, the confirmed pieces stored and drawn, events ignored, requests (and per
         // second) and refusals.
         public void TickBuild(float now, ToolKind tool, BuildPieceType piece, BuildMaterialType material, int stored, int drawn, int ignored,
@@ -165,6 +179,9 @@ namespace ProjectH.Client.UI
             _build.text = UiText.BuildDebugLine(tool, piece, material, stored, drawn, ignored, sent, refused, lastRefusal, _rate);
         }
 
+        // 기능: 두 수송기 경로가 같은지 비교한다(시작·끝 좌표와 시작 Tick).
+        // 입력: a·b - 비교할 경로.
+        // 출력: 모두 같으면 true, 아니면 false.
         private static bool SameRoute(in DropRoute a, in DropRoute b) =>
             a.StartX == b.StartX && a.StartZ == b.StartZ && a.EndX == b.EndX && a.EndZ == b.EndZ && a.StartTick == b.StartTick;
 
@@ -186,6 +203,9 @@ namespace ProjectH.Client.UI
             }
         }
 
+        // 기능: F1 Canvas를 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 이미 파괴됐으면 아무것도 하지 않는다.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);

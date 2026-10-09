@@ -74,6 +74,9 @@ public sealed class BuildRequestQueue
         return true;
     }
 
+    // 기능: 대기 중인 요청을 모두 버린다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 큐가 비워진다.
     public void Clear()
     {
         _head = 0;

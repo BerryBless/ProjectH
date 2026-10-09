@@ -148,6 +148,9 @@ namespace ProjectH.Client.Input
         // Phase 12 D7: the Crouch button: toggled with C or held with Ctrl.
         public bool CrouchHeld => _crouchToggled || _crouchHold.IsPressed();
 
+        // 기능: C로 켠 웅크리기 토글을 끈다(부활·사망은 서서 시작한다).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 토글이 꺼져 CrouchHeld는 Ctrl을 누를 때만 true가 된다.
         // A respawn or a death starts standing.
         public void ResetCrouch() => _crouchToggled = false;
 

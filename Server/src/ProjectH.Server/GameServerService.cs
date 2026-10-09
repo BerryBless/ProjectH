@@ -59,6 +59,9 @@ public sealed class GameServerService : IHostedService, System.IDisposable
         _meter = new ServerMeter(_loop.Health);
     }
 
+    // 기능: Game Loop를 시작하고, 정지 감시기(FatalStallSeconds를 넘기면 새 연결 거부 + 오류 종료)를 만들어 시작한다.
+    // 입력: cancellationToken - 호스트 시작 취소 토큰(쓰지 않는다).
+    // 출력: 완료된 Task. UDP 수신과 Tick이 시작된다.
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _loop.Start();
@@ -77,6 +80,9 @@ public sealed class GameServerService : IHostedService, System.IDisposable
     // Phase 10 D6, server review M8: the fatal path of failing resets and of a hung loop. Exit code 1 tells a supervisor or
     // a person; StopApplication runs on the thread pool, so neither the game loop thread nor the watchdog's timer waits on
     // the host. Any thread; calling it twice only asks the host to stop twice.
+    // 기능: 종료 코드를 1로 두고 Thread Pool에서 호스트 종료를 요청한다(치명 리셋·멈춘 Loop의 경로, 어느 스레드든, 막지 않는다).
+    // 입력: 없음.
+    // 출력: 반환값 없음. 호스트가 종료 절차에 들어간다.
     private void StopWithError()
     {
         Environment.ExitCode = 1;
@@ -85,6 +91,9 @@ public sealed class GameServerService : IHostedService, System.IDisposable
 
     // Phase 10 D7: GameLoop.Stop blocks (thread join up to 5 s, shutdown notices up to 1 s), so it runs on the thread
     // pool and the host's thread only awaits it, for as long as the host's shutdown token allows.
+    // 기능: 감시기를 먼저 해제하고 GameLoop.Stop을 Thread Pool에서 돌려 기다린다. 호스트 종료 시한이 먼저 끝나면 Warning만 남긴다.
+    // 입력: cancellationToken - 호스트 종료 시한 토큰.
+    // 출력: Stop이 끝나거나 시한이 지나면 완료. 연결과 소켓이 닫힌다.
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         // A stopping loop does not tick: that is no stall.
@@ -99,6 +108,9 @@ public sealed class GameServerService : IHostedService, System.IDisposable
         }
     }
 
+    // 기능: 감시기, GameLoop(멈추지 않았으면 멈춘다), Meter를 해제한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void Dispose()
     {
         _watchdog?.Dispose();

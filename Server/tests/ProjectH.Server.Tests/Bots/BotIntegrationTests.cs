@@ -14,6 +14,9 @@ namespace ProjectH.Server.Tests.Bots;
 // that writes them.
 public sealed class BotIntegrationTests
 {
+    // 기능: 빈 포트·3초 끊김 타임아웃·60초 통계 간격으로 옵션을 고쳐 in-process 서버를 시작한다.
+    // 입력: options - 서버 옵션(포트 등은 덮어쓴다), data - 게임 데이터, loadout - 시작 장비(없으면 null), drops - 투입 지점(없으면 null).
+    // 출력: 시작된 GameLoop(호출자가 Dispose).
     private static GameLoop StartServer(ServerOptions options, GameData data, StartingLoadout? loadout = null, Vector3[]? drops = null)
     {
         options.Port = 0;
@@ -24,9 +27,15 @@ public sealed class BotIntegrationTests
         return server;
     }
 
+    // 기능: 서버의 로컬 포트로 접속 간격 없이 봇 count명을 만드는 BotRunner를 만든다.
+    // 입력: server - 접속할 서버, count - 봇 수, reconnect - 재접속 허용 여부.
+    // 출력: 아직 Step하지 않은 BotRunner.
     private static BotRunner Bots(GameLoop server, int count, bool reconnect = false) =>
         new(new BotOptions { Port = server.LocalPort, Count = count, ConnectIntervalMs = 0, Reconnect = reconnect }, _ => { });
 
+    // 기능: 조건이 참이 되거나 시간이 다할 때까지 약 30 Hz로 봇을 Step한다.
+    // 입력: bots - Step할 BotRunner, condition - 멈출 조건, timeoutMs - 최대 시간.
+    // 출력: 조건이 참이면 true(시간이 다한 뒤 마지막으로 한 번 더 본다).
     // Steps the bots at about 30 Hz until the condition holds or the time runs out.
     private static bool RunUntil(BotRunner bots, Func<bool> condition, int timeoutMs)
     {
@@ -135,6 +144,9 @@ public sealed class BotIntegrationTests
         var a = new BotConnection();
         using var b = new BotConnection();
         BotConnection? impostor = null, back = null;
+        // 기능: 조건이 참이 될 때까지 살아 있는 연결 네 개(a, b, impostor, back)를 15 ms마다 Update한다.
+        // 입력: until - 멈출 조건, timeoutMs - 최대 시간, what - 실패 메시지.
+        // 출력: 반환값 없음. 시간 안에 조건이 참이 되지 않으면 Assert 실패.
         void Pump(Func<bool> until, int timeoutMs, string what)
         {
             var clock = Stopwatch.StartNew();
@@ -213,6 +225,9 @@ public sealed class BotIntegrationTests
         using GameLoop server = StartServer(new ServerOptions { MaxPlayers = 4, MinPlayers = 2, StartCountdownSeconds = 1, ResultSeconds = 1 },
             TestGameData.Create(zonesJson: TestGameData.ShortZonesJson), drops: RoyaleHarness.LobbyRingDrops);
         using BotRunner bots = Bots(server, 4);
+        // 기능: 모든 봇이 MatchResult를 하나 이상 받았는지 본다.
+        // 입력: 없음.
+        // 출력: 모든 봇이 받았으면 true.
         bool AllGotResults()
         {
             for (int i = 0; i < bots.Count; i++)

@@ -12,6 +12,9 @@ namespace ProjectH.Server.Tests.Integration;
 // counted as invalid packets.
 public sealed class BuildIntegrationTests
 {
+    // 기능: DevRespawn 샌드박스 서버를 전투 장비로 포트 0에 띄운다.
+    // 입력: 없음.
+    // 출력: 시작된 GameLoop(호출자가 Dispose한다).
     private static GameLoop StartServer()
     {
         var loop = new GameLoop(new ServerOptions { Port = 0, MaxPlayers = 4, DevRespawn = true, StatsIntervalSeconds = 60 },

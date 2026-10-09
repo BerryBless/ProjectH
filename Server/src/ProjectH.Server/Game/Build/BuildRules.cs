@@ -16,8 +16,9 @@ public static class BuildRules
     // A wall or floor box closer than this along the eye's line to it than a map box or the terrain is "behind" it.
     private const float LineOfSightSlack = 0.05f;
 
-    // D1: the slot is taken, or the piece would share its space with another: a floor and the roof of the level below
-    // fill the same slab.
+    // 기능: 조각의 slot이 이미 차 있거나 같은 공간을 다른 조각과 나누는지 본다(D1: 바닥과 아래 층 지붕은 같은 판을 채운다).
+    // 입력: world - 경기의 조각 저장소, shape - 놓으려는 모양.
+    // 출력: 자리가 막혀 있으면 true.
     public static bool Occupied(BuildWorld world, in BuildPieceShape shape)
     {
         if (world.IdAtSlotKey(BuildGrid.SlotKey(shape)) != 0) return true;
@@ -28,8 +29,10 @@ public static class BuildRules
         return false;
     }
 
-    // D9: the piece's centre is within range (plus its own radius) of the eye, and the aim points at it: the aim ray meets
-    // its bounds within reach, or its centre is within the view angle of the aim. aim is a unit vector.
+    // 기능: 조각 중심이 눈에서 사거리(+조각 반지름) 안에 있고 조준이 그 조각을 향하는지 본다(D9): 조준 Ray가 상자를 맞히거나
+    //   중심이 시야각 안이면 된다.
+    // 입력: eye - 눈 위치, aim - 조준 방향(단위 벡터), shape - 조각 모양, range - 사거리, viewAngleDegrees - 허용 시야각(도).
+    // 출력: 손이 닿으면 true.
     public static bool InReach(Vector3 eye, Vector3 aim, in BuildPieceShape shape, float range, float viewAngleDegrees)
     {
         Box bounds = BuildGrid.BoundsOf(shape);
@@ -44,8 +47,9 @@ public static class BuildRules
         return cos >= MathF.Cos(viewAngleDegrees * (MathF.PI / 180f));
     }
 
-    // D9: the straight line from the eye to the piece's centre meets a map box, a closed door or the terrain before it
-    // reaches the piece (building behind a wall). blockers: the map boxes and the closed doors.
+    // 기능: 눈에서 조각 중심까지의 직선이 조각에 닿기 전에 맵 상자·닫힌 문·지형에 먼저 막히는지 본다(D9: 벽 너머 건설).
+    // 입력: eye - 눈 위치, shape - 조각 모양, blockers - 맵 상자와 닫힌 문 상자, terrain - 지형 높이.
+    // 출력: 조각보다 먼저 막히면 true.
     public static bool BehindAWall(Vector3 eye, in BuildPieceShape shape, ReadOnlySpan<Box> blockers, HeightField terrain)
     {
         Box bounds = BuildGrid.BoundsOf(shape);
@@ -75,7 +79,9 @@ public static class BuildRules
         return PieceTrace.Trace(eye, direction, range, world, out _, out _, out _, targetId);
     }
 
-    // D9: the piece's top is buried under the terrain at its centre.
+    // 기능: 조각 중심에서 지형이 조각 윗면보다 BuriedTolerance 넘게 높은지 본다(D9: 땅에 묻힌 조각).
+    // 입력: shape - 조각 모양, terrain - 지형 높이.
+    // 출력: 묻혀 있으면 true.
     public static bool Buried(in BuildPieceShape shape, HeightField terrain)
     {
         Box bounds = BuildGrid.BoundsOf(shape);
@@ -83,9 +89,10 @@ public static class BuildRules
         return terrain.Height(c.X, c.Z) > bounds.Max.Y + BuriedTolerance;
     }
 
-    // D9: the piece's box overlaps this map box (a static box, a door or a harvestable) deeper on every axis than
-    // MaxMapOverlap or half the piece's own size on that axis, whichever is less: a thin wall cutting through a crate
-    // counts, a wall standing on a roof slab 0.25 m deep does not.
+    // 기능: 조각 상자가 맵 상자(정적 상자·문·채집물)와 세 축 모두 허용 깊이(MaxMapOverlap 또는 조각 크기의 절반 중 작은 쪽)보다
+    //   깊게 겹치는지 본다(D9). 얇은 벽이 상자를 가르면 겹침, 지붕 판 위 0.25 m는 겹침이 아니다.
+    // 입력: shape - 조각 모양, other - 맵 상자.
+    // 출력: 너무 깊게 겹치면 true.
     public static bool OverlapsTooMuch(in BuildPieceShape shape, in Box other)
     {
         Box b = BuildGrid.BoundsOf(shape);

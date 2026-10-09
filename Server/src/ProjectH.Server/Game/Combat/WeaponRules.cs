@@ -32,8 +32,9 @@ public static class WeaponRules
         player.SwitchReadyTick = now + (held.IsEmpty ? 0u : held.Weapon!.EquipTicks);
     }
 
-    // Runs every tick for a living player, whether or not an input arrived. A finished reload moves rounds
-    // from the reserve into the magazine; it never makes rounds (Review Focus).
+    // 기능: 끝난 재장전을 마무리한다(살아 있는 플레이어마다 매 Tick, 입력이 없어도). 예비 탄을 탄창으로 옮길 뿐 탄을 만들지 않는다.
+    // 입력: player - 플레이어, now - 마지막 Tick.
+    // 출력: 반환값 없음. ReloadEndTick이 지났으면 Reloading이 풀리고 탄창·예비 탄·Inventory.Changed가 바뀐다.
     public static void UpdateReload(PlayerEntity player, uint now)
     {
         if (!player.Reloading || now < player.ReloadEndTick) return;
@@ -106,6 +107,9 @@ public static class WeaponRules
         return true;
     }
 
+    // 기능: 예비 탄이 있을 때만 재장전을 시작한다(없으면 시작하지 않아 끝낼 수 없는 재장전이 Snapshot에 실리지 않는다).
+    // 입력: player - 플레이어, weapon - 손에 든 무기, now - 마지막 Tick.
+    // 출력: 반환값 없음. Reloading = true, ReloadEndTick = now + ReloadTicks(예비 탄이 0이면 그대로).
     // A reload needs reserve rounds of the weapon's type. Without them it does not start at all, so the
     // snapshot never reports a reload that cannot finish. That holds only while nothing empties a reserve
     // during a reload: every path that takes reserve rounds out of the inventory must cancel the reload

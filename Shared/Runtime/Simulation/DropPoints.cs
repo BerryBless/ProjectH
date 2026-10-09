@@ -25,6 +25,9 @@ namespace ProjectH.Shared.Simulation
 
         public static ReadOnlySpan<Vector3> All => s_points;
 
+        // 기능: 지형 위의 투입 지점을 만든다.
+        // 입력: x·z - 지점의 평면 위치.
+        // 출력: 그 자리 지형 높이를 Y로 갖는 위치.
         private static Vector3 Ground(float x, float z) => new Vector3(x, GameMap.Terrain.Height(x, z), z);
     }
 }

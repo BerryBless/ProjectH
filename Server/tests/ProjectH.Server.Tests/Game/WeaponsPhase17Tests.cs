@@ -197,6 +197,9 @@ public class WeaponsPhase17Tests
     [Fact]
     public void TheSameShots_GiveTheSameRays()
     {
+        // 기능: 새 샌드박스 경기에서 SMG 사수를 같은 자리에 넣고 10 Tick 뒤 같은 지점을 한 발 쏜 뒤 그 궤적의 끝점을 읽는다.
+        // 입력: 없음.
+        // 출력: 마지막 ShotFired의 End 위치.
         Vector3 End()
         {
             var h = Harness(Loadout(Smg, Ar, Shotgun));

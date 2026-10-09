@@ -37,8 +37,14 @@ public sealed class ActionSpec
 
     public const int StandardTimeoutMs = 10_000;
 
+    // 기능: 단계의 Timeout을 정한다(단계 지정값 → 액션 기본값 → 표준값 순).
+    // 입력: step - Timeout을 구할 단계 정의.
+    // 출력: 적용할 Timeout(ms).
     public int TimeoutFor(StepDefinition step) => step.TimeoutMilliseconds ?? DefaultTimeout?.Invoke(step) ?? StandardTimeoutMs;
 
+    // 기능: 이 액션이 받는 Parameter 이름인지 검사한다("a|b" 대안 포함).
+    // 입력: param - 검사할 Parameter 이름.
+    // 출력: Required 또는 Optional에 있으면 true, 아니면 false.
     public bool Accepts(string param)
     {
         foreach (string r in Required)
@@ -70,10 +76,19 @@ public sealed class StepOutcome
     public bool Skipped { get; init; }
     public bool SkipRest { get; init; }
 
+    // 기능: 통과 결과를 만든다.
+    // 입력: message - 결과 메시지(선택), value - saveAs에 저장할 값(선택).
+    // 출력: Passed가 true인 StepOutcome.
     public static StepOutcome Pass(string? message = null, JsonElement? value = null) => new() { Passed = true, Message = message, Value = value };
 
+    // 기능: 환경 사유로 건너뛴 결과를 만든다(통과로 집계).
+    // 입력: reason - 건너뛴 이유, skipRest - 나머지 단계도 건너뛸지 여부.
+    // 출력: Skipped가 true인 StepOutcome.
     public static StepOutcome Skip(string reason, bool skipRest) => new() { Passed = true, Skipped = true, SkipRest = skipRest, Message = reason };
 
+    // 기능: 실패 결과를 만든다.
+    // 입력: message - 실패 메시지, expected - 기대값 설명(선택), actual - 실제값 설명(선택), value - saveAs에 저장할 값(선택).
+    // 출력: Passed가 false인 StepOutcome.
     public static StepOutcome Fail(string message, string? expected = null, string? actual = null, JsonElement? value = null) =>
         new() { Passed = false, Message = message, Expected = expected, Actual = actual, Value = value };
 }
@@ -82,12 +97,21 @@ public sealed class ActionRegistry
 {
     private readonly Dictionary<string, IScenarioActionHandler> _handlers = new(StringComparer.OrdinalIgnoreCase);
 
+    // 기능: 액션 Handler를 이름으로 등록한다(대소문자 무시, 중복 이름이면 예외).
+    // 입력: handler - 등록할 Handler.
+    // 출력: 반환값 없음. Registry에 Handler가 추가된다.
     public void Add(IScenarioActionHandler handler) => _handlers.Add(handler.Spec.Name, handler);
 
+    // 기능: 액션 이름으로 Handler를 찾는다.
+    // 입력: action - 액션 이름, handler - 찾은 Handler(out).
+    // 출력: 등록되어 있으면 true와 Handler, 없으면 false.
     public bool TryGet(string action, out IScenarioActionHandler handler) => _handlers.TryGetValue(action, out handler!);
 
     public IEnumerable<ActionSpec> Specs => _handlers.Values.Select(h => h.Spec).OrderBy(s => s.Name, StringComparer.Ordinal);
 
+    // 기능: 모든 액션 모음(Flow·Actor·ServerCommand·Fault·Unity·Stress)을 등록한 기본 Registry를 만든다.
+    // 입력: 없음.
+    // 출력: 모든 액션 Handler가 등록된 ActionRegistry.
     // Every MVP action (QA-1).
     public static ActionRegistry CreateDefault()
     {
@@ -107,6 +131,9 @@ public sealed class StepContext
 {
     private readonly Stopwatch _clock = Stopwatch.StartNew();
 
+    // 기능: 단계 실행 Context를 만들고 경과 시계를 시작한다.
+    // 입력: run - 실행 중인 Run, step - 실행할 단계 정의, timeoutMs - 단계의 Soft Timeout(ms).
+    // 출력: 시계가 시작된 StepContext.
     public StepContext(RunContext run, StepDefinition step, int timeoutMs)
     {
         Run = run;
@@ -120,9 +147,15 @@ public sealed class StepContext
     public long ElapsedMs => _clock.ElapsedMilliseconds;
     public bool TimedOut => _clock.ElapsedMilliseconds >= TimeoutMs;
 
+    // 기능: 단계 Parameter를 읽고 Run 변수를 치환한다.
+    // 입력: name - Parameter 이름.
+    // 출력: 치환된 값, Parameter가 없으면 null.
     public JsonElement? Param(string name) =>
         Step.Params.TryGetValue(name, out JsonElement raw) ? Variables.Substitute(raw, Run.Variables) : null;
 
+    // 기능: 단계 Parameter를 문자열로 읽는다(문자열이 아니면 원문 JSON).
+    // 입력: name - Parameter 이름.
+    // 출력: 문자열 값, 없거나 null이면 null.
     public string? String(string name)
     {
         JsonElement? v = Param(name);
@@ -130,8 +163,14 @@ public sealed class StepContext
         return v.Value.ValueKind == JsonValueKind.String ? v.Value.GetString() : v.Value.GetRawText();
     }
 
+    // 기능: 필수 문자열 Parameter를 읽는다.
+    // 입력: name - Parameter 이름.
+    // 출력: 문자열 값. 없으면 QaStepException.
     public string RequireString(string name) => String(name) ?? throw new QaStepException($"'{name}' is required.");
 
+    // 기능: 단계 Parameter를 숫자로 읽는다.
+    // 입력: name - Parameter 이름.
+    // 출력: 숫자 값, 없거나 null이면 null. 숫자가 아니면 QaStepException.
     public double? Double(string name)
     {
         JsonElement? v = Param(name);
@@ -140,6 +179,9 @@ public sealed class StepContext
         throw new QaStepException($"'{name}' must be a number (got {JsonPath.Describe(v)}).");
     }
 
+    // 기능: 단계 Parameter를 범위 안의 정수로 읽는다.
+    // 입력: name - Parameter 이름, min - 허용 최소값, max - 허용 최대값.
+    // 출력: 정수 값, 없으면 null. 정수가 아니거나 범위 밖이면 QaStepException.
     public int? Int(string name, int min, int max)
     {
         double? d = Double(name);
@@ -149,6 +191,9 @@ public sealed class StepContext
         return (int)d.Value;
     }
 
+    // 기능: 단계 Parameter를 bool로 읽는다(JSON bool 또는 "true"/"false" 문자열).
+    // 입력: name - Parameter 이름.
+    // 출력: bool 값, 없거나 null이면 null. 해석할 수 없으면 QaStepException.
     public bool? Bool(string name)
     {
         JsonElement? v = Param(name);
@@ -158,6 +203,9 @@ public sealed class StepContext
         throw new QaStepException($"'{name}' must be true or false.");
     }
 
+    // 기능: 단계 Parameter를 위치(마커 이름 또는 {x,y,z})로 해석한다.
+    // 입력: name - Parameter 이름.
+    // 출력: 해석된 QaPosition, Parameter가 없으면 null. 해석 실패면 QaStepException.
     public QaPosition? Position(string name)
     {
         JsonElement? v = Param(name);
@@ -168,8 +216,14 @@ public sealed class StepContext
 
     public string ActorAlias => Step.Actor ?? throw new QaStepException("'actor' is required.");
 
+    // 기능: 단계의 actor 별칭에 해당하는 Actor를 가져온다.
+    // 입력: 없음.
+    // 출력: 해당 IQaActor. actor가 없거나 미등록 별칭이면 QaStepException.
     public IQaActor Actor() => Run.Actors.Get(ActorAlias);
 
+    // 기능: 로컬 조건이 성립할 때까지 단계의 Soft Timeout 안에서 주기적으로 검사한다.
+    // 입력: condition - 검사할 조건, token - 취소 토큰, intervalMs - 검사 간격(ms).
+    // 출력: 조건이 성립하면 true, Timeout까지 성립하지 않으면 false.
     // Polls a local condition (actor state: no server cost) until it holds or the step's soft limit passes.
     public async Task<bool> WaitUntilAsync(Func<bool> condition, CancellationToken token, int intervalMs = ActorPollMs)
     {

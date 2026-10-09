@@ -17,6 +17,9 @@ public class CollisionTests
     private static readonly InputCommand Idle = new InputCommand();
     private static readonly InputCommand WalkPlusX = new InputCommand { MoveY = 1f, Yaw = 90f };
 
+    // 기능: 최소·최대 좌표 여섯 개로 테스트용 상자를 만든다.
+    // 입력: minX/minY/minZ - 최소 모서리 좌표, maxX/maxY/maxZ - 최대 모서리 좌표.
+    // 출력: 지정한 범위의 Box.
     private static Box B(float minX, float minY, float minZ, float maxX, float maxY, float maxZ)
         => new Box(new Vector3(minX, minY, minZ), new Vector3(maxX, maxY, maxZ));
 

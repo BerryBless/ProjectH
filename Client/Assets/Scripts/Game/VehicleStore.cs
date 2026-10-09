@@ -88,6 +88,9 @@ namespace ProjectH.Client.Game
         public const float MaxAheadSeconds = 10f;
         // The changes the last Apply found (valid until the next Apply).
         public int ChangeCount { get; private set; }
+        // 기능: 마지막 Apply가 찾은 i번째 소리 변화를 돌려준다.
+        // 입력: i - 0..ChangeCount-1.
+        // 출력: 그 변화(차량 id, 소리, 위치).
         public VehicleChange Change(int i) => _changes[i];
         // The latest packet's records (empty once no packet came for HideSeconds).
         public ReadOnlySpan<VehicleRecord> Latest => new ReadOnlySpan<VehicleRecord>(_latest, 0, _latestCount);
@@ -429,8 +432,14 @@ namespace ProjectH.Client.Game
             s.Latest = default;
         }
 
+        // 기능: 값이 NaN도 무한대도 아닌지 본다.
+        // 입력: v - 검사할 값.
+        // 출력: 유한하면 true.
         private static bool IsFinite(float v) => !float.IsNaN(v) && !float.IsInfinity(v);
 
+        // 기능: 벡터의 세 성분이 모두 유한한지 본다.
+        // 입력: v - 검사할 벡터.
+        // 출력: 세 성분 모두 유한하면 true.
         private static bool IsFinite(Vector3 v) => IsFinite(v.X) && IsFinite(v.Y) && IsFinite(v.Z);
     }
 }

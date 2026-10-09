@@ -20,8 +20,9 @@ public sealed class PositionHistory
 
     public int Count => _count;
 
-    // Forget everything and start from one known position (join, respawn): a rewind must never reach a
-    // position from before a teleport.
+    // 기능: 기록을 모두 잊고 알려진 위치 하나에서 다시 시작한다(참가·부활: 되감기가 순간이동 전 위치에 닿으면 안 된다).
+    // 입력: tick - 기록할 Tick, position - 발 위치, mode - 이동 모드.
+    // 출력: 반환값 없음. 기록이 그 하나만 남는다.
     public void Reset(uint tick, Vector3 position, MovementMode mode = MovementMode.Ground)
     {
         _count = 0;
@@ -29,7 +30,9 @@ public sealed class PositionHistory
         Record(tick, position, mode);
     }
 
-    // Ticks must increase; a repeated or older tick is ignored.
+    // 기능: 한 Tick의 발 위치와 이동 모드를 기록한다(가장 오래된 기록을 덮어쓴다).
+    // 입력: tick - 기록할 Tick(마지막 기록보다 커야 한다), position - 발 위치, mode - 이동 모드.
+    // 출력: 반환값 없음. 같거나 오래된 Tick은 무시된다.
     public void Record(uint tick, Vector3 position, MovementMode mode = MovementMode.Ground)
     {
         if (_count > 0 && tick <= _ticks[_newest]) return;
@@ -40,11 +43,14 @@ public sealed class PositionHistory
         if (_count < Capacity) _count++;
     }
 
+    // 기능: 어떤 Tick의 발 위치를 구한다(이동 모드는 받지 않는 판).
+    // 입력: tick - 되감을 Tick(소수 가능).
+    // 출력: 보간된 발 위치.
     public Vector3 Sample(double tick) => Sample(tick, out _);
 
-    // Position at a (fractional) tick, interpolated between the two records around it. Past the newest
-    // record it holds the newest; before the oldest it uses the oldest (short history, spec §5).
-    // mode: the mode of the record at or before the tick (between two records, the older one's).
+    // 기능: 어떤 Tick의 발 위치를 앞뒤 기록 사이에서 보간해 구한다. 최신보다 뒤면 최신, 가장 오래된 기록보다 앞이면 그 기록(spec §5).
+    // 입력: tick - 되감을 Tick(소수 가능), mode - 결과(그 Tick 또는 바로 앞 기록의 이동 모드).
+    // 출력: 보간된 발 위치. 기록이 없으면 Zero(참가 시 Reset하므로 닿지 않는다).
     public Vector3 Sample(double tick, out MovementMode mode)
     {
         mode = MovementMode.Ground;

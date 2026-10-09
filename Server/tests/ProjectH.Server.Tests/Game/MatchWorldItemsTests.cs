@@ -21,10 +21,16 @@ public class MatchWorldItemsTests
 
     private readonly List<Sent> _sent = new();
 
+    // 기능: 고정 seed의 DevRespawn Match를 만든다. 보낸 패킷은 _sent에 기록한다.
+    // 입력: seed - Loot seed, points - Loot 지점(null이면 기본 LootPoints).
+    // 출력: 초기 Loot가 깔린 Match.
     private Match NewMatch(int seed = 1, LootPoint[]? points = null) =>
         new(new ServerOptions { MaxPlayers = 4, LootSeed = seed, DevRespawn = true, DeterministicSeeds = true }, TestGameData.Create(),
             (peer, data, method) => _sent.Add(new Sent(peer, data.ToArray(), method)), lootPoints: points);
 
+    // 기능: 송신 기록의 PacketId를 건너뛴 본문 위치의 PacketReader를 만든다.
+    // 입력: s - 송신 기록.
+    // 출력: 본문 첫 바이트를 가리키는 PacketReader.
     private static PacketReader Reader(Sent s)
     {
         var reader = new PacketReader(s.Data);
@@ -32,6 +38,9 @@ public class MatchWorldItemsTests
         return reader;
     }
 
+    // 기능: 한 Peer에게 보낸 WorldItems 패킷들이 담은 아이템을 순서대로 모은다. 각 청크의 전달 방식·크기·남은 바이트도 검사한다.
+    // 입력: peer - 받은 Peer ID.
+    // 출력: 보낸 순서대로 모은 WorldItemData 목록.
     // Every item the WorldItems packets to one peer carried, in order.
     private List<WorldItemData> ListSentTo(int peer)
     {
@@ -52,6 +61,9 @@ public class MatchWorldItemsTests
         return items;
     }
 
+    // 기능: Light 탄약 LootRoll을 만든다.
+    // 입력: amount - 탄약 수.
+    // 출력: Light 탄약 amount개의 LootRoll.
     private static LootRoll Ammo(ushort amount = 10) => new(ItemKind.Ammo, (byte)AmmoType.Light, 0, amount);
 
     [Fact]
@@ -70,6 +82,9 @@ public class MatchWorldItemsTests
     [Fact]
     public void SameSeed_SameLoot_OtherSeed_OtherLoot()
     {
+        // 기능: Match의 월드 아이템 전부를 종류/정의/희귀도/수량@위치 문자열로 이어 붙인다(두 Match 비교용).
+        // 입력: m - 대상 Match.
+        // 출력: 아이템을 ';'로 이은 문자열.
         static string Describe(Match m) => string.Join(";", Enumerable.Range(0, m.WorldItems.Count)
             .Select(i => m.WorldItems[i].Data).Select(d => $"{d.Kind}/{d.DefId}/{d.Rarity}/{d.Amount}@{d.Position}"));
 

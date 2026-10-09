@@ -74,6 +74,9 @@ namespace ProjectH.Shared.Simulation
         public bool Equals(BuildPieceShape other) =>
             Type == other.Type && X == other.X && Y == other.Y && Z == other.Z && Rotation == other.Rotation && Edit == other.Edit;
 
+        // 기능: object로 받은 값이 같은 조각 모양인지 본다.
+        // 입력: obj - 비교할 값.
+        // 출력: BuildPieceShape이고 종류·칸·회전·편집 상태가 모두 같으면 true.
         public override bool Equals(object obj) => obj is BuildPieceShape other && Equals(other);
 
         // 기능: 슬롯 키·회전·편집 상태로 해시를 만든다.
@@ -81,6 +84,9 @@ namespace ProjectH.Shared.Simulation
         // 출력: 해시 값.
         public override int GetHashCode() => (int)BuildGrid.SlotKey(this) ^ (Rotation << 24) ^ (Edit << 19);
 
+        // 기능: 모양을 로그용 문자열로 만든다.
+        // 입력: 없음.
+        // 출력: "종류(x,y,z r회전)" 문자열. 편집 상태가 있으면 " e편집값"이 붙는다.
         public override string ToString() => Edit == 0 ? $"{Type}({X},{Y},{Z} r{Rotation})" : $"{Type}({X},{Y},{Z} r{Rotation} e{Edit})";
     }
 
@@ -108,6 +114,10 @@ namespace ProjectH.Shared.Simulation
         // The slab under a ramp's or a roof's surface: walking from below is blocked by it.
         public const float SlopeThickness = 0.25f;
 
+        // 기능: Client가 요청한 조각을 검증하고 정규 모양으로 바꾼다(D1). 북·동쪽 벽(회전 2·3)은 다음 칸의 남·서쪽 벽(회전 0·1)이 되고,
+        //   Floor·Roof의 회전은 0이 된다(Ramp는 회전을 그대로 둔다). 편집 상태는 0이다.
+        // 입력: type - 조각 종류, x·y·z - 칸 좌표와 층, rotation - 요청한 회전, shape - 결과 모양.
+        // 출력: 종류·회전(0–3)·칸·층이 모두 격자 안이면 true와 정규 모양, 아니면 false와 default.
         // D1: validates a piece the client asked for and returns its canonical shape: a north or east wall becomes the
         // next cell's south or west wall. False for an unknown type, a rotation above 3, or a cell or level off the grid.
         public static bool TryNormalize(BuildPieceType type, int x, int y, int z, int rotation, out BuildPieceShape shape)
@@ -137,6 +147,9 @@ namespace ProjectH.Shared.Simulation
             return true;
         }
 
+        // 기능: 조각 모양이 차지하는 슬롯 종류를 낸다.
+        // 입력: shape - 정규 모양.
+        // 출력: 벽은 회전에 따라 WallSouth(0)·WallWest(1), 바닥은 Floor, 경사로는 Ramp, 그 외는 Roof.
         public static BuildSlotKind SlotOf(in BuildPieceShape shape)
         {
             switch (shape.Type)
@@ -148,21 +161,48 @@ namespace ProjectH.Shared.Simulation
             }
         }
 
+        // 기능: 조각 모양의 슬롯 키를 낸다(편집 상태는 키에 들어가지 않고, 회전은 벽의 슬롯 종류(남·서)로만 반영된다).
+        // 입력: shape - 정규 모양.
+        // 출력: 칸·층·슬롯 종류를 묶은 키.
         // D1: one key per slot: x 6 bits, z 6 bits, level 4 bits, slot kind 3 bits.
         public static uint SlotKey(in BuildPieceShape shape) => SlotKey(shape.X, shape.Y, shape.Z, SlotOf(shape));
 
+        // 기능: 칸·층·슬롯 종류를 슬롯 키 하나로 묶는다.
+        // 입력: x·z - 칸 좌표(6비트로 자른다), y - 층(4비트로 자른다), slot - 슬롯 종류.
+        // 출력: 슬롯 키(x | z << 6 | y << 12 | slot << 16).
         public static uint SlotKey(int x, int y, int z, BuildSlotKind slot) =>
             (uint)(x & 63) | ((uint)(z & 63) << 6) | ((uint)(y & 15) << 12) | ((uint)slot << 16);
 
+        // 기능: 칸의 X 최소 월드 좌표를 낸다.
+        // 입력: x - 칸 X 번호.
+        // 출력: 칸 서쪽 변의 월드 X.
         public static float CellMinX(int x) => OriginX + x * CellSize;
+        // 기능: 칸의 Z 최소 월드 좌표를 낸다.
+        // 입력: z - 칸 Z 번호.
+        // 출력: 칸 남쪽 변의 월드 Z.
         public static float CellMinZ(int z) => OriginZ + z * CellSize;
+        // 기능: 층의 바닥 높이를 낸다.
+        // 입력: y - 층 번호.
+        // 출력: 층 바닥의 월드 Y.
         public static float LevelBase(int y) => y * LevelHeight;
 
         // The cell or level a world coordinate lies in (may be off the grid: callers check the range).
+        // 기능: 월드 X가 드는 칸 번호를 낸다(격자 밖일 수 있다. 범위는 호출자가 확인한다).
+        // 입력: x - 월드 X.
+        // 출력: 칸 X 번호(내림).
         public static int CellX(float x) => (int)MathF.Floor((x - OriginX) / CellSize);
+        // 기능: 월드 Z가 드는 칸 번호를 낸다(격자 밖일 수 있다. 범위는 호출자가 확인한다).
+        // 입력: z - 월드 Z.
+        // 출력: 칸 Z 번호(내림).
         public static int CellZ(float z) => (int)MathF.Floor((z - OriginZ) / CellSize);
+        // 기능: 월드 높이가 드는 층 번호를 낸다(격자 밖일 수 있다. 범위는 호출자가 확인한다).
+        // 입력: y - 월드 Y.
+        // 출력: 층 번호(내림).
         public static int Level(float y) => (int)MathF.Floor(y / LevelHeight);
 
+        // 기능: 편집하지 않은 모양이 경사면인 조각 종류인지 본다.
+        // 입력: type - 조각 종류.
+        // 출력: Ramp·Roof면 true. 실제 모양(평지붕·통로)은 HasSlope(shape)로 본다.
         // Phase 13 kinds whose unedited shape is a slope. Since Phase 13.5 a roof may be flat (BuildEdit.RoofFlat,
         // RoofPassage): ask HasSlope(shape) for a piece's actual shape.
         public static bool IsSlope(BuildPieceType type) => type == BuildPieceType.Ramp || type == BuildPieceType.Roof;
@@ -290,6 +330,10 @@ namespace ProjectH.Shared.Simulation
             return count;
         }
 
+        // 기능: 편집하지 않은 벽·바닥의 충돌 상자를 낸다(D2). 벽은 변 위에 WallThickness 두께로 한 층 높이, 바닥은 층 높이가
+        //   윗면인 얇은 판. 편집 상태는 보지 않는다(편집된 모양은 PartsOf).
+        // 입력: shape - 벽 또는 바닥 모양(그 외 종류를 넘기면 바닥 상자를 돌려준다).
+        // 출력: 조각의 상자.
         // D2: a wall stands on its edge (WallThickness, centred on it, one level high); a floor is a thin box whose top
         // is the level's height. Only for walls and floors.
         public static Box BoxOf(in BuildPieceShape shape)
@@ -341,6 +385,9 @@ namespace ProjectH.Shared.Simulation
             return new Box(new Vector3(slope.MinX, slope.BaseY - SlopeThickness, slope.MinZ), new Vector3(slope.MaxX, slope.Top, slope.MaxZ));
         }
 
+        // 기능: 조각 전체 상자(BoundsOf)의 중심을 낸다.
+        // 입력: shape - 조각 모양.
+        // 출력: 조각 중심의 월드 위치.
         public static Vector3 CenterOf(in BuildPieceShape shape) => BoundsOf(shape).Center;
     }
 
@@ -443,6 +490,9 @@ namespace ProjectH.Shared.Simulation
             return true;
         }
 
+        // 기능: 점이 낮은 변에서 높아지는 방향으로 얼마나 떨어졌는지 낸다(Ramp·RoofSlope).
+        // 입력: x·z - 칸 안으로 자른 점.
+        // 출력: 낮은 변에서의 거리(0..CellSize).
         // Distance from the low edge in the rising direction, 0..CellSize.
         private float Along(float x, float z)
         {
@@ -455,6 +505,9 @@ namespace ProjectH.Shared.Simulation
             }
         }
 
+        // 기능: 평면 경사(Ramp·RoofSlope)의 표면 높이를 낸다. 양 끝은 정확히 BaseY와 BaseY + Rise다.
+        // 입력: along - 낮은 변에서의 거리(Along).
+        // 출력: 그 거리에서의 표면 높이.
         // rise = along x Rise / CellSize: exact at both ends (0 and Rise), so a ramp's top edge is exactly the next level's
         // height, the same float a floor's top has (BuildGrid.LevelBase).
         private float PlaneHeight(float along)
@@ -465,6 +518,9 @@ namespace ProjectH.Shared.Simulation
             return BaseY + along * rise / BuildGrid.CellSize;
         }
 
+        // 기능: 사각뿔 지붕의 표면 높이를 낸다. 중심은 BaseY + RoofRise, 처마(Chebyshev 거리 CellSize / 2 이상)는 BaseY.
+        // 입력: distance - 중심에서의 Chebyshev 거리.
+        // 출력: 그 거리에서의 표면 높이.
         // The pyramid: RoofRise at the centre, the eaves (BaseY) at Chebyshev distance CellSize / 2.
         private float RoofHeight(float distance)
         {
@@ -474,6 +530,9 @@ namespace ProjectH.Shared.Simulation
             return BaseY + (half - distance) * BuildGrid.RoofRise / half;
         }
 
+        // 기능: 값을 min..max 범위로 자른다.
+        // 입력: v - 자를 값, min·max - 범위.
+        // 출력: 범위 안으로 자른 값.
         private static float Clamp(float v, float min, float max) => v < min ? min : v > max ? max : v;
     }
 }

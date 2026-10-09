@@ -17,8 +17,14 @@ namespace ProjectH.Server.Tests.Persistence;
 // that never fails the server (persistence off, a database that does not answer).
 public class StatsQueryTests
 {
+    // 기능: peer 1이 지금 보낸 전적 조회 요청을 만든다(NetPeer 없음).
+    // 입력: id - 조회할 플레이어 id.
+    // 출력: 그 id의 StatsQuery.
     private static StatsQuery Query(string id) => new(1, null!, id, Environment.TickCount64);
 
+    // 기능: 큐에 답이 들어올 때까지 20ms마다 확인하며 기다린다.
+    // 입력: queue - 답을 꺼낼 큐, timeoutMs - 제한 시간(ms).
+    // 출력: 꺼낸 StatsReply. 제한 시간 안에 없으면 TimeoutException.
     private static async Task<StatsReply> NextReplyAsync(StatsQueryQueue queue, int timeoutMs = 10000)
     {
         var clock = Stopwatch.StartNew();

@@ -8,6 +8,9 @@ public sealed class DelegateAction : IScenarioActionHandler
 {
     private readonly Func<StepContext, CancellationToken, Task<StepOutcome>> _run;
 
+    // 기능: 액션 사양과 실행 함수로 Handler를 만든다.
+    // 입력: spec - 액션 사양, run - 단계 실행 함수.
+    // 출력: 사양과 함수를 담은 DelegateAction.
     public DelegateAction(ActionSpec spec, Func<StepContext, CancellationToken, Task<StepOutcome>> run)
     {
         Spec = spec;
@@ -16,6 +19,9 @@ public sealed class DelegateAction : IScenarioActionHandler
 
     public ActionSpec Spec { get; }
 
+    // 기능: 단계를 실행 함수에 넘겨 실행한다.
+    // 입력: context - 단계 문맥, token - 취소 토큰.
+    // 출력: 단계 결과(StepOutcome).
     public Task<StepOutcome> ExecuteAsync(StepContext context, CancellationToken token) => _run(context, token);
 }
 
@@ -95,6 +101,9 @@ public static class FlowActions
         }, DisconnectAllAsync));
     }
 
+    // 기능: wait 단계의 대기 시간을 Literal에서 구한다(변수면 최대값, 둘 다 없으면 표준 Timeout).
+    // 입력: s - 단계 정의.
+    // 출력: 대기 시간(ms, 0-MaxWaitMs).
     private static int WaitMs(StepDefinition s)
     {
         if (s.Params.TryGetValue("milliseconds", out JsonElement ms) && Comparison.TryNumber(ms, out double m)) return (int)Math.Clamp(m, 0, MaxWaitMs);
@@ -104,6 +113,9 @@ public static class FlowActions
         return ActionSpec.StandardTimeoutMs;
     }
 
+    // 기능: wait 단계의 milliseconds·seconds가 0 이상이고 MaxWaitMs 이내인지 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckWait(StepDefinition s)
     {
         foreach (string name in new[] { "milliseconds", "seconds" })
@@ -114,6 +126,9 @@ public static class FlowActions
         }
     }
 
+    // 기능: assert·waitFor·save 단계의 경로(문법, actor 필요 여부)와 연산자(개수, tolerance, between 형식)를 검사한다.
+    // 입력: s - 단계 정의, pathParam - 경로가 든 Parameter 이름(path 또는 condition), requireOperator - 연산자가 꼭 있어야 하는지.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckAssertion(StepDefinition s, string pathParam, bool requireOperator)
     {
         if (s.Params.TryGetValue(pathParam, out JsonElement p))
@@ -136,6 +151,9 @@ public static class FlowActions
             yield return "'between' needs [low, high] numbers.";
     }
 
+    // 기능: spawnActors 단계의 count 범위와 마지막 생성 별칭의 유효성을 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckSpawn(StepDefinition s)
     {
         if (s.Params.TryGetValue("count", out JsonElement c) && !Variables.HasReference(c)
@@ -148,6 +166,9 @@ public static class FlowActions
         }
     }
 
+    // 기능: spawnActors 단계가 만들 Actor 별칭(prefix-001..prefix-NNN)을 나열한다.
+    // 입력: s - 단계 정의(prefix, count).
+    // 출력: 별칭 목록. prefix나 count가 Literal이 아니면 빈 목록.
     // prefix-001 .. prefix-NNN, like the bots' names.
     public static IEnumerable<string> SpawnedAliases(StepDefinition s)
     {
@@ -157,8 +178,14 @@ public static class FlowActions
         for (int i = 1; i <= count; i++) yield return SpawnAlias(p.GetString()!, i);
     }
 
+    // 기능: 생성 Actor의 별칭을 만든다.
+    // 입력: prefix - 별칭 접두사, i - 1부터 세는 번호.
+    // 출력: "prefix-NNN" 형식의 별칭.
     public static string SpawnAlias(string prefix, int i) => $"{prefix}-{i.ToString("000", CultureInfo.InvariantCulture)}";
 
+    // 기능: milliseconds 또는 seconds만큼 기다린다.
+    // 입력: ctx - 단계 문맥(milliseconds, seconds), token - 취소 토큰.
+    // 출력: Pass. 범위 밖이면 QaStepException.
     private static async Task<StepOutcome> WaitAsync(StepContext ctx, CancellationToken token)
     {
         double ms = ctx.Double("milliseconds") ?? (ctx.Double("seconds") ?? 0) * 1000;
@@ -167,6 +194,9 @@ public static class FlowActions
         return StepOutcome.Pass();
     }
 
+    // 기능: 단계에 있는 비교 연산자 Parameter와 그 기대값을 찾는다.
+    // 입력: ctx - 단계 문맥.
+    // 출력: (연산자 이름, 기대값). 연산자가 없으면 QaStepException.
     private static (string Op, JsonElement Expected) Operator(StepContext ctx)
     {
         foreach (string op in Comparison.Operators)
@@ -177,8 +207,14 @@ public static class FlowActions
         throw new QaStepException("No operator.");
     }
 
+    // 기능: 단계의 path(없으면 condition) 경로 문자열을 읽는다.
+    // 입력: ctx - 단계 문맥.
+    // 출력: 경로 문자열. 둘 다 없으면 QaStepException.
     private static string PathOf(StepContext ctx) => ctx.String("path") ?? ctx.String("condition") ?? throw new QaStepException("'path' is required.");
 
+    // 기능: 경로의 값을 한 번 읽어 연산자로 비교한다.
+    // 입력: ctx - 단계 문맥(path, 연산자, tolerance), token - 취소 토큰.
+    // 출력: 비교가 맞으면 Pass(saveAs: 실제값), 틀리면 기대·실제를 담은 Fail.
     private static async Task<StepOutcome> AssertAsync(StepContext ctx, CancellationToken token)
     {
         string path = PathOf(ctx);
@@ -190,6 +226,9 @@ public static class FlowActions
             : StepOutcome.Fail($"{path}: expected {expectedText}, actual {Comparison.Text(actual)}", expectedText, Comparison.Text(actual));
     }
 
+    // 기능: 경로의 값을 읽어 saveAs 변수로 저장할 결과를 만든다.
+    // 입력: ctx - 단계 문맥(path), token - 취소 토큰.
+    // 출력: 값이 있으면 Pass(saveAs: 그 값), 없으면 Fail.
     private static async Task<StepOutcome> SaveAsync(StepContext ctx, CancellationToken token)
     {
         string path = PathOf(ctx);
@@ -201,6 +240,9 @@ public static class FlowActions
     // Polls the same engine as assert at the run's poll interval until it holds or the step's limit passes; the
     // failure shows the last value seen. A QA API error while polling is remembered and polling goes on (the server
     // may be restarting); it is the actual value if nothing else came.
+    // 기능: 경로의 값이 연산자 조건을 만족할 때까지 Run의 Poll 간격으로 읽는다(QA API 오류는 기억하고 계속).
+    // 입력: ctx - 단계 문맥(path 또는 condition, 연산자, tolerance), token - 취소 토큰.
+    // 출력: 조건이 성립하면 Pass(saveAs: 실제값), Timeout이면 마지막 값을 담은 Fail.
     private static async Task<StepOutcome> WaitForAsync(StepContext ctx, CancellationToken token)
     {
         string path = PathOf(ctx);
@@ -228,6 +270,9 @@ public static class FlowActions
         }
     }
 
+    // 기능: 서버 이벤트 중 type(과 actor의 플레이어, where 필드)이 맞는 첫 이벤트가 올 때까지 기다린다.
+    // 입력: ctx - 단계 문맥(event, where, actor), token - 취소 토큰.
+    // 출력: 맞는 이벤트가 오면 Pass(saveAs: 이벤트 원문), Timeout이면 Fail. 이벤트 소스가 없거나 where가 객체가 아니면 QaStepException.
     private static async Task<StepOutcome> WaitForEventAsync(StepContext ctx, CancellationToken token)
     {
         EventCursor events = ctx.Run.Events ?? throw new QaStepException("No event source in this run.");
@@ -235,6 +280,9 @@ public static class FlowActions
         string? player = ctx.Step.Actor != null ? ctx.Actor().DevPlayerId : null;
         JsonElement? where = ctx.Param("where");
         if (where != null && where.Value.ValueKind != JsonValueKind.Object) throw new QaStepException("'where' must be an object of event data fields.");
+        // 기능: 이벤트가 type·플레이어·where 필드와 모두 맞는지 검사한다.
+        // 입력: e - 검사할 이벤트.
+        // 출력: 모두 맞으면 true, 아니면 false.
         bool Match(QaEvent e)
         {
             if (!string.Equals(e.Type, type, StringComparison.OrdinalIgnoreCase)) return false;
@@ -261,6 +309,9 @@ public static class FlowActions
         }
     }
 
+    // 기능: prefix-001..prefix-NNN 별칭의 Actor를 count개 만든다.
+    // 입력: ctx - 단계 문맥(count, prefix, type), token - 취소 토큰.
+    // 출력: Pass(만든 별칭 범위).
     private static async Task<StepOutcome> SpawnActorsAsync(StepContext ctx, CancellationToken token)
     {
         int count = ctx.Int("count", 1, MaxSpawn)!.Value;
@@ -270,6 +321,9 @@ public static class FlowActions
         return StepOutcome.Pass($"{count} actors {SpawnAlias(prefix, 1)}..{SpawnAlias(prefix, count)}");
     }
 
+    // 기능: 별칭이 prefix로 시작하는 모든 Actor를 한꺼번에 접속시키고 전부 Join할 때까지 기다린다.
+    // 입력: ctx - 단계 문맥(prefix), token - 취소 토큰.
+    // 출력: 모두 Join하면 Pass, 아니면 Join 수와 실패 예시를 담은 Fail.
     // Cheap group connect: all at once, then one wait for all to join.
     private static async Task<StepOutcome> ConnectAllAsync(StepContext ctx, CancellationToken token)
     {
@@ -287,6 +341,9 @@ public static class FlowActions
         return StepOutcome.Fail($"{count}/{actors.Length} joined within {ctx.TimeoutMs} ms ({failed})", $"{actors.Length} joined", $"{count} joined");
     }
 
+    // 기능: 별칭이 prefix로 시작하는 모든 Actor의 연결을 끊고 닫힐 때까지(단계 Timeout 이내) 기다린다.
+    // 입력: ctx - 단계 문맥(prefix, graceful), token - 취소 토큰.
+    // 출력: Pass(대상 수). 닫히지 않아도 Timeout 뒤 Pass를 돌려준다.
     private static async Task<StepOutcome> DisconnectAllAsync(StepContext ctx, CancellationToken token)
     {
         string? prefix = ctx.String("prefix");
@@ -297,6 +354,9 @@ public static class FlowActions
         return StepOutcome.Pass($"{actors.Length} disconnected");
     }
 
+    // 기능: Actor 상태를 짧은 설명 문자열로 만든다(끊김 사유, Snapshot 없음 포함).
+    // 입력: s - Actor 상태.
+    // 출력: 상태 설명 문자열.
     public static string Describe(ActorState s) => s.Status switch
     {
         ActorStatus.Disconnected => $"disconnected ({s.DisconnectReason})",

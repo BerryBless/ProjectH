@@ -24,6 +24,9 @@ public sealed class StatsQueryService : BackgroundService
     // Only the ExecuteAsync task reads or writes it.
     private bool _failing;
 
+    // 기능: 통계 조회 서비스를 만든다(MatchStore는 ExecuteAsync에서 만든다).
+    // 입력: queue - 요청·응답 큐, options - Persistence 설정(연결 문자열, 켜짐 여부), logger - 로그.
+    // 출력: 시작 전의 StatsQueryService.
     public StatsQueryService(StatsQueryQueue queue, IOptions<PersistenceOptions> options, ILogger<StatsQueryService> logger)
     {
         _queue = queue;
@@ -34,6 +37,9 @@ public sealed class StatsQueryService : BackgroundService
     // D8: how long one query (both statements) may take. Test seam.
     internal TimeSpan QueryTimeout { get; init; } = TimeSpan.FromSeconds(3);
 
+    // 기능: 요청 큐를 하나씩 읽어 답한다: 저장이 꺼져 있거나 MaxQueueAgeMs보다 오래 기다린 요청은 Unavailable, 그 외는 DB를 조회한다. 모든 요청에 답을 넣고 예외를 밖으로 내보내지 않는다.
+    // 입력: stoppingToken - 호스트 중지 토큰.
+    // 출력: 중지되거나 예상 못 한 오류로 멈추면 끝난다. 응답 큐에 답이 쌓인다.
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         MatchStore? store = _options.Enabled ? new MatchStore(_options.ConnectionString) : null;
@@ -72,6 +78,9 @@ public sealed class StatsQueryService : BackgroundService
         }
     }
 
+    // 기능: 플레이어 하나의 통계를 QueryTimeout 안에 조회한다. 시한·연결·조회 오류는 Unavailable로 답하고 실패 시작과 회복을 한 번씩 로그한다. 시한에 남은 조회는 취소하고 토큰 소스는 조회가 끝난 뒤 해제한다.
+    // 입력: store - 저장소, devPlayerId - 조회할 플레이어 id, stoppingToken - 호스트 중지 토큰.
+    // 출력: Ok·NoRecord·Unavailable 중 하나의 StatsResponse.
     private async Task<StatsResponse> QueryAsync(MatchStore store, string devPlayerId, CancellationToken stoppingToken)
     {
         // Disposed when the query has ended (see finally): disposing it earlier would leave an abandoned query without
@@ -128,6 +137,9 @@ public sealed class StatsQueryService : BackgroundService
         }
     }
 
+    // 기능: 누적 통계와(있을 때만) 최근 경기 MaxRows건을 읽어 응답으로 만든다.
+    // 입력: store - 저장소, devPlayerId - 조회할 플레이어 id, token - 시한·중지가 묶인 취소 토큰.
+    // 출력: 통계가 없으면 NoRecord, 있으면 Ok와 요약·행이 든 StatsResponse. DB 오류는 예외로 올라간다.
     private static async Task<StatsResponse> ReadAsync(MatchStore store, string devPlayerId, CancellationToken token)
     {
         PlayerStats? stats = await store.GetStatsAsync(devPlayerId, token);
@@ -139,6 +151,9 @@ public sealed class StatsQueryService : BackgroundService
 
     // The wire form of what MatchStore returned. The database keeps 64-bit sums; the packet carries uint32 values,
     // clamped, and the total survival time in whole seconds. At most StatsResponse.MaxRows matches, newest first.
+    // 기능: DB 결과를 전송 형식으로 바꾼다(64비트 합계는 uint32로 자르고, 생존 시간은 초 단위로, 행은 MaxRows까지).
+    // 입력: stats - 누적 통계(null = 기록 없음), history - 최신순 경기 기록.
+    // 출력: stats가 null이면 NoRecord, 아니면 Ok와 요약·행이 든 StatsResponse.
     internal static StatsResponse BuildResponse(PlayerStats? stats, IReadOnlyList<MatchHistoryEntry> history)
     {
         if (stats == null) return StatsResponse.Of(StatsStatus.NoRecord);
@@ -174,5 +189,8 @@ public sealed class StatsQueryService : BackgroundService
         };
     }
 
+    // 기능: 64비트 값을 uint32 범위로 자른다.
+    // 입력: value - 자를 값.
+    // 출력: 0 이하면 0, uint.MaxValue 이상이면 uint.MaxValue, 그 사이면 그대로.
     private static uint Clamp(long value) => value <= 0 ? 0u : value >= uint.MaxValue ? uint.MaxValue : (uint)value;
 }

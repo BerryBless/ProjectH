@@ -20,9 +20,15 @@ public sealed class ExceptionRecoveryTests
     private const int SimHz = 30;
     private const int TicksBeforeReset = SimHz * 3;
 
+    // 기능: 스레드를 시작하지 않은 4인 GameLoop를 만든다(테스트가 Tick을 직접 돌린다).
+    // 입력: onFatal - 치명적 중단 시 부를 콜백(null = 없음), time - 시계(null = 시스템 시계).
+    // 출력: 시작되지 않은 GameLoop(호출자가 Dispose한다).
     private static GameLoop Loop(Action? onFatal = null, TimeProvider? time = null) =>
         new(new ServerOptions { Port = 0, MaxPlayers = 4 }, TestGameData.Create(), NullLogger.Instance, onFatal: onFatal, time: time);
 
+    // 기능: Tick 결함 Hook을 걸고 주어진 횟수만큼 실패하는 Tick을 돌린 뒤 Hook을 푼다.
+    // 입력: loop - 대상 GameLoop, ticks - 실패시킬 Tick 수.
+    // 출력: 반환값 없음. loop.Health의 TickFailures(와 한계를 넘으면 MatchResets)가 늘어난다.
     private static void Fail(GameLoop loop, int ticks)
     {
         loop.TickFaultHook = () => throw new InvalidOperationException("test fault");
@@ -94,6 +100,9 @@ public sealed class ExceptionRecoveryTests
         int fatal = 0;
         using GameLoop loop = Loop(() => fatal++, time);
         int nextPeer = 100;
+        // 기능: 현재 경기에 플레이어 넷을 넣고 모든 플레이어의 Tick이 던지게 한 채 Tick 하나를 돌린다.
+        // 입력: 없음(nextPeer를 이어서 쓴다).
+        // 출력: 반환값 없음. 플레이어 실패 넷이 기록되고 경기가 리셋되거나 서버가 중단된다.
         void FailEveryone()
         {
             Match match = loop.Match;
@@ -124,6 +133,9 @@ public sealed class ExceptionRecoveryTests
     {
         using GameLoop loop = Loop();
         Match match = loop.Match;
+        // 기능: 플레이어 둘을 더 넣고 모든 플레이어의 Tick이 던지는 Tick 하나를 돌린 뒤 결함을 끈다.
+        // 입력: firstPeer - 넣을 두 peer id 중 첫 번째(둘째는 +1).
+        // 출력: 반환값 없음. 플레이어 실패가 현재 플레이어 수만큼 기록된다.
         void FailTwo(int firstPeer)
         {
             Assert.Equal(JoinResult.Ok, match.TryJoin(firstPeer, "a" + firstPeer));
@@ -230,6 +242,9 @@ public sealed class ExceptionRecoveryTests
         Assert.Equal(1, SinkLogs());
     }
 
+    // 기능: 플레이어 둘을 넣어 경기를 시작시키고(1초 카운트다운) 하나를 내보내 경기를 끝낸다.
+    // 입력: loop - 대상 GameLoop.
+    // 출력: 반환값 없음. 현재 경기가 Finished 상태가 되고 Match Sink가 불린다.
     // Two players start a match (1 s countdown), then one leaves: the other wins and the match is recorded.
     private static void FinishAMatch(GameLoop loop)
     {
@@ -255,8 +270,17 @@ public sealed class ExceptionRecoveryTests
 
     private sealed class ThrowingLogger : ILogger
     {
+        // 기능: Scope를 만들지 않는다.
+        // 입력: state - Scope 상태(무시).
+        // 출력: 항상 null.
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        // 기능: 모든 로그 수준을 켠 것으로 답한다.
+        // 입력: logLevel - 로그 수준(무시).
+        // 출력: 항상 true.
         public bool IsEnabled(LogLevel logLevel) => true;
+        // 기능: 로그 호출마다 예외를 던진다(던지는 로거 시험).
+        // 입력: logLevel·eventId·state·exception·formatter - ILogger.Log 인자(무시).
+        // 출력: 반환값 없음. 항상 InvalidOperationException을 던진다.
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
             throw new InvalidOperationException("logger fault");
     }
@@ -349,5 +373,8 @@ public sealed class ExceptionRecoveryTests
         server.Dispose();
     }
 
+    // 기능: 조건이 참이 될 때까지 제한 시간 안에서 기다린다.
+    // 입력: condition - 기다릴 조건, timeoutMs - 제한 시간(ms).
+    // 출력: 제한 시간 안에 조건이 참이 되면 true, 아니면 false.
     private static bool SpinUntil(Func<bool> condition, int timeoutMs) => SpinWait.SpinUntil(condition, timeoutMs);
 }

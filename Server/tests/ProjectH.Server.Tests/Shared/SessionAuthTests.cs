@@ -11,6 +11,9 @@ namespace ProjectH.Server.Tests.Shared;
 // resume proof (B4).
 public class SessionAuthTests
 {
+    // 기능: seed에서 시작해 1씩 오르는 바이트로 채운 시험용 세션 키를 만든다.
+    // 입력: seed - 첫 바이트 값(seed가 다르면 다른 키).
+    // 출력: SessionKeyBytes 길이의 키 배열.
     private static byte[] Key(byte seed)
     {
         var key = new byte[ProtocolLimits.SessionKeyBytes];
@@ -19,8 +22,8 @@ public class SessionAuthTests
     }
 
     // 기능: 길이 n 페이로드와 꼬리 자리를 가진 버퍼를 만든다.
-    // 입력: n - 페이로드 길이, fill - 채울 값.
-    // 출력: n + AuthTagBytes 크기 버퍼.
+    // 입력: n - 페이로드 길이, fill - 페이로드 첫 바이트 값(이후 1씩 오른다).
+    // 출력: n + AuthTagBytes 크기 버퍼. 꼬리 자리는 0이다.
     private static byte[] Datagram(int n, byte fill = 7)
     {
         var data = new byte[n + ProtocolLimits.AuthTagBytes];

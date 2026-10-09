@@ -11,6 +11,9 @@ public class WorldItemsTests
 {
     private readonly WorldItems _items = new();
 
+    // 기능: 희귀도 0의 아이템 하나를 _items에 넣는다. 추가가 거부되거나 퇴거가 일어나면 테스트를 실패시킨다.
+    // 입력: position - 위치, spawnPoint - 스폰 지점(-1이면 드롭), kind - 아이템 종류, defId - 정의 ID, amount - 수량.
+    // 출력: 새 아이템 ID.
     private ushort Add(Vector3 position, int spawnPoint = -1, ItemKind kind = ItemKind.Ammo, byte defId = 1, ushort amount = 10)
     {
         Assert.True(_items.TryAdd(kind, defId, 0, amount, position, spawnPoint, out ushort id, out ushort evicted));

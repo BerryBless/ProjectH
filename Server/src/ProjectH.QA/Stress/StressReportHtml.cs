@@ -8,9 +8,18 @@ namespace ProjectH.QA;
 // samples of each phase (collapsed), stalls, a crash and the groups. Plain HTML (details/summary, no script).
 public static class StressReportHtml
 {
+    // 기능: 숫자를 보고용 문자열로 만든다(MeasureMath.F 위임).
+    // 입력: v - 숫자.
+    // 출력: 포맷된 문자열.
     private static string F(double v) => MeasureMath.F(v);
+    // 기능: 텍스트를 HTML escape한다.
+    // 입력: text - 원문.
+    // 출력: escape된 문자열.
     private static string E(string text) => WebUtility.HtmlEncode(text);
 
+    // 기능: Stress Summary 절(크래시 안내, 판정 단계의 한 줄 표)을 HTML로 덧붙인다.
+    // 입력: sb - 출력 버퍼, s - stress 보고.
+    // 출력: 반환값 없음. sb에 HTML이 추가된다.
     public static void Summary(StringBuilder sb, StressReport s)
     {
         sb.Append("<h2>Stress Summary</h2>");
@@ -37,6 +46,9 @@ public static class StressReportHtml
           .Append("</td></tr></table>");
     }
 
+    // 기능: matchLoop 추세 절(요약 문단, 경고, milestone 행 표, 전체 행의 접이식 표)을 덧붙인다.
+    // 입력: sb - 출력 버퍼, loop - matchLoop 보고.
+    // 출력: 반환값 없음. sb에 HTML이 추가된다.
     // matchLoop (soak): the trend over matches. The table shows "start", the milestones (after match 1/5/10/25/50/100...)
     // and the last match; every recorded row is in the collapsed table below it.
     public static void MatchLoop(StringBuilder sb, MatchLoopReport loop)
@@ -55,6 +67,9 @@ public static class StressReportHtml
         }
     }
 
+    // 기능: MatchRow들을 표 하나로 덧붙인다.
+    // 입력: sb - 출력 버퍼, rows - 표에 넣을 행.
+    // 출력: 반환값 없음. sb에 HTML이 추가된다.
     private static void Rows(StringBuilder sb, IEnumerable<MatchRow> rows)
     {
         sb.Append("<table><tr><th>Row</th><th>s</th><th>Post-GC floor MB</th><th>Managed end / min MB</th><th>WS MB</th><th>GC 0/1/2 in match</th><th>GC 0/1/2 total</th><th>Alloc MB</th><th>GC pause ms</th>")
@@ -72,6 +87,9 @@ public static class StressReportHtml
         sb.Append("</table>");
     }
 
+    // 기능: 보고서 하단의 stress 상세(matchLoop, 측정 단계 표, 단계별 sample 접이식 표, stall, crash, groups)를 덧붙인다.
+    // 입력: sb - 출력 버퍼, s - stress 보고.
+    // 출력: 반환값 없음. sb에 HTML이 추가된다.
     public static void Details(StringBuilder sb, StressReport s)
     {
         if (s.MatchLoop != null) MatchLoop(sb, s.MatchLoop);

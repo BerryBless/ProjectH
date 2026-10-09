@@ -20,6 +20,9 @@ namespace ProjectH.Client.Game
         // 0 = nobody to watch (everyone else is dead or gone): the camera stays on our own body.
         public ushort Target { get; private set; }
 
+        // 기능: 관전을 시작한다(경기 중 내 PlayerDied). 처음에는 처치자를 따라간다.
+        // 입력: killerId - 처치자 Entity id(존이나 떠난 사람이면 0: 첫 살아 있는 플레이어).
+        // 출력: 반환값 없음. Active가 켜지고 Target은 0, 처치자 선호가 기록된다.
         public void Begin(ushort killerId)
         {
             Active = true;
@@ -64,6 +67,9 @@ namespace ProjectH.Client.Game
             Target = _teamCount > 0 ? SpectatorTargets.Next(_team, _teamCount, Target) : SpectatorTargets.Next(_alive, _count, Target);
         }
 
+        // 기능: 관전 대상의 발이 renderTick에 그려지는 위치를 구한다(카메라가 따라갈 곳).
+        // 입력: players - 원격 플레이어, renderTick - 렌더 Tick, feet - 대상의 발 위치.
+        // 출력: 관전 중이고 대상이 있으며 표본이 있으면 true와 발 위치, 아니면 false.
         public bool TryGetFeet(RemotePlayers players, double renderTick, out Vector3 feet)
         {
             feet = default;

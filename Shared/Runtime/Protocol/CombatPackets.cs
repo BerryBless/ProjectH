@@ -181,6 +181,9 @@ namespace ProjectH.Shared.Protocol
             return -1;
         }
 
+        // 기능: 각도 값이 유한하고 0..max 안인지 본다(퍼짐·반동 검사).
+        // 입력: value - 검사할 값, max - 허용 상한.
+        // 출력: 0 이상 max 이하면 true(NaN·Infinity는 false).
         private static bool InRange(float value, float max) => Finite.Check(value) && value >= 0f && value <= max;
     }
 
@@ -230,6 +233,9 @@ namespace ProjectH.Shared.Protocol
         public ushort Damage;
         public bool Killed;
 
+        // 기능: HitConfirmed 패킷(id, 대상 id, 피해, 처치 여부)을 쓴다.
+        // 입력: writer - 대상, h - 명중 확인.
+        // 출력: 반환값 없음. writer에 6바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in HitConfirmed h)
         {
             writer.WriteByte((byte)PacketId.HitConfirmed);
@@ -238,6 +244,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte(h.Killed ? (byte)1 : (byte)0);
         }
 
+        // 기능: HitConfirmed 본문(PacketId 뒤)을 읽는다.
+        // 입력: reader - 본문, h - 읽은 명중 확인을 받을 변수.
+        // 출력: 본문이 5바이트 이상이면 true와 명중 확인(Killed는 0이 아닌 바이트), 짧으면 false.
         public static bool TryRead(ref PacketReader reader, out HitConfirmed h)
         {
             h = default;
@@ -330,6 +339,9 @@ namespace ProjectH.Shared.Protocol
         public byte Placement;
         public DeathCause Cause;
 
+        // 기능: PlayerDied 패킷(id, 희생자, 처치자, 순위, 원인)을 쓴다.
+        // 입력: writer - 대상, d - 사망 사건.
+        // 출력: 반환값 없음. writer에 7바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in PlayerDied d)
         {
             writer.WriteByte((byte)PacketId.PlayerDied);
@@ -367,6 +379,9 @@ namespace ProjectH.Shared.Protocol
         public float Yaw;
         public MovementMode Mode;
 
+        // 기능: PlayerRespawned 패킷(id, 엔티티 id, 위치, Yaw, 이동 모드)을 쓴다.
+        // 입력: writer - 대상, r - 재생성 사건.
+        // 출력: 반환값 없음. writer에 20바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in PlayerRespawned r)
         {
             writer.WriteByte((byte)PacketId.PlayerRespawned);
@@ -376,6 +391,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte((byte)r.Mode);
         }
 
+        // 기능: PlayerRespawned 본문(PacketId 뒤)을 읽는다.
+        // 입력: reader - 본문, r - 읽은 사건을 받을 변수.
+        // 출력: 성공하면 true와 사건. 짧거나, 모드가 Downed보다 크거나, 위치·Yaw가 유한하지 않으면 false.
         public static bool TryRead(ref PacketReader reader, out PlayerRespawned r)
         {
             r = default;
@@ -393,8 +411,14 @@ namespace ProjectH.Shared.Protocol
     // Values received from the network may be NaN/Infinity; a packet carrying one is rejected.
     internal static class Finite
     {
+        // 기능: 받은 float가 유한한 값인지 본다.
+        // 입력: value - 검사할 값.
+        // 출력: NaN도 Infinity도 아니면 true.
         public static bool Check(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
 
+        // 기능: 받은 벡터의 세 성분이 모두 유한한지 본다.
+        // 입력: value - 검사할 벡터.
+        // 출력: X, Y, Z가 모두 유한하면 true.
         public static bool Check(Vector3 value) => Check(value.X) && Check(value.Y) && Check(value.Z);
     }
 }

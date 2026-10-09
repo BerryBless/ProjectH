@@ -32,6 +32,9 @@ public static partial class StressActions
     public static readonly string[] MovePatterns = { "mixed", "clockwise", "counterClockwise", "radial", "random" };
     public static readonly string[] Roles = { "move", "sprint", "jump", "idle", "loot", "build", "turbo" };
 
+    // 기능: Stress 액션(measure, actorGroup, groupMove·Combat·Build·Loot·Roles·Churn·NetworkFault, stopGroup, Phase B)을 Registry에 등록한다.
+    // 입력: r - 등록 대상 Registry.
+    // 출력: 반환값 없음. Registry에 Stress 액션 Handler가 추가된다.
     public static void Register(ActionRegistry r)
     {
         r.Add(new DelegateAction(new ActionSpec
@@ -71,6 +74,9 @@ public static partial class StressActions
         RegisterPhaseB(r);
     }
 
+    // 기능: group Parameter가 필수인 Stress 그룹 액션 정의를 만든다.
+    // 입력: name - 액션 이름, run - 실행 함수, optional - 선택 Parameter, positions - 위치 Parameter, check - Literal 검사, required - group 외의 필수 Parameter, timeoutMs - 고정 기본 Timeout(ms).
+    // 출력: Required에 "group"이 포함된 DelegateAction.
     private static DelegateAction Group(string name, Func<StepContext, CancellationToken, Task<StepOutcome>> run, string[] optional,
         string[]? positions = null, Func<StepDefinition, IEnumerable<string>>? check = null, string[]? required = null, int? timeoutMs = null) =>
         new(new ActionSpec
@@ -83,11 +89,17 @@ public static partial class StressActions
             DefaultTimeout = timeoutMs != null ? _ => timeoutMs.Value : null,
         }, run);
 
+    // 기능: 단계 Parameter의 Literal 숫자를 읽는다(변수이거나 없으면 fallback).
+    // 입력: s - 단계 정의, name - Parameter 이름, fallback - 숫자를 읽을 수 없을 때 쓸 값.
+    // 출력: Literal 숫자 값, 아니면 fallback.
     private static double Seconds(StepDefinition s, string name, double fallback) =>
         s.Params.TryGetValue(name, out JsonElement v) && Comparison.TryNumber(v, out double d) ? d : fallback;
 
     // ---- validation of literal values ----
 
+    // 기능: measure 단계의 Literal 인자(name 형식, seconds·sampleSeconds 범위)를 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckMeasure(StepDefinition s)
     {
         if (s.Params.TryGetValue("name", out JsonElement n) && !Variables.HasReference(n) && (n.ValueKind != JsonValueKind.String || !GroupName().IsMatch(n.GetString()!)))
@@ -98,6 +110,9 @@ public static partial class StressActions
             yield return "'sampleSeconds' must be 1-120.";
     }
 
+    // 기능: actorGroup 단계의 groups Literal(비어 있지 않은 배열, 그룹 이름 형식·중복, percent/count/rest 택일, proxy, rest 하나, 합계 100 이하)을 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckActorGroup(StepDefinition s)
     {
         if (!s.Params.TryGetValue("groups", out JsonElement g)) yield break;
@@ -155,6 +170,9 @@ public static partial class StressActions
         if (percent > 100.0001) yield return $"The percentages add up to {percent} (more than 100).";
     }
 
+    // 기능: 숫자 Parameter의 Literal 값이 min-max 범위(m 단위) 안인지 검사한다.
+    // 입력: s - 단계 정의, name - Parameter 이름, min - 최소값, max - 최대값, exclusiveMin - true면 min 초과여야 함.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckRange(StepDefinition s, string name, double min, double max, bool exclusiveMin = false)
     {
         if (s.Params.TryGetValue(name, out JsonElement v) && !Variables.HasReference(v)
@@ -162,6 +180,9 @@ public static partial class StressActions
             yield return $"'{name}' must be {(exclusiveMin ? "above " + min : min.ToString(CultureInfo.InvariantCulture))} and at most {max} m.";
     }
 
+    // 기능: 문자열 Parameter의 Literal 값이 choices 중 하나인지 검사한다(대소문자 무시).
+    // 입력: s - 단계 정의, name - Parameter 이름, choices - 허용 값 목록.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckChoice(StepDefinition s, string name, string[] choices)
     {
         if (s.Params.TryGetValue(name, out JsonElement v) && !Variables.HasReference(v)
@@ -169,6 +190,9 @@ public static partial class StressActions
             yield return $"'{name}' must be one of {string.Join(", ", choices)}.";
     }
 
+    // 기능: pieces Literal이 비어 있지 않은 조각 이름(wall, floor, ramp, roof) 배열인지 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckBuildPieces(StepDefinition s)
     {
         if (!s.Params.TryGetValue("pieces", out JsonElement p) || Variables.HasReference(p)) yield break;
@@ -180,6 +204,9 @@ public static partial class StressActions
         }
     }
 
+    // 기능: roles Literal이 role(Roles 중 하나)과 percent(0-100)를 가진 객체의 비어 있지 않은 배열인지 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckRoles(StepDefinition s)
     {
         if (!s.Params.TryGetValue("roles", out JsonElement r) || Variables.HasReference(r) && r.ValueKind != JsonValueKind.Array) yield break;
@@ -199,6 +226,9 @@ public static partial class StressActions
 
     // ---- measure (D37, D41, D43) ----
 
+    // 기능: 측정 Phase 하나를 돌려(MeasurePhaseAsync) 결과를 Run의 Stress 보고에 더한다.
+    // 입력: ctx - 단계 문맥(name, seconds, sampleSeconds), token - 취소 토큰.
+    // 출력: 서버가 끝까지 답하면 Pass(saveAs: 표본을 뺀 Phase 수치), 서버 미응답·종료면 Fail. seconds가 범위 밖이면 QaStepException.
     private static async Task<StepOutcome> MeasureAsync(StepContext ctx, CancellationToken token)
     {
         string name = ctx.RequireString("name");
@@ -210,6 +240,9 @@ public static partial class StressActions
         return StepOutcome.Pass(PhaseText(result), JsonPath.From(Flat(result)));
     }
 
+    // 기능: 측정 결과를 한 줄 요약(길이, 인원, Tick 분위수, CPU, 관리 메모리, 송신량, 입력 지연 p95)으로 만든다.
+    // 입력: result - 측정 결과.
+    // 출력: 요약 문자열.
     internal static string PhaseText(MeasureResult result)
     {
         string latencyText = result.InputLatency is LatencyStats l ? $", R1 p95 {MeasureMath.F(l.P95Ms)} ms" : string.Empty;
@@ -221,6 +254,9 @@ public static partial class StressActions
     // Shared by `measure` and `matchLoop` (one phase per match). Start = the cumulative reading the phase began with.
     internal sealed record PhaseRun(MeasureResult Result, MeasureSample Start, string? Failure);
 
+    // 기능: 측정 Phase 하나를 돈다. 시작 Metrics를 읽고 간격마다 표본을 모으며(Stall이 늘면 기록), 서버 링 안이면 전체 창을 한 번 더 읽어 요약을 Stress 보고에 더한다(D37).
+    // 입력: run - Run, name - Phase 이름, stepId - 단계 id, seconds - 측정 길이(초), sampleSeconds - 표본 간격(초, null이면 자동), token - 취소 토큰, keep - 보고에 Phase를 넣을지, warnTickBudget - Tick 예산 초과를 이 Phase에서 경고할지.
+    // 출력: 결과·시작 표본·실패 사유(서버 미응답이면 설명, 아니면 null)를 담은 PhaseRun. 취소돼도 측정한 부분까지 요약된다.
     // keep: add the phase to the report (matchLoop stops keeping its phases after MatchLoopKeptPhases, so later measure steps
     // still get a slot); warnTickBudget: the D42 tick-budget warning per phase (matchLoop sums them into one warning).
     internal static async Task<PhaseRun> MeasurePhaseAsync(RunContext run, string name, string? stepId, double seconds, double? sampleSeconds, CancellationToken token,
@@ -308,6 +344,9 @@ public static partial class StressActions
 
     // 503 (QA queue full) and 504 (the loop did not run the query in time) are retried twice, half a second apart; a
     // server that still does not answer is a hang (D41: the measure fails).
+    // 기능: /qa/metrics를 읽는다(503·504는 0.5초 간격으로 최대 MaxRetries 재시도).
+    // 입력: server - QA 서버 Client, window - 창 길이(초, null이면 누적값), token - 취소 토큰.
+    // 출력: Metrics JSON. 재시도 뒤에도 실패면 QaApiException.
     internal static async Task<JsonElement> MetricsAsync(IQaServerClient server, int? window, CancellationToken token)
     {
         for (int attempt = 0; ; attempt++)
@@ -326,6 +365,9 @@ public static partial class StressActions
     // The server keeps 120 s of ticks (Qa/QaOptions.MetricsWindowSeconds); windowSeconds above it is refused.
     public const int QaMetricsRingSeconds = 120;
 
+    // 기능: saveAs용으로 측정 결과에서 표본 목록을 뺀 수치만 모은다(변수를 작게 유지).
+    // 입력: r - 측정 결과.
+    // 출력: 수치만 담은 익명 객체.
     // saveAs: the phase's numbers without the samples (variables stay small).
     private static object Flat(MeasureResult r) => new
     {
@@ -337,6 +379,9 @@ public static partial class StressActions
         inputLatencyP50Ms = r.InputLatency?.P50Ms, inputLatencyP95Ms = r.InputLatency?.P95Ms, inputLatencyP99Ms = r.InputLatency?.P99Ms, inputLatencyMaxMs = r.InputLatency?.MaxMs,
     };
 
+    // 기능: QA API 실패를 서버 프로세스 종료(띄운 서버가 끝났으면 exit code 포함) 또는 미응답 설명으로 바꾼다.
+    // 입력: run - Run, e - QA API 예외.
+    // 출력: 실패 사유 문자열.
     internal static string ServerGone(RunContext run, QaApiException e)
     {
         if (run.ServerControl is LaunchedServer { Running: false } launched)
@@ -344,6 +389,9 @@ public static partial class StressActions
         return $"the QA API did not answer: {e.Message}";
     }
 
+    // 기능: 서버가 센 Stall을 Phase·단계·인원·표본·최근 이벤트(켜져 있으면)와 함께 Stress 보고에 기록하고 경고를 남긴다(D41).
+    // 입력: run - Run, phase - Phase 이름, before - 이전 Stall 수, sample - Stall이 늘어난 표본, token - 취소 토큰.
+    // 출력: 반환값 없음. run.Stress.Stalls(한도를 넘으면 StallsDropped)와 run.Warnings가 바뀐다.
     // D41: the moment the server counted a stall: phase, step, players, the sample, and the recent events (when on).
     private static async Task RecordStallAsync(RunContext run, string phase, long before, MeasureSample sample, CancellationToken token)
     {
@@ -386,8 +434,14 @@ public static partial class StressActions
         private TimeSpan _cpu;
         private TimeSpan _wall;
 
+        // 기능: 도구 CPU 측정기를 만들고 직전 기준점을 생성 시점의 CPU 시간으로 둔다.
+        // 입력: 없음.
+        // 출력: 시계가 시작된 ToolCpu.
         public ToolCpu() => _cpu = _start;
 
+        // 기능: 직전 호출(처음은 생성) 이후 이 도구의 CPU 사용률을 구하고 기준점을 지금으로 옮긴다.
+        // 입력: 없음.
+        // 출력: 구간 CPU 사용률(%, 모든 논리 프로세서 = 100).
         public double Percent()
         {
             TimeSpan cpu = Process.GetCurrentProcess().TotalProcessorTime;
@@ -398,14 +452,23 @@ public static partial class StressActions
             return percent;
         }
 
+        // 기능: 생성 이후 전체 구간의 이 도구 CPU 사용률을 구한다.
+        // 입력: 없음.
+        // 출력: 전체 CPU 사용률(%, 모든 논리 프로세서 = 100).
         public double WholePercent() => Scale(Process.GetCurrentProcess().TotalProcessorTime - _start, _clock.Elapsed);
 
+        // 기능: CPU 시간을 경과 시간 x 논리 프로세서 수로 나눠 백분율로 바꾼다.
+        // 입력: cpu - 쓴 CPU 시간, wall - 경과 시간.
+        // 출력: CPU 사용률(%). wall이 1 ms 이하면 0.
         private static double Scale(TimeSpan cpu, TimeSpan wall) =>
             wall.TotalSeconds > 0.001 ? cpu.TotalSeconds / (wall.TotalSeconds * Environment.ProcessorCount) * 100.0 : 0;
     }
 
     // ---- groups ----
 
+    // 기능: Headless Actor(prefix로 고를 수 있음)를 groups의 percent·count·rest로 Seed에 따라 나눠 ActorGroup을 정의한다(proxy 그룹은 구성원에 Proxy를 켠다).
+    // 입력: ctx - 단계 문맥(groups, prefix, seed), token - 취소 토큰(사용 안 함).
+    // 출력: 그룹별 인원을 담은 Pass(saveAs: actors, seed, groups, ungrouped), Headless Actor가 없으면 Fail. groups 형식 오류나 proxy 그룹에 이미 연결된 Actor가 있으면 QaStepException.
     private static Task<StepOutcome> ActorGroupAsync(StepContext ctx, CancellationToken token)
     {
         RunContext run = ctx.Run;
@@ -453,8 +516,14 @@ public static partial class StressActions
         return Task.FromResult(StepOutcome.Pass($"{actors.Length} actors (seed {seed}): {text}", JsonPath.From(new { actors = actors.Length, seed, groups = sizes, ungrouped })));
     }
 
+    // 기능: 단계의 group 인자에 해당하는 ActorGroup을 가져온다.
+    // 입력: ctx - 단계 문맥(group).
+    // 출력: 해당 ActorGroup. group이 없거나 정의되지 않은 그룹이면 예외.
     private static ActorGroup GroupOf(StepContext ctx) => ctx.Run.Groups.Get(ctx.RequireString("group"));
 
+    // 기능: 단계의 center 위치를 XZ 평면 좌표로 읽는다.
+    // 입력: ctx - 단계 문맥(center).
+    // 출력: (x, z) 좌표. center가 없으면 (0, 0).
     private static Vector2 Center(StepContext ctx)
     {
         if (ctx.Position("center") is QaPosition p) return new Vector2(p.X, p.Z);
@@ -463,6 +532,9 @@ public static partial class StressActions
 
     // Hands every member its brain and waits (bounded) until each has applied it. The group's previous behaviour goes with
     // its workload (a re-arm loop for an old combat or recycle behaviour); a churn keeps running beside any behaviour.
+    // 기능: 그룹의 재무장 작업을 멈춘 뒤 모든 구성원에게 make가 만든 Brain을 보내고 전부 적용될 때까지 기다린다.
+    // 입력: ctx - 단계 문맥, group - 대상 그룹, make - (구성원 순번, Actor)로 Brain을 만드는 함수(null이면 Brain 없음), token - 취소 토큰.
+    // 출력: 모든 구성원이 적용하면 true, 단계 Timeout까지 안 되면 false.
     private static async Task<bool> SetBrainsAsync(StepContext ctx, ActorGroup group, Func<int, IQaActor, ActorBrain?> make, CancellationToken token)
     {
         await ctx.Run.Groups.StopAsync(group.Name, GroupRegistry.StopTimeout, kind: "rearm").ConfigureAwait(false);
@@ -477,6 +549,9 @@ public static partial class StressActions
         return await ctx.WaitUntilAsync(() => sent.All(s => s.Actor.State.LastCommandId >= s.Id), token).ConfigureAwait(false);
     }
 
+    // 기능: 그룹 구성원에게 이동 Brain(패턴, 중심·반경, 달리기 여부·비율, 점프 주기)을 준다.
+    // 입력: ctx - 단계 문맥(group, pattern, center, radius, sprint, sprintPercent, jumpEverySeconds), token - 취소 토큰.
+    // 출력: 모두 적용되면 Pass, 아니면 Fail. 패턴이나 반경이 잘못되면 QaStepException.
     private static async Task<StepOutcome> GroupMoveAsync(StepContext ctx, CancellationToken token)
     {
         ActorGroup group = GroupOf(ctx);
@@ -502,6 +577,9 @@ public static partial class StressActions
         return StepOutcome.Pass($"{group.Members.Count} moving ({pattern}, radius {radius} m around ({center.X}, {center.Y}), {sprinting} sprinting{(jump > 0 ? $", jump every {jump} s" : "")})");
     }
 
+    // 기능: 패턴 이름을 MovePattern으로 바꾼다(mixed 등 그 외 이름은 순번에 따라 4개 패턴을 돌아가며).
+    // 입력: pattern - 패턴 이름, index - 구성원 순번.
+    // 출력: 해당 MovePattern.
     public static MovePattern PatternFor(string pattern, int index) => pattern.ToLowerInvariant() switch
     {
         "clockwise" => MovePattern.Clockwise,
@@ -514,6 +592,9 @@ public static partial class StressActions
 
     // §14-17. Members in fights of groupSize (2 = pairs); member k of a fight shoots member k+1 (a ring), so nobody is
     // everyone's target. A last single member joins the previous fight's ring.
+    // 기능: 그룹을 groupSize 단위의 싸움(고리형 표적)으로 나누고, arrange면 자리·무기·탄·실드를 Arrange한 뒤 Combat Brain을 주며, rearm이면 재무장 작업을 시작한다(§14-17).
+    // 입력: ctx - 단계 문맥(group, pairing, groupSize, weapon, ammo, ammoType, burst, pauseMs, reloadEvery, hitPercent, engageRange, strafeSeconds, arrange, rearm, center, radius, spacing, pairDistance, shield), token - 취소 토큰.
+    // 출력: 적용되면 Pass(saveAs: fights, size, weapon, arrangeCommands), 자리 부족·Arrange 거절·무기 미도착·Brain 미적용이면 Fail. 구성원이 2명 미만이면 싸움 없이 Pass. 범위 밖 인자는 QaStepException.
     private static async Task<StepOutcome> GroupCombatAsync(StepContext ctx, CancellationToken token)
     {
         RunContext run = ctx.Run;
@@ -636,6 +717,9 @@ public static partial class StressActions
         _ => "medium",
     };
 
+    // 기능: 한 구성원을 무장시키는 Arrange 명령(자리, 무기 0번 칸 선택, 탄, 실드)을 나열한다.
+    // 입력: a - 대상 Actor, at - 자리, yaw - 바라볼 방향, weapon - 무기 이름, ammoType - 탄 종류, ammo - 탄 수(0이면 생략), shield - 실드(0이면 생략), position - setPosition을 포함할지.
+    // 출력: (명령 이름, DevPlayerId, 인자 객체) 목록.
     private static IEnumerable<(string Command, string? Player, object Args)> ArmCommands(IQaActor a, Vector3 at, float yaw, string weapon, string ammoType, int ammo, int shield, bool position)
     {
         if (position) yield return ("setPosition", a.DevPlayerId, new { x = at.X, z = at.Z, yaw });
@@ -650,6 +734,9 @@ public static partial class StressActions
     private static readonly TimeSpan RearmCooldown = TimeSpan.FromSeconds(2);
     private const int RefillBelow = 60;
 
+    // 기능: 재무장 작업 본체. 250 ms마다 구성원 상태를 보고 사망을 세며, 살아 있는데 0번 칸이 비면 다시 무장시키고(position이면 자리로 되돌림) 예비 탄이 RefillBelow 아래면 채운다(구성원마다 RearmCooldown에 한 번).
+    // 입력: server - QA 서버 Client, runId - Run id, pollMs - 재시도 간격(ms), group - 대상 그룹, spot - 구성원별 자리, facing - 구성원별 방향, position - 자리로 되돌릴지, weapon - 무기 이름, ammoType - 탄 종류, ammo - 탄 수, token - 중단 토큰.
+    // 출력: 반환값 없음. 그룹 통계(Deaths, Rearms, Refills, 명령 수)가 갱신되고, 중단 외의 예외로 끝나면 WorkloadFailed가 기록된다.
     private static async Task RearmLoopAsync(IQaServerClient server, string runId, int pollMs, ActorGroup group, Vector3[] spot, float[] facing, bool position,
         string weapon, string ammoType, int ammo, CancellationToken token)
     {
@@ -697,6 +784,9 @@ public static partial class StressActions
         }
     }
 
+    // 기능: Arrange 명령들을 최대 ArrangeParallel개씩 동시에 보낸다.
+    // 입력: run - Run, stats - 명령 수·실패를 집계할 그룹 통계, commands - (명령, DevPlayerId, 인자) 목록, token - 취소 토큰.
+    // 출력: 거절되거나 실패한 명령 수.
     // Arrange commands with at most ArrangeParallel in flight (the server runs 16 per tick). Returns how many failed.
     private static async Task<int> CommandsAsync(RunContext run, GroupStats stats, IReadOnlyList<(string Command, string? Player, object Args)> commands, CancellationToken token)
     {
@@ -719,6 +809,9 @@ public static partial class StressActions
         return failed;
     }
 
+    // 기능: QA 명령 하나를 보낸다(503·504는 pollMs 간격으로 최대 MaxRetries 재시도). 보낸 명령과 실패는 그룹 통계에 센다.
+    // 입력: server - QA 서버 Client, runId - Run id, pollMs - 재시도 간격(ms), stats - 그룹 통계, command - 명령 이름, player - 대상 DevPlayerId, args - 인자 객체, token - 취소 토큰.
+    // 출력: 받아들여지면 true, 거절이나 QA API 예외면 false(오류가 통계에 기록된다).
     // One QA command with the same retry as the Arrange steps (503 queue full, 504 not run in time: twice).
     private static async Task<bool> SendCommandAsync(IQaServerClient server, string runId, int pollMs, GroupStats stats, string command, string? player, object args, CancellationToken token)
     {
@@ -750,6 +843,9 @@ public static partial class StressActions
 
     // §20-23: builders on their own sites. Each member claims the free site nearest the group's centre (in member order),
     // then the next one near where it is whenever it finishes (BuildSitePool, shared by every build group of the run).
+    // 기능: 그룹 구성원마다 중심 가까운 건설 터를 잡고(arrange면 자리·자원·recycle 무기 Arrange) Build Brain을 주며, recycle이면 재무장 작업도 시작한다(§20-23).
+    // 입력: ctx - 단계 문맥(group, pieces, material, ratePerSecond, arrange, resources, center, role, recycle, weapon, ammo), token - 취소 토큰.
+    // 출력: 적용되면 Pass(saveAs: builders, sites, free, shared, rate), 터가 없거나 Arrange 거절·Brain 미적용이면 Fail. ratePerSecond가 범위 밖이면 QaStepException.
     private static async Task<StepOutcome> GroupBuildAsync(StepContext ctx, CancellationToken token)
     {
         RunContext run = ctx.Run;
@@ -804,6 +900,9 @@ public static partial class StressActions
             JsonPath.From(new { builders = group.Members.Count, sites = pool.Count, free = pool.Free, shared, rate }));
     }
 
+    // 기능: pieces 인자를 조각 종류 배열로 읽는다(없으면 벽·바닥·경사로·지붕 전부).
+    // 입력: ctx - 단계 문맥(pieces).
+    // 출력: 중복을 뺀 BuildPieceType 배열. 배열이 아니거나 모르는 이름이면 QaStepException.
     private static BuildPieceType[] Pieces(StepContext ctx)
     {
         JsonElement? p = ctx.Param("pieces");
@@ -812,12 +911,18 @@ public static partial class StressActions
         return p.Value.EnumerateArray().Select(e => Enum.TryParse(QaJson.Text(e), true, out BuildPieceType t) ? t : throw new QaStepException($"Unknown piece {e.GetRawText()}.")).Distinct().ToArray();
     }
 
+    // 기능: material 인자를 재료 종류로 읽는다(기본 wood, 숫자 문자열은 거부).
+    // 입력: ctx - 단계 문맥(material).
+    // 출력: BuildMaterialType. 모르는 이름이면 QaStepException.
     private static BuildMaterialType Material(StepContext ctx)
     {
         string text = ctx.String("material") ?? "wood";
         return Enum.TryParse(text, true, out BuildMaterialType m) && Enum.IsDefined(m) && !int.TryParse(text, out _) ? m : throw new QaStepException($"Unknown material '{text}'.");
     }
 
+    // 기능: 그룹 구성원에게 Loot Brain(탐색 범위, 몇 번 줍고 버릴지)을 준다.
+    // 입력: ctx - 단계 문맥(group, searchRange, dropEvery), token - 취소 토큰.
+    // 출력: 모두 적용되면 Pass, 아니면 Fail.
     private static async Task<StepOutcome> GroupLootAsync(StepContext ctx, CancellationToken token)
     {
         ActorGroup group = GroupOf(ctx);
@@ -831,6 +936,9 @@ public static partial class StressActions
 
     // §51-52: each member changes role every switchSeconds (a seeded weighted pick per period). Builders get their own
     // sites and, when arranged, resources up front.
+    // 기능: 그룹 구성원에게 switchSeconds마다 roles의 비율로 역할을 바꾸는 Role Brain을 준다(건설 역할이 있으면 자원을 먼저 Arrange)(§51-52).
+    // 입력: ctx - 단계 문맥(group, roles, switchSeconds, center, radius, ratePerSecond, turboRatePerSecond, resources, material), token - 취소 토큰.
+    // 출력: 모두 적용되면 Pass, 건설 터 없음·giveResource 거절·Brain 미적용이면 Fail. roles 형식이 틀리면 QaStepException.
     private static async Task<StepOutcome> GroupRolesAsync(StepContext ctx, CancellationToken token)
     {
         RunContext run = ctx.Run;
@@ -888,6 +996,9 @@ public static partial class StressActions
     // §36-38: every cycle, percent of the group (a seeded pick) disconnects (graceful, drop or both halves), waits until
     // the server no longer counts the old connection (one /qa/players query per poll, not one per actor), and
     // reconnects with the same DevPlayerId. A background workload: measure runs alongside; stopGroup or cleanup ends it.
+    // 기능: 그룹의 이전 Churn 작업을 멈추고 새 Churn 작업(주기마다 percent만큼 끊고 재접속)을 Background로 시작한다(§36-38).
+    // 입력: ctx - 단계 문맥(group, percent, cycleSeconds, cycles, mode, offlineMs, reconnectTimeoutMs), token - 취소 토큰.
+    // 출력: 작업이 시작되면 Pass. 인자가 범위 밖이거나 Proxy를 쓰는 구성원이 있으면 QaStepException.
     private static async Task<StepOutcome> GroupChurnAsync(StepContext ctx, CancellationToken token)
     {
         RunContext run = ctx.Run;
@@ -914,6 +1025,9 @@ public static partial class StressActions
     private sealed record ChurnPlan(IQaServerClient Server, string Host, int Port, int Seed, double Percent, double CycleSeconds, int Cycles, string Mode,
         int OfflineMs, int ReconnectTimeoutMs, int PollMs);
 
+    // 기능: Churn 작업 본체. 주기마다 Seed로 고른 구성원을 끊고(graceful/drop/mixed), 서버가 옛 연결을 잊을 때까지 기다린 뒤 같은 DevPlayerId로 재접속시켜 재접속 시간·실패·중복 등록을 센다.
+    // 입력: plan - Churn 설정, group - 대상 그룹, token - 중단 토큰.
+    // 출력: 반환값 없음. 그룹 통계가 갱신되고, 어떻게 끝나든 보내둔 구성원은 BringBackAsync로 되돌린다. 중단 외의 예외면 WorkloadFailed가 기록된다.
     private static async Task ChurnLoopAsync(ChurnPlan plan, ActorGroup group, CancellationToken token)
     {
         GroupStats stats = group.Stats;
@@ -1005,6 +1119,9 @@ public static partial class StressActions
 
     // /qa/players with the same bounded retry as the metrics: 503 / 504 and a request that timed out on its own (not the
     // workload's cancellation) are tried again twice, half a second apart.
+    // 기능: /qa/players를 읽는다(503·504·연결 실패·요청 자체 Timeout은 0.5초 간격으로 최대 MaxRetries 재시도, 작업 취소는 재시도하지 않음).
+    // 입력: server - QA 서버 Client, token - 취소 토큰.
+    // 출력: 플레이어 목록 JSON. 재시도 뒤에도 실패면 예외.
     internal static async Task<JsonElement> PlayersAsync(IQaServerClient server, CancellationToken token)
     {
         for (int attempt = 0; ; attempt++)
@@ -1026,6 +1143,9 @@ public static partial class StressActions
     // disconnect packet just before the stop is still "connected" on the server until that timeout.
     public static readonly TimeSpan BringBackTimeout = TimeSpan.FromSeconds(8);
 
+    // 기능: 멈춘 Churn 주기가 끊어 둔 구성원을 BringBackTimeout 안에 재접속시킨다(서버가 옛 연결을 잊을 때까지 먼저 기다림).
+    // 입력: plan - Churn 설정, away - 주기가 끊어 둔 Actor들, stats - 그룹 통계.
+    // 출력: 반환값 없음. 시간 안에 돌아오지 못한 Actor가 있으면 오류와 WorkloadFailed가 기록된다.
     private static async Task BringBackAsync(ChurnPlan plan, IQaActor[] away, GroupStats stats)
     {
         IQaActor[] gone = away.Where(a => !a.State.Joined).ToArray();
@@ -1053,6 +1173,9 @@ public static partial class StressActions
         if (gone.Any(a => !a.State.Joined)) stats.WorkloadFailed($"churn: {gone.Count(a => !a.State.Joined)} actor(s) sent away were not back within {BringBackTimeout.TotalSeconds:0} s");
     }
 
+    // 기능: /qa/players 응답의 모든 devPlayerId를 나열한다.
+    // 입력: players - /qa/players 응답.
+    // 출력: devPlayerId 목록(배열이 아니면 빈 목록).
     private static IEnumerable<string> AllIds(JsonElement players)
     {
         if (players.ValueKind != JsonValueKind.Array) yield break;
@@ -1060,6 +1183,9 @@ public static partial class StressActions
             if (JsonPath.Child(p, "devPlayerId") is { ValueKind: JsonValueKind.String } id) yield return id.GetString()!;
     }
 
+    // 기능: /qa/players 응답에서 connected가 true인 플레이어의 devPlayerId만 나열한다.
+    // 입력: players - /qa/players 응답.
+    // 출력: 연결 중인 devPlayerId 목록(배열이 아니면 빈 목록).
     private static IEnumerable<string> ConnectedIds(JsonElement players)
     {
         if (players.ValueKind != JsonValueKind.Array) yield break;
@@ -1070,6 +1196,9 @@ public static partial class StressActions
         }
     }
 
+    // 기능: 조건이 성립할 때까지 ActorPollMs 간격으로 최대 timeoutMs 기다린다.
+    // 입력: condition - 검사할 조건, timeoutMs - 한도(ms), token - 취소 토큰.
+    // 출력: 조건이 성립하면 true, 한도까지 성립하지 않으면 false.
     private static async Task<bool> WaitAsync(Func<bool> condition, int timeoutMs, CancellationToken token)
     {
         var clock = Stopwatch.StartNew();
@@ -1081,6 +1210,9 @@ public static partial class StressActions
         }
     }
 
+    // 기능: 그룹 모든 구성원의 Proxy에 같은 네트워크 장애(지연·Jitter·손실·중복)를 direction 방향으로 설정한다(§45, D38).
+    // 입력: ctx - 단계 문맥(group, latencyMs, jitterMs, lossPercent, duplicatePercent, direction), token - 취소 토큰(사용 안 함).
+    // 출력: 설정 내용을 담은 Pass. Proxy 없는 구성원·모르는 방향·범위 밖 값이면 QaStepException.
     // §45, D38: the same network fault on every member's proxy (the group was made with "proxy": true).
     private static Task<StepOutcome> GroupNetworkFaultAsync(StepContext ctx, CancellationToken token)
     {
@@ -1118,6 +1250,9 @@ public static partial class StressActions
 
     // Ends a group's workloads (bounded wait) and behaviours; the members stand still, still sending input.
     // group "all": every group. saveAs: the group(s) stats.
+    // 기능: 그룹("all"이면 모든 그룹)의 Background 작업을 멈추고 구성원의 행동·의도를 초기화한다.
+    // 입력: ctx - 단계 문맥(group), token - 취소 토큰.
+    // 출력: 작업이 시간 안에 멈추고 오류로 끝난 작업이 없으면 Pass, 아니면 Fail. saveAs: 그룹 통계(여러 그룹이면 이름별).
     private static async Task<StepOutcome> StopGroupAsync(StepContext ctx, CancellationToken token)
     {
         RunContext run = ctx.Run;

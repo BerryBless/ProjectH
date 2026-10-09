@@ -67,7 +67,7 @@ public sealed class ConnectRateLimiter
     private readonly int _maxActive;
     private readonly uint _hashSalt;
 
-    // 기능: IP별 연결 요청 표를 만든다(서버 리뷰 M2의 빈도 제한 그대로, 동시 연결 상한·벌점은 끔, salt 0).
+    // 기능: IP별 연결 요청 표를 만든다(서버 리뷰 M2의 빈도 제한 그대로, 동시 연결 상한은 끔(0), salt 0. 벌점은 Penalize를 부르면 그대로 적용된다).
     // 입력: burst - 한 번에 받는 요청 수, perSecond - 초당 채워지는 수(둘 중 하나라도 0이면 빈도 제한 끔).
     // 출력: 빈 표를 가진 ConnectRateLimiter.
     public ConnectRateLimiter(int burst, int perSecond) : this(burst, perSecond, 0, 0)
@@ -192,14 +192,20 @@ public sealed class ConnectRateLimiter
     // 출력: 0–Slots-1 칸 번호.
     public int SlotOf(IPAddress address) => IndexOf(KeyOf(address) ^ _hashSalt);
 
-    // 기능: salt 0 표의 칸 번호를 구한다(테스트가 충돌하는 주소를 찾을 때).
-    // 입력: address - 원격 주소.
+    // 기능: 주어진 salt 표의 칸 번호를 구한다(테스트가 충돌하는 주소를 찾을 때).
+    // 입력: address - 원격 주소, salt - 주소 해시에 섞는 값(기본 0).
     // 출력: 0–Slots-1 칸 번호.
     internal static int SlotOf(IPAddress address, uint salt = 0) => IndexOf(KeyOf(address) ^ salt);
 
+    // 기능: 32비트 키를 Fibonacci Hashing으로 칸 번호에 접는다.
+    // 입력: key - 주소 키(salt 적용 뒤).
+    // 출력: 0–Slots-1 칸 번호.
     // Fibonacci hashing: the top bits of key * 2^32/phi, so neighbouring addresses spread over the table.
     private static int IndexOf(uint key) => (int)((key * 2654435769u) >> (32 - SlotBits));
 
+    // 기능: 주소를 32비트 숫자로 만든다(IPv4는 그대로, IPv6는 4바이트씩 XOR). 할당 없음.
+    // 입력: address - 원격 주소.
+    // 출력: 주소 키. 바이트를 못 쓰면 0.
     // The IPv4 address as a number. The server binds IPv4 only; an IPv6 address (not expected) is folded into 32 bits,
     // so two such addresses may share a bucket. No allocation.
     private static uint KeyOf(IPAddress address)

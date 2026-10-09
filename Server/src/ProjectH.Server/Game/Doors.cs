@@ -14,6 +14,9 @@ public sealed class DoorSet
     private readonly int[] _doorOfSlot = new int[GameMap.DoorCount];
     private int _length;
 
+    // 기능: 맵 상자를 복사하고 모든 문이 닫힌 충돌 세계를 만든다.
+    // 입력: 없음.
+    // 출력: OpenMask 0, World = GameMap.Boxes + 닫힌 문 전부인 DoorSet.
     public DoorSet()
     {
         GameMap.Boxes.CopyTo(_world);
@@ -27,8 +30,14 @@ public sealed class DoorSet
     // character (CollisionWorld), with the doors' OpenMask.
     public ReadOnlySpan<Box> World => new(_world, 0, _length);
 
+    // 기능: 문이 열려 있는지 OpenMask의 비트로 확인한다.
+    // 입력: door - GameMap.Doors의 문 index.
+    // 출력: 열려 있으면 true, 닫혀 있으면 false.
     public bool IsOpen(int door) => (OpenMask & (1 << door)) != 0;
 
+    // 기능: World의 한 index가 어느 문의 상자인지 찾는다.
+    // 입력: worldIndex - World 안의 상자 index.
+    // 출력: 닫힌 문의 상자면 그 문 index, 맵 상자이거나 World 밖이면 -1.
     // The door whose box is at this index of World, or -1 for a map box (or an index outside World).
     public int DoorAt(int worldIndex)
     {
@@ -36,6 +45,9 @@ public sealed class DoorSet
         return slot >= 0 && worldIndex < _length ? _doorOfSlot[slot] : -1;
     }
 
+    // 기능: 이동 Step을 막은 충돌체가 문이면 어느 문인지 찾는다(막은 충돌체가 문이 아니면 Z 축 Sweep의 충돌체를 본다).
+    // 입력: step - 이동 Step 결과.
+    // 출력: 막은 문의 index, 문에 막히지 않았으면 -1.
     // D9: the door a step was stopped by: the collider that stopped it, or when that is no door, the Z sweep's (a sprint
     // into a doorway a little off-centre meets the jamb on one axis and the door on the other). -1 = no door. Phase 13 D3:
     // the step names colliders by kind and id (CollisionWorld), so a door is Door i wherever it was gathered. The client's
@@ -46,6 +58,9 @@ public sealed class DoorSet
         return step.BlockedByZ.Kind == ColliderKind.Door ? (int)step.BlockedByZ.Id : -1;
     }
 
+    // 기능: 문 하나를 열거나 닫고, 상태가 바뀌었을 때만 충돌 세계를 다시 만든다.
+    // 입력: door - 문 index, open - true면 열기, false면 닫기.
+    // 출력: 반환값 없음. OpenMask와 World가 갱신된다(이미 같은 상태면 그대로).
     public void Set(int door, bool open)
     {
         int bit = 1 << door;
@@ -55,6 +70,9 @@ public sealed class DoorSet
         Rebuild();
     }
 
+    // 기능: 모든 문을 닫는다(라운드 시작).
+    // 입력: 없음.
+    // 출력: 반환값 없음. OpenMask가 0이 되고 World에 모든 문이 들어간다(이미 전부 닫혀 있으면 그대로).
     // D9: a round starts with every door closed.
     public void CloseAll()
     {
@@ -63,6 +81,9 @@ public sealed class DoorSet
         Rebuild();
     }
 
+    // 기능: World의 문 부분을 현재 OpenMask로 다시 쓴다(맵 상자 뒤에 닫힌 문만 순서대로).
+    // 입력: 없음.
+    // 출력: 반환값 없음. _world의 문 구간, _doorOfSlot, _length가 갱신된다. 할당 없음.
     private void Rebuild()
     {
         int length = GameMap.Boxes.Length;
@@ -81,6 +102,9 @@ public sealed class DoorSet
 // predict the door and show the prompt, and DoorTests.TheClientsCopy_PicksTheSameDoor keeps the two the same.
 public static class DoorRules
 {
+    // 기능: E 키가 작용할 문을 고른다: 발 위치에서 수평 거리 DoorInteractRange 안, 바라보는 방향의 DoorInteractHalfAngle 안, 같은 층에 있는 가장 가까운 문.
+    // 입력: feet - 플레이어 발 위치, yaw - 바라보는 방향(도, 0 = +Z), doors - 문 상자 목록(GameMap.Doors).
+    // 출력: 대상 문의 index, 없으면 -1. 순수 함수, 할당 없음.
     // The nearest door whose centre is within DoorInteractRange of the feet across the ground and within
     // DoorInteractHalfAngle of the facing direction (yaw 0 = +Z), on the door's floor (the feet between 1 m below its
     // bottom and its top), or -1. Pure, no allocation.

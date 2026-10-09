@@ -10,12 +10,18 @@ namespace ProjectH.Server.Tests.Bots;
 // Phase 12 D15 (spec §2 봇): the landing target, the jump tick, riding, steering the fall, and the stuck sprint.
 public class BotDeployTests
 {
+    // 기능: 고도 90 m에서 Tick 1000~1300 동안 x -100에서 100까지 +X로 나는 수송기 경로를 만든다.
+    // 입력: 없음.
+    // 출력: DropRoute.
     // Along +X at 90 m: x -100..100 over ticks 1000..1300; the jump window is 1045..1255 (x -70..70).
     private static DropRoute AlongX() => new()
     {
         StartX = -100f, StartZ = 0f, EndX = 100f, EndZ = 0f, Altitude = 90f, StartTick = 1000, DurationTicks = 300,
     };
 
+    // 기능: AlongX 경로의 수송기에 탄 채 Playing 상태인 BotView를 만든다.
+    // 입력: serverTick - View의 현재 서버 Tick.
+    // 출력: Transport 모드, 경로 보유, 참가자 2명 Match 상태의 BotView.
     private static BotView Aboard(uint serverTick = 1000)
     {
         BotView view = BotTestView.Create(new Vector3(-100f, 90f, 0f));

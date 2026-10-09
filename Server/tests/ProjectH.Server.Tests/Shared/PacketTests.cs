@@ -10,6 +10,9 @@ public class PacketTests
 {
     private readonly byte[] _buffer = new byte[ProtocolConstants.MaxPacketSize];
 
+    // 기능: 테스트 버퍼의 앞 length 바이트로 Reader를 만들고 Packet Id가 expected인지 확인한 뒤 Id 다음 위치의 Reader를 돌려준다.
+    // 입력: length - 버퍼에 쓰인 바이트 수, expected - 기대하는 Packet Id.
+    // 출력: Packet Id를 읽은 뒤의 PacketReader. Id가 다르면 Assert 실패.
     private PacketReader ReaderAfterId(int length, PacketId expected)
     {
         var reader = new PacketReader(_buffer.AsSpan(0, length));
@@ -18,6 +21,9 @@ public class PacketTests
         return reader;
     }
 
+    // 기능: 모든 필드가 채워진 시험용 입력 명령을 만든다.
+    // 입력: seq - 입력 순번(Yaw·AimYaw·ViewTick에도 더해져 명령마다 값이 달라진다).
+    // 출력: Seq·이동·버튼·조준·ViewTick이 채워진 InputCommand.
     private static InputCommand FullCommand(uint seq) => new InputCommand
     {
         Seq = seq,
@@ -148,6 +154,9 @@ public class PacketTests
         return ConnectRequestData.TryRead(ref reader, out _);
     }
 
+    // 기능: 이름 바이트를 그대로 넣은 Connect 요청(버전 1, v19 배치)을 만들어 읽어 본다.
+    // 입력: name - 이름 필드에 넣을 원시 UTF-8 바이트, id - 읽힌 DevPlayerId(실패하면 기본값).
+    // 출력: TryRead가 받아들이면 true, 거부하면 false.
     // Phase 11: the raw name bytes of a connect request (version 1; v19 layout: flags 0, no cookie, a 256-byte blob).
     private bool TryReadConnectName(byte[] name, out string id)
     {
@@ -501,6 +510,9 @@ public class PacketTests
         Assert.True(almostFull < 0.01f || almostFull > 359.99f, $"359.999 -> {almostFull}");
     }
 
+    // 기능: Snapshot Entity 하나를 쓰고 다시 읽어 양자화를 거친 값을 얻는다.
+    // 입력: e - 쓸 Entity.
+    // 출력: 다시 읽힌 SnapshotEntity. 읽기에 실패하면 Assert 실패.
     private SnapshotEntity RoundTrip(SnapshotEntity e)
     {
         var writer = new PacketWriter(_buffer);

@@ -14,6 +14,9 @@ public sealed class FaultActionTests
         public List<string> Calls { get; } = new();
         public bool ExitFails { get; set; }
 
+        // 기능: 서버 정지 호출을 기록하고 ExitFails 설정에 따라 정상 종료 또는 강제 종료 결과를 돌려준다.
+        // 입력: token - 취소 토큰(쓰지 않음).
+        // 출력: ExitFails면 10초 내 미종료·killed 정보(Running 유지), 아니면 exit 0으로 120 ms 만에 멈춘 정보.
         public Task<ServerExitInfo> StopAsync(CancellationToken token)
         {
             Calls.Add("stop");
@@ -23,6 +26,9 @@ public sealed class FaultActionTests
                 : new ServerExitInfo(true, 120, 0, false, "stop requested"));
         }
 
+        // 기능: 강제 종료 호출을 기록하고 서버를 멈춘 것으로 표시한다.
+        // 입력: token - 취소 토큰(쓰지 않음).
+        // 출력: killed로 표시된 종료 정보. Running이 false가 된다.
         public Task<ServerExitInfo> KillAsync(CancellationToken token)
         {
             Calls.Add("kill");
@@ -30,6 +36,9 @@ public sealed class FaultActionTests
             return Task.FromResult(new ServerExitInfo(true, 15, -1, true, "killed"));
         }
 
+        // 기능: 시작 호출을 기록하고 서버를 실행 중으로 표시한다.
+        // 입력: token - 취소 토큰(쓰지 않음).
+        // 출력: 게임 포트 40001, QA 포트 40002의 고정 시작 정보. Running이 true가 된다.
         public Task<ServerStartInfo> StartAsync(CancellationToken token)
         {
             Calls.Add("start");
@@ -45,6 +54,9 @@ public sealed class FaultActionTests
         public bool Running { get; set; } = true;
         public List<string> Calls { get; } = new();
 
+        // 기능: 호출을 기록하고 Available·Running 상태대로 답하는 가짜 docker CLI를 꽂은 DockerDbController를 만든다.
+        // 입력: name - 컨테이너 이름.
+        // 출력: stop/start가 Running을 바꾸고 inspect가 그 상태를 보고하는 DockerDbController.
         public DockerDbController Create(string name) => new(name, (args, timeout, ct) =>
         {
             Calls.Add(string.Join(' ', args));
@@ -62,6 +74,9 @@ public sealed class FaultActionTests
             return Task.FromResult(new DockerCommandResult(0, stdout, "", false, false));
         });
 
+        // 기능: 가짜 컨테이너의 실행 상태를 바꾼다.
+        // 입력: running - 새 실행 상태.
+        // 출력: docker stop/start가 출력하는 컨테이너 이름 "projecth-mysql".
         private string SetRunning(bool running)
         {
             Running = running;
@@ -74,6 +89,9 @@ public sealed class FaultActionTests
     private readonly FakeDocker _docker = new();
     private readonly Dictionary<string, MockActor> _actors = new();
 
+    // 기능: 단계·Actor·추가 필드를 끼운 시나리오 JSON을 파싱해 오류가 없는지 확인한다.
+    // 입력: steps - steps 배열 JSON, actors - actors 배열 JSON(기본은 proxy를 켠 playerA와 playerB), extra - 루트에 끼울 추가 필드 JSON.
+    // 출력: 파싱된 ScenarioDefinition. 파싱 오류가 있으면 Assert 실패.
     private static ScenarioDefinition Load(string steps, string actors = """[ { "id": "playerA", "network": { "proxy": true } }, { "id": "playerB" } ]""",
         string extra = "")
     {
@@ -82,6 +100,9 @@ public sealed class FaultActionTests
         return load.Scenario!;
     }
 
+    // 기능: 시나리오를 검증한 뒤 가짜 서버·Actor·docker·서버 제어를 꽂은 RunContext에서 단계를 끝까지 실행한다.
+    // 입력: scenario - 실행할 시나리오, withServerControl - true면 가짜 서버 프로세스 제어를 붙인다(attach 모드 흉내는 false).
+    // 출력: 단계 결과가 채워진 RunReport와 사용한 RunContext. 정리(cleanup)는 호출자 몫이다.
     // Runs the steps on a RunContext like the orchestrator builds, with the fakes plugged in. Cleanup is the caller's.
     private async Task<(RunReport Report, RunContext Run)> RunStepsAsync(ScenarioDefinition scenario, bool withServerControl = true)
     {

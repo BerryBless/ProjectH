@@ -18,12 +18,18 @@ public class SupportTests
     private const int C = 16;
     private readonly SandboxHarness _h = new();
 
+    // 기능: 격자 좌표의 조각 모양을 정규화해 만든다. 유효하지 않으면 테스트를 실패시킨다.
+    // 입력: type - 조각 종류, x·y·z - 격자 칸, r - 회전.
+    // 출력: 정규화된 BuildPieceShape.
     private static BuildPieceShape S(BuildPieceType type, int x, int y, int z, int r = 0)
     {
         Assert.True(BuildGrid.TryNormalize(type, x, y, z, r, out BuildPieceShape s));
         return s;
     }
 
+    // 기능: 두 조각이 지지 간선을 하나라도 공유하는지 본다.
+    // 입력: a - 첫 조각, b - 둘째 조각.
+    // 출력: 공유하는 간선이 있으면 true.
     private static bool Connected(BuildPieceShape a, BuildPieceShape b)
     {
         Span<uint> ka = stackalloc uint[BuildSupport.MaxEdges];
@@ -78,6 +84,9 @@ public class SupportTests
 
     // ---- Placement through requests ----
 
+    // 기능: Peer 1을 칸 16 남쪽에 참가시켜 건설 도구를 들게 하고 나무 200을 준다.
+    // 입력: 없음.
+    // 출력: 건설 준비가 된 PlayerEntity.
     private PlayerEntity Builder()
     {
         PlayerEntity p = _h.Join(1, new Vector3(2.5f, 0f, -3f));
@@ -88,6 +97,9 @@ public class SupportTests
 
     private ushort _seq;
 
+    // 기능: 조각 중심을 겨냥한 채 다음 Sequence의 건설 요청을 Peer 1로 넣고 처리·최소 건설 간격만큼 Tick을 돌린 뒤 마지막 BuildResult를 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: p - 건설자(Peer 1), s - 놓을 조각 모양.
+    // 출력: 서버가 보낸 BuildResult 코드.
     private BuildResultCode Place(PlayerEntity p, BuildPieceShape s)
     {
         Vector3 at = BuildGrid.CenterOf(s);
@@ -118,6 +130,9 @@ public class SupportTests
 
     // ---- Collapse ----
 
+    // 기능: Peer 1에게 보낸(기록된) BuildEvents 패킷의 파괴 기록을 보낸 순서대로 모은다. 헤더나 기록 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: 없음.
+    // 출력: 파괴된 조각 ID 목록.
     private List<uint> DestroyedThisTick()
     {
         var ids = new List<uint>();
@@ -228,6 +243,9 @@ public class SupportTests
 
     // ---- Final review A2: one support search per tick ----
 
+    // 기능: 칸 (16, 16) 서쪽 가장자리에 벽 8개를 쌓고 그 위 8단에 x 16..31, z 0..31의 바닥 512개를 바로 넣는다.
+    // 입력: match - 대상 Match.
+    // 출력: 벽 ID 목록(아래부터)과 바닥 ID 목록.
     // A grounded stack of eight walls on cell (16, 16)'s west edge holding a level 8 deck of floors over cells x 16..31,
     // z 0..31 (512 floors, far above the terrain). Returns the walls (bottom first) and the floors.
     private static (List<uint> Walls, List<uint> Floors) Deck(Match match)
@@ -240,6 +258,9 @@ public class SupportTests
         return (walls, floors);
     }
 
+    // 기능: Deck의 바닥 중 벽에서 먼 쪽(x 24..31, 홀수 z)에서 서로 붙지 않는 바닥 50개를 고른다.
+    // 입력: floors - Deck이 돌려준 바닥 ID 목록.
+    // 출력: 고른 바닥 ID 50개.
     // 50 floors far from the walls, never side by side (the deck stays in one piece).
     private static List<uint> FarHoles(List<uint> floors)
     {
@@ -249,6 +270,9 @@ public class SupportTests
         return holes;
     }
 
+    // 기능: 조각 격자에 남아 있는 모든 조각 ID를 모아 정렬한다.
+    // 입력: match - 대상 Match.
+    // 출력: 오름차순 조각 ID 목록.
     private static List<uint> Standing(Match match)
     {
         var ids = new List<uint>();

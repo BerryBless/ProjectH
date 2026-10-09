@@ -21,6 +21,9 @@ public class LootRespawnTests
     private PlayerEntity _a = null!;
     private uint _seq;
 
+    // 기능: Loot 지점 하나(0, 0, 8)만 있는 2인 개발 모드 Match를 만들고 플레이어 1을 지점 1 m 남쪽에 세운다(입장 패킷은 비운다).
+    // 입력: respawnSeconds - Loot 재생성 초(0이면 끔), lootJson - Loot 데이터(기본 테스트 데이터).
+    // 출력: 반환값 없음. _match와 _a가 채워진다.
     private void Start(int respawnSeconds, string lootJson = TestGameData.LootJson)
     {
         _match = new Match(new ServerOptions { MaxPlayers = 2, LootRespawnSeconds = respawnSeconds, DevRespawn = true },TestGameData.Create(lootJson: lootJson),
@@ -32,6 +35,9 @@ public class LootRespawnTests
         _sent.Clear();
     }
 
+    // 기능: 플레이어 1이 지점을 바라보며(yaw 180) 버튼을 누른 입력을 다음 순번으로 넣고 Tick을 한 번 돌린다.
+    // 입력: buttons - 누를 버튼.
+    // 출력: 반환값 없음. 경기가 한 Tick 진행된다.
     private void Press(InputButtons buttons)
     {
         var packet = new PlayerInputPacket { Count = 1 };
@@ -40,8 +46,14 @@ public class LootRespawnTests
         _match.Tick();
     }
 
+    // 기능: Loot 지점 0에 놓인 월드 아이템이 있는지 본다.
+    // 입력: 없음.
+    // 출력: 지점 0의 아이템이 하나라도 있으면 true, 없으면 false.
     private bool PointFilled() => Enumerable.Range(0, _match.WorldItems.Count).Any(i => _match.WorldItems[i].SpawnPoint == 0);
 
+    // 기능: Loot 지점 0에 놓인 월드 아이템 수를 센다.
+    // 입력: 없음.
+    // 출력: 지점 0의 아이템 수.
     private int PointItems() => Enumerable.Range(0, _match.WorldItems.Count).Count(i => _match.WorldItems[i].SpawnPoint == 0);
 
     [Fact]

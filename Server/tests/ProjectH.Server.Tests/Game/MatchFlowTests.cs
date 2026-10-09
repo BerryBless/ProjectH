@@ -12,8 +12,14 @@ public class MatchFlowTests
     private const uint Countdown = 300;   // 10 s at 30 Hz
     private const uint Result = 300;
 
+    // 기능: 10초 카운트다운·10초 결과 화면의 MatchFlow를 만든다.
+    // 입력: minPlayers - 시작 최소 인원(기본 2), dev - true면 개발 모드.
+    // 출력: WaitingForPlayers 상태의 MatchFlow.
     private static MatchFlow Flow(int minPlayers = 2, bool dev = false) => new(minPlayers, Countdown, Result, dev);
 
+    // 기능: [from, to) 구간의 Tick마다 Update를 돌려 None이 아닌 첫 이벤트를 찾는다.
+    // 입력: flow - 흐름, from·to - Tick 구간, players - 접속 인원.
+    // 출력: (첫 이벤트, 그 Tick). 구간 안에 이벤트가 없으면 (None, to).
     // Runs Update for every tick in [from, to) and returns the first event that is not None (and its tick).
     private static (FlowEvent Event, uint Tick) RunUntilEvent(MatchFlow flow, uint from, uint to, int players)
     {

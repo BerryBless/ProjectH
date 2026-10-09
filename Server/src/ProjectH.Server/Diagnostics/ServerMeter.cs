@@ -109,10 +109,19 @@ public sealed class ServerMeter : IDisposable
         _meter.CreateObservableCounter("projecth.stats_queries", () => StatsQueries(h));
     }
 
+    // 기능: Meter를 닫아 등록한 계측기를 모두 해제한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 관찰자가 더는 이 서버의 값을 받지 않는다.
     public void Dispose() => _meter.Dispose();
 
+    // 기능: Measurement에 붙일 Tag 쌍을 만든다.
+    // 입력: key - Tag 이름, value - Tag 값.
+    // 출력: key-value 쌍.
     private static KeyValuePair<string, object?> Tag(string key, string value) => new(key, value);
 
+    // 기능: 서버가 연결 하나를 끊은 수를 DisconnectCode Tag로 나눠 돌려준다.
+    // 입력: h - 합계.
+    // 출력: Kicked·JoinTimeout·InputTimeout·ServerError·Congested 다섯 개의 Measurement 배열(관찰자가 읽을 때마다 만든다).
     // Every code the server closes one connection with. None and ServerShutdown are left out: a shutdown closes everyone
     // at once and is not a kick (it is never counted).
     private static Measurement<long>[] ByCode(HealthCounters h) => new[]
@@ -124,8 +133,14 @@ public sealed class ServerMeter : IDisposable
         Kick(h, DisconnectCode.Congested),
     };
 
+    // 기능: 코드 하나의 끊은 수를 code Tag가 붙은 Measurement로 만든다.
+    // 입력: h - 합계, code - 끊은 이유.
+    // 출력: 그 코드의 합계 Measurement.
     private static Measurement<long> Kick(HealthCounters h, DisconnectCode code) => new(h.Kicks(code), Tag("code", code.ToString()));
 
+    // 기능: 잘못된 패킷 수를 BadPacketReason Tag로 나눠 돌려준다.
+    // 입력: h - 합계.
+    // 출력: 이유마다 하나씩(Count 제외)인 Measurement 배열(관찰자가 읽을 때마다 만든다).
     private static Measurement<long>[] ByReason(HealthCounters h)
     {
         var result = new Measurement<long>[(int)BadPacketReason.Count];
@@ -134,6 +149,9 @@ public sealed class ServerMeter : IDisposable
         return result;
     }
 
+    // 기능: 건설 요청 수를 result Tag(Ok, 거절 코드별, Duplicate)로 나눠 돌려준다.
+    // 입력: h - 합계.
+    // 출력: 수락 1 + 거절 코드 수 + 중복 1 개의 Measurement 배열(관찰자가 읽을 때마다 만든다).
     // Accepted, each refusal reason, and duplicates.
     private static Measurement<long>[] BuildRequests(HealthCounters h)
     {
@@ -201,6 +219,9 @@ public sealed class ServerMeter : IDisposable
         };
     }
 
+    // 기능: 경기 기록 저장 결과 수를 result Tag(saved, failed, discarded, dropped)로 나눠 돌려준다.
+    // 입력: h - 합계(Persistence 공급자는 없어도 된다).
+    // 출력: 네 개의 Measurement 배열(관찰자가 읽을 때마다 만든다). 저장기가 없으면(Persistence null) 빈 배열.
     private static Measurement<long>[] DbRecords(HealthCounters h)
     {
         if (h.Persistence is not { } source) return Array.Empty<Measurement<long>>();
@@ -214,6 +235,9 @@ public sealed class ServerMeter : IDisposable
         };
     }
 
+    // 기능: 통계 조회 경로의 수를 result Tag(requests, limited, busy, unavailable, undelivered)로 나눠 돌려준다.
+    // 입력: h - 합계(StatsQueries 공급자는 없어도 된다).
+    // 출력: 다섯 개의 Measurement 배열(관찰자가 읽을 때마다 만든다). 공급자가 없으면(StatsQueries null) 빈 배열.
     // Phase 11 D8: the statistics path.
     private static Measurement<long>[] StatsQueries(HealthCounters h)
     {

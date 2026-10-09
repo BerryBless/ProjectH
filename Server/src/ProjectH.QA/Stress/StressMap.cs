@@ -14,6 +14,9 @@ public static class StressMap
 
     private static readonly Box[] s_blockers = BuildBlockers();
 
+    // 기능: 설 수 없는 장애물(맵 박스·문·채집물 경계)을 한 배열로 모은다.
+    // 입력: 없음.
+    // 출력: 장애물 Box 배열.
     private static Box[] BuildBlockers()
     {
         var list = new List<Box>(GameMap.Boxes.ToArray());
@@ -22,10 +25,19 @@ public static class StressMap
         return list.ToArray();
     }
 
+    // 기능: XZ 좌표를 지형 높이 위의 지면 위치로 만든다.
+    // 입력: x·z - 수평 좌표.
+    // 출력: y가 지형 높이인 위치.
     public static Vector3 Ground(float x, float z) => new(x, GameMap.Terrain.Height(x, z), z);
 
+    // 기능: Margin을 뺀 맵 안인지 본다.
+    // 입력: x·z - 수평 좌표.
+    // 출력: 안이면 true.
     public static bool InsideMap(float x, float z) => MathF.Abs(x) <= GameMap.HalfSize - Margin && MathF.Abs(z) <= GameMap.HalfSize - Margin;
 
+    // 기능: 맵 안이고 모든 장애물에서 StandClearance 이상 떨어져 몸(높이 2 m)이 겹치지 않는지 검사한다.
+    // 입력: feet - 발 위치.
+    // 출력: 설 수 있으면 true.
     // A body can stand here: inside the walls and clear (with room to spare) of every box, door and harvestable.
     public static bool CanStand(Vector3 feet)
     {
@@ -38,6 +50,9 @@ public static class StressMap
         return true;
     }
 
+    // 기능: 한 몸의 눈과 가슴에서 다른 몸의 가슴까지 장애물·지형에 가리지 않는지 검사한다.
+    // 입력: fromFeet - 보는 쪽 발 위치, toFeet - 대상 발 위치.
+    // 출력: 두 선 모두 보이면 true.
     // Eye of one body to the chest of another, past every blocker and the terrain (the bots' own approximation).
     public static bool InSight(Vector3 fromFeet, Vector3 toFeet) =>
         LineOfSight.Clear(BotAim.Eye(fromFeet), BotAim.Chest(toFeet), s_blockers, GameMap.Terrain)
@@ -45,6 +60,9 @@ public static class StressMap
 
     // ---- combat spots ----
 
+    // 기능: 원 안 격자 후보를 중심에서 가까운 순으로 돌며 size명이 서로 보이는 전투 자리를 count개까지 만든다.
+    // 입력: center - 원 중심, radius - 반지름, spacing - 후보 격자 간격(최소 2 m), distance - 자리 원의 지름, size - 자리당 인원(2 이상), count - 원하는 자리 수.
+    // 출력: 자리마다 구성원 발 위치 배열(자리가 모자라면 count보다 적다).
     // `count` spots for fights of `size` actors (2 = a pair): each spot's members stand on a circle of diameter
     // `distance` around the spot centre, and every member sees the next one (the one it shoots). Candidates lie on a
     // grid of `spacing` inside the circle (center, radius) and are taken nearest to the centre first. Fewer than
@@ -80,6 +98,9 @@ public static class StressMap
         return result;
     }
 
+    // 기능: 한 후보 중심 둘레에 size명을 고르게 세우고, 모두 설 수 있고 다음 사람과 서로 보이며 높이 차가 1.5 m 이하인지 확인한다.
+    // 입력: c - 자리 중심, distance - 자리 원의 지름, size - 인원.
+    // 출력: 구성원 발 위치 배열. 조건이 안 맞으면 null.
     private static Vector3[]? Members(Vector2 c, float distance, int size)
     {
         var members = new Vector3[size];
@@ -101,6 +122,9 @@ public static class StressMap
         return members;
     }
 
+    // 기능: from에서 to를 바라보는 yaw를 구한다(BotAim 위임).
+    // 입력: from - 보는 위치, to - 대상 위치.
+    // 출력: yaw 각도.
     public static float YawTo(Vector3 from, Vector3 to) => BotAim.YawTo(from, to);
 
     // ---- build sites ----
@@ -110,6 +134,9 @@ public static class StressMap
     // line-of-sight check), then the near south walls last.
     public sealed record BuildSite(int CellX, int CellZ, Vector3 Stand, IReadOnlyList<BuildPlan> Pieces);
 
+    // 기능: 격자 전체에서 사이트 조건(평지·장애물 없음·stand 가능·원 안)을 만족하는 셀을 가까운 순으로 고르되 셀이 겹치지 않게 사이트 목록을 만든다.
+    // 입력: center - 기준점, radius - 반지름, pieces - 사이트에 넣을 조각 종류, material - 재질.
+    // 출력: BuildSite 목록(조각이 하나도 없는 셀은 뺀다).
     // Every target cell whose site (cells x-1..x+1, rows z-1..z) is on flat ground clear of every box, door and
     // harvestable, inside (center, radius), taken nearest first and only when its cells overlap no site taken before (so
     // two sites never share a cell). Deterministic.
@@ -153,6 +180,9 @@ public static class StressMap
 
     public static readonly BuildPieceType[] AllPieces = { BuildPieceType.Wall, BuildPieceType.Floor, BuildPieceType.Ramp, BuildPieceType.Roof };
 
+    // 기능: 사이트 셀 범위(x-1..x+1, z-1..z)가 격자·맵 안이고 거의 평평하며(고저 차 0.5 m, 높이 0.25 m 이하) 2층 높이까지 장애물이 없는지 본다.
+    // 입력: x·z - 대상 셀.
+    // 출력: 깨끗하면 true.
     // Cells x-1..x+1, rows z-1..z: on the grid, nearly flat (the pieces sit on level 0) and free of map objects up to
     // two levels.
     private static bool SiteClear(int x, int z)
@@ -180,6 +210,9 @@ public static class StressMap
         return true;
     }
 
+    // 기능: 한 사이트의 조각을 건설 순서(먼 것 먼저, 남쪽 벽 마지막)로 만든다.
+    // 입력: x·z - 대상 셀, types - 포함할 조각 종류, material - 재질.
+    // 출력: 정규화된 BuildPlan 목록(정규화에 실패한 조각은 뺀다).
     // The order the builder places one site's pieces (T = target cell, W/E = its west and east neighbours, S = the
     // stand cell): ramps in W and E (rising north), a floor on T, T's west, east and north walls, the same three walls
     // one level up, a roof over T, the floor over T one level up, then T's south wall below and above

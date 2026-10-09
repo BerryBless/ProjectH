@@ -10,6 +10,9 @@ namespace ProjectH.Server.Tests.Net;
 // Review fix B1: where the server key comes from, and the development key refused in Production.
 public class ServerIdentityTests
 {
+    // 기능: 새 RSA 키 쌍을 만들어 개인 키까지 담은 XML로 돌려준다.
+    // 입력: bits - 키 길이.
+    // 출력: 개인 키 XML 문자열.
     private static string NewKeyXml(int bits = 2048)
     {
         using var rsa = RSA.Create(bits);

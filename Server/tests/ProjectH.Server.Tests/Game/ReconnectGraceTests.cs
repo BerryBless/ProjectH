@@ -15,6 +15,9 @@ public class ReconnectGraceTests
 {
     private const int GraceTicks = 300;
 
+    // 기능: 재접속 유예가 설정된 CombatLoadout 경기를 만들어 세 명(Peer 1·2·3)을 넣고 경기를 시작한 뒤 5 Tick 돌린다.
+    // 입력: grace - 재접속 유예 초, records - 경기 기록을 받을 목록(null이면 기록하지 않음), expired - 유예 만료 플레이어 이름을 받을 목록(null이면 받지 않음).
+    // 출력: 진행 중인 하네스와 참가한 세 PlayerEntity(a = Peer 1, b = Peer 2, c = Peer 3).
     private static (RoyaleHarness h, PlayerEntity a, PlayerEntity b, PlayerEntity c) InMatch(int grace = 10,
         List<MatchRecord>? records = null, List<string>? expired = null)
     {

@@ -20,6 +20,9 @@ public class BuildPlacementTests
     private readonly SandboxHarness _h = new();
     private readonly Dictionary<int, ushort> _seq = new();
 
+    // 기능: 플레이어를 들여보내 건설 도구를 들게 하고 나무를 준다.
+    // 입력: peer - 연결 id, feet - 발 위치, wood - 줄 나무 양(기본 100).
+    // 출력: 건설 준비가 된 플레이어.
     private PlayerEntity Ready(int peer, Vector3 feet, int wood = 100)
     {
         PlayerEntity p = _h.Join(peer, feet);
@@ -28,9 +31,15 @@ public class BuildPlacementTests
         return p;
     }
 
+    // 기능: 건설 요청 패킷 내용을 만든다(순번은 비워 둔다).
+    // 입력: type - 조각 종류, x·y·z - 격자 칸, rotation - 회전(기본 0), material - 재료(기본 나무).
+    // 출력: 그 값으로 채운 BuildRequest(Sequence 0).
     private static BuildRequest Request(BuildPieceType type, int x, int y, int z, int rotation = 0, BuildMaterialType material = BuildMaterialType.Wood) =>
         new() { Piece = (byte)type, Material = (byte)material, X = (byte)x, Y = (byte)y, Z = (byte)z, Rotation = (byte)rotation };
 
+    // 기능: 플레이어별 건설 요청 순번을 하나 올려 돌려준다.
+    // 입력: p - 요청을 보낼 플레이어.
+    // 출력: 그 플레이어의 다음 순번(1부터).
     private ushort NextSeq(PlayerEntity p)
     {
         _seq.TryGetValue(p.PeerId, out ushort s);
@@ -38,6 +47,9 @@ public class BuildPlacementTests
         return s;
     }
 
+    // 기능: 조각을 조준하는 Tick 한 번 뒤 건설 요청을 넣고 처리하는 Tick을 돌린다.
+    // 입력: p - 건설자, request - 건설 요청, aimAt - 조준점(기본 조각 중심), newSequence - true면 다음 순번을 붙인다.
+    // 출력: 그 플레이어가 받은 마지막 BuildResult.
     // Aims at the piece (one tick, so it is the player's last input), then sends the request and runs the tick that
     // processes it. Returns the result the player got.
     private BuildResult Build(PlayerEntity p, BuildRequest request, Vector3? aimAt = null, bool newSequence = true)
@@ -50,6 +62,9 @@ public class BuildPlacementTests
         return LastResult(p);
     }
 
+    // 기능: 플레이어가 받은 마지막 BuildResult 패킷을 읽는다.
+    // 입력: p - 받은 플레이어.
+    // 출력: 마지막 BuildResult 내용. 하나도 없거나 읽기에 실패하면 테스트가 실패한다.
     private BuildResult LastResult(PlayerEntity p)
     {
         PacketReader r = SandboxHarness.Body(_h.To(p.PeerId, PacketId.BuildResult).Last());
@@ -57,12 +72,18 @@ public class BuildPlacementTests
         return result;
     }
 
+    // 기능: 건설 요청이 가리키는 조각의 중심을 구한다(조준점으로 쓴다).
+    // 입력: r - 건설 요청.
+    // 출력: 정규화된 조각의 중심. 요청이 격자에 맞지 않으면 셀 16 중심 (2.5, 1, 2.5).
     private static Vector3 CentreOf(in BuildRequest r)
     {
         if (!BuildGrid.TryNormalize((BuildPieceType)r.Piece, r.X, r.Y, r.Z, r.Rotation, out BuildPieceShape shape)) return new Vector3(2.5f, 1f, 2.5f);
         return BuildGrid.CenterOf(shape);
     }
 
+    // 기능: 한 Client가 받은 BuildEvents의 Placed 기록을 모두 모은다(패킷 순서대로).
+    // 입력: peer - 받는 연결 id.
+    // 출력: Placed 기록 목록. 패킷 읽기에 실패하면 테스트가 실패한다.
     private List<BuildPieceRecord> PlacedTo(int peer)
     {
         var list = new List<BuildPieceRecord>();
@@ -147,6 +168,9 @@ public class BuildPlacementTests
 
     // ---- Refusals: nothing changes ----
 
+    // 기능: 거절된 요청이 아무것도 바꾸지 않았는지 확인한다(조각 0개, 나무 그대로, Placed 기록 없음).
+    // 입력: p - 요청한 플레이어, wood - 남아 있어야 할 나무 양(기본 100).
+    // 출력: 반환값 없음. 하나라도 바뀌었으면 테스트가 실패한다.
     private void AssertNothingChanged(PlayerEntity p, int wood = 100)
     {
         Assert.Equal(0, _h.Match.BuildPieces);
@@ -405,6 +429,9 @@ public class BuildPlacementTests
         PlayerEntity p = h.Join(1, Builder);
         h.Press(p, InputButtons.ToolBuild);
         p.Inventory.SetResource(BuildMaterialType.Wood, 100);
+        // 기능: 조각을 조준한 뒤 주어진 순번으로 요청을 넣고 4 Tick 돌려 결과를 읽는다.
+        // 입력: request - 건설 요청, seq - 붙일 순번.
+        // 출력: 마지막 BuildResult의 코드.
         BuildResultCode Place(BuildRequest request, ushort seq)
         {
             h.Act(p, InputButtons.None, CentreOf(request));

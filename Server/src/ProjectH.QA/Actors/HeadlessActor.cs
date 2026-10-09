@@ -110,6 +110,9 @@ public sealed class HeadlessActor : IQaActor
     private long _dropsVersion = -1;
     private string[] _dropStatesPublished = Array.Empty<string>();
 
+    // 기능: Headless Actor를 연결 없는 Idle 상태로 만든다.
+    // 입력: alias - 시나리오 별칭, pump - 이 Actor를 Tick할 Pump, seed - 조향 난수 Seed, latency - 입력 지연 Histogram(null이면 기록 안 함).
+    // 출력: Idle 상태가 발행된 HeadlessActor.
     internal HeadlessActor(string alias, ActorPump pump, int seed, InputLatencyHistogram? latency = null)
     {
         Alias = alias;
@@ -128,6 +131,9 @@ public sealed class HeadlessActor : IQaActor
     public string DevPlayerId { get; }
     public ActorState State => Volatile.Read(ref _state);
 
+    // 기능: 명령을 Pump 채널에 넣는다(다음 Tick의 Drain에서 적용).
+    // 입력: command - 적용할 명령, token - 취소 토큰.
+    // 출력: 반환값 없음. 채널이 가득 차면 자리가 날 때까지 기다리고, Pump가 멈췄으면 예외.
     public ValueTask SendAsync(ActorCommand command, CancellationToken token) => _pump.PostAsync(this, command, token);
 
     // ---- pump thread only below ----
@@ -285,6 +291,9 @@ public sealed class HeadlessActor : IQaActor
 
     // Publishes even when the tick throws, so the error and the applied command id reach State and a waiting step
     // sees them instead of running to its timeout.
+    // 기능: 한 Pump Tick. 연결을 갱신하고 건설 결과·입력 Ack를 거둔 뒤, Join·Snapshot·입력 재개 상태면 Brain을 생각시키고 입력 하나(재생 또는 의도)와 뒤따르는 건설·편집 요청을 보낸다. 끝에 항상 상태를 발행한다.
+    // 입력: elapsedMs - 지난 Tick 이후 경과 시간(ms), now - Pump 시계(초).
+    // 출력: 반환값 없음. 연결·의도가 진행되고 State가 새로 발행된다(예외는 Error로 실린다).
     internal void Tick(float elapsedMs, float now)
     {
         try
@@ -323,8 +332,14 @@ public sealed class HeadlessActor : IQaActor
         PublishSafe();
     }
 
+    // 기능: 예외를 이 Actor의 오류 문자열로 기록한다.
+    // 입력: e - 발생한 예외.
+    // 출력: 반환값 없음. 다음 발행에 실릴 _error가 바뀐다.
     internal void RecordError(Exception e) => _error = $"{e.GetType().Name}: {e.Message}";
 
+    // 기능: 상태를 발행하고, 전체 상태 만들기가 실패하면 오류와 명령 id만이라도 발행한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. State가 바뀐다.
     // Publish, or at least the error and the command id when building the full state fails.
     internal void PublishSafe()
     {
@@ -339,6 +354,9 @@ public sealed class HeadlessActor : IQaActor
         }
     }
 
+    // 기능: Pump 종료 시 연결을 정상 종료(서버에 알림)하고 상태를 발행한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 연결이 닫히고 State가 바뀐다.
     // Pump shutdown: a graceful close tells the server at once (a clean leave, or grace in a match).
     internal void Shutdown()
     {
@@ -348,6 +366,9 @@ public sealed class HeadlessActor : IQaActor
 
     internal byte SimHz => _connection != null && _connection.View.Joined ? _connection.View.SimHz : (byte)0;
 
+    // 기능: 현재 연결을 닫는다(graceful이면 Dispose로 Disconnect를 보내고, 아니면 Abort). 연결이 없거나 이미 닫았으면 아무것도 하지 않는다.
+    // 입력: graceful - 서버에 알리고 닫을지, reason - 기록할 종료 사유(서버가 먼저 닫았으면 서버 사유를 유지).
+    // 출력: 반환값 없음. _closed와 _closeReason이 바뀐다.
     private void CloseConnection(bool graceful, string reason)
     {
         if (_connection == null || _closed) return;
@@ -360,6 +381,9 @@ public sealed class HeadlessActor : IQaActor
 
     // A brain that throws is dropped (its error published) so the actor keeps sending plain inputs instead of failing
     // every tick.
+    // 기능: Brain에 이번 Tick의 의도를 정하게 한다. Brain이 예외를 던지면 오류를 기록하고 Brain을 버리며 의도를 초기화한다.
+    // 입력: view - 이 Client의 상태, now - Pump 시계(초).
+    // 출력: 반환값 없음. 의도가 바뀌거나, 실패 시 _brain이 null이 되고 _error가 남는다.
     private void Think(BotView view, float now)
     {
         ActorBrain brain = _brain!;
@@ -375,6 +399,9 @@ public sealed class HeadlessActor : IQaActor
         }
     }
 
+    // 기능: Brain을 바꾼다(기존 Brain이 있으면 그 의도를 먼저 초기화한다).
+    // 입력: brain - 새 Brain(null이면 없음).
+    // 출력: 반환값 없음. _brain과 의도가 바뀐다.
     // The old brain's intent goes with it; the new one sets its own from the next tick.
     private void SetBrain(ActorBrain? brain)
     {
@@ -388,6 +415,9 @@ public sealed class HeadlessActor : IQaActor
 
     // D43: every input up to the snapshot's AckInputSeq has been applied by the server. Inputs older than the ring (a
     // long stall) are skipped rather than mismeasured.
+    // 기능: Snapshot의 AckInputSeq까지 새로 확인된 입력마다 보낸 시각으로 왕복 지연을 Histogram에 기록한다(링보다 오래된 입력은 건너뜀)(D43).
+    // 입력: c - 현재 연결.
+    // 출력: 반환값 없음. Histogram과 _latencyAcked가 갱신된다(Histogram이 없으면 아무것도 안 함).
     private void TakeAcks(BotConnection c)
     {
         uint ack = c.View.AckInputSeq;
@@ -414,6 +444,9 @@ public sealed class HeadlessActor : IQaActor
     internal int BuildsQueued => _builds.Count + _edits.Count;
     internal float PumpNow => _pump.Now;
 
+    // 기능: Brain용 이동 목표를 둔다(새 목표면 조향을 다시 시작, 같은 목표면 유지, null이면 멈춤).
+    // 입력: target - 목표 위치(null이면 정지), tolerance - 도착 허용 거리(m), sprint - 달릴지.
+    // 출력: 반환값 없음. 이동 의도가 바뀐다.
     // A new target restarts steering; the same target keeps it going. Null stops walking.
     internal void BrainMoveTo(Vector3? target, float tolerance, bool sprint)
     {
@@ -430,6 +463,9 @@ public sealed class HeadlessActor : IQaActor
         }
     }
 
+    // 기능: Brain용 로컬 이동 벡터를 바뀔 때까지 유지하게 둔다((0, 0)은 정지). 이동 목표가 없을 때만 쓰인다.
+    // 입력: x - 옆 이동(-1..1), y - 앞 이동(-1..1).
+    // 출력: 반환값 없음. 이동 벡터 의도가 바뀐다.
     // Local move input until changed; (0, 0) stops. Used only while there is no move target.
     internal void BrainVector(float x, float y)
     {
@@ -438,6 +474,9 @@ public sealed class HeadlessActor : IQaActor
         _vectorTicks = x == 0f && y == 0f ? 0 : -1;
     }
 
+    // 기능: Brain용 조준 대상을 다른 Actor의 Entity로 둔다.
+    // 입력: entity - 대상 Entity id, fallback - Snapshot에 대상이 없을 때 위치를 읽을 Actor.
+    // 출력: 반환값 없음. 조준 의도가 바뀐다.
     internal void BrainAimActor(ushort entity, IQaActor fallback)
     {
         _aim = AimMode.Actor;
@@ -445,20 +484,32 @@ public sealed class HeadlessActor : IQaActor
         _aimFallback = fallback;
     }
 
+    // 기능: Brain용 조준점을 둔다.
+    // 입력: point - 조준할 월드 지점.
+    // 출력: 반환값 없음. 조준 의도가 바뀐다.
     internal void BrainAimPoint(Vector3 point)
     {
         _aim = AimMode.Point;
         _aimPoint = point;
     }
 
+    // 기능: Brain용 조준을 지운다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 조준 의도가 없어진다.
     internal void BrainClearAim()
     {
         _aim = AimMode.None;
         _aimFallback = null;
     }
 
+    // 기능: Brain용으로 버튼을 계속 누르거나 뗀다.
+    // 입력: buttons - 대상 버튼 Flag, down - true면 누름, false면 뗌.
+    // 출력: 반환값 없음. _held가 바뀐다.
     internal void BrainHold(InputButtons buttons, bool down) => _held = down ? _held | buttons : _held & ~buttons;
 
+    // 기능: Brain용 시간제 입력을 큐 뒤에 더한다(MaxScriptSteps를 넘으면 버린다).
+    // 입력: steps - 더할 입력 단계들.
+    // 출력: 반환값 없음. 입력 큐가 바뀐다.
     // Timed inputs after the ones already queued (fire presses with the weapon's interval, a jump, a slot key).
     internal void BrainScript(ReadOnlySpan<InputStep> steps)
     {
@@ -468,6 +519,9 @@ public sealed class HeadlessActor : IQaActor
 
     // One more piece in the build queue (bounded by MaxBuildQueue). Returns the request sequence it will be sent with
     // (requests go out in queue order), or -1 when the queue is full.
+    // 기능: 건설 큐에 조각 하나를 더한다(MaxBuildQueue 한도).
+    // 입력: plan - 놓을 조각 계획.
+    // 출력: 그 요청이 보내질 순번, 큐가 가득 차면 -1.
     internal int BrainBuild(in BuildPlan plan)
     {
         if (_builds.Count >= MaxBuildQueue) return -1;
@@ -479,6 +533,9 @@ public sealed class HeadlessActor : IQaActor
 
     // Stress abuse brains (D38 groupInvalidPackets): bytes as they are on this connection, now (BotConnection.SendRaw,
     // reliable). False when not connected. Counted in RawPacketsSent like sendInvalidPackets.
+    // 기능: 바이트를 지금 바로 이 연결로 보낸다(D38 groupInvalidPackets).
+    // 입력: packet - 보낼 바이트.
+    // 출력: 보냈으면 true(RawPacketsSent 증가), 연결이 없거나 보내지 못하면 false.
     internal bool BrainSendRaw(byte[] packet)
     {
         BotConnection? c = _connection;
@@ -490,6 +547,9 @@ public sealed class HeadlessActor : IQaActor
     // Stress abuse brains (D38 groupBuildSpam): a build request sent at once, without the aim ticks and spacing of the
     // build queue (a client that ignores the build rules). Takes the next request sequence, so the server's answers are
     // counted by code like every other build result. Returns the sequence, or -1 when not connected.
+    // 기능: 건설 요청을 조준 Tick·간격 없이 지금 바로 보낸다(D38 groupBuildSpam).
+    // 입력: piece - 조각 종류, material - 재료, x·y·z - 칸, rotation - 회전.
+    // 출력: 요청에 쓴 순번, 연결이 없으면 -1.
     internal int BrainSendBuildNow(BuildPieceType piece, BuildMaterialType material, byte x, byte y, byte z, byte rotation)
     {
         BotConnection? c = _connection;
@@ -502,6 +562,9 @@ public sealed class HeadlessActor : IQaActor
         return request.Sequence;
     }
 
+    // 기능: 순번에 대한 서버 응답을 최근 건설 결과(최대 ActorState.MaxBuildResults)에서 찾는다.
+    // 입력: sequence - 찾을 요청 순번, result - 찾은 결과(out).
+    // 출력: 있으면 true와 결과, 없으면 false.
     // The server's answer to the request with this sequence, among the latest ActorState.MaxBuildResults.
     internal bool TryBuildResult(int sequence, out BuildResultInfo result)
     {
@@ -515,6 +578,9 @@ public sealed class HeadlessActor : IQaActor
         return false;
     }
 
+    // 기능: 모든 의도(이동 목표·벡터, 조준, 누름, 입력 큐, 건설·편집 큐, 입력 멈춤, 재생)를 지운다. Brain은 유지한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. Actor가 가만히 서서 빈 입력만 보내게 된다.
     private void ResetIntent()
     {
         _moveTarget = null;
@@ -626,6 +692,9 @@ public sealed class HeadlessActor : IQaActor
     // One replay tick (pure, tested): the entry at the cursor (clamped to the last one), with the buttons of every entry
     // skipped since the last sent one (speed > 1), then the cursor advances by speed. Done once the last entry has been
     // sent and the cursor passed the end, so the last entry is always sent (and held 1/speed ticks when speed < 1).
+    // 기능: 재생 한 Tick(순수 함수). cursor 위치의 항목(마지막으로 제한)에 지난번 이후 건너뛴 항목의 버튼을 합치고 cursor를 speed만큼 전진시킨다.
+    // 입력: inputs - 녹화 항목들, cursor - 재생 위치(ref, 전진), lastIndex - 마지막으로 보낸 index(ref), speed - Tick당 전진량.
+    // 출력: (보낼 항목 index, 합친 버튼, 마지막 항목을 보냈고 cursor가 끝을 지났으면 true).
     internal static (int Index, InputButtons Buttons, bool Done) PlaybackStep(IReadOnlyList<RecordedInput> inputs, ref double cursor, ref int lastIndex, double speed)
     {
         int index = Math.Min(inputs.Count - 1, (int)cursor);
@@ -636,6 +705,9 @@ public sealed class HeadlessActor : IQaActor
         return (index, buttons, lastIndex == inputs.Count - 1 && cursor >= inputs.Count);
     }
 
+    // 기능: count개 항목을 speed로 재생할 때 걸리는 Tick 수를 PlaybackStep과 같은 규칙으로 센다.
+    // 입력: count - 녹화 항목 수, speed - Tick당 전진량.
+    // 출력: 재생 Tick 수(count가 0 이하면 0).
     // How many ticks a replay of `count` entries takes at `speed` (the same steps as PlaybackStep).
     public static int PlaybackTicks(int count, double speed)
     {
@@ -652,9 +724,15 @@ public sealed class HeadlessActor : IQaActor
         }
     }
 
+    // 기능: 재생을 일찍 끝내고 녹화를 버린다(완료로 표시하지 않는다).
+    // 입력: 없음.
+    // 출력: 반환값 없음. _playback이 null이 된다.
     // Ends a replay early (it did not complete) and drops the recording.
     private void StopPlayback() => _playback = null;
 
+    // 기능: 이번 Tick에 보낼 녹화 입력을 만든다(D34). 마지막 항목을 보내고 끝을 지나면 재생을 끝내고 완료로 표시한다.
+    // 입력: view - 이 Client의 상태(ViewTick용).
+    // 출력: 보낼 InputCommand. _playSent·_bodyYaw가 갱신된다.
     // The recorded entry for this tick (D34). Entries skipped because of Speed > 1 give their buttons to this one.
     private InputCommand NextPlaybackInput(BotView view)
     {
@@ -680,6 +758,9 @@ public sealed class HeadlessActor : IQaActor
         };
     }
 
+    // 기능: 연결 View에 새로 온 BuildResult를 코드별 계수와 최근 결과 큐(최대 MaxBuildResults)에 거둔다.
+    // 입력: view - 이 Client의 상태.
+    // 출력: 반환값 없음. 새 결과가 있었으면 발행용 코드 계수 배열을 새로 만든다.
     private void TakeBuildResults(BotView view)
     {
         // A burst bigger than the ring between two ticks loses the oldest (counted in BuildResultCount anyway).
@@ -704,6 +785,9 @@ public sealed class HeadlessActor : IQaActor
     private const int AimTicksPerBuild = 2;
     private const int HoldAimTicks = 10;
 
+    // 기능: 건설 한 단계(BotBuilder 순서). 지상 모드에서 건설 도구가 아니면 Q를 누르고, 다음 조각을 AimTicksPerBuild Tick 겨눈 뒤 이번 입력 다음에 요청을 보내게 하며, 마지막 조각 뒤 HoldAimTicks 동안 조준을 유지한다. 건설 큐가 비면 편집 큐를 처리한다.
+    // 입력: view - 이 Client의 상태, buttons·aimYaw·aimPitch - 이번 입력(ref; 겨눔, Fire 제거, 도구 키가 반영된다).
+    // 출력: 건설·편집·조준 유지 중이면 true, 할 일이 없거나 죽었거나 지상 모드가 아니면 false.
     private bool StepBuild(BotView view, ref InputButtons buttons, ref float aimYaw, ref float aimPitch)
     {
         if (_toolPressWait > 0) _toolPressWait--;
@@ -778,6 +862,9 @@ public sealed class HeadlessActor : IQaActor
         return true;
     }
 
+    // 기능: 입력 큐와 진행 중인 단계에서 Fire가 든 것을 버린다(stopFire).
+    // 입력: 없음.
+    // 출력: 반환값 없음. 입력 큐가 바뀌고 진행 중인 Fire 단계가 끝난다.
     private void DropFireSteps()
     {
         int count = _script.Count;
@@ -890,6 +977,9 @@ public sealed class HeadlessActor : IQaActor
         return command;
     }
 
+    // 기능: 이번 Tick의 시간제 입력 버튼을 정한다(진행 중인 단계 → 뗌 대기 → 큐의 다음 단계. FirePress는 1 Tick 누른 뒤 현재 무기의 발사 간격만큼 뗀다).
+    // 입력: view - 현재 무기의 발사 간격을 읽을 Client 상태.
+    // 출력: 이번 Tick에 누를 버튼(없으면 None). 새 단계를 시작하면 PressesSent가 는다.
     private InputButtons NextScripted(BotView view)
     {
         if (_currentTicks <= 0)
@@ -1116,6 +1206,9 @@ public sealed class HeadlessActor : IQaActor
         return ticks;
     }
 
+    // 기능: 최신 Snapshot에 보이는 다른 플레이어의 Entity id 목록을 만든다.
+    // 입력: v - 봇 View.
+    // 출력: Entity id 배열(없으면 빈 배열).
     private static ushort[] VisibleIds(BotView v)
     {
         if (v.OtherCount == 0) return Array.Empty<ushort>();

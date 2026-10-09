@@ -20,6 +20,9 @@ namespace ProjectH.Client.UI
         private bool _visible = true;
         private int _shownSeconds = -1;
 
+        // 기능: 결과 화면(제목·순위·처치·우승·처치자·다음 판 줄과 계속 관전·내 전적 버튼)을 Canvas 아래에 만든다.
+        // 입력: canvas - 부모 Canvas, onContinue - 계속 관전 처리, onStats - 내 전적 처리.
+        // 출력: 보이는 상태로 시작하고 글자가 비어 있는 ResultScreen.
         public ResultScreen(Transform canvas, UnityAction onContinue, UnityAction onStats)
         {
             _root = UiFactory.CreateScreen("Result", canvas, dim: true).gameObject;
@@ -36,6 +39,9 @@ namespace ProjectH.Client.UI
             UiFactory.CreateButton("Stats", panel, "내 전적", new Vector2(140f, -200f), new Vector2(240f, 60f), onStats);
         }
 
+        // 기능: 결과 화면을 보이거나 숨긴다.
+        // 입력: visible - 보일지.
+        // 출력: 반환값 없음. 바뀔 때만 루트 GameObject가 켜지거나 꺼진다.
         public void SetVisible(bool visible)
         {
             if (visible == _visible) return;
@@ -47,7 +53,7 @@ namespace ProjectH.Client.UI
         // 입력: won - 우승(배치 1), placement·participants - 배치와 참가 수(Phase 14: 분대면 팀 배치와 팀 수), teams - 분대 경기인지,
         //   kills - 처치 수, winnerName - 우승자(분대는 우승 팀의 가장 작은 id) 이름(null = 없음), died - 이번 판에 탈락했는지,
         //   noKiller - 처치자 없음(자기장·낙하, Phase 12 D10은 cause가 정한다), cause - 그 원인, killerName - 처치자 이름.
-        // 출력: 반환값 없음.
+        // 출력: 반환값 없음. 제목·순위·처치·우승·처치자 Text가 바뀌고(우승했으면 처치자 줄은 빈 줄), 다음 판 줄은 다음 SetSecondsLeft가 다시 만든다.
         public void Show(bool won, int placement, int participants, bool teams, int kills, string winnerName, bool died, bool noKiller,
             DeathCause cause, string killerName)
         {
@@ -59,6 +65,9 @@ namespace ProjectH.Client.UI
             _shownSeconds = -1;
         }
 
+        // 기능: 다음 판까지 남은 초 줄을 갱신한다.
+        // 입력: seconds - 남은 초(0 이하면 준비 중 문구).
+        // 출력: 반환값 없음. 초가 바뀐 때만 Text를 다시 만든다.
         public void SetSecondsLeft(int seconds)
         {
             if (seconds == _shownSeconds) return;

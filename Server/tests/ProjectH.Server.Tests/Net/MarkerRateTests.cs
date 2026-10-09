@@ -57,6 +57,9 @@ public class MarkerRateTests
         return loop;
     }
 
+    // 기능: (x, 0, 5) 위치의 Location Ping 요청을 만든다.
+    // 입력: x - Ping의 X 좌표.
+    // 출력: 그 위치의 MapMarker.
     private static MapMarker Ping(float x) => new() { Kind = MapMarkerKind.Location, Position = new Vector3(x, 0f, 5f) };
 
     [Fact]

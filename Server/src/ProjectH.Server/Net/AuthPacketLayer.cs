@@ -31,6 +31,9 @@ public sealed class AuthPacketLayer : PacketLayerBase
 {
     private sealed class Entry
     {
+        // 기능: 살아 있는(은퇴 전) 키 항목을 만든다.
+        // 입력: keys - 이 endpoint의 세션 키.
+        // 출력: RetireAtMs = 0인 Entry.
         public Entry(SessionKeys keys) => Keys = keys;
         public SessionKeys Keys { get; }
         public long RetireAtMs;   // 0 = live; otherwise removable from this time (Environment.TickCount64)
@@ -68,7 +71,7 @@ public sealed class AuthPacketLayer : PacketLayerBase
     }
 
     // 기능: 서버 인증 계층을 만든다(데이터그램마다 꼬리 20 B).
-    // 입력: health - authDrops를 셀 곳, retireMs - 끊긴 뒤 키를 남겨 둘 시간(DisconnectTimeoutMs + 1000), maxRetired - 은퇴 항목 상한.
+    // 입력: health - authDrops·authDropsRetired를 셀 곳, retireMs - 끊긴 뒤 키를 남겨 둘 시간(DisconnectTimeoutMs + 1000), maxRetired - 은퇴 항목 상한(1 미만이면 1).
     // 출력: 키가 하나도 없는 AuthPacketLayer.
     public AuthPacketLayer(HealthCounters health, long retireMs, int maxRetired) : base(ProtocolLimits.AuthTagBytes)
     {
@@ -80,8 +83,8 @@ public sealed class AuthPacketLayer : PacketLayerBase
     // Entries in the table (live and retired). Takes the dictionary's locks: tests and diagnostics only, never per datagram.
     internal int Count => _keys.Count;
 
-    // 기능: endpoint의 세션 키를 등록한다(있던 항목은 바꾼다). 먼저 만료된 은퇴 항목을 지우고, 은퇴 항목이 상한을 넘으면 오래된 것부터 지운다.
-    //   수신 스레드 전용(연결 요청 처리 중, Accept 전).
+    // 기능: endpoint의 세션 키를 등록한다(있던 항목은 바꾸고, 그 항목이 은퇴 중이었으면 은퇴 수에서 뺀다). 먼저 만료된 은퇴 항목을 지우고,
+    //   은퇴 항목이 상한에 이르렀으면 오래된 것부터 지운다(Sweep). 수신 스레드 전용(연결 요청 처리 중, Accept 전).
     // 입력: endPoint - 원격 주소(복사해 둔다), keys - 이 연결의 키, nowMs - 단조 증가 ms 시계.
     // 출력: 반환값 없음. 이 endpoint의 데이터그램은 이제 봉인·검증된다.
     public void Register(IPEndPoint endPoint, SessionKeys keys, long nowMs)
@@ -106,9 +109,10 @@ public sealed class AuthPacketLayer : PacketLayerBase
         if (Interlocked.CompareExchange(ref entry.RetireAtMs, nowMs + _retireMs, 0) == 0) Interlocked.Increment(ref _retiredCount);
     }
 
-    // 기능: 만료된 은퇴 항목을 지우고, 은퇴 항목이 상한을 넘으면 은퇴 시각이 이른 것부터 지운다(키를 해제한다). 수신 스레드 전용.
+    // 기능: 만료된 은퇴 항목을 지우고, 은퇴 항목이 상한에 이르렀으면(이번 등록 뒤 은퇴할 하나의 자리를 남기게) 은퇴 시각이 이른 것부터 지운다(키를 해제한다).
+    //   은퇴 항목이 하나도 없으면 바로 돌아온다. 수신 스레드 전용.
     // 입력: nowMs - 시계.
-    // 출력: 반환값 없음.
+    // 출력: 반환값 없음. 지운 만큼 은퇴 수가 준다.
     private void Sweep(long nowMs)
     {
         if (Volatile.Read(ref _retiredCount) == 0) return;

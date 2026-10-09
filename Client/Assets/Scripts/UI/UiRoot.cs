@@ -41,6 +41,9 @@ namespace ProjectH.Client.UI
         private float _statsSentAt = -1f;
         private TimeSpan _utcOffset;
 
+        // 기능: EventSystem(씬에 없을 때만)과 화면 캔버스를 만들고 모든 화면·통계 창·디버그 줄을 그리기 순서대로 만든다.
+        // 입력: 없음(Unity가 부른다).
+        // 출력: 반환값 없음. 화면 객체들이 만들어진다(첫 그리기는 Start의 Apply).
         private void Awake()
         {
             _client = GetComponent<GameClient>();
@@ -56,6 +59,9 @@ namespace ProjectH.Client.UI
             _debug = new DebugOverlay();
         }
 
+        // 기능: 명령줄로 자동 접속이면 입력 칸을 채우고 바로 접속하고, 아니면 저장된 주소·포트·이름(없으면 명령줄 기본값)으로 칸을 채운 뒤 화면을 처음 그린다.
+        // 입력: 없음(명령줄 인수와 PlayerPrefs를 읽는다).
+        // 출력: 반환값 없음. 자동 접속의 주소·이름은 PlayerPrefs에 저장하지 않는다.
         // After every Awake on this GameObject, so GameClient is ready when the command line connects at once.
         private void Start()
         {
@@ -114,7 +120,10 @@ namespace ProjectH.Client.UI
             _client.TickBuildDebug(_debug, Time.unscaledTime);
         }
 
-        // Shows what UiFlow chose. Runs only when its Version changed (or at start).
+        // 기능: UiFlow가 고른 화면을 보인다(Version이 바뀌었을 때와 시작 시에만). 타이틀로 돌아오면 끊긴 이유를, 결과 화면이 처음 열리면 결과를 채우고,
+        //   통계 창이 처음 열리면 요청을 보낸다(D8: 열 때마다 한 번, GameClient가 최근 요청을 다시 쓸 수 있다).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 각 화면의 표시 상태와 보인 화면·통계 상태·Version 기록이 바뀐다.
         private void Apply()
         {
             UiScreen screen = _flow.Screen;
@@ -161,7 +170,9 @@ namespace ProjectH.Client.UI
                 _client.KillerName);
         }
 
-        // The title's Connect: the only path that saves the address, port and name (D4).
+        // 기능: 타이틀의 접속 처리. 주소·포트·이름을 PlayerPrefs에 저장하고(D4: 저장하는 유일한 경로) 접속을 시작한다.
+        // 입력: host - 주소, port - 포트, name - 이름.
+        // 출력: 반환값 없음. 연결이 Disconnected가 아니면 저장도 접속도 하지 않는다.
         private void Connect(string host, int port, string name)
         {
             if (_client.State != ClientState.Disconnected) return;
@@ -172,6 +183,9 @@ namespace ProjectH.Client.UI
             StartConnect(host, port, name);
         }
 
+        // 기능: Disconnected 상태에서만 GameClient.Connect를 부르고 흐름을 Connecting으로 보낸다. 주소는 Retry를 위해 기억한다.
+        // 입력: host - 주소, port - 포트, name - 이름.
+        // 출력: 반환값 없음. 이전 연결이 아직 닫히는 중이면 아무것도 하지 않는다.
         // Only from Disconnected: GameClient.Connect ignores a connect while the previous connection is still closing,
         // and the flow must not show "connecting" for a connect that never started.
         private void StartConnect(string host, int port, string name)
@@ -184,20 +198,27 @@ namespace ProjectH.Client.UI
             _flow.ConnectRequested();
         }
 
+        // 기능: 끊김 화면의 "다시 시도". 마지막 접속 주소·포트·이름으로 다시 접속한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 접속한 적이 없으면 아무것도 하지 않는다.
         private void Retry()
         {
             if (_host == null) return;
             StartConnect(_host, _port, _name);
         }
 
-        // Connecting "cancel".
+        // 기능: 접속 중 "취소". 연결을 끊고 타이틀로 돌아간다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. GameClient가 끊기고 흐름이 Title이 된다.
         private void CancelConnect()
         {
             _client.Disconnect();
             _flow.LeaveRequested();
         }
 
-        // Menu "disconnect", Disconnected "to title": also stops an automatic reconnect.
+        // 기능: 메뉴 "접속 끊기"·끊김 "타이틀로". 연결을 끊고(자동 재접속도 멈춘다) 타이틀로 돌아간다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. GameClient가 끊기고 흐름이 Title이 된다.
         private void Leave()
         {
             _client.Disconnect();
@@ -257,12 +278,17 @@ namespace ProjectH.Client.UI
         }
 #endif
 
-        // A built player closes. In the Editor Application.Quit does nothing (stop Play Mode instead).
+        // 기능: 빌드된 플레이어를 종료한다(에디터에서는 Application.Quit이 아무 일도 하지 않는다: Play Mode를 멈출 것).
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         private static void Quit()
         {
             Application.Quit();
         }
 
+        // 기능: 만든 디버그 줄·화면 캔버스·EventSystem(여기서 만든 것만)을 파괴한다. 폰트는 GameClient가 해제한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         private void OnDestroy()
         {
             _debug?.Dispose();

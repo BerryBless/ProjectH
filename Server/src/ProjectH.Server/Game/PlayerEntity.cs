@@ -118,6 +118,9 @@ public sealed class PlayerEntity
     public int SyncColumn;
     public uint SyncAfterId;
 
+    // 기능: 건설 관심 영역 동기화 상태를 처음으로 되돌린다(입장, 재접속, 라운드 초기화: Client가 아무것도 모르는 상태에서 창을 다시 받는다).
+    // 입력: 없음.
+    // 출력: 반환값 없음. InterestCells·SyncPending·SyncColumn·SyncAfterId가 0, SyncCell이 -1이 된다.
     // A join, a resume or a round reset: the client starts from nothing and the window is sent again.
     public void ResetInterest()
     {

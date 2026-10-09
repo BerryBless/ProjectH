@@ -10,6 +10,9 @@ public static class LineOfSight
 {
     public const float Step = 0.5f;
 
+    // 기능: from에서 to까지의 선분을 Step 간격으로 표본 삼아 맵 상자 안이나 지형 아래에 걸리는지 본다(봇 자체의 근사, 서버 HitScan이 아니다).
+    // 입력: from - 시작점(눈), to - 끝점(표적), boxes - 맵 상자, terrain - 높이 지형.
+    // 출력: 어느 표본도 막히지 않으면 true(선분이 Step보다 짧거나 NaN이면 true), 막히면 false.
     public static bool Clear(Vector3 from, Vector3 to, ReadOnlySpan<Box> boxes, HeightField terrain)
     {
         Vector3 delta = to - from;

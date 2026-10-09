@@ -14,6 +14,9 @@ public sealed class UnityQaClient : IDisposable
 
     private readonly HttpClient _http;
 
+    // 기능: 플레이어 QA 수신기용 HttpClient를 만든다(전체 Timeout은 무한, 요청마다 RequestTimeout).
+    // 입력: port - 수신기 포트, handler - 테스트용 가짜 endpoint(null이면 실제 HTTP).
+    // 출력: http://127.0.0.1:port/를 기본 주소로 하는 UnityQaClient.
     // handler: tests pass a fake endpoint; null = real HTTP.
     public UnityQaClient(int port, HttpMessageHandler? handler = null)
     {
@@ -26,10 +29,19 @@ public sealed class UnityQaClient : IDisposable
 
     public int Port { get; }
 
+    // 기능: GET /qa/status로 플레이어 상태를 읽는다.
+    // 입력: token - 취소 토큰.
+    // 출력: 플레이어의 답(상태 JSON). 전송 실패·시간 초과면 QaApiException.
     public Task<UnityAnswer> StatusAsync(CancellationToken token) => SendAsync(HttpMethod.Get, "qa/status", null, token);
 
+    // 기능: POST /qa/screenshot으로 스크린샷을 찍게 한다.
+    // 입력: name - 파일 이름, token - 취소 토큰.
+    // 출력: 플레이어의 답(PNG가 디스크에 쓰인 뒤). 전송 실패·시간 초과면 QaApiException.
     public Task<UnityAnswer> ScreenshotAsync(string name, CancellationToken token) => SendAsync(HttpMethod.Post, "qa/screenshot", new { name }, token);
 
+    // 기능: POST /qa/ui로 UI 명령을 보낸다.
+    // 입력: command - UI 명령, token - 취소 토큰.
+    // 출력: 플레이어의 답(적용할 수 없는 명령은 409 상태로 온다). 전송 실패·시간 초과면 QaApiException.
     public Task<UnityAnswer> UiAsync(string command, CancellationToken token) => SendAsync(HttpMethod.Post, "qa/ui", new { command }, token);
 
     // 기능: Player에 Gameplay 입력 하나(키, 마우스 버튼, 시점 이동)를 보낸다. Player가 Input System의 가상 장치로 넣는다.
@@ -42,6 +54,9 @@ public sealed class UnityQaClient : IDisposable
     // 출력: Player의 답. 200이면 hold·look이 모두 끝났다.
     public Task<UnityAnswer> ReleaseAllAsync(CancellationToken token) => SendAsync(HttpMethod.Post, "qa/input", new { releaseAll = true }, token);
 
+    // 기능: HttpClient(와 테스트 handler)를 해제한다.
+    // 입력: 없음.
+    // 출력: 반환값 없음.
     public void Dispose() => _http.Dispose();
 
     // 기능: Unity Player의 QA 수신기에 요청 하나를 보내고 응답을 읽는다.

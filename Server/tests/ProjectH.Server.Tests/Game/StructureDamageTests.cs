@@ -19,6 +19,9 @@ public class StructureDamageTests
 
     private readonly SandboxHarness _h = new();
 
+    // 기능: 플라자 칸 16 남쪽 가장자리에 age Tick 전에 생성된 벽을 바로 넣는다(age > 0이면 먼저 160 Tick 돌려 완공되게 한다).
+    // 입력: age - 생성 후 지난 Tick 수(0이면 방금 생성해 초기 체력), material - 벽 재질.
+    // 출력: 추가된 벽 조각 ID.
     // A wood wall that finished building (150 health) unless age says otherwise (the match runs past the longest
     // construction time first).
     private uint Wall(uint age = 1000, BuildMaterialType material = BuildMaterialType.Wood)
@@ -28,12 +31,18 @@ public class StructureDamageTests
         return _h.Match.Build.Add(WallShape, material, 99, created, grounded: true);
     }
 
+    // 기능: 조각의 현재 Tick 기준 체력(건설 진행과 피해 반영)을 읽는다. 조각이 없으면 테스트를 실패시킨다.
+    // 입력: id - 조각 ID.
+    // 출력: 현재 체력.
     private int Health(uint id)
     {
         Assert.True(_h.Match.Build.TryGetSlot(id, out int slot));
         return _h.Match.Build.Health(_h.Match.Build.At(slot), _h.Match.ServerTick);
     }
 
+    // 기능: 특정 Peer에게 보낸 BuildEvents 패킷의 체력 기록을 보낸 순서대로 모은다. 헤더나 기록 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: peer - 받은 Peer ID.
+    // 출력: (조각 ID, 피해값) 목록.
     private List<(uint Id, ushort Damage)> HealthRecords(int peer)
     {
         var list = new List<(uint, ushort)>();
@@ -52,6 +61,9 @@ public class StructureDamageTests
         return list;
     }
 
+    // 기능: 특정 Peer에게 보낸 BuildEvents 패킷의 파괴 기록을 보낸 순서대로 모은다. 헤더나 기록 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: peer - 받은 Peer ID.
+    // 출력: 파괴된 조각 ID 목록.
     private List<uint> DestroyedRecords(int peer)
     {
         var list = new List<uint>();
@@ -71,6 +83,9 @@ public class StructureDamageTests
         return list;
     }
 
+    // 기능: 자동 소총 발사 간격만큼 기다린 뒤 at을 겨냥해 한 발 쏘고 버튼을 뗀다.
+    // 입력: shooter - 사수, at - 겨냥할 월드 지점.
+    // 출력: 반환값 없음. Match가 AutoInterval + 2 Tick 진행된다.
     private void Shoot(PlayerEntity shooter, Vector3 at)
     {
         _h.Ticks(TestWeapons.AutoInterval);
@@ -228,6 +243,9 @@ public class StructureDamageTests
 
     // ---- The trace itself ----
 
+    // 기능: 기본 건설 카탈로그의 BuildWorld를 만들어 주어진 모양을 나무·접지 조각으로 넣는다.
+    // 입력: shapes - 넣을 조각 모양들.
+    // 출력: 조각이 들어간 BuildWorld.
     private static BuildWorld World(params BuildPieceShape[] shapes)
     {
         var world = new BuildWorld(BuildingCatalog.Default(30));

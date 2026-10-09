@@ -71,6 +71,9 @@ public sealed class PeerState
     // gets a reconnect grace: never after a server close.
     public DisconnectCode CloseCode => (DisconnectCode)Volatile.Read(ref _closeCode);
 
+    // 기능: 서버가 이 연결을 닫는 코드를 처음 한 번만 적는다(Interlocked, 어느 스레드든).
+    // 입력: code - 닫는 이유.
+    // 출력: 이번에 적혔으면 true, 다른 닫기가 먼저 적었으면 false(그 코드가 남는다).
     // Returns false when another close already set the code (that one stays).
     public bool TrySetCloseCode(DisconnectCode code) =>
         Interlocked.CompareExchange(ref _closeCode, (int)code, (int)DisconnectCode.None) == (int)DisconnectCode.None;
@@ -84,6 +87,9 @@ public sealed class PeerState
     // Server review M5, L5: up to burst packets at once, then maxPerSecond. Returns false for a packet over the rate (the
     // caller drops it). Unlike the fixed one-second window before it, the bucket never lets 2 x maxPerSecond through
     // back to back across a window edge.
+    // 기능: 입력 패킷 토큰 버킷(서버 리뷰 M5·L5): 처음에는 가득 차 있고, 초당 maxPerSecond개씩 burst개까지 찬다. 수신 스레드 전용.
+    // 입력: nowMs - 지금 시각(ms), maxPerSecond - 초당 통과 수, burst - 한 번에 통과할 수 있는 수.
+    // 출력: 통과하면 true, 버킷이 비었으면 false(호출자가 버리고 센다, 끊지 않는다).
     public bool TryCountInputPacket(long nowMs, int maxPerSecond, int burst)
     {
         long capacity = burst * 1000L;
@@ -106,6 +112,9 @@ public sealed class PeerState
     private long _buildWindowStartMs;
     private int _buildRequestsInWindow;
 
+    // 기능: 건설 요청을 고정 1초 창으로 센다(Phase 13 D8). 수신 스레드 전용.
+    // 입력: nowMs - 지금 시각(ms), maxPerSecond - 1초에 허용하는 수.
+    // 출력: 이 창에서 maxPerSecond 이하면 true, 넘으면 false(호출자가 잘못된 패킷으로 센다).
     // Phase 13 D8: the same fixed 1-second window for build requests (LiteNetLib's receive path only).
     public bool TryCountBuildRequest(long nowMs, int maxPerSecond)
     {
@@ -165,6 +174,9 @@ public sealed class PeerState
 
     // Phase 11 D8: at most one statistics request per minIntervalMs. A refused request does not move the window, so
     // pressing the button again and again still gets one answer every minIntervalMs.
+    // 기능: 통계 요청을 minIntervalMs에 하나만 받는다(Phase 11 D8). 거절은 창을 옮기지 않는다. 수신 스레드 전용.
+    // 입력: nowMs - 지금 시각(ms), minIntervalMs - 받은 요청 사이의 최소 간격.
+    // 출력: 받으면 true(이 시각을 기억한다), 간격 안이면 false.
     public bool TryCountStatsRequest(long nowMs, int minIntervalMs)
     {
         if (_statsRequested && nowMs - _lastStatsRequestMs < minIntervalMs) return false;

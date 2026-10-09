@@ -11,6 +11,9 @@ public class ProjectilePacketTests
 {
     private readonly byte[] _buffer = new byte[ProtocolConstants.MaxPacketSize];
 
+    // 기능: 테스트 버퍼의 앞 length 바이트로 Reader를 만들고 Packet Id가 expected인지 확인한 뒤 Id 다음 위치의 Reader를 돌려준다.
+    // 입력: length - 버퍼에 쓰인 바이트 수, expected - 기대하는 Packet Id.
+    // 출력: Packet Id를 읽은 뒤의 PacketReader. Id가 다르면 Assert 실패.
     private PacketReader ReaderAfterId(int length, PacketId expected)
     {
         var reader = new PacketReader(_buffer.AsSpan(0, length));
@@ -94,6 +97,9 @@ public class ProjectilePacketTests
         }
     }
 
+    // 기능: 샷건형 고정 수치(피해 11, Pellet 8, Shells 탄약)를 가진 시험용 무기 정보를 만든다.
+    // 입력: id - 무기 ID(이름 "W"+id에도 쓰인다), projectile - 발사하는 투사체 종류(기본 없음).
+    // 출력: 그 ID와 투사체 종류를 가진 WeaponInfo.
     private static WeaponInfo Weapon(byte id, ProjectileKind projectile = ProjectileKind.None) => new()
     {
         WeaponId = id, Name = "W" + id, Damage = 11, FireIntervalTicks = 27, MagazineSize = 5, ReloadTicks = 72, Range = 35f, AmmoType = AmmoType.Shells,
@@ -135,6 +141,9 @@ public class ProjectilePacketTests
     [Fact]
     public void WeaponCatalog_BadPhase17Values_AreRejected()
     {
+        // 기능: 무기·투사체 목록을 WeaponCatalog로 쓰고 다시 읽어 본다.
+        // 입력: w - 무기 목록, p - 투사체 목록.
+        // 출력: 읽기가 받아들이면 true, 거부하면 false.
         bool Reads(WeaponInfo[] w, ProjectileInfo[] p)
         {
             var writer = new PacketWriter(_buffer);
@@ -185,6 +194,9 @@ public class ProjectilePacketTests
     [Fact]
     public void ItemCatalog_AGrenadeWithAChannel_OrAHealWithout_IsRefused()
     {
+        // 기능: 희귀도·탄약 전부와 소모품(의료 키트·방패 셀·수류탄)을 채운 Item Catalog를 만든다.
+        // 입력: grenade - 수류탄 소모품 정보, medkit - 의료 키트 소모품 정보.
+        // 출력: 그 두 소모품이 든 ItemCatalogData.
         ItemCatalogData Catalog(ConsumableInfo grenade, ConsumableInfo medkit) => new()
         {
             Rarities = new[] { R(), R(), R(), R(), R() },
@@ -195,6 +207,9 @@ public class ProjectilePacketTests
         static AmmoInfo A(AmmoType t) => new() { Type = t, Name = "A", Max = 10 };
         var goodGrenade = new ConsumableInfo { Type = ConsumableType.Grenade, Name = "G", MaxStack = 6 };
         var goodMedkit = new ConsumableInfo { Type = ConsumableType.Medkit, Name = "M", UseTicks = 90, Heal = 50, MaxStack = 3 };
+        // 기능: Item Catalog를 쓰고 다시 읽어 본다.
+        // 입력: data - 쓸 카탈로그.
+        // 출력: 읽기가 받아들이면 true, 거부하면 false.
         bool Reads(ItemCatalogData data)
         {
             var writer = new PacketWriter(_buffer);

@@ -16,16 +16,28 @@ public class WeaponRulesTests
     private readonly GameData _data = TestGameData.Create();
     private readonly PlayerEntity _player = new(1, 1, "a", 8);
 
+    // 기능: 테스트 플레이어에 전투 장비를 적용하고 무기 상태를 초기화한다.
+    // 입력: 없음.
+    // 출력: 칸 0에 Test Auto가 들려 있고 재장전 중이 아닌 _player가 준비된 테스트 인스턴스.
     public WeaponRulesTests()
     {
         TestGameData.CombatLoadout.ApplyTo(_player.Inventory, _data.Weapons);
         WeaponRules.ResetState(_player);
     }
 
+    // 기능: 테스트 플레이어의 무기 칸을 참조로 가져온다.
+    // 입력: index - 칸 번호(0..2).
+    // 출력: 그 칸의 HeldWeapon 참조(수정 가능).
     private ref HeldWeapon Slot(int index) => ref _player.Inventory.Slots[index];
 
+    // 기능: 테스트 플레이어의 예비 탄약 수를 읽는다.
+    // 입력: type - 탄약 종류.
+    // 출력: 예비 탄약 수.
     private int Reserve(AmmoType type) => _player.Inventory.GetAmmo(type);
 
+    // 기능: 입력을 보낸 살아 있는 플레이어의 서버 한 Tick을 Match 순서대로 돌린다(재장전 완료 -> 칸 선택 -> 재장전/발사).
+    // 입력: now - 현재 Tick, buttons - 이 Tick의 버튼, aimValid - 조준이 유효한지.
+    // 출력: 이 Tick에 발사했으면 true.
     // One server tick for a living player that sent an input, in Match order: reload done -> slot -> reload/fire.
     private bool Tick(uint now, InputButtons buttons, bool aimValid = true)
     {
@@ -49,6 +61,9 @@ public class WeaponRulesTests
         player.Inventory.SetAmmo(AmmoType.Heavy, 20);
         WeaponRules.ResetState(player);
         int shots = 0;
+        // 기능: Kestrel만 든 player의 서버 한 Tick을 Match 순서대로 돌리고 발사 수를 센다.
+        // 입력: now - 현재 Tick, buttons - 이 Tick의 버튼.
+        // 출력: 이 Tick에 발사했으면 true. 발사하면 바깥 shots가 1 는다.
         bool Step(uint now, InputButtons buttons)
         {
             WeaponRules.UpdateReload(player, now);
@@ -237,6 +252,9 @@ public class WeaponRulesTests
             InputButtons.Fire, InputButtons.Fire, InputButtons.None, InputButtons.Reload,
             InputButtons.Slot1, InputButtons.Slot2, InputButtons.Slot3, InputButtons.Fire | InputButtons.Reload,
         };
+        // 기능: 한 탄약 종류의 예비 탄약과 그 탄약을 쓰는 무기 탄창을 모두 더한다.
+        // 입력: type - 탄약 종류.
+        // 출력: 예비 + 탄창 합계.
         int Total(AmmoType type)
         {
             int total = _player.Inventory.GetAmmo(type);

@@ -10,6 +10,9 @@ namespace ProjectH.Client.Tests
     // open anything, and the fall height drawn from SupplyDropFall.
     public class LootStateTests
     {
+        // 기능: 시험용 보급 상자 정보를 만든다.
+        // 입력: id - 보급 상자 ID, state - 낙하 상태, x - 착지 x 좌표, z - 착지 z 좌표, landY - 착지 높이, start - 낙하 시작 Tick, land - 착지 Tick.
+        // 출력: SupplyDropInfo.
         private static SupplyDropInfo Drop(byte id, SupplyDropState state, float x, float z, float landY = 1f, uint start = 100, uint land = 550) =>
             new SupplyDropInfo { Id = id, State = state, X = x, Z = z, LandY = landY, StartTick = start, LandTick = land };
 

@@ -9,6 +9,9 @@ public sealed class MockActor : IQaActor
     private static int s_nextEntity = 1;
     private ActorState _state;
 
+    // 기능: 별칭으로 Idle 상태의 가짜 Actor를 만든다.
+    // 입력: alias - 시나리오 Actor 별칭.
+    // 출력: DevPlayerId가 별칭에서 파생되고 Status가 Idle인 MockActor 객체.
     public MockActor(string alias)
     {
         Alias = alias;
@@ -30,6 +33,9 @@ public sealed class MockActor : IQaActor
     // Called after a command is applied (tests react, e.g. the fake server takes damage on fire).
     public Action<MockActor, ActorCommand>? OnCommand { get; set; }
 
+    // 기능: 명령을 기록하고 네트워크 없이 즉시 Actor 상태에 반영한 뒤 OnCommand를 호출한다.
+    // 입력: command - 적용할 Actor 명령, token - 취소 토큰.
+    // 출력: 반환값 없음. Commands에 명령이 쌓이고 State가 명령 종류에 맞게 바뀐다.
     public ValueTask SendAsync(ActorCommand command, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
@@ -78,6 +84,9 @@ public sealed class MockActor : IQaActor
         return ValueTask.CompletedTask;
     }
 
+    // 기능: 테스트가 Actor 상태를 직접 바꾼다.
+    // 입력: change - 현재 상태를 받아 새 상태를 돌려주는 함수.
+    // 출력: 반환값 없음. State가 change의 결과로 교체된다.
     public void Set(Func<ActorState, ActorState> change) => Volatile.Write(ref _state, change(State));
 }
 
@@ -92,6 +101,9 @@ public sealed class FakeQaServer : IQaServerClient
     public bool Stopped { get; private set; }
     public Func<string, string?, JsonElement, CommandResponse>? CommandHandler { get; set; }
 
+    // 기능: 가짜 서버에 접속·생존 상태의 플레이어 한 명을 등록한다.
+    // 입력: devPlayerId - 플레이어 Dev ID, health - 초기 체력.
+    // 출력: 등록된 플레이어 상태 사전(테스트가 값을 바꿀 수 있다).
     public Dictionary<string, object?> AddPlayer(string devPlayerId, int health = 100)
     {
         var p = new Dictionary<string, object?>
@@ -104,12 +116,21 @@ public sealed class FakeQaServer : IQaServerClient
         return p;
     }
 
+    // 기능: 가짜 이벤트 목록에 순번·Tick이 붙은 이벤트를 하나 추가한다.
+    // 입력: type - 이벤트 종류, player - 관련 플레이어(없으면 null), data - 이벤트 데이터(없으면 빈 객체).
+    // 출력: 반환값 없음. Events에 이벤트가 하나 늘어난다.
     public void AddEvent(string type, string? player, object? data = null) =>
         Events.Add(new { seq = Events.Count + 1, tick = 100 + Events.Count, utc = "2026-10-02T00:00:00Z", type, player, data = data ?? new { } });
 
+    // 기능: 고정된 서버 상태(qaMode, 포트, 버전)와 현재 플레이어 수를 health 응답으로 돌려준다.
+    // 입력: token - 취소 토큰(쓰지 않음).
+    // 출력: ok=true인 health JSON.
     public Task<JsonElement> GetHealthAsync(CancellationToken token) =>
         Task.FromResult(JsonSerializer.SerializeToElement(new { ok = true, qaMode = true, gamePort = 7777, qaPort = 7780, version = "test-1", activeSessions = Players.Count }));
 
+    // 기능: QA 명령을 기록하고 CommandHandler가 있으면 그 응답을, 없으면 성공 응답을 돌려준다.
+    // 입력: command - 명령 이름, player - 대상 플레이어, args - 명령 인자, runId - 실행 ID(쓰지 않음), token - 취소 토큰.
+    // 출력: CommandHandler의 응답 또는 done=command를 담은 200 성공 응답.
     public Task<CommandResponse> CommandAsync(string command, string? player, JsonElement args, string runId, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
@@ -118,6 +139,9 @@ public sealed class FakeQaServer : IQaServerClient
         return Task.FromResult(new CommandResponse(true, null, JsonSerializer.SerializeToElement(new { done = command }), 200));
     }
 
+    // 기능: 조회를 기록하고 등록된 플레이어 상태를 JSON으로 돌려준다.
+    // 입력: devPlayerId - 조회할 플레이어 Dev ID, token - 취소 토큰.
+    // 출력: 플레이어 상태 JSON. 등록되지 않았으면 null.
     public Task<JsonElement?> GetPlayerAsync(string devPlayerId, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
@@ -125,16 +149,31 @@ public sealed class FakeQaServer : IQaServerClient
         return Task.FromResult(Players.TryGetValue(devPlayerId, out var p) ? JsonSerializer.SerializeToElement(p) : (JsonElement?)null);
     }
 
+    // 기능: 등록된 모든 플레이어 상태를 배열 JSON으로 돌려준다.
+    // 입력: token - 취소 토큰(쓰지 않음).
+    // 출력: 플레이어 상태 배열 JSON.
     public Task<JsonElement> GetPlayersAsync(CancellationToken token) => Task.FromResult(JsonSerializer.SerializeToElement(Players.Values));
 
+    // 기능: 테스트가 채운 Match 사전을 JSON으로 돌려준다.
+    // 입력: token - 취소 토큰(쓰지 않음).
+    // 출력: Match 상태 JSON.
     public Task<JsonElement> GetMatchAsync(CancellationToken token) => Task.FromResult(JsonSerializer.SerializeToElement(Match));
 
+    // 기능: 조건과 무관하게 조각 하나(id 42, health 100)가 있는 건설 상태를 돌려준다.
+    // 입력: x, z, radius, max - 조회 범위(쓰지 않음), token - 취소 토큰(쓰지 않음).
+    // 출력: count=1과 조각 배열을 담은 JSON.
     public Task<JsonElement> GetBuildAsync(float? x, float? z, float? radius, int? max, CancellationToken token) =>
         Task.FromResult(JsonSerializer.SerializeToElement(new { count = 1, pieces = new[] { new { id = 42, health = 100 } } }));
 
+    // 기능: 조건과 무관하게 고정된 Loot 상태(상자 1, 아이템 3, 무기 1)를 돌려준다.
+    // 입력: x, z, radius - 조회 범위(쓰지 않음), token - 취소 토큰(쓰지 않음).
+    // 출력: containersSpawned와 items 집계를 담은 JSON.
     public Task<JsonElement> GetLootAsync(float? x, float? z, float? radius, CancellationToken token) =>
         Task.FromResult(JsonSerializer.SerializeToElement(new { containersSpawned = 1, items = new { count = 3, weapons = 1 } }));
 
+    // 기능: 터진 수류탄 하나가 있는 고정된 투사체 상태를 돌려준다.
+    // 입력: token - 취소 토큰(쓰지 않음).
+    // 출력: 빈 projectiles 배열과 explosionsTotal=1, launched=1을 담은 JSON.
     // Phase 17: one exploded grenade.
     public Task<JsonElement> GetProjectilesAsync(CancellationToken token) =>
         Task.FromResult(JsonSerializer.SerializeToElement(new { projectiles = Array.Empty<object>(), explosionsTotal = 1, launched = 1 }));
@@ -152,15 +191,24 @@ public sealed class FakeQaServer : IQaServerClient
     // QA-5: settable so baseline tests can make a run worse than the previous one.
     public object Metrics { get; set; } = new { tickP50Ms = 0.4, tickP95Ms = 0.9, tickP99Ms = 1.5, tickMaxMs = 3.0, workingSetMB = 80.5 };
 
+    // 기능: 테스트가 설정한 Metrics 객체를 그대로 JSON으로 돌려준다.
+    // 입력: windowSeconds - 집계 창(쓰지 않음), token - 취소 토큰(쓰지 않음).
+    // 출력: Metrics를 직렬화한 JSON.
     public Task<JsonElement> GetMetricsAsync(int? windowSeconds, CancellationToken token) =>
         Task.FromResult(JsonSerializer.SerializeToElement(Metrics));
 
+    // 기능: 이벤트 목록에서 after 이후 최대 max개를 잘라 서버 응답 형식으로 돌려준다.
+    // 입력: after - 건너뛸 이벤트 수(마지막으로 받은 순번), max - 최대 개수, token - 취소 토큰(쓰지 않음).
+    // 출력: next 순번, oldest=1, dropped=0, events 배열을 담은 JSON.
     public Task<JsonElement> GetEventsAsync(long after, int max, CancellationToken token)
     {
         var list = Events.Skip((int)after).Take(max).ToList();
         return Task.FromResult(JsonSerializer.SerializeToElement(new { next = after + list.Count, oldest = 1, dropped = 0, events = list }));
     }
 
+    // 기능: 서버 정지 요청을 받았다고 표시한다.
+    // 입력: token - 취소 토큰(쓰지 않음).
+    // 출력: 반환값 없음. Stopped가 true가 된다.
     public Task StopServerAsync(CancellationToken token)
     {
         Stopped = true;

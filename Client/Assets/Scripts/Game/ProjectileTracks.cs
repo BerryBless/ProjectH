@@ -140,7 +140,7 @@ namespace ProjectH.Client.Game
 
         // 기능: 등가속 탄도를 계산한다(서버 적분과 같은 식): p + v·dt + ½·(0, −g, 0)·dt², v + (0, −g, 0)·dt. 속도 0이면 멈춰 있다(중력 없음).
         // 입력: position·velocity - 사건 시점 상태, gravity - 아래로 당기는 m/s², dt - 사건 뒤 초(음수·NaN이면 0).
-        // 출력: position·velocity 결과 - dt 뒤의 위치와 속도.
+        // 출력: resultPosition·resultVelocity - dt 뒤의 위치와 속도(속도 0이거나 dt가 양수가 아니면 입력 그대로).
         public static void Extrapolate(Vector3 position, Vector3 velocity, float gravity, float dt, out Vector3 resultPosition, out Vector3 resultVelocity)
         {
             if (velocity == Vector3.Zero || !(dt > 0f))

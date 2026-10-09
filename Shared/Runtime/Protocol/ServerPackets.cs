@@ -13,6 +13,9 @@ namespace ProjectH.Shared.Protocol
         public byte SimHz;
         public byte SnapshotHz;
 
+        // 기능: JoinMatchResponse 패킷(id, 결과, 내 Entity id, 서버 Tick, SimHz, SnapshotHz)을 쓴다.
+        // 입력: writer - 쓸 곳, r - 입장 응답.
+        // 출력: 반환값 없음. writer에 10바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in JoinMatchResponse r)
         {
             writer.WriteByte((byte)PacketId.JoinMatchResponse);
@@ -53,6 +56,9 @@ namespace ProjectH.Shared.Protocol
         public float Yaw;
         public string Name;
 
+        // 기능: PlayerSpawned 패킷(id, Entity id, 위치, Yaw, 이름 문자열)을 쓴다.
+        // 입력: writer - 쓸 곳, s - 생성된 플레이어(Name은 MaxDevPlayerIdBytes 이하).
+        // 출력: 반환값 없음. writer에 패킷이 쓰인다(이름이 길면 Overflowed).
         public static void Write(ref PacketWriter writer, in PlayerSpawned s)
         {
             writer.WriteByte((byte)PacketId.PlayerSpawned);
@@ -81,12 +87,18 @@ namespace ProjectH.Shared.Protocol
     {
         public ushort EntityId;
 
+        // 기능: PlayerDespawned 패킷(id + Entity id)을 쓴다.
+        // 입력: writer - 쓸 곳, d - 사라진 플레이어.
+        // 출력: 반환값 없음. writer에 3바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in PlayerDespawned d)
         {
             writer.WriteByte((byte)PacketId.PlayerDespawned);
             writer.WriteUInt16(d.EntityId);
         }
 
+        // 기능: PlayerDespawned 본문(PacketId 뒤)의 Entity id를 읽는다.
+        // 입력: reader - 본문, d - 결과.
+        // 출력: 2바이트가 있으면 true와 id(값 검사는 없다), 짧으면 false.
         public static bool TryRead(ref PacketReader reader, out PlayerDespawned d)
         {
             d = default;
@@ -113,6 +125,9 @@ namespace ProjectH.Shared.Protocol
         public byte PartCount;
         public SnapshotSelf Self;
 
+        // 기능: Snapshot 헤더(id, 서버 Tick, Ack 입력 순번, 엔티티 수, 부분 번호·수, 자기 블록)를 쓴다. 뒤에 Count개의 SnapshotEntity가 따른다.
+        // 입력: writer - 쓸 곳, h - 헤더(Self는 받는 사람에 따라 PatchRecipient로 덮어쓴다).
+        // 출력: 반환값 없음. writer에 Size(27)바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in WorldSnapshotHeader h)
         {
             writer.WriteByte((byte)PacketId.WorldSnapshot);
@@ -124,6 +139,10 @@ namespace ProjectH.Shared.Protocol
             SnapshotSelf.Write(ref writer, h.Self);
         }
 
+        // 기능: Snapshot 헤더(PacketId 뒤)를 읽고 부분·엔티티 수가 말이 되는지 검사한다.
+        // 입력: reader - 본문, h - 결과.
+        // 출력: 성공하면 true와 헤더. 짧거나, 자기 블록이 잘못됐거나, 엔티티 수가 MaxEntitiesPerSnapshotPacket을 넘거나,
+        //   부분 수가 1..MaxSnapshotParts 밖이거나 부분 번호가 부분 수 이상이거나, 남은 바이트가 Count x 13보다 적으면 false.
         public static bool TryRead(ref PacketReader reader, out WorldSnapshotHeader h)
         {
             h = default;
@@ -139,6 +158,9 @@ namespace ProjectH.Shared.Protocol
             return reader.Remaining >= h.Count * SnapshotEntity.Size;
         }
 
+        // 기능: 이미 쓴 Snapshot 패킷의 Ack 입력 순번과 자기 블록을 받는 사람 것으로 덮어쓴다(한 번 쓴 본문을 모두에게 재사용, D10).
+        // 입력: packet - PacketId 바이트부터 시작하는 전체 Snapshot 패킷(Size 이상), ackInputSeq - 받는 사람의 마지막 처리 입력 순번, self - 받는 사람의 자기 블록.
+        // 출력: 반환값 없음. packet의 5..8바이트와 13..26바이트가 바뀐다.
         // packet is the whole written snapshot, starting with its PacketId byte.
         public static void PatchRecipient(Span<byte> packet, uint ackInputSeq, in SnapshotSelf self)
         {
@@ -171,6 +193,9 @@ namespace ProjectH.Shared.Protocol
         public byte ModeTicks;
         public byte EnergyDelayTicks;
 
+        // 기능: 자기 블록(체력, 실드, 무기 칸+도구, 탄창, 재장전 잔여, 에너지, 수평 속도 고정소수점, 모드·에너지 지연 Tick)을 쓴다.
+        // 입력: writer - 쓸 곳, s - 받는 사람 자신의 상태.
+        // 출력: 반환값 없음. writer에 Size(14)바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in SnapshotSelf s)
         {
             writer.WriteByte(s.Health);
@@ -185,6 +210,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte(s.EnergyDelayTicks);
         }
 
+        // 기능: 자기 블록 14바이트를 읽는다.
+        // 입력: reader - 블록이 시작되는 곳, s - 결과.
+        // 출력: 성공하면 true와 상태. 짧거나, 에너지가 MaxEnergyHundredths를 넘거나, 도구 비트가 Build보다 크면 false.
         public static bool TryRead(ref PacketReader reader, out SnapshotSelf s)
         {
             s = default;
@@ -257,6 +285,9 @@ namespace ProjectH.Shared.Protocol
             }
         }
 
+        // 기능: 엔티티 플래그 바이트를 만든다(bit 0 생존, 1-3 이동 모드, 4 질주, 5 탈진, 6-7 도구).
+        // 입력: alive - 살아 있는지, mode - 이동 모드, sprinting - 질주 중인지, exhausted - 탈진했는지, tool - 손에 든 도구(기본 Weapon).
+        // 출력: 조합된 플래그 바이트.
         public static byte MakeFlags(bool alive, MovementMode mode, bool sprinting, bool exhausted, ToolKind tool = ToolKind.Weapon)
         {
             int flags = ((int)mode << ModeShift) & ModeMask;
@@ -267,6 +298,9 @@ namespace ProjectH.Shared.Protocol
             return (byte)flags;
         }
 
+        // 기능: 엔티티 하나(id, 위치·VelocityY 고정소수점, Yaw 16비트, 플래그)를 양자화해 쓴다.
+        // 입력: writer - 쓸 곳, e - 엔티티 상태.
+        // 출력: 반환값 없음. writer에 Size(13)바이트가 쓰인다.
         public static void Write(ref PacketWriter writer, in SnapshotEntity e)
         {
             writer.WriteUInt16(e.EntityId);
@@ -278,6 +312,9 @@ namespace ProjectH.Shared.Protocol
             writer.WriteByte(e.Flags);
         }
 
+        // 기능: 엔티티 하나 13바이트를 읽어 양자화를 되돌린다.
+        // 입력: reader - 엔티티 기록이 시작되는 곳, e - 결과.
+        // 출력: 13바이트가 있으면 true와 엔티티(값 검사는 없다), 짧으면 false.
         public static bool TryRead(ref PacketReader reader, out SnapshotEntity e)
         {
             e = default;
@@ -295,9 +332,15 @@ namespace ProjectH.Shared.Protocol
             return true;
         }
 
+        // 기능: 값을 고정소수점으로 왕복시켜 받는 쪽이 읽게 될 값으로 맞춘다.
+        // 입력: value - 미터 또는 m/s 값.
+        // 출력: 1/256 단위로 양자화된 값.
         // What the receiver will read back for this value (used by tests).
         public static float Quantize(float value) => FromFixed(ToFixed(value));
 
+        // 기능: 값을 부호 있는 16비트 고정소수점(1/256)으로 바꾼다(범위 밖은 끝값으로 자르고, NaN·Infinity는 0).
+        // 입력: value - 미터 또는 m/s 값.
+        // 출력: 보낼 16비트 값(short 비트를 ushort로 담은 것).
         // Signed 16-bit fixed point (1/256), clamped; non-finite is 0. Also the self block's horizontal velocity.
         internal static ushort ToFixed(float value)
         {
@@ -308,8 +351,14 @@ namespace ProjectH.Shared.Protocol
             return unchecked((ushort)(short)scaled);
         }
 
+        // 기능: 16비트 고정소수점(1/256)을 float로 되돌린다.
+        // 입력: raw - 받은 16비트 값.
+        // 출력: 미터 또는 m/s 값.
         internal static float FromFixed(ushort raw) => unchecked((short)raw) / FixedScale;
 
+        // 기능: Yaw(도)를 0..360을 16비트에 나눈 값으로 바꾼다(음수는 360을 더해 정규화, NaN·Infinity는 0).
+        // 입력: yaw - 도 단위 Yaw.
+        // 출력: 보낼 16비트 Yaw.
         private static ushort ToYaw(float yaw)
         {
             if (float.IsNaN(yaw) || float.IsInfinity(yaw)) return 0;

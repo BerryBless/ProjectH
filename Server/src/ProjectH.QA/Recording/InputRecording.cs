@@ -32,6 +32,9 @@ public sealed class InputRecording
 
     public double Seconds => SimHz > 0 ? (double)Inputs.Length / SimHz : 0;
 
+    // 기능: 녹화 파일의 존재·크기(0 또는 MaxFileBytes 초과)를 확인한 뒤 UTF-8로 열어 Read로 파싱한다.
+    // 입력: path - -qaRecord JSON Lines 파일 경로.
+    // 출력: 검증된 InputRecording. 파일이 없거나 비었거나 너무 크거나 형식이 틀리면 RecordingException.
     public static InputRecording Load(string path)
     {
         var info = new FileInfo(path);
@@ -86,6 +89,9 @@ public sealed class InputRecording
         return new InputRecording { SimHz = simHz, DevPlayerId = devPlayerId, Inputs = inputs.ToArray(), UnknownButtonLines = unknownButtons };
     }
 
+    // 기능: 1행 헤더({"type":"header","version":1,"simHz":N,"devPlayerId"?})를 검증해 시뮬레이션 Hz와 개발 플레이어 ID를 읽는다.
+    // 입력: line - 헤더 줄 텍스트.
+    // 출력: simHz와 devPlayerId(없으면 null, 64자로 자름). 헤더가 아니거나 버전·Hz가 맞지 않으면 RecordingException.
     private static (int SimHz, string? DevPlayerId) ReadHeader(string line)
     {
         JsonElement o = ParseObject(line, 1);
@@ -99,6 +105,9 @@ public sealed class InputRecording
         return ((int)hz, id);
     }
 
+    // 기능: 한 줄을 MaxLineChars까지만 읽는다(초과하면 끝까지 읽지 않고 거부).
+    // 입력: reader - 녹화 텍스트, lineNumber - 오류 메시지용 줄 번호.
+    // 출력: CR을 뗀 한 줄. 파일 끝이면 null. 너무 길면 RecordingException.
     // Bounded line read: a line longer than MaxLineChars is refused without reading it whole.
     private static string? ReadLine(TextReader reader, int lineNumber)
     {
@@ -113,6 +122,9 @@ public sealed class InputRecording
         }
     }
 
+    // 기능: 한 줄을 깊이 4 이하의 JSON 객체로 파싱한다.
+    // 입력: line - 줄 텍스트, lineNumber - 오류 메시지용 줄 번호.
+    // 출력: 복제된 JSON 객체. 객체가 아니거나 JSON이 깨졌으면 RecordingException.
     private static JsonElement ParseObject(string line, int lineNumber)
     {
         try
@@ -127,6 +139,9 @@ public sealed class InputRecording
         }
     }
 
+    // 기능: 객체의 숫자 필드를 읽어 유한하고 범위 안인지 검사한다.
+    // 입력: o - JSON 객체, name - 필드 이름, lineNumber - 오류 메시지용 줄 번호, min - 최소값, max - 최대값.
+    // 출력: 필드 값. 숫자가 아니거나 범위 밖이면 RecordingException.
     private static double Number(JsonElement o, string name, int lineNumber, double min, double max)
     {
         if (JsonPath.Child(o, name) is not { ValueKind: JsonValueKind.Number } v || !v.TryGetDouble(out double d))
@@ -139,5 +154,8 @@ public sealed class InputRecording
 
 public sealed class RecordingException : Exception
 {
+    // 기능: 녹화 파일 형식 오류 예외를 만든다.
+    // 입력: message - 줄 번호가 포함된 오류 설명.
+    // 출력: 그 메시지를 가진 예외.
     public RecordingException(string message) : base(message) { }
 }

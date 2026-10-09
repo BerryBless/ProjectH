@@ -317,6 +317,9 @@ public sealed class GameLoopPeerTests
         private readonly List<NetManager> _clients = new();
         private readonly List<NetPeer> _connected = new();
 
+        // 기능: 게임과 같은 채널 수의 LiteNetLib 서버를 포트 0에 띄우고 모든 연결 요청을 받아들이게 한다.
+        // 입력: mtuOverride - 강제할 MTU(0 = 자동).
+        // 출력: 연결을 받을 준비가 된 PeerHost(Dispose가 닫는다).
         public PeerHost(int mtuOverride = 0)
         {
             // The game's channels, like GameLoop's own NetManager (the loop asks the peers for their channel-1 queue).
@@ -326,6 +329,9 @@ public sealed class GameLoopPeerTests
             _server.Start(0);
         }
 
+        // 기능: Client NetManager 하나를 새로 만들어 서버에 연결시키고 연결이 맺어질 때까지(최대 3초) 양쪽을 Poll한다.
+        // 입력: 없음.
+        // 출력: 서버 쪽의 연결된 NetPeer. 3초 안에 연결되지 않으면 테스트가 실패한다.
         public NetPeer AcceptPeer()
         {
             var client = new NetManager(new EventBasedNetListener(), null) { ChannelsCount = ProtocolConstants.ChannelCount };
@@ -345,6 +351,9 @@ public sealed class GameLoopPeerTests
             return _connected[^1];
         }
 
+        // 기능: 만든 Client들과 서버 NetManager를 모두 멈춘다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 소켓이 모두 닫힌다.
         public void Dispose()
         {
             foreach (var client in _clients) client.Stop();

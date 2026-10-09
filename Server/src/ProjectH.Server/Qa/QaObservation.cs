@@ -35,6 +35,9 @@ internal sealed class QaMetrics
     private int _secCount;
     private int _ticksToSample;
 
+    // 기능: 측정 Ring을 만든다(MetricsWindowSeconds × simHz 칸).
+    // 입력: simHz - Tick 속도(초 표본의 주기).
+    // 출력: 비어 있는 QaMetrics.
     public QaMetrics(int simHz)
     {
         _simHz = simHz;
@@ -46,6 +49,9 @@ internal sealed class QaMetrics
 
     public int Count => _count;
 
+    // 기능: 한 Tick의 길이와 그 안의 QA 시간을 Ring에 기록한다.
+    // 입력: tickMs - Tick 길이(ms), qaMs - 그 Tick의 QA 작업 시간(ms).
+    // 출력: 반환값 없음. 가득이면 가장 오래된 표본이 덮어쓰인다.
     public void Record(double tickMs, double qaMs)
     {
         _tickMs[_next] = tickMs;
@@ -54,6 +60,9 @@ internal sealed class QaMetrics
         if (_count < _tickMs.Length) _count++;
     }
 
+    // 기능: SimHz Tick마다 한 번 시각·패킷 합계·프로세스 CPU 시간을 초 단위 Ring에 기록한다.
+    // 입력: net - 지금까지의 패킷·바이트 합계.
+    // 출력: 반환값 없음. 표본 차례가 아니면 아무 일도 없다.
     // Every tick; samples once per second of ticks.
     public void SampleSecond(QaNetTotals net)
     {
@@ -66,6 +75,9 @@ internal sealed class QaMetrics
         if (_secCount < SecondSlots) _secCount++;
     }
 
+    // 기능: 창 안의 Tick 백분위·QA 시간과, 창 안 가장 오래된 초 표본 대비 패킷·바이트·CPU 속도를 계산한다.
+    // 입력: windowSeconds - 창(초), net - 지금의 패킷·바이트 합계.
+    // 출력: QaTickMetrics(표본이 없으면 0들).
     public QaTickMetrics Snapshot(int windowSeconds, QaNetTotals net)
     {
         int n = Math.Min(_count, windowSeconds * _simHz);
@@ -118,12 +130,18 @@ internal sealed class QaMetrics
         return new QaTickMetrics(windowSeconds, n, p50, p95, p99, max, qaMean, qaP99, qaMax, seconds, pktIn, pktOut, cpu, bytesIn, bytesOut);
     }
 
+    // 기능: Ring의 최신 n개 표본을 _scratch로 복사한다.
+    // 입력: ring - 복사할 Ring, n - 표본 수.
+    // 출력: 반환값 없음. _scratch[0..n)이 채워진다.
     private void Copy(double[] ring, int n)
     {
         // The newest n samples, in any order (they are sorted next).
         for (int i = 0; i < n; i++) _scratch[i] = ring[(_next - 1 - i + ring.Length) % ring.Length];
     }
 
+    // 기능: 정렬된 _scratch에서 최근접 순위 백분위를 읽는다.
+    // 입력: n - 정렬된 표본 수, fraction - 백분위(0~1).
+    // 출력: 해당 백분위 값.
     // Nearest rank, as TickMetrics.
     private double Percentile(int n, double fraction)
     {
@@ -177,6 +195,9 @@ internal sealed class QaEvents
     // Overwritten since the start.
     public long DroppedTotal => _nextSeq - 1 - _count;
 
+    // 기능: 사건 하나를 Ring에 넣는다(가득이면 가장 오래된 것을 덮는다).
+    // 입력: tick - 사건의 서버 Tick, type - 사건 이름, player - 대상 DevPlayerId(없으면 null), data - 추가 값.
+    // 출력: 반환값 없음. 순번이 하나 늘어난다.
     public void Add(uint tick, string type, string? player, IReadOnlyDictionary<string, object?>? data = null)
     {
         _ring[(_nextSeq - 1) % _ring.Length] = new QaEvent(_nextSeq, tick, DateTime.UtcNow, type, player, data);
@@ -184,6 +205,9 @@ internal sealed class QaEvents
         if (_count < _ring.Length) _count++;
     }
 
+    // 기능: 순번 after 다음부터의 사건을 최대 max개 돌려준다(GET /qa/events).
+    // 입력: after - 마지막으로 받은 순번(제외, 음수는 0), max - 최대 개수.
+    // 출력: 익명 객체(next, oldest, latest, dropped, droppedTotal, events).
     // after is exclusive. next = the last returned seq (or after when nothing came), to be passed back as after. missed =
     // events after `after` that were already overwritten.
     public object Query(long after, int max)

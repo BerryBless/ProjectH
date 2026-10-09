@@ -147,6 +147,9 @@ public sealed class BotView
     public readonly BuildResult[] RecentBuildResults = new BuildResult[RecentBuildResultCount];
     public long BuildResultCount;
 
+    // 기능: 받은 BuildResult를 최근 Ring에 넣는다(QA 도구가 읽는다).
+    // 입력: result - 받은 건설 결과.
+    // 출력: 반환값 없음. RecentBuildResults의 다음 칸이 덮이고 BuildResultCount가 는다.
     public void AddBuildResult(in BuildResult result)
     {
         RecentBuildResults[BuildResultCount % RecentBuildResultCount] = result;
@@ -206,7 +209,9 @@ public sealed class BotView
         PieceVersion++;
     }
 
-    // The other player with this entity id in the latest snapshot.
+    // 기능: 최신 Snapshot의 다른 플레이어 중 Entity id가 같은 것을 찾는다.
+    // 입력: id - Entity id, entity - 찾은 Entity를 받을 곳.
+    // 출력: 있으면 true와 그 Entity, 없으면 false.
     public bool TryGetOther(ushort id, out SnapshotEntity entity)
     {
         for (int i = 0; i < OtherCount; i++)
@@ -238,6 +243,9 @@ public sealed class BotView
     // Phase 7 D4 rule 2: the dev sandbox (no MatchState ever) is always "in a match".
     public bool InMatch => !HasMatchState || Match.State == MatchFlowState.Playing || Match.State == MatchFlowState.FinalPhase;
 
+    // 기능: Snapshot 머리를 반영한다(Tick, Ack, 자기 상태). 새 Tick의 첫 패킷이면 다른 플레이어 목록을 비운다(같은 Tick의 뒤 패킷은 이어 붙인다).
+    // 입력: header - 받은 Snapshot 머리.
+    // 출력: 반환값 없음. HasSnapshot·ServerTick·AckInputSeq·Self가 갱신된다.
     // Phase 8: a snapshot can come in several packets of the same tick. The first packet of a new tick starts the list
     // of others over; later packets of that tick add to it.
     public void ApplySnapshot(in WorldSnapshotHeader header)
@@ -249,7 +257,9 @@ public sealed class BotView
         Self = header.Self;
     }
 
-    // One entity of the snapshot just applied. Our own entity sets our position and life; the rest are others.
+    // 기능: 방금 반영한 Snapshot의 Entity 하나를 넣는다. 자기 Entity면 위치·생존·이동 모드를, 아니면 다른 플레이어 목록에 더한다(상한까지).
+    // 입력: entity - Snapshot의 Entity.
+    // 출력: 반환값 없음.
     public void ApplyEntity(in SnapshotEntity entity)
     {
         if (entity.EntityId == MyId)
@@ -262,18 +272,27 @@ public sealed class BotView
         if (OtherCount < Others.Length) Others[OtherCount++] = entity;
     }
 
+    // 기능: 바닥 아이템을 기억하거나 갱신한다(MaxItems까지; 이미 아는 id는 항상 갱신).
+    // 입력: item - 받은 아이템.
+    // 출력: 반환값 없음. Items가 갱신된다(가득 찬 상태의 새 id는 버린다).
     public void ApplyItem(in WorldItemData item)
     {
         // Bounded like the server's store; an id already known is an update and always fits.
         if (Items.Count < MaxItems || Items.ContainsKey(item.ItemId)) Items[item.ItemId] = item;
     }
 
+    // 기능: PlayerDied를 반영한다(누구의 죽음이든 세고, 자기면 Alive = false).
+    // 입력: died - 받은 죽음 사건.
+    // 출력: 반환값 없음.
     public void ApplyDeath(in PlayerDied died)
     {
         DeathsSeen++;
         if (died.VictimId == MyId) Alive = false;
     }
 
+    // 기능: PlayerRespawned를 반영한다(자기 것만: 살아나고 위치·이동 모드를 받는다).
+    // 입력: respawned - 받은 부활 사건.
+    // 출력: 반환값 없음.
     public void ApplyRespawn(in PlayerRespawned respawned)
     {
         if (respawned.EntityId != MyId) return;
@@ -282,7 +301,9 @@ public sealed class BotView
         MyMode = respawned.Mode;
     }
 
-    // The weapon in a slot, or null when the slot is empty or the catalog has not arrived.
+    // 기능: 인벤토리 칸의 무기 카탈로그 항목을 찾는다.
+    // 입력: slot - 무기 칸(0부터).
+    // 출력: 항목, 칸이 비었거나 인벤토리·카탈로그가 아직 없으면 null.
     public WeaponInfo? WeaponInSlot(int slot)
     {
         if (!HasInventory || Weapons == null) return null;

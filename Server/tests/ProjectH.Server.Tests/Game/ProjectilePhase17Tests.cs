@@ -45,14 +45,29 @@ public class ProjectilePhase17Tests
         Assert.True(condition(), "condition not reached");
     }
 
-    // 기능: 보낸 투사체·전투 패킷의 본문을 읽는다(읽기 실패면 테스트 실패).
-    // 입력: sent - 보낸 패킷.
-    // 출력: 읽은 값.
+    // 기능: 보낸 패킷의 본문을 ProjectileSpawned로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: sent - 하네스가 기록한 송신 패킷.
+    // 출력: 읽은 ProjectileSpawned.
     private static ProjectileSpawned Spawned(SandboxHarness.Sent sent) { PacketReader r = SandboxHarness.Body(sent); Assert.True(ProjectileSpawned.TryRead(ref r, out var v)); return v; }
+    // 기능: 보낸 패킷의 본문을 ProjectileState로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: sent - 하네스가 기록한 송신 패킷.
+    // 출력: 읽은 ProjectileState.
     private static ProjectileState State(SandboxHarness.Sent sent) { PacketReader r = SandboxHarness.Body(sent); Assert.True(ProjectileState.TryRead(ref r, out var v)); return v; }
+    // 기능: 보낸 패킷의 본문을 ProjectileExploded로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: sent - 하네스가 기록한 송신 패킷.
+    // 출력: 읽은 ProjectileExploded.
     private static ProjectileExploded Exploded(SandboxHarness.Sent sent) { PacketReader r = SandboxHarness.Body(sent); Assert.True(ProjectileExploded.TryRead(ref r, out var v)); return v; }
+    // 기능: 보낸 패킷의 본문을 PlayerDied로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: sent - 하네스가 기록한 송신 패킷.
+    // 출력: 읽은 PlayerDied.
     private static PlayerDied Died(SandboxHarness.Sent sent) { PacketReader r = SandboxHarness.Body(sent); Assert.True(PlayerDied.TryRead(ref r, out var v)); return v; }
+    // 기능: 보낸 패킷의 본문을 HitConfirmed로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: sent - 하네스가 기록한 송신 패킷.
+    // 출력: 읽은 HitConfirmed.
     private static HitConfirmed Hit(SandboxHarness.Sent sent) { PacketReader r = SandboxHarness.Body(sent); Assert.True(HitConfirmed.TryRead(ref r, out var v)); return v; }
+    // 기능: 보낸 패킷의 본문을 DamageTaken으로 읽는다. 읽기에 실패하면 테스트를 실패시킨다.
+    // 입력: sent - 하네스가 기록한 송신 패킷.
+    // 출력: 읽은 DamageTaken.
     private static DamageTaken Taken(SandboxHarness.Sent sent) { PacketReader r = SandboxHarness.Body(sent); Assert.True(DamageTaken.TryRead(ref r, out var v)); return v; }
 
     // ---- pure motion and surfaces ----
@@ -447,6 +462,9 @@ public class ProjectilePhase17Tests
         for (int i = 0; i < 160; i++) match.Tick();
         for (int x = 14; x < 19; x++) SandboxHarness.AddPiece(match, new BuildPieceShape(BuildPieceType.Wall, x, 0, 16, 0));
         uint seq = 0;
+        // 기능: a의 눈에서 at을 겨냥한 채 버튼을 누른 입력(ViewTick = 현재 Tick)을 Peer 1로 넣고 한 Tick 돌린다.
+        // 입력: buttons - 누를 버튼, at - 겨냥할 월드 지점.
+        // 출력: 반환값 없음. 바깥 seq가 1 늘고 Match가 한 Tick 진행된다.
         void Input(InputButtons buttons, Vector3 at)
         {
             TestAim.YawPitch(a.State.Position, at, out float yaw, out float pitch);

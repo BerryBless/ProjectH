@@ -140,11 +140,17 @@ namespace ProjectH.Client.Game
             return false;
         }
 
+        // 기능: 원격 플레이어 하나를 없앤다(PlayerDespawned). 모르는 id면 아무것도 하지 않는다.
+        // 입력: entityId - 플레이어 id.
+        // 출력: 반환값 없음. 항목이 지워지고 뷰가 파괴된다.
         public void Despawn(ushort entityId)
         {
             if (_entries.Remove(entityId, out Entry entry)) entry.View.Destroy();
         }
 
+        // 기능: Snapshot 항목 하나를 그 플레이어의 보간기에 넣고 생존 비트를 따라간다. 죽음→생존이면 재투입이므로 옛 표본을 비운다. 모르는 id면 아무것도 하지 않는다.
+        // 입력: tick - Snapshot의 서버 Tick, entity - 그 플레이어의 Snapshot 항목.
+        // 출력: 반환값 없음. 보간기에 표본이 들어가고, 생존이 바뀌면 Alive와 뷰의 생존 표시가 바뀐다.
         public void Push(uint tick, in SnapshotEntity entity)
         {
             if (!_entries.TryGetValue(entity.EntityId, out Entry entry)) return;
@@ -188,8 +194,9 @@ namespace ProjectH.Client.Game
             }
         }
 
-        // Phase 5 D5 (spectating): the entity ids of the living remote players, written into buffer; returns how
-        // many. Alive comes from the snapshot flags. No allocation (struct enumerator).
+        // 기능: 살아 있는(Snapshot 비트) 원격 플레이어의 Entity id를 버퍼에 쓴다(Phase 5 D5: 관전).
+        // 입력: buffer - 결과를 쓸 고정 배열(가득 차면 나머지는 쓰지 않는다).
+        // 출력: 쓴 수. 할당 없음(구조체 열거자).
         public int CollectAlive(ushort[] buffer)
         {
             int count = 0;
@@ -201,21 +208,27 @@ namespace ProjectH.Client.Game
             return count;
         }
 
-        // Phase 5: PlayerRespawned for a remote player (match start and round reset are alive -> alive, so the
-        // snapshot flag does not flip): drop its pre-teleport samples so the view snaps instead of sliding.
-        // Alive and the view stay with the snapshot flags. Unknown id: nothing.
+        // 기능: 원격 플레이어의 PlayerRespawned(Phase 5)로 순간이동 전 표본을 버려 뷰가 미끄러지지 않고 튀게 한다. 생존 비트와 뷰는 Snapshot을 따르고, 모르는 id면 아무것도 하지 않는다.
+        // 입력: entityId - 플레이어 id, to - 재투입 위치.
+        // 출력: 반환값 없음. 그 플레이어 보간기의 옛 표본이 지워진다.
+        // Phase 5: match start and round reset are alive -> alive, so the snapshot flag does not flip.
         public void Teleport(ushort entityId, Vector3 to)
         {
             if (_entries.TryGetValue(entityId, out Entry entry)) entry.Interpolator.Teleport(to);
         }
 
-        // Where a remote player's feet are drawn at renderTick (the same interpolation as its view).
+        // 기능: 원격 플레이어의 발이 renderTick에 그려지는 위치를 구한다(뷰와 같은 보간).
+        // 입력: entityId - 플레이어 id, renderTick - 렌더 Tick, feet - 그려지는 발 위치.
+        // 출력: 알고 있고 표본이 있으면 true와 발 위치, 아니면 false.
         public bool TryGetFeet(ushort entityId, double renderTick, out Vector3 feet)
         {
             feet = default;
             return _entries.TryGetValue(entityId, out Entry entry) && entry.Interpolator.TrySample(renderTick, out feet, out _);
         }
 
+        // 기능: 모든 원격 플레이어를 없앤다(연결 끊김·파괴).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 모든 뷰가 파괴되고 표가 빈다.
         public void Clear()
         {
             foreach (var pair in _entries) pair.Value.View.Destroy();

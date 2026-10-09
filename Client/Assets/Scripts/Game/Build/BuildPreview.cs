@@ -31,6 +31,9 @@ namespace ProjectH.Client.Game
         private int _shownType = -1;
         private int _pendingVersion = -1;
 
+        // 기능: 종류별 후보 유령 4개와 대기 배치 유령 MaxPending개, 반투명 Material 4개를 만든다(모두 숨긴 채).
+        // 입력: meshes - 공유 Mesh(이 객체보다 오래 산다), fallback - Sprites/Default가 없을 때 쓸 불투명 Material.
+        // 출력: 숨겨진 미리보기(Dispose가 Object와 Material을 파괴한다).
         public BuildPreview(PieceMeshes meshes, Material fallback)
         {
             _meshes = meshes;
@@ -50,6 +53,9 @@ namespace ProjectH.Client.Game
                 _pendingBodies[i] = CreateGhost("Pending", meshes.Box, _pendingMaterial, out _pendingRoots[i], out _pendingFilters[i]);
         }
 
+        // 기능: 후보 유령을 이번 프레임의 후보 자리·판정 색으로 놓고, 대기 배치가 바뀐 프레임에만 대기 유령을 다시 놓는다.
+        // 입력: build - 배치 컨트롤러(후보, 판정, 대기 배치).
+        // 출력: 반환값 없음. 후보가 없으면 후보 유령을 숨긴다. 할당 없음.
         public void Update(BuildController build)
         {
             if (_root == null) return;
@@ -81,6 +87,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: 후보·대기 유령을 모두 숨긴다(건설 모드를 나가거나 경기 상태를 비울 때).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 다음 Update가 대기 유령을 다시 놓는다.
         public void HideAll()
         {
             if (_root == null) return;
@@ -90,6 +99,9 @@ namespace ProjectH.Client.Game
             _pendingVersion = -1;
         }
 
+        // 기능: 유령 Object와 Material을 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);
@@ -100,6 +112,9 @@ namespace ProjectH.Client.Game
             if (_pendingMaterial != null) Object.Destroy(_pendingMaterial);
         }
 
+        // 기능: 루트와 몸체(그림자 없는 MeshRenderer) 두 단으로 된 유령 하나를 꺼진 채 만든다(Collider 없음).
+        // 입력: name - 루트 이름, mesh - 몸체 Mesh, material - 몸체 Material, root - 만든 루트 Transform, filter - 몸체 MeshFilter.
+        // 출력: 몸체 Transform.
         private Transform CreateGhost(string name, Mesh mesh, Material material, out Transform root, out MeshFilter filter)
         {
             var go = new GameObject(name);
@@ -117,6 +132,9 @@ namespace ProjectH.Client.Game
             return body.transform;
         }
 
+        // 기능: 반투명 Material을 만든다(Sprites/Default가 빌드에 없으면 경고 한 번 뒤 불투명 대체 Material).
+        // 입력: sprite - Sprites/Default Shader(null 가능), fallback - 대체 원본, color - 색.
+        // 출력: 새 Material(Dispose에서 파괴한다).
         private static Material Make(Shader sprite, Material fallback, Color color)
         {
             if (sprite == null && !_warnedNoSprite)

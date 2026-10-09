@@ -18,6 +18,9 @@ namespace ProjectH.Shared.Simulation
 
         public uint EndTick => StartTick + DurationTicks;
 
+        // 기능: 어떤 서버 Tick(소수 가능)에 수송기가 있는 위치를 낸다. StartTick..EndTick 사이는 직선 보간, 밖은 양 끝에 고정.
+        // 입력: tick - 서버 Tick(NaN이면 시작점).
+        // 출력: 고도 Altitude의 수송기 위치. DurationTicks가 0이면 항상 끝점.
         // Where the transport is at a (fractional) server tick: StartTick..EndTick along the line, held at the ends.
         public Vector3 PositionAt(double tick)
         {
@@ -28,6 +31,9 @@ namespace ProjectH.Shared.Simulation
             return new Vector3(StartX + (EndX - StartX) * s, Altitude, StartZ + (EndZ - StartZ) * s);
         }
 
+        // 기능: 수송기가 외벽에서 TransportJumpMargin 이상 안쪽에 있는 Tick 구간(점프 창)을 낸다(D5).
+        // 입력: first - 점프가 허용되는 첫 Tick, last - 아직 타고 있으면 강제로 떨어지는 Tick.
+        // 출력: 반환값 없음. first·last가 채워진다. 그 사각형에 한 번도 들어오지 않거나 DurationTicks가 0이면 둘 다 EndTick.
         // D5: the ticks while the transport is at least TransportJumpMargin inside the outer walls. A jump counts only
         // from first on; whoever is still aboard at last is dropped. A route that never enters that square (only a
         // broken route can) gives first = last = EndTick.
@@ -49,6 +55,9 @@ namespace ProjectH.Shared.Simulation
             if (last < first) last = first;
         }
 
+        // 기능: 한 축에서 start + delta * t가 ±limit 안에 드는 t 구간으로 [enter, leave]를 좁힌다.
+        // 입력: start - 축의 시작 좌표, delta - 축의 이동량, limit - 허용 반폭, enter·leave - 좁힐 경로 비율 구간.
+        // 출력: 반환값 없음. enter·leave가 좁혀진다. 움직임이 없고 밖에 있으면 enter = 2(절대 안 들어옴).
         // Narrows [enter, leave] (fractions of the route) to where start + delta * t is within +-limit.
         private static void Clip(float start, float delta, float limit, ref double enter, ref double leave)
         {
@@ -74,6 +83,10 @@ namespace ProjectH.Shared.Simulation
     // MovementSimulation.Step, with the server tick that input is simulated at.
     public static class DropTransport
     {
+        // 기능: Transport 모드의 캐릭터를 그 Tick의 경로 위치에 두고 시선만 돌린다. 점프 창 안의 점프 입력 또는 창의 끝이면
+        //   속도 0으로 그 자리에서 Freefall로 바꾼다(낙하는 다음 Tick의 Step부터. 같은 입력이 글라이더까지 열지 않는다).
+        // 입력: state - 이동 상태, input - 이번 Tick 입력(Yaw·Jump), route - 수송기 경로, tick - 시뮬레이션할 서버 Tick.
+        // 출력: 타고 있었으면 true(위치·속도·Yaw, 필요하면 Mode가 바뀐다). Transport 모드가 아니면 false이고 아무것도 바꾸지 않는다.
         // Places a rider on the route at tick and lets it look around. A jump press inside the jump window, or the end of
         // the window, drops it into Freefall right there with no velocity; the fall starts with the next tick's Step, so
         // the same press does not also open the glider. Returns false (and does nothing) when the character is not riding.

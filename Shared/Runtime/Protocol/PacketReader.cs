@@ -13,6 +13,9 @@ namespace ProjectH.Shared.Protocol
         private readonly ReadOnlySpan<byte> _data;
         private int _position;
 
+        // 기능: 받은 바이트 위에서 읽기 위치 0으로 시작하는 Reader를 만든다.
+        // 입력: data - 읽을 바이트(복사하지 않고 참조한다).
+        // 출력: 처음부터 읽을 준비가 된 PacketReader.
         public PacketReader(ReadOnlySpan<byte> data)
         {
             _data = data;
@@ -21,6 +24,9 @@ namespace ProjectH.Shared.Protocol
 
         public int Remaining => _data.Length - _position;
 
+        // 기능: 1바이트를 읽고 읽기 위치를 1 옮긴다.
+        // 입력: value - 읽은 바이트를 받을 변수.
+        // 출력: 남은 바이트가 있으면 true와 값, 없으면 false와 0(위치는 그대로).
         public bool TryReadByte(out byte value)
         {
             if (Remaining < 1)
@@ -33,6 +39,9 @@ namespace ProjectH.Shared.Protocol
             return true;
         }
 
+        // 기능: Little-endian uint16 2바이트를 읽고 읽기 위치를 2 옮긴다.
+        // 입력: value - 읽은 값을 받을 변수.
+        // 출력: 남은 바이트가 2 이상이면 true와 값, 아니면 false와 0(위치는 그대로).
         public bool TryReadUInt16(out ushort value)
         {
             if (Remaining < 2)
@@ -45,6 +54,9 @@ namespace ProjectH.Shared.Protocol
             return true;
         }
 
+        // 기능: Little-endian uint32 4바이트를 읽고 읽기 위치를 4 옮긴다.
+        // 입력: value - 읽은 값을 받을 변수.
+        // 출력: 남은 바이트가 4 이상이면 true와 값, 아니면 false와 0(위치는 그대로).
         public bool TryReadUInt32(out uint value)
         {
             if (Remaining < 4)
@@ -57,6 +69,9 @@ namespace ProjectH.Shared.Protocol
             return true;
         }
 
+        // 기능: Little-endian float 4바이트를 비트 그대로 읽고 읽기 위치를 4 옮긴다.
+        // 입력: value - 읽은 값을 받을 변수.
+        // 출력: 남은 바이트가 4 이상이면 true와 값, 아니면 false와 0(위치는 그대로).
         public bool TryReadSingle(out float value)
         {
             if (!TryReadUInt32(out uint bits))
@@ -68,6 +83,9 @@ namespace ProjectH.Shared.Protocol
             return true;
         }
 
+        // 기능: float 세 개(X, Y, Z) 12바이트를 읽어 Vector3로 만들고 읽기 위치를 12 옮긴다.
+        // 입력: value - 읽은 벡터를 받을 변수.
+        // 출력: 남은 바이트가 12 이상이면 true와 벡터, 아니면 false와 default(위치는 그대로).
         public bool TryReadVector3(out Vector3 value)
         {
             if (Remaining < 12)
@@ -93,6 +111,9 @@ namespace ProjectH.Shared.Protocol
             return true;
         }
 
+        // 기능: 1바이트 길이 접두사 뒤의 UTF-8 바이트를 문자열로 읽는다(잘못된 바이트는 U+FFFD로 대체).
+        // 입력: maxBytes - 허용하는 최대 바이트 길이, value - 읽은 문자열을 받을 변수.
+        // 출력: 길이가 maxBytes 이하이고 바이트가 충분하면 true와 문자열, 아니면 false와 null(길이 바이트는 이미 소비됨).
         // Allocates the string: only used at connect time, never on the per-tick path.
         public bool TryReadString(int maxBytes, out string value)
         {

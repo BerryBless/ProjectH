@@ -39,9 +39,15 @@ public sealed class StepResult
     public string? Actual { get; set; }
     public bool ContinueOnFailure { get; init; }
 
+    // 기능: 단계 결과를 콘솔 한 줄로 만든다.
+    // 입력: 없음.
+    // 출력: "번호 제목 상태 소요ms" 형식의 문자열.
     // Request §101: "01 Connect playerA PASS 121 ms".
     public string Line() => $"{Index + 1:00} {Title} {StatusWord(Status)} {DurationMs} ms";
 
+    // 기능: 단계 상태를 표시 단어로 바꾼다.
+    // 입력: s - 단계 상태.
+    // 출력: PASS / FAIL / ERROR / CANCELLED / PENDING / RUNNING, 그 외(Skipped)는 SKIPPED.
     public static string StatusWord(StepStatus s) => s switch
     {
         StepStatus.Passed => "PASS",
@@ -130,6 +136,9 @@ public sealed class RunReport
     // Stress D37-D41: measure phases, the summary, stalls, a crash (null: no measure step and not a stress scenario).
     public StressReport? Stress { get; set; }
 
+    // 기능: 실행 상태를 프로세스 종료 코드로 바꾼다.
+    // 입력: status - 실행 상태, failOnSkip - Skipped를 실패(1)로 볼지.
+    // 출력: Passed 0, Skipped 0(failOnSkip이면 1), Error 2, 그 외(Failed·Cancelled) 1.
     public static int ExitCodeFor(RunStatus status, bool failOnSkip = false) => status switch
     {
         RunStatus.Passed => 0,

@@ -29,6 +29,9 @@ public sealed class ScenarioRunner
     private readonly Action<StepResult> _onStep;
     private readonly RunnerOptions _options;
 
+    // 기능: 단계 실행기를 만든다.
+    // 입력: registry - Action 목록, control - 단계 전·실패 후 게이트, onStep - 단계가 끝날 때 결과를 받을 콜백, options - UI용 옵션(null이면 기본값).
+    // 출력: RunAsync를 기다리는 실행기.
     public ScenarioRunner(ActionRegistry registry, IRunControl control, Action<StepResult> onStep, RunnerOptions? options = null)
     {
         _registry = registry;
@@ -37,6 +40,9 @@ public sealed class ScenarioRunner
         _options = options ?? new RunnerOptions();
     }
 
+    // 기능: 시나리오 단계를 순서대로 실행한다. 단계마다 게이트를 거치고, 실패하면 continueOnFailure가 아닌 한 나머지를 Skipped로 기록하며, 게이트가 Retry를 주면 같은 단계를 다시 돈다. 어떤 토큰이 취소됐는지로 Cancelled와 Failed를 가른다.
+    // 입력: scenario - 실행할 시나리오, run - 실행 상태, report - 단계 결과·실패·경고를 기록할 보고서, userToken - 사용자 중단 토큰, scenarioToken - userToken + 시나리오 시간 한도.
+    // 출력: 실행 상태(Passed / Failed / Error / Cancelled, 어떤 단계가 나머지를 건너뛰게 했으면 Skipped). 보고서의 Steps·Failure·SkipReason·Warnings가 채워진다.
     // userToken: Stop / Ctrl+C. scenarioToken: userToken + the scenario timeout.
     public async Task<RunStatus> RunAsync(ScenarioDefinition scenario, RunContext run, RunReport report,
         CancellationToken userToken, CancellationToken scenarioToken)
@@ -185,6 +191,9 @@ public sealed class ScenarioRunner
         return status;
     }
 
+    // 기능: Debug Run용으로 단계 전후의 서버 상태(/qa/match, /qa/players)를 보고서에 담는다(MaxDebugSnapshots까지).
+    // 입력: run - 실행 상태, report - 스냅샷을 담을 보고서, step - 대상 단계, when - "before" 또는 "after".
+    // 출력: 반환값 없음. report.DebugSnapshots에 추가된다. 질의 실패는 스냅샷의 Error에만 남는다.
     // D24: best effort, bounded; a failing query is recorded in the snapshot, never fails the step.
     private static async Task SnapshotAsync(RunContext run, RunReport report, StepDefinition step, string when)
     {
@@ -203,6 +212,9 @@ public sealed class ScenarioRunner
         report.DebugSnapshots.Add(snapshot);
     }
 
+    // 기능: 단계 하나를 Handler로 실행하고 결과(상태·메시지·Expected/Actual)를 result에 채운다. 소프트 한도는 Handler가, 하드 한도(+HardGraceMs)는 연결 토큰이 맡으며, 통과한 단계의 saveAs 값을 변수에 저장한다.
+    // 입력: step - 실행할 단계, run - 실행 상태, result - 채울 단계 결과, scenarioToken - 시나리오 취소 토큰.
+    // 출력: 단계가 나머지 시나리오를 건너뛰게 했으면 true, 아니면 false. 모르는 Action·Handler 예외는 Error, 시간 초과·QaStepException·QaApiException은 Failed로 기록된다.
     // Returns true when the step skipped the rest of the scenario.
     private async Task<bool> ExecuteAsync(StepDefinition step, RunContext run, StepResult result, CancellationToken scenarioToken)
     {
@@ -270,6 +282,9 @@ public sealed class ScenarioRunner
         return false;
     }
 
+    // 기능: 단계의 표시 제목을 만든다: description이 있으면 그것, 없으면 "Action 액터 주요 파라미터(40자)".
+    // 입력: step - 단계 정의.
+    // 출력: 제목 문자열.
     public static string Title(StepDefinition step)
     {
         if (!string.IsNullOrWhiteSpace(step.Description)) return step.Description!;

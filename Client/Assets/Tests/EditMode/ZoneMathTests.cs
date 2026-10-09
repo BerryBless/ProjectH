@@ -8,6 +8,9 @@ namespace ProjectH.Client.Tests
     // on the server side for SafeZone (ZoneMathParityTests compiles this ZoneMath and compares it with SafeZone).
     public class ZoneMathTests
     {
+        // 기능: 서버 ZoneMathParityTests와 같은 수치의 시험용 자기장 상태를 만든다(Phase 2, (2,-4) r20 → (6,0) r12, Tick 1000..1360).
+        // 입력: 없음.
+        // 출력: ZoneState.
         private static ZoneState Zone() => new ZoneState
         {
             Phase = 2,

@@ -49,6 +49,9 @@ public sealed class UnityActor : IQaActor, IAsyncDisposable
     private long _lastCommandId;
     private string _closeReason = string.Empty;
 
+    // 기능: Unity 플레이어 액터를 Idle 상태로 만든다(플레이어 프로세스는 connect에서 띄운다).
+    // 입력: alias - 액터 별칭, spec - 액터의 unity 설정(없으면 null), settings - run의 Unity 설정, log - 로그 콜백.
+    // 출력: Idle ActorState를 가진 UnityActor.
     public UnityActor(string alias, UnitySpec? spec, UnitySettings settings, Action<string> log)
     {
         Alias = alias;
@@ -122,9 +125,15 @@ public sealed class UnityActor : IQaActor, IAsyncDisposable
         }
     }
 
+    // 기능: 플레이어에 스크린샷(POST /qa/screenshot)을 요청한다.
+    // 입력: name - 스크린샷 파일 이름, token - 취소 토큰.
+    // 출력: 플레이어의 답(상태 코드 포함). 연결 전이면 QaStepException.
     public async Task<UnityAnswer> ScreenshotAsync(string name, CancellationToken token) =>
         await Client().ScreenshotAsync(name, token).ConfigureAwait(false);
 
+    // 기능: UI 명령(POST /qa/ui)을 보내고 상태를 새로 읽어 게시한다.
+    // 입력: command - UI 명령, token - 취소 토큰.
+    // 출력: 플레이어의 답(상태 코드 포함). 연결 전이면 QaStepException.
     public async Task<UnityAnswer> UiAsync(string command, CancellationToken token)
     {
         UnityAnswer answer = await Client().UiAsync(command, token).ConfigureAwait(false);
@@ -144,6 +153,9 @@ public sealed class UnityActor : IQaActor, IAsyncDisposable
     public async Task<UnityAnswer> ReleaseAllAsync(CancellationToken token) =>
         await Client().ReleaseAllAsync(token).ConfigureAwait(false);
 
+    // 기능: 상태를 한 번 읽어 ActorState를 게시한다(client가 없으면 아무것도 안 하고, 무응답이면 현재 상태를 다시 게시).
+    // 입력: token - 취소 토큰.
+    // 출력: 반환값 없음. State가 갱신된다.
     // One status read now (actions call it so they judge a fresh state, not the last poll).
     // The poll loop and the run flow both refresh: one at a time, so an older answer is never published after a newer
     // one. The semaphore is the only lock here, held across one status request; nothing else is taken inside it.
@@ -168,10 +180,19 @@ public sealed class UnityActor : IQaActor, IAsyncDisposable
         }
     }
 
+    // 기능: run 종료로 연결을 닫는다(CloseAsync).
+    // 입력: 없음.
+    // 출력: 반환값 없음. 띄운 플레이어가 닫히고 Disconnected 상태가 게시된다.
     public async ValueTask DisposeAsync() => await CloseAsync("QA run ended").ConfigureAwait(false);
 
+    // 기능: 연결된 QA client를 돌려준다.
+    // 입력: 없음.
+    // 출력: client. 연결 전이면 QaStepException.
     private UnityQaClient Client() => _client ?? throw new QaStepException($"UnityClient actor '{Alias}' is not connected (connect it first).");
 
+    // 기능: 이전 연결을 닫고, attach면 지정 포트에 붙고 아니면 플레이어를 띄운 뒤, QA 수신기가 ReadyTimeout 안에 답할 때까지 기다리고 상태 poll 루프를 시작한다.
+    // 입력: host·gamePort - 플레이어가 접속할 서버, token - 취소 토큰.
+    // 출력: 반환값 없음. _client·_process·_poll이 설정되고 상태가 게시된다. 플레이어를 띄울 수 없거나 먼저 죽거나 시간을 넘기면 QaStepException.
     private async Task ConnectAsync(string host, int gamePort, CancellationToken token)
     {
         await CloseAsync("replaced by a new connection").ConfigureAwait(false);
@@ -295,6 +316,9 @@ public sealed class UnityActor : IQaActor, IAsyncDisposable
         }
     }
 
+    // 기능: 플레이어 상태 JSON과 프로세스·client 상태로 ActorState를 만들어 게시한다.
+    // 입력: status - /qa/status 본문(없으면 null).
+    // 출력: 반환값 없음. _state가 새 ActorState로 교체된다.
     private void Publish(JsonElement? status)
     {
         bool B(string name) => status != null && JsonPath.Child(status.Value, name) is { ValueKind: JsonValueKind.True };

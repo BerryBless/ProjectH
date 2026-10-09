@@ -7,6 +7,9 @@ namespace ProjectH.Client.Tests
 {
     public class WorldItemListTests
     {
+        // 기능: x = id 위치에 놓인 Light 탄약 시험용 월드 아이템을 만든다.
+        // 입력: id - 아이템 ID(x 좌표로도 쓴다), amount - 수량.
+        // 출력: Ammo 종류의 WorldItemData.
         private static WorldItemData Item(ushort id, ushort amount = 10) => new WorldItemData
         {
             ItemId = id,

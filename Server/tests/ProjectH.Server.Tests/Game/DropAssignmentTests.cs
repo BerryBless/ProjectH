@@ -12,6 +12,9 @@ namespace ProjectH.Server.Tests.Game;
 // Phase 6 D9: the match start spreads the participants over the map's drop points, shuffled by SpawnSeed + round.
 public class DropAssignmentTests
 {
+    // 기능: 맵의 모든 투입 지점을 쓰는 경기를 만들고 플레이어들을 들여보내 경기 시작까지 돌린다.
+    // 입력: players - 들여보낼 인원(peer 1..players), maxPlayers - 최대 인원(기본 6).
+    // 출력: 경기가 시작된 RoyaleHarness.
     private static RoyaleHarness Start(int players, int maxPlayers = 6)
     {
         var h = new RoyaleHarness(maxPlayers: maxPlayers, dropPoints: DropPoints.All.ToArray());
@@ -20,6 +23,9 @@ public class DropAssignmentTests
         return h;
     }
 
+    // 기능: peer 1..players의 현재 위치를 순서대로 모은다.
+    // 입력: h - 경기, players - 인원.
+    // 출력: 위치 목록. 없는 peer가 있으면 테스트가 실패한다.
     private static List<Vector3> Positions(RoyaleHarness h, int players)
     {
         var list = new List<Vector3>();

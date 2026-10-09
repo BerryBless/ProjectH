@@ -252,6 +252,9 @@ public class GameMapTests
         const float limit = GameMap.HalfSize - MoveSettings.HalfWidth;
         int size = (int)(2f * limit / step) + 1;
         float Coord(int index) => -limit + index * step;
+        // 기능: 격자 칸 (i, j)에 지형 위로 선 캐릭터가 어떤 맵 상자와도 겹치지 않는지 검사한다.
+        // 입력: i - X 방향 칸 번호, j - Z 방향 칸 번호.
+        // 출력: 상자와 겹치지 않으면 true, 하나라도 겹치면 false.
         bool Free(int i, int j)
         {
             float x = Coord(i), z = Coord(j);
@@ -275,6 +278,9 @@ public class GameMapTests
             }
         }
 
+        // 기능: 월드 좌표를 가장 가까운 격자 칸으로 바꿔 Flood Fill이 그 칸에 도달했는지 본다.
+        // 입력: p - 검사할 월드 위치(X, Z만 사용).
+        // 출력: 광장에서 걸어서 닿은 칸이면 true, 아니면 false.
         bool Reached(Vector3 p)
         {
             int i = (int)MathF.Round((p.X + limit) / step);
@@ -290,12 +296,18 @@ public class GameMapTests
             Assert.True(Reached(p), $"drop point {p} cannot be reached on foot");
     }
 
+    // 기능: 월드 좌표(X 또는 Z)가 속한 지형 격자 셀 번호를 구하고 유효 범위로 자른다.
+    // 입력: coordinate - 지형 원점 기준으로 환산할 월드 좌표.
+    // 출력: 0..VertsX-2 범위로 Clamp된 셀 번호.
     private static int CellIndex(float coordinate)
     {
         int index = (int)MathF.Floor((coordinate - Terrain.OriginX) / Terrain.CellSize);
         return Math.Clamp(index, 0, Terrain.VertsX - 2);
     }
 
+    // 기능: k번 맵 상자가 다른 상자의 윗면 위에 올려져 있는지(바닥 높이가 같고 발자국이 겹치는지) 검사한다.
+    // 입력: k - 검사할 맵 상자 번호.
+    // 출력: 받쳐 주는 상자가 하나라도 있으면 true, 없으면 false.
     private static bool IsStacked(int k)
     {
         Box b = Boxes[k];
@@ -308,8 +320,14 @@ public class GameMapTests
         return false;
     }
 
+    // 기능: 두 상자의 높이 범위가 실제로 겹치는지(윗면과 바닥이 맞닿기만 한 경우 제외) 검사한다.
+    // 입력: a - 첫 상자, b - 둘째 상자.
+    // 출력: Y 범위가 겹치면 true, 아니면 false.
     private static bool SameHeightBand(Box a, Box b) => a.Min.Y < b.Max.Y && b.Min.Y < a.Max.Y;
 
+    // 기능: 두 상자 발자국 사이의 수평 간격(X·Z 축 간격 중 큰 쪽)을 구한다.
+    // 입력: a - 첫 상자, b - 둘째 상자.
+    // 출력: 떨어져 있으면 양수 간격, 발자국이 겹치거나 맞닿으면 0 이하.
     private static float Gap(Box a, Box b)
     {
         float gapX = MathF.Max(b.Min.X - a.Max.X, a.Min.X - b.Max.X);
@@ -317,6 +335,9 @@ public class GameMapTests
         return MathF.Max(gapX, gapZ);
     }
 
+    // 기능: 점 (x, z)에서 상자 발자국(XZ 직사각형)까지의 최단 수평 거리를 구한다.
+    // 입력: b - 대상 상자, x - 점의 X 좌표, z - 점의 Z 좌표.
+    // 출력: 점이 발자국 안이면 0, 바깥이면 가장 가까운 변·모서리까지의 거리.
     internal static float FootprintDistance(Box b, float x, float z)
     {
         float dx = MathF.Max(MathF.Max(b.Min.X - x, x - b.Max.X), 0f);

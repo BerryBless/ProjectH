@@ -7,7 +7,13 @@ namespace ProjectH.QA;
 
 public readonly record struct Vec3(float X, float Y, float Z)
 {
+    // 기능: System.Numerics.Vector3를 Vec3로 바꾼다.
+    // 입력: v - 바꿀 벡터.
+    // 출력: 같은 성분의 Vec3.
     public static Vec3 From(Vector3 v) => new(v.X, v.Y, v.Z);
+    // 기능: 이 Vec3를 System.Numerics.Vector3로 바꾼다.
+    // 입력: 없음.
+    // 출력: 같은 성분의 Vector3.
     public Vector3 ToVector3() => new(X, Y, Z);
 }
 

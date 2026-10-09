@@ -100,6 +100,9 @@ namespace ProjectH.Shared.Protocol
 
     public static class JoinMatchRequest
     {
+        // 기능: 본문 없는 JoinMatchRequest 패킷(id 1바이트)을 쓴다.
+        // 입력: writer - 쓸 Writer.
+        // 출력: 반환값 없음. writer에 1바이트가 쓰인다.
         public static void Write(ref PacketWriter writer)
         {
             writer.WriteByte((byte)PacketId.JoinMatchRequest);
@@ -127,6 +130,9 @@ namespace ProjectH.Shared.Protocol
         public InputCommand Input1;
         public InputCommand Input2;
 
+        // 기능: 패킷의 index번째 입력 명령을 돌려준다.
+        // 입력: index - 0, 1, 2(그 밖의 값은 Input2로 본다).
+        // 출력: 해당 자리의 InputCommand 복사본.
         public InputCommand Get(int index)
         {
             switch (index)
@@ -137,6 +143,9 @@ namespace ProjectH.Shared.Protocol
             }
         }
 
+        // 기능: 패킷의 index번째 자리에 입력 명령을 넣는다.
+        // 입력: index - 0, 1, 2(그 밖의 값은 Input2로 본다), command - 넣을 명령.
+        // 출력: 반환값 없음. 해당 자리의 InputCommand가 바뀐다(Count는 바뀌지 않는다).
         public void Set(int index, in InputCommand command)
         {
             switch (index)

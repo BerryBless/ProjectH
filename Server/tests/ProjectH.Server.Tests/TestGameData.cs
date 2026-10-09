@@ -117,6 +117,9 @@ internal static class TestGameData
         }
         """;
 
+    // 기능: Zone JSON을 파싱해 테스트용 ZoneData를 만든다.
+    // 입력: simHz - Tick 속도, json - Zone JSON(기본 ZonesJson).
+    // 출력: ZoneData. 잘못되면 InvalidOperationException.
     public static ZoneData Zones(int simHz = 30, string json = ZonesJson)
     {
         if (!ZoneData.TryParse(json, simHz, out var zones, out string? error))
@@ -124,6 +127,9 @@ internal static class TestGameData
         return zones!;
     }
 
+    // 기능: ItemsJson을 파싱해 테스트용 아이템 Catalog를 만든다.
+    // 입력: simHz - Tick 속도.
+    // 출력: ItemCatalog. 잘못되면 InvalidOperationException.
     public static ItemCatalog Items(int simHz = 30)
     {
         if (!ItemCatalog.TryParse(ItemsJson, simHz, out var items, out string? error))
@@ -146,6 +152,9 @@ internal static class TestGameData
         HeavyAmmo = LoadoutHeavyAmmo,
     };
 
+    // 기능: Loot JSON을 아이템 Catalog에 맞춰 파싱해 테스트용 LootTable을 만든다.
+    // 입력: items - 아이템 Catalog, json - Loot JSON(기본 LootJson).
+    // 출력: LootTable. 잘못되면 InvalidOperationException.
     public static LootTable Loot(ItemCatalog items, string json = LootJson)
     {
         if (!LootTable.TryParse(json, items, out var loot, out string? error))

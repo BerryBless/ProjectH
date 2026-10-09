@@ -12,6 +12,9 @@ namespace ProjectH.Client.Tests
     {
         private static readonly Vector3 Origin = new Vector3(10f, 2f, 10f);
 
+        // 기능: 높이 2, Yaw 0인 상자(Chest) 컨테이너를 만든다.
+        // 입력: x - 상자 x 좌표, z - 상자 z 좌표.
+        // 출력: Chest 종류의 LootContainer.
         private static LootContainer Chest(float x, float z) => new LootContainer(LootContainerKind.Chest, new Vector3(x, 2f, z), 0f);
 
         [Test]

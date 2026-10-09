@@ -20,6 +20,9 @@ namespace ProjectH.Client.Game
         private byte _server;
         private int _length;
 
+        // 기능: 맵 상자를 복사하고 모든 문이 닫힌 월드를 만든다.
+        // 입력: 없음.
+        // 출력: 서버 상태 0(모두 닫힘), 예측 없음, Version 0인 객체.
         public PredictedDoors()
         {
             GameMap.Boxes.CopyTo(_world);
@@ -34,24 +37,33 @@ namespace ProjectH.Client.Game
         // prediction gathers its world around the character from OpenMask instead (LocalPlayerPredictor).
         public ReadOnlySpan<Box> World => new ReadOnlySpan<Box>(_world, 0, _length);
 
+        // 기능: 문이 예측상 열려 있는지 본다.
+        // 입력: door - GameMap.Doors 번호(0..DoorCount-1).
+        // 출력: 열려 있으면 true.
         public bool IsOpen(int door) => (OpenMask & (1 << door)) != 0;
 
-        // The door whose box is at this index of World, or -1 for a map box.
+        // 기능: World의 색인이 어느 문의 상자인지 찾는다.
+        // 입력: worldIndex - World 안의 색인.
+        // 출력: 문 번호, 맵 상자이거나 범위 밖이면 -1.
         public int DoorAt(int worldIndex)
         {
             int slot = worldIndex - GameMap.Boxes.Length;
             return slot >= 0 && worldIndex < _length ? _doorOfSlot[slot] : -1;
         }
 
-        // The door a step was stopped by, the same rule as the server's DoorSet.DoorBlocking: the collider that stopped it,
-        // or when that is no door, the Z sweep's. -1 = no door. Phase 13 D3: colliders are named by kind and id.
+        // 기능: 이동 Step을 막은 문을 서버 DoorSet.DoorBlocking과 같은 규칙으로 찾는다(막은 Collider가 문이면 그것, 아니면 Z 스윕이 막힌 문;
+        //   Phase 13 D3: Collider는 종류와 id로 가리킨다).
+        // 입력: step - 이동 Step 결과.
+        // 출력: 문 번호, 문에 막히지 않았으면 -1.
         public int DoorBlocking(in StepResult step)
         {
             if (step.BlockedBy.Kind == ColliderKind.Door) return (int)step.BlockedBy.Id;
             return step.BlockedByZ.Kind == ColliderKind.Door ? (int)step.BlockedByZ.Id : -1;
         }
 
-        // DoorStates: the server's word replaces every prediction.
+        // 기능: 서버의 DoorStates를 적용하고 모든 예측을 버린다.
+        // 입력: openMask - 서버가 말한 열린 문 비트.
+        // 출력: 반환값 없음. OpenMask가 서버 값이 되고, 바뀌었으면 Version과 World가 갱신된다.
         public void ApplyServer(byte openMask)
         {
             _server = openMask;
@@ -60,6 +72,9 @@ namespace ProjectH.Client.Game
             Update();
         }
 
+        // 기능: 내 행동(어깨 박치기, E)으로 문 상태를 PredictionSeconds 동안 예측한다(범위 밖 번호는 무시).
+        // 입력: door - 문 번호, open - 예측할 상태(true = 열림), now - 예측 시계(초).
+        // 출력: 반환값 없음. OpenMask가 바뀌면 Version과 World가 갱신된다.
         public void Predict(int door, bool open, float now)
         {
             if (door < 0 || door >= GameMap.DoorCount) return;
@@ -69,7 +84,9 @@ namespace ProjectH.Client.Game
             Update();
         }
 
-        // Predictions older than PredictionSeconds give way to the server's state.
+        // 기능: PredictionSeconds가 지난 예측을 버려 서버 상태로 되돌린다.
+        // 입력: now - 예측 시계(초).
+        // 출력: 반환값 없음. 하나라도 만료되면 OpenMask를 다시 계산한다.
         public void Expire(float now)
         {
             bool changed = false;
@@ -84,9 +101,14 @@ namespace ProjectH.Client.Game
             if (changed) Update();
         }
 
-        // Disconnect: no server state any more (every door closed, as at a round start).
+        // 기능: 끊김 때 서버 상태 없이 되돌린다(라운드 시작처럼 모든 문 닫힘, 예측 없음).
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void Reset() => ApplyServer(0);
 
+        // 기능: 서버 상태 위에 살아 있는 예측을 덮어 OpenMask를 다시 계산한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 마스크가 바뀌었을 때만 Version이 오르고 World를 다시 만든다.
         private void Update()
         {
             int mask = _server;
@@ -102,6 +124,9 @@ namespace ProjectH.Client.Game
             Rebuild();
         }
 
+        // 기능: 맵 상자 뒤에 닫힌 문 상자를 서버 DoorSet 순서로 다시 채운다(할당 없음).
+        // 입력: 없음(OpenMask를 읽는다).
+        // 출력: 반환값 없음. World의 길이와 각 칸의 문 번호가 갱신된다.
         private void Rebuild()
         {
             int length = GameMap.Boxes.Length;

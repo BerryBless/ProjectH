@@ -16,6 +16,9 @@ namespace ProjectH.Client.Tests
 
         private readonly List<BuildRequest> _sent = new List<BuildRequest>();
 
+        // 기능: 보낸 요청을 _sent에 모으는 시험용 BuildController를 만든다. 사거리 7 m, 최소 간격 3 Tick, 벽 비용 10 나무.
+        // 입력: wood - 시작 나무 자원량.
+        // 출력: _sent를 비운 뒤 만든 BuildController.
         private BuildController Controller(int wood = 100)
         {
             _sent.Clear();
@@ -28,6 +31,9 @@ namespace ProjectH.Client.Tests
             return c;
         }
 
+        // 기능: 모든 관심 영역이 켜진 빈 BuildStore를 만든다.
+        // 입력: 없음.
+        // 출력: 조각이 없는 BuildStore.
         private static BuildStore Store()
         {
             var store = new BuildStore();
@@ -35,6 +41,9 @@ namespace ProjectH.Client.Tests
             return store;
         }
 
+        // 기능: 고정 위치(Feet/Eye)에서 건설 버튼을 누른 한 프레임을 Update로 넣는다.
+        // 입력: c - 대상 컨트롤러, now - 현재 시각(초), store - 조각 저장소, inBuildMode - 건설 모드 여부.
+        // 출력: 이 프레임에 요청을 보냈으면 true.
         private bool Press(BuildController c, float now, BuildStore store, bool inBuildMode = true) =>
             c.Update(now, inBuildMode, true, true, Feet, Eye, 0f, 0f, store);
 

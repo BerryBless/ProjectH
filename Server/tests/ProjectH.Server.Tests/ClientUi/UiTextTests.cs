@@ -10,6 +10,9 @@ namespace ProjectH.Server.Tests.ClientUi;
 // Phase 11 D4, D6-D9, D11 (spec §2): the client's Korean UI strings. Compiled here through a source link like UiFlow.
 public class UiTextTests
 {
+    // 기능: 문자열에 완성형 한글 음절(가~힣)이 하나라도 있는지 본다.
+    // 입력: text - 검사할 문자열.
+    // 출력: 한글이 있으면 true.
     private static bool HasHangul(string text)
     {
         foreach (char c in text)

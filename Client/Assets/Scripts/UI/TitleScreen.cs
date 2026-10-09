@@ -29,6 +29,9 @@ namespace ProjectH.Client.UI
         // A refused input's rule is on screen: typing into any field, or the next Connect, clears it.
         private bool _ruleShown;
 
+        // 기능: 타이틀 화면을 캔버스 아래에 한 번 만든다(주소·포트·이름 입력 칸, 접속·취소·종료 버튼, 오류 문구, 조작법).
+        // 입력: canvas - 부모 캔버스, onConnect - 검사를 통과한 주소·포트·이름으로 접속을 시작하는 처리, onCancel - 접속 취소 처리, onQuit - 종료 처리.
+        // 출력: 보이는 상태(취소 버튼은 숨김)로 만들어진 TitleScreen.
         public TitleScreen(Transform canvas, Action<string, int, string> onConnect, UnityAction onCancel, UnityAction onQuit)
         {
             _onConnect = onConnect;
@@ -63,6 +66,9 @@ namespace ProjectH.Client.UI
             help.color = new Color(1f, 1f, 1f, 0.6f);
         }
 
+        // 기능: 입력 칸에 주소·포트·이름을 채운다.
+        // 입력: host - 주소(null이면 빈칸), port - 포트(0 이하면 빈칸), name - 이름(null이면 빈칸).
+        // 출력: 반환값 없음. 세 입력 칸의 글자가 바뀐다.
         public void Fill(string host, int port, string name)
         {
             _host.text = host ?? string.Empty;
@@ -70,6 +76,9 @@ namespace ProjectH.Client.UI
             _name.text = name ?? string.Empty;
         }
 
+        // 기능: 화면을 보이거나 숨긴다.
+        // 입력: visible - 보이면 true.
+        // 출력: 반환값 없음. 값이 바뀔 때만 루트 GameObject가 켜지거나 꺼진다.
         public void SetVisible(bool visible)
         {
             if (visible == _visible) return;
@@ -77,7 +86,9 @@ namespace ProjectH.Client.UI
             _root.SetActive(visible);
         }
 
-        // An error to show (a refused input, or why the last connection ended), or empty.
+        // 기능: 오류 문구(거절된 입력이나 지난 접속이 끝난 이유)를 오류 색으로 보인다.
+        // 입력: message - 보일 문구(null이나 빈 문자열이면 지운다).
+        // 출력: 반환값 없음. 문구가 바뀌고 규칙 표시 상태(_ruleShown)가 풀린다.
         public void SetMessage(string message)
         {
             _ruleShown = false;
@@ -85,17 +96,26 @@ namespace ProjectH.Client.UI
             _message.text = message ?? string.Empty;
         }
 
+        // 기능: 거절된 입력의 규칙을 보이고 규칙 표시 상태로 둔다(어느 칸이든 입력하거나 다음 접속 클릭에 지워진다).
+        // 입력: rule - 규칙 문구.
+        // 출력: 반환값 없음. 오류 문구와 _ruleShown이 바뀐다.
         private void ShowRule(string rule)
         {
             SetMessage(rule);
             _ruleShown = true;
         }
 
+        // 기능: 입력 칸 값 변경 Handler. 규칙 문구가 떠 있으면 지운다.
+        // 입력: _ - 바뀐 값(쓰지 않음).
+        // 출력: 반환값 없음.
         private void OnFieldChanged(string _)
         {
             if (_ruleShown) SetMessage(string.Empty);
         }
 
+        // 기능: 접속 중 모드를 켜거나 끈다(입력 칸 잠금, 접속 대신 취소 버튼, 켤 때 "접속하는 중..." 문구).
+        // 입력: connecting - 접속 중이면 true.
+        // 출력: 반환값 없음. 값이 바뀔 때만 버튼·입력 칸·문구가 바뀐다.
         // UiScreen.Connecting: fields locked, Cancel instead of Connect.
         public void SetConnecting(bool connecting)
         {
@@ -113,6 +133,9 @@ namespace ProjectH.Client.UI
             }
         }
 
+        // 기능: 접속 버튼을 누를 수 있게 하거나 막는다.
+        // 입력: enabled - 누를 수 있으면 true.
+        // 출력: 반환값 없음. 값이 바뀔 때만 버튼의 interactable이 바뀐다.
         // Off while the previous connection is still closing (GameClient.Connect would ignore the click).
         public void SetConnectEnabled(bool enabled)
         {
@@ -121,6 +144,9 @@ namespace ProjectH.Client.UI
             _connect.interactable = enabled;
         }
 
+        // 기능: 접속 버튼 클릭 Handler. 주소·포트·이름을 UiText 규칙(서버 규칙)으로 검사하고 통과하면 onConnect를 부른다.
+        // 입력: 없음(입력 칸의 글자를 읽는다).
+        // 출력: 반환값 없음. 거절되면 해당 규칙 문구가 보이고, 통과하면 이름 칸이 다듬은 이름으로 바뀌고 onConnect가 불린다.
         private void OnConnectClicked()
         {
             if (_ruleShown) SetMessage(string.Empty);

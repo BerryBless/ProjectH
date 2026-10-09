@@ -56,6 +56,9 @@ internal static class RunIds
     private static readonly HashSet<string> s_recent = new(StringComparer.Ordinal);
     private static string s_second = string.Empty;
 
+    // 기능: 보고서 폴더가 아직 없고 이 프로세스가 최근(현재·직전 초)에 발급하지 않은 실행 ID를 만든다.
+    // 입력: reportRoot - 보고서 루트 폴더(같은 ID의 폴더가 있는지 확인).
+    // 출력: 고유한 실행 ID("qa-yyyyMMdd-HHmmss-xxxx"). 1000회 넘게 겹치면 마지막 후보를 그대로 준다.
     public static string Claim(string reportRoot)
     {
         // 65536 ids per second: a few attempts always find a free one; the bound only guards against a broken clock.
@@ -95,6 +98,9 @@ internal sealed class PausableDeadline
     private readonly Stopwatch _since = Stopwatch.StartNew();
     private TimeSpan _remaining;
 
+    // 기능: 시나리오 시간 한도를 토큰 소스에 걸고 경과 시간 측정을 시작한다.
+    // 입력: cts - 시간 초과 시 취소할 토큰 소스, timeout - 시나리오 시간 한도.
+    // 출력: 한도가 작동 중인 마감 객체.
     public PausableDeadline(CancellationTokenSource cts, TimeSpan timeout)
     {
         _cts = cts;
@@ -102,6 +108,9 @@ internal sealed class PausableDeadline
         cts.CancelAfter(timeout);
     }
 
+    // 기능: 일시정지 시작이면 경과분을 남은 시간에서 빼고 마감을 해제하며, 재개면 남은 시간으로 마감을 다시 건다. 이미 취소된 토큰은 건드리지 않는다.
+    // 입력: paused - true면 일시정지 시작, false면 재개.
+    // 출력: 반환값 없음. 토큰 소스의 CancelAfter가 바뀐다.
     public void SetPaused(bool paused)
     {
         if (_cts.IsCancellationRequested) return;
@@ -133,6 +142,9 @@ public sealed class QaOrchestrator
     private readonly MarkerStore _markers;
     private readonly TextWriter _out;
 
+    // 기능: 한 실행을 수행할 오케스트레이터를 만든다.
+    // 입력: options - 실행 옵션, registry - Action 목록, markers - 위치 이름 저장소, output - 콘솔 출력.
+    // 출력: RunAsync를 기다리는 오케스트레이터.
     public QaOrchestrator(QaRunOptions options, ActionRegistry registry, MarkerStore markers, TextWriter output)
     {
         _options = options;
@@ -141,8 +153,14 @@ public sealed class QaOrchestrator
         _out = output;
     }
 
+    // 기능: 시각과 16비트 난수로 실행 ID를 만든다.
+    // 입력: now - ID에 넣을 현재 시각.
+    // 출력: "qa-yyyyMMdd-HHmmss-xxxx" 형식의 ID(고유성은 RunIds.Claim이 보장).
     public static string NewRunId(DateTime now) => $"qa-{now:yyyyMMdd-HHmmss}-{Random.Shared.Next(0x10000):x4}";
 
+    // 기능: 시나리오 한 번을 끝까지 수행한다: 서버 시작 또는 attach → 액터 생성 → 단계 실행 → 실패 시 상태 덤프 → 정리(그룹·액터·프록시·DB·서버) → 기준선 기록 → 보고서 작성.
+    // 입력: scenario - 실행할 시나리오, warnings - 검증 단계의 경고(보고서에 기록), userToken - 사용자 중단(Ctrl+C·Stop) 토큰.
+    // 출력: 상태·종료 코드·단계 결과·정리 결과가 채워진 RunReport. 서버를 못 멈추거나 보고서를 못 쓰면 ExitCode 2.
     public async Task<RunReport> RunAsync(ScenarioDefinition scenario, IReadOnlyList<ValidationIssue> warnings, CancellationToken userToken)
     {
         var clock = Stopwatch.StartNew();
@@ -197,6 +215,9 @@ public sealed class QaOrchestrator
         bool stress = scenario.Stress;
         bool Quiet(string line) => stress && !IsWarning(line);
 
+        // 기능: 실행 로그 한 줄을 QA 분류로 내보낸다(스트레스 실행에서는 경고성 줄만).
+        // 입력: line - 로그 줄.
+        // 출력: 반환값 없음. --verbose면 콘솔에, LogSink가 있으면 "QA" 분류로 전달된다.
         void Log(string line)
         {
             if (Quiet(line)) return;
@@ -204,6 +225,9 @@ public sealed class QaOrchestrator
             _options.LogSink?.Invoke("QA", line);
         }
 
+        // 기능: 액터 로그 한 줄을 Actor 분류로 내보낸다(스트레스 실행에서는 경고성 줄만).
+        // 입력: line - 로그 줄.
+        // 출력: 반환값 없음. --verbose면 콘솔에, LogSink가 있으면 "Actor" 분류로 전달된다.
         void ActorLog(string line)
         {
             if (Quiet(line)) return;
@@ -497,6 +521,9 @@ public sealed class QaOrchestrator
         return report;
     }
 
+    // 기능: 실행을 기준선 히스토리에 기록하고 이전 PASSED 실행과 비교해 report.Baseline과 경고를 채운다. 보고서·히스토리가 꺼져 있으면 아무것도 하지 않고, 파일이 없거나 미저장 텍스트·Run From Step이면 Note만 남기고 기록하지 않는다.
+    // 입력: scenario - 실행한 시나리오, report - 채울 보고서, reportRoot - 보고서 루트(history 폴더의 부모), variables - 실행 종료 시점의 변수.
+    // 출력: 반환값 없음. report.Baseline·Warnings가 갱신된다. 결과·종료 코드는 바뀌지 않는다.
     // D33: one history line per run and the comparison with the previous PASSED run (same scenario file, same
     // parameter set). Skipped when the run is not the file's content (unsaved editor text, Run From Step) or has no
     // file. Never changes the result or the exit code: problems become warnings.
@@ -532,6 +559,9 @@ public sealed class QaOrchestrator
         }
     }
 
+    // 기능: 서버 실행 옵션을 정한다. 스트레스 시나리오이고 Qa:Events가 지정되지 않았으면 "Qa:Events"="false"를 더한다.
+    // 입력: scenario - 시나리오 정의.
+    // 출력: 서버에 넘길 설정 재정의 사전.
     // D39: a stress scenario's server has no QA events unless the scenario turns them on (tick diff cost, §150).
     public static IReadOnlyDictionary<string, string> LaunchOptions(ScenarioDefinition scenario)
     {
@@ -540,12 +570,18 @@ public sealed class QaOrchestrator
         return options;
     }
 
+    // 기능: 로그 줄이 warn/fail/error/exception/crit 중 하나를 담고 있는지(대소문자 무시) 판정한다.
+    // 입력: line - 로그 줄.
+    // 출력: 경고성 줄이면 true.
     // A line worth showing in a stress run's quiet live log.
     public static bool IsWarning(string line) =>
         line.Contains("warn", StringComparison.OrdinalIgnoreCase) || line.Contains("fail", StringComparison.OrdinalIgnoreCase)
         || line.Contains("error", StringComparison.OrdinalIgnoreCase) || line.Contains("exception", StringComparison.OrdinalIgnoreCase)
         || line.Contains("crit", StringComparison.OrdinalIgnoreCase);
 
+    // 기능: /qa/health를 읽어 ok 응답인지와 QA 모드가 켜져 있는지 확인한다.
+    // 입력: client - QA 서버 Client, token - 취소 토큰.
+    // 출력: health 응답 JSON. ok=false면 QaApiException, qaMode=false면 QaToolException.
     private static async Task<JsonElement> HealthAsync(IQaServerClient client, CancellationToken token)
     {
         JsonElement health = await client.GetHealthAsync(token).ConfigureAwait(false);
@@ -554,6 +590,9 @@ public sealed class QaOrchestrator
         return health;
     }
 
+    // 기능: 실패 시점의 상태 덤프를 만든다: 모든 액터의 상태와, Client가 주어지면 /qa/players·/qa/match.
+    // 입력: client - 질의할 QA Client(null이면 액터 상태만), actors - 액터 관리자.
+    // 출력: StateDump. 서버 질의가 실패하면 Error에 메시지만 남긴다.
     private async Task<StateDump> DumpAsync(IQaServerClient? client, ActorManager actors)
     {
         var dump = new StateDump();
@@ -572,6 +611,9 @@ public sealed class QaOrchestrator
         return dump;
     }
 
+    // 기능: 정리 단계의 서버 호출을 CleanupRequestTimeout 안에서 실행하고 어떤 예외도 삼킨다.
+    // 입력: call - 취소 토큰을 받아 값을 돌려주는 비동기 호출.
+    // 출력: 호출 결과. 실패·시간 초과면 null.
     private static async Task<T?> TryAsync<T>(Func<CancellationToken, Task<T>> call) where T : struct
     {
         try
@@ -585,6 +627,9 @@ public sealed class QaOrchestrator
         }
     }
 
+    // 기능: 서버 로그에 실행 ID 표식을 남기는 "mark" QA 명령을 보낸다(최선 노력).
+    // 입력: client - QA 서버 Client, text - 표식 문장, runId - 명령에 붙일 실행 ID.
+    // 출력: 반환값 없음. 실패는 무시된다.
     // Request §69: the run id in the server log at start and end (best effort).
     private static async Task TryMarkAsync(IQaServerClient client, string text, string runId)
     {
@@ -599,9 +644,15 @@ public sealed class QaOrchestrator
         }
     }
 
+    // 기능: JSON 객체의 숫자 필드를 int로 읽는다.
+    // 입력: e - JSON 객체, name - 필드 이름(대소문자 무시).
+    // 출력: 정수로 잘라낸 값. 없거나 숫자가 아니면 null.
     private static int? ReadInt(JsonElement e, string name) =>
         JsonPath.Child(e, name) is JsonElement v && Comparison.TryNumber(v, out double d) ? (int)d : null;
 
+    // 기능: 끝난 단계의 결과 줄(실패·오류면 메시지·Expected·Actual 포함)을 LogSink 또는 콘솔에 내보내고 OnStepFinished를 호출한다.
+    // 입력: r - 단계 결과.
+    // 출력: 반환값 없음. 줄이 LogSink(Action별 분류)나 콘솔에 기록된다.
     private void PrintStep(StepResult r)
     {
         _options.OnStepFinished?.Invoke(r);
@@ -625,6 +676,9 @@ public sealed class QaOrchestrator
         foreach (string line in lines) _out.WriteLine(line);
     }
 
+    // 기능: 단계 Action 이름을 UI 로그 분류(Assertion / Network / Actor / QA)로 바꾼다.
+    // 입력: action - 단계 Action 이름.
+    // 출력: 분류 문자열.
     // D21 categories for step lines.
     public static string LogCategory(string action) => action switch
     {
@@ -636,6 +690,9 @@ public sealed class QaOrchestrator
         _ => "QA",
     };
 
+    // 기능: 실행 요약(도구 오류, 실패한 정리, 상태·실패 단계·시드·runId·소요 ms)을 콘솔에 쓴다.
+    // 입력: r - 완성된 실행 보고서.
+    // 출력: 반환값 없음. 요약 줄이 output에 기록된다.
     private void PrintSummary(RunReport r)
     {
         if (r.ToolError != null) _out.WriteLine($"   {r.ToolError}");
@@ -648,6 +705,9 @@ public sealed class QaOrchestrator
 
 public static class ServerLocator
 {
+    // 기능: Server/src/ProjectH.Server/bin 아래 Debug·Release 중 가장 최근에 빌드된 ProjectH.Server.dll을 찾는다.
+    // 입력: repoRoot - 저장소 루트.
+    // 출력: DLL 경로. 둘 다 없으면 null.
     // The newest built ProjectH.Server.dll (Debug or Release) under Server/src/ProjectH.Server/bin.
     public static string? FindServerDll(string repoRoot)
     {
@@ -666,6 +726,9 @@ public static class ServerLocator
         return best;
     }
 
+    // 기능: 시작 폴더에서 위로 올라가며 Server/ProjectH.Server.slnx가 있는 폴더를 찾는다.
+    // 입력: start - 탐색을 시작할 폴더.
+    // 출력: 저장소 루트 경로. 못 찾으면 null.
     // The repository root: the nearest folder up from `start` that has Server/ProjectH.Server.slnx.
     public static string? FindRepoRoot(string start)
     {
@@ -682,6 +745,9 @@ public static class GitInfo
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
 
+    // 기능: git rev-parse HEAD와 git status --porcelain으로 커밋 해시와 작업 트리 변경 여부를 읽는다.
+    // 입력: repoRoot - git을 실행할 폴더.
+    // 출력: (커밋 해시, 변경 있음 여부, 오류). git이 없거나 실패·시간 초과면 (null, null, 오류 메시지).
     public static async Task<(string? Commit, bool? Dirty, string? Error)> ReadAsync(string repoRoot)
     {
         try
@@ -696,6 +762,9 @@ public static class GitInfo
         }
     }
 
+    // 기능: git 명령 하나를 실행해 stdout을 읽고 Timeout 안에 끝나기를 기다린다.
+    // 입력: dir - 작업 폴더, args - git 인자 문자열.
+    // 출력: stdout 텍스트. 시작 실패·0이 아닌 종료 코드면 InvalidOperationException, 시간 초과면 프로세스를 죽이고 TimeoutException.
     private static async Task<string?> RunAsync(string dir, string args)
     {
         var info = new ProcessStartInfo("git", args)

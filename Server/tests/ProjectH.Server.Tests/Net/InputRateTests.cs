@@ -113,6 +113,9 @@ public class InputRateTests
         Assert.Equal(1, dropped);   // still bounded: one more pushes the oldest out
     }
 
+    // 기능: 주어진 Tick 수만큼 약 33ms마다 정지 입력 하나를 보내며 Poll한다.
+    // 입력: client - 입력을 보낼 Client, ticks - 보낼 입력 수.
+    // 출력: 반환값 없음. 입력 패킷 ticks개가 나간다.
     // One input per tick for the given number of ticks.
     private static void Flow(HeadlessClient client, int ticks)
     {

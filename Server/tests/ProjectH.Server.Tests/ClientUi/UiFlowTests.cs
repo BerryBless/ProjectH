@@ -10,6 +10,9 @@ public class UiFlowTests
 {
     private const MatchFlowState Playing = MatchFlowState.Playing;
 
+    // 기능: 접속 요청·연결 중·참가 완료를 거쳐 InGame 화면에 있는 UiFlow를 만든다.
+    // 입력: 없음.
+    // 출력: Screen이 InGame인 UiFlow. 아니면 Assert 실패.
     private static UiFlow InGame()
     {
         var flow = new UiFlow();

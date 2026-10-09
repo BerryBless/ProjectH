@@ -12,6 +12,9 @@ public class TerrainTraceTests
 {
     private static HeightField Terrain => GameMap.Terrain;
 
+    // 기능: 광선을 1 cm씩 전진시켜 지형 아래로 들어가는 첫 구간을 이분법으로 좁혀 교차 거리를 구한다(검증용 기준값).
+    // 입력: o - 광선 시작점, d - 방향(단위 벡터), range - 최대 거리.
+    // 출력: 지형과 만나는 거리. 맵 밖으로 나가거나 range 안에 만나지 않으면 range.
     // Reference answer: march the ray in 1 cm steps and bisect the first step that ends at or under the surface.
     private static float DenseSample(Vector3 o, Vector3 d, float range)
     {

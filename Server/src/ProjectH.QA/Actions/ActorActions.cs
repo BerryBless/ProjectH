@@ -26,6 +26,9 @@ public static class ActorActions
         return SlotSettleTicks + Math.Max(0, state.SlotEquipTicks[want]);
     }
 
+    // 기능: Actor 액션(connect·move·aim·fire·press·build·ping·playInputs 등)을 Registry에 등록한다.
+    // 입력: r - 등록 대상 Registry.
+    // 출력: 반환값 없음. Registry에 Actor 액션 Handler가 추가된다.
     public static void Register(ActionRegistry r)
     {
         // A Unity player needs time to start and join (QA-4); a headless client joins in well under a second.
@@ -82,6 +85,9 @@ public static class ActorActions
 
     // ---- QA-5: replaying a recording (D34) ----
 
+    // 기능: playInputs 단계의 Literal 인자(file 경로·확장자, speed 범위)를 실행 전에 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckPlayInputs(StepDefinition s)
     {
         if (s.Params.TryGetValue("file", out JsonElement f) && !Variables.HasReference(f))
@@ -94,6 +100,9 @@ public static class ActorActions
             yield return $"'speed' must be {PlayInputsCommand.MinSpeed}-{PlayInputsCommand.MaxSpeed}.";
     }
 
+    // 기능: 시나리오 파일 기준의 녹화 파일 경로를 절대 경로로 푼다(QA/ 밖이면 거부).
+    // 입력: run - 실행 중인 Run(시나리오 경로·Repo 루트), file - 시나리오 기준 상대 경로.
+    // 출력: 녹화 파일의 절대 경로. 시나리오 파일이 없거나 QA/ 밖이면 QaStepException.
     // The recording file next to the scenario, never outside <repo>/QA (a scenario must not read arbitrary files).
     internal static string ResolveRecording(RunContext run, string file)
     {
@@ -104,6 +113,9 @@ public static class ActorActions
         return full;
     }
 
+    // 기능: 녹화 파일을 읽어 Actor가 Tick마다 한 입력씩 재생하게 하고 끝날 때까지 기다린다(QA-5 D34).
+    // 입력: ctx - 단계 문맥(file, speed), token - 취소 토큰.
+    // 출력: 재생이 끝나면 Pass(saveAs: inputs, sent, simHz, speed, seconds, ms), Timeout·이탈·Timeout 부족이면 Fail. 중단 시 입력 큐를 비운다.
     private static async Task<StepOutcome> PlayInputsAsync(StepContext ctx, CancellationToken token)
     {
         IQaActor actor = ctx.Actor();
@@ -154,6 +166,9 @@ public static class ActorActions
         }
     }
 
+    // 기능: 별칭이 prefix로 시작하는 모든 Headless Actor에 같은 이동 벡터를 보낸다(spread면 방향을 고르게 나눠 바라보게 한다).
+    // 입력: ctx - 단계 문맥(prefix, x, y, spread), token - 취소 토큰.
+    // 출력: 대상이 있으면 Pass, Headless Actor가 하나도 없으면 Fail.
     private static async Task<StepOutcome> MoveVectorAllAsync(StepContext ctx, CancellationToken token)
     {
         string? prefix = ctx.String("prefix");
@@ -170,6 +185,9 @@ public static class ActorActions
         return StepOutcome.Pass($"{actors.Length} actors moving ({x}, {y}){(spread ? ", directions spread" : string.Empty)}");
     }
 
+    // 기능: Actor가 필수인 액션 정의(ActionSpec + 실행 Delegate)를 만든다.
+    // 입력: name - 액션 이름, run - 실행 함수, required - 필수 Parameter, optional - 선택 Parameter, positions - 위치 Parameter, timeoutMs - 고정 기본 Timeout, defaultTimeout - 단계별 기본 Timeout 계산, check - Literal 검사.
+    // 출력: Actor = Required로 설정된 DelegateAction.
     private static DelegateAction Actor(string name, Func<StepContext, CancellationToken, Task<StepOutcome>> run,
         string[]? required = null, string[]? optional = null, string[]? positions = null, int? timeoutMs = null,
         Func<StepDefinition, int>? defaultTimeout = null, Func<StepDefinition, IEnumerable<string>>? check = null) =>
@@ -186,6 +204,9 @@ public static class ActorActions
 
     // ---- validation of literal values ----
 
+    // 기능: ",", "|", "+"로 이어진 버튼 이름 목록을 InputButtons Flag로 파싱한다(숫자·None은 거부).
+    // 입력: text - 버튼 이름 목록, buttons - 파싱된 Flag(out).
+    // 출력: 하나 이상 유효하면 true와 Flag, 아니면 false.
     public static bool TryParseButtons(string text, out InputButtons buttons)
     {
         buttons = InputButtons.None;
@@ -197,6 +218,9 @@ public static class ActorActions
         return buttons != InputButtons.None;
     }
 
+    // 기능: press·release 단계의 Literal 인자(button 이름, count 범위)를 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckButton(StepDefinition s)
     {
         if (s.Params.TryGetValue("button", out JsonElement b) && b.ValueKind == JsonValueKind.String && !Variables.HasReference(b)
@@ -206,6 +230,9 @@ public static class ActorActions
             yield return $"'count' must be 1-{MaxPresses}.";
     }
 
+    // 기능: moveVector·moveVectorAll 단계의 Literal 인자(milliseconds 정수 범위, x·y -1..1)를 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckMoveVector(StepDefinition s)
     {
         if (s.Params.TryGetValue("milliseconds", out JsonElement v) && !Variables.HasReference(v)
@@ -218,6 +245,9 @@ public static class ActorActions
         }
     }
 
+    // 기능: slot 인자가 0부터 무기 칸 수 미만의 정수인지 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckSlot(StepDefinition s)
     {
         if (s.Params.TryGetValue("slot", out JsonElement v) && !Variables.HasReference(v)
@@ -227,6 +257,9 @@ public static class ActorActions
 
     private static int ItemConstantsSlots => ProjectH.Shared.Protocol.ItemConstants.WeaponSlotCount;
 
+    // 기능: fire 단계의 Literal 인자(count·holdMilliseconds 택일과 범위, slot, target)를 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckFire(StepDefinition s)
     {
         if (s.Has("count") && s.Has("holdMilliseconds")) yield return "Give 'count' or 'holdMilliseconds', not both.";
@@ -238,6 +271,9 @@ public static class ActorActions
         foreach (string e in CheckTargetActor(s)) yield return e;
     }
 
+    // 기능: target 인자가 문자열(Actor 별칭)인지 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     // 'target' names another actor; the validator checks it exists (ScenarioValidator.ActorParams).
     private static IEnumerable<string> CheckTargetActor(StepDefinition s)
     {
@@ -248,6 +284,9 @@ public static class ActorActions
 
     public const int UnityConnectTimeoutMs = 90_000;
 
+    // 기능: Actor를 서버에 새 연결로 접속시키고 Join·Snapshot 수신까지 기다린다.
+    // 입력: ctx - 단계 문맥, token - 취소 토큰.
+    // 출력: Join되면 Pass(saveAs: Actor 상태), Unity Player를 띄울 수 없으면 Skip(나머지도 건너뜀), 연결 종료·Timeout이면 Fail.
     private static async Task<StepOutcome> ConnectAsync(StepContext ctx, CancellationToken token)
     {
         IQaActor actor = ctx.Actor();
@@ -259,6 +298,9 @@ public static class ActorActions
         return await WaitJoinedAsync(ctx, actor, before, token).ConfigureAwait(false);
     }
 
+    // 기능: connectionsBefore 이후의 새 연결에서 Join과 Snapshot 수신, 또는 연결 끊김까지 기다린다.
+    // 입력: ctx - 단계 문맥, actor - 대상 Actor, connectionsBefore - 명령 전의 연결 횟수, token - 취소 토큰.
+    // 출력: Join되면 Pass(entity id, saveAs: Actor 상태), 연결이 닫히거나 Timeout이면 Fail.
     // Joined with a snapshot on a connection newer than `connectionsBefore`; fails at once when that connection drops.
     private static async Task<StepOutcome> WaitJoinedAsync(StepContext ctx, IQaActor actor, int connectionsBefore, CancellationToken token)
     {
@@ -273,6 +315,9 @@ public static class ActorActions
         return StepOutcome.Fail(done ? $"Connection closed: {state.DisconnectReason}" : $"Not joined within {ctx.TimeoutMs} ms ({actual})", "joined", actual);
     }
 
+    // 기능: Actor의 연결을 끊고(graceful 기본, false면 즉시 중단) 연결이 닫힐 때까지 기다린다.
+    // 입력: ctx - 단계 문맥(graceful), token - 취소 토큰.
+    // 출력: 연결이 닫히면 Pass, 명령 미적용·Timeout이면 Fail.
     private static async Task<StepOutcome> DisconnectAsync(StepContext ctx, CancellationToken token)
     {
         IQaActor actor = ctx.Actor();
@@ -286,6 +331,9 @@ public static class ActorActions
     // the old connection as connected: a connect while the old peer still lives would join as a new player instead of
     // resuming the graced one (Match.TryJoin finds graced players only). After an abrupt disconnect that is the
     // server's DisconnectTimeoutMs (5 s by default).
+    // 기능: 같은 DevPlayerId로 재접속한다. 연결 중이면 먼저 끊고, 서버가 옛 연결을 더 이상 연결됨으로 보지 않을 때까지 기다린 뒤 접속한다.
+    // 입력: ctx - 단계 문맥, token - 취소 토큰.
+    // 출력: 재Join되면 Pass, 옛 연결이 Timeout까지 남아 있거나 Join 실패면 Fail.
     private static async Task<StepOutcome> ReconnectAsync(StepContext ctx, CancellationToken token)
     {
         IQaActor actor = ctx.Actor();
@@ -309,6 +357,9 @@ public static class ActorActions
         return await WaitJoinedAsync(ctx, actor, before, token).ConfigureAwait(false);
     }
 
+    // 기능: Actor가 게임에 들어와 Snapshot을 받은 상태인지 확인한다.
+    // 입력: actor - 검사할 Actor.
+    // 출력: 들어와 있으면 null, 아니면 그 이유를 담은 Fail.
     private static StepOutcome? RequireJoined(IQaActor actor)
     {
         ActorState s = actor.State;
@@ -317,6 +368,9 @@ public static class ActorActions
 
     // ---- movement and looking ----
 
+    // 기능: Actor를 목표 위치까지 걷게 하고 도착·포기·이탈까지 기다린다. 끝나면 항상 이동 의도를 지운다.
+    // 입력: ctx - 단계 문맥(position, tolerance, sprint), token - 취소 토큰.
+    // 출력: tolerance 안에 도착하면 Pass(saveAs: 위치), 막힘·Timeout·이탈이면 Fail.
     private static async Task<StepOutcome> MoveToAsync(StepContext ctx, CancellationToken token)
     {
         IQaActor actor = ctx.Actor();
@@ -348,6 +402,9 @@ public static class ActorActions
         }
     }
 
+    // 기능: Actor에 이동 벡터를 보낸다. milliseconds가 있으면 그 시간만큼 Tick으로 환산해 보내고 단계가 그만큼 기다린다.
+    // 입력: ctx - 단계 문맥(x, y, milliseconds), token - 취소 토큰.
+    // 출력: Pass(지속 시간 설명).
     private static async Task<StepOutcome> MoveVectorAsync(StepContext ctx, CancellationToken token)
     {
         IQaActor actor = ctx.Actor();
@@ -360,6 +417,9 @@ public static class ActorActions
         return StepOutcome.Pass(ms == null ? "until changed" : $"{ms} ms");
     }
 
+    // 기능: Actor의 시선(yaw, pitch)을 설정한다.
+    // 입력: ctx - 단계 문맥(yaw, pitch -90..90), token - 취소 토큰.
+    // 출력: Pass. pitch가 범위 밖이면 QaStepException.
     private static async Task<StepOutcome> LookAsync(StepContext ctx, CancellationToken token)
     {
         float yaw = (float)ctx.Double("yaw")!.Value;
@@ -369,6 +429,9 @@ public static class ActorActions
         return StepOutcome.Pass();
     }
 
+    // 기능: 조준을 지우거나(clear), 다른 Actor(target) 또는 지점(at, y가 없으면 가슴 높이)에 조준한다.
+    // 입력: ctx - 단계 문맥(target, at, clear), token - 취소 토큰.
+    // 출력: Pass, 대상이 보이지 않거나 게임에 없으면 Fail. 세 인자가 모두 없으면 QaStepException.
     private static async Task<StepOutcome> AimAsync(StepContext ctx, CancellationToken token)
     {
         IQaActor actor = ctx.Actor();
@@ -387,6 +450,9 @@ public static class ActorActions
 
     // Aims at another actor's entity as the shooter's snapshots show it. Waits (bounded) until the shooter actually
     // sees that entity, so a fire right after does not shoot at a stale guess. Null = aiming.
+    // 기능: 다른 Actor의 Entity를 조준시키고, 사수의 Snapshot에 그 Entity가 보일 때까지 짧게 기다린다.
+    // 입력: ctx - 단계 문맥, shooter - 조준하는 Actor, targetAlias - 대상 Actor 별칭, token - 취소 토큰.
+    // 출력: 조준 중이면 null, 사수·대상이 게임에 없거나 대상이 보이지 않으면 Fail.
     private static async Task<StepOutcome?> AimAtActorAsync(StepContext ctx, IQaActor shooter, string targetAlias, CancellationToken token)
     {
         if (RequireJoined(shooter) is { } notJoined) return notJoined;
@@ -400,6 +466,9 @@ public static class ActorActions
 
     // ---- buttons ----
 
+    // 기능: 무기 칸을 고르고(필요 시 target 조준) count번 발사하거나 holdMilliseconds 동안 누른 뒤 HitConfirmed가 안정될 때까지 기다린다.
+    // 입력: ctx - 단계 문맥(count, holdMilliseconds, slot, target), token - 취소 토큰.
+    // 출력: 입력을 다 보내면 Pass(saveAs: presses, hits, ammoBefore, ammoAfter, weapon), 칸 선택·무기 없음·Timeout이면 Fail. 중단 시 입력 큐를 비운다.
     private static async Task<StepOutcome> FireAsync(StepContext ctx, CancellationToken token)
     {
         IQaActor actor = ctx.Actor();
@@ -451,12 +520,18 @@ public static class ActorActions
         return StepOutcome.Pass($"{before.WeaponName}: {result.presses} press(es), hits confirmed {result.hits}, ammo {result.ammoBefore}->{result.ammoAfter}", JsonPath.From(result));
     }
 
+    // 기능: Actor의 발사 입력을 멈춘다.
+    // 입력: ctx - 단계 문맥, token - 취소 토큰.
+    // 출력: Pass.
     private static async Task<StepOutcome> StopFireAsync(StepContext ctx, CancellationToken token)
     {
         await ctx.Actor().SendAsync(new StopFireCommand(), token).ConfigureAwait(false);
         return StepOutcome.Pass();
     }
 
+    // 기능: 버튼을 count번 Edge 입력하거나(hold true면) 계속 누른 상태로 둔다.
+    // 입력: ctx - 단계 문맥(button, count, hold), token - 취소 토큰.
+    // 출력: 입력을 보내면 Pass, Timeout이면 Fail.
     private static async Task<StepOutcome> PressAsync(StepContext ctx, CancellationToken token)
     {
         InputButtons buttons = ParseButtons(ctx);
@@ -468,6 +543,9 @@ public static class ActorActions
         return await PressButtonsAsync(ctx, buttons, ctx.Int("count", 1, MaxPresses) ?? 1, token).ConfigureAwait(false);
     }
 
+    // 기능: 누르고 있던 버튼을 놓는다.
+    // 입력: ctx - 단계 문맥(button), token - 취소 토큰.
+    // 출력: Pass.
     private static async Task<StepOutcome> ReleaseAsync(StepContext ctx, CancellationToken token)
     {
         InputButtons buttons = ParseButtons(ctx);
@@ -475,6 +553,9 @@ public static class ActorActions
         return StepOutcome.Pass($"released {buttons}");
     }
 
+    // 기능: 무기 칸 키를 눌러 slot을 고르고 교체 대기가 끝날 때까지 기다린다.
+    // 입력: ctx - 단계 문맥(slot), token - 취소 토큰.
+    // 출력: 칸이 바뀌면 Pass, 아니면 Fail.
     private static async Task<StepOutcome> SwitchWeaponAsync(StepContext ctx, CancellationToken token)
     {
         IQaActor actor = ctx.Actor();
@@ -485,6 +566,9 @@ public static class ActorActions
         return done ? StepOutcome.Pass($"slot {slot}") : StepOutcome.Fail($"Slot {slot} not selected.", $"slot {slot}", $"slot {actor.State.CurrentSlot}");
     }
 
+    // 기능: 버튼을 count번 Edge 입력(1 Tick 누름, 1 Tick 뗌)하고 다 보내질 때까지 기다린다.
+    // 입력: ctx - 단계 문맥, buttons - 누를 버튼 Flag, count - 반복 횟수, token - 취소 토큰.
+    // 출력: 다 보내면 Pass, 미Join·Timeout이면 Fail. 중단 시 입력 큐를 비운다.
     // Edge presses: each held one tick, released one tick, so the server sees a new press every time.
     private static async Task<StepOutcome> PressButtonsAsync(StepContext ctx, InputButtons buttons, int count, CancellationToken token)
     {
@@ -510,6 +594,9 @@ public static class ActorActions
         return done ? StepOutcome.Pass($"{buttons} x{count}") : StepOutcome.Fail($"Presses not sent within {ctx.TimeoutMs} ms.");
     }
 
+    // 기능: 버튼을 계속 누르거나(held 기본 true) 놓는다(sprint·crouch).
+    // 입력: ctx - 단계 문맥(held), button - 대상 버튼, token - 취소 토큰.
+    // 출력: Pass.
     private static async Task<StepOutcome> HoldAsync(StepContext ctx, InputButtons button, CancellationToken token)
     {
         bool held = ctx.Bool("held") ?? true;
@@ -618,12 +705,18 @@ public static class ActorActions
         return StepOutcome.Pass(clear ? "waypoint cleared" : $"waypoint at {position}");
     }
 
+    // 기능: 단계의 button 인자를 InputButtons로 파싱한다.
+    // 입력: ctx - 단계 문맥(button).
+    // 출력: 파싱된 버튼 Flag. 없거나 모르는 이름이면 QaStepException.
     private static InputButtons ParseButtons(StepContext ctx)
     {
         string text = ctx.RequireString("button");
         return TryParseButtons(text, out InputButtons b) ? b : throw new QaStepException($"Unknown button '{text}'.");
     }
 
+    // 기능: 0부터 세는 무기 칸 번호를 해당 칸 선택 버튼으로 바꾼다.
+    // 입력: slot - 칸 번호(0, 1, 그 외는 3번째 칸).
+    // 출력: Slot1·Slot2·Slot3 중 하나.
     private static InputButtons SlotButton(int slot) => slot switch
     {
         0 => InputButtons.Slot1,
@@ -634,6 +727,9 @@ public static class ActorActions
     public const int HitSettleMs = 150;
     public const int HitSettleMaxMs = 500;
 
+    // 기능: HitsLanded가 HitSettleMs 동안 변하지 않을 때까지(최대 HitSettleMaxMs) 기다린다.
+    // 입력: actor - 대상 Actor, token - 취소 토큰.
+    // 출력: 반환값 없음. 늦게 오는 HitConfirmed가 집계될 시간을 준다.
     private static async Task SettleHitsAsync(IQaActor actor, CancellationToken token)
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -657,6 +753,9 @@ public static class ActorActions
 
     // ---- input pause (request §75) ----
 
+    // 기능: 연결은 유지한 채 Actor의 입력 전송을 멈추거나 다시 시작한다(request §75).
+    // 입력: ctx - 단계 문맥, paused - true면 멈춤, false면 재개, token - 취소 토큰.
+    // 출력: 명령이 적용되면 Pass, 아니면 Fail.
     private static async Task<StepOutcome> PauseInputAsync(StepContext ctx, bool paused, CancellationToken token)
     {
         IQaActor actor = ctx.Actor();
@@ -668,6 +767,9 @@ public static class ActorActions
 
     public const int MaxBuildCount = 8;   // the server keeps 8 waiting requests per player (BuildRequestQueue.Capacity)
 
+    // 기능: build 단계의 Literal 인자(piece·material 이름, 칸·position 택일, 칸·rotation·count 범위)를 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckBuild(StepDefinition s)
     {
         if (s.Params.TryGetValue("piece", out JsonElement p) && p.ValueKind == JsonValueKind.String && !Variables.HasReference(p)
@@ -826,6 +928,9 @@ public static class ActorActions
         }
     }
 
+    // 기능: 이름 문자열을 enum 값으로 파싱한다(대소문자 무시, 숫자 문자열과 정의되지 않은 값은 거부).
+    // 입력: text - enum 이름, value - 파싱된 값(out).
+    // 출력: 정의된 이름이면 true와 값, 아니면 false.
     private static bool TryEnum<T>(string text, out T value) where T : struct, Enum =>
         Enum.TryParse(text, ignoreCase: true, out value) && Enum.IsDefined(value) && !int.TryParse(text, out _);
 
@@ -833,6 +938,9 @@ public static class ActorActions
     // the input that carries the aim. count/dx/dz: a row of pieces, cell (x + i*dx, z + i*dz) (turbo building: one
     // request every two ticks). Passes when every request got its BuildResult and each code is `expect` (default Ok,
     // "any" accepts all). saveAs: { sent, accepted, pieceId (first accepted), pieceIds[], codes[] }.
+    // 기능: 플레이어처럼 건설 모드에서 조각을 count개 놓는 BuildRequest를 보내고 모든 BuildResult를 기다린다.
+    // 입력: ctx - 단계 문맥(piece, material, cellX·level·cellZ 또는 position, rotation, count, dx, dz, expect), token - 취소 토큰.
+    // 출력: 모든 결과가 오고 코드가 expect(기본 Ok, "any"는 모두)면 Pass(saveAs: sent, accepted, pieceId, pieceIds, codes), 아니면 Fail. 중단 시 입력 큐를 비운다.
     private static async Task<StepOutcome> BuildAsync(StepContext ctx, CancellationToken token)
     {
         IQaActor actor = ctx.Actor();
@@ -902,6 +1010,9 @@ public static class ActorActions
         }
     }
 
+    // 기능: 단계 안의 준비 대기. 조건이 성립할 때까지 최대 ReadyWaitMs(단계 Timeout 이내) 검사한다.
+    // 입력: ctx - 단계 문맥, condition - 검사할 조건, token - 취소 토큰.
+    // 출력: 조건이 성립하면 true, 짧은 한도나 단계 Timeout이 지나면 false.
     // A readiness wait inside a step: at most ReadyWaitMs, and never past the step's own limit.
     private static async Task<bool> WaitShortAsync(StepContext ctx, Func<bool> condition, CancellationToken token)
     {
@@ -914,6 +1025,9 @@ public static class ActorActions
         }
     }
 
+    // 기능: 명령을 보내고 Actor가 그 명령을 적용한 상태를 발행할 때까지 단계 Timeout 안에서 기다린다.
+    // 입력: ctx - 단계 문맥, actor - 대상 Actor, command - 보낼 명령, token - 취소 토큰.
+    // 출력: 적용 상태가 발행되면 true, Timeout이면 false.
     // Sends and waits (bounded by the step) until the actor has applied it and published a state after it.
     private static async Task<bool> SendAppliedAsync(StepContext ctx, IQaActor actor, ActorCommand command, CancellationToken token)
     {
@@ -921,6 +1035,9 @@ public static class ActorActions
         return await ctx.WaitUntilAsync(() => actor.State.LastCommandId >= command.Id, token).ConfigureAwait(false);
     }
 
+    // 기능: 정리용 명령을 1초 한도로 보내고 실패(Pump 종료·가득 참)는 무시한다.
+    // 입력: actor - 대상 Actor, command - 보낼 명령.
+    // 출력: 반환값 없음. 보내지면 Actor 의도가 정리된다.
     private static async Task TrySendAsync(IQaActor actor, ActorCommand command)
     {
         try

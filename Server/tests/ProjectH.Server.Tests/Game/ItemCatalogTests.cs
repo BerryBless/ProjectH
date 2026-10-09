@@ -9,6 +9,9 @@ namespace ProjectH.Server.Tests.Game;
 
 public class ItemCatalogTests
 {
+    // 기능: 잘못된 items.json 문자열의 파싱이 거절되는지 확인하고 오류 메시지를 돌려준다.
+    // 입력: json - 파싱할 문자열, simHz - 시뮬레이션 주파수(기본 30).
+    // 출력: 거절 오류 메시지. 파싱이 성공하거나 메시지가 비면 테스트가 실패한다.
     private static string Parse(string json, int simHz = 30)
     {
         Assert.False(ItemCatalog.TryParse(json, simHz, out var catalog, out string? error));
@@ -17,6 +20,9 @@ public class ItemCatalogTests
         return error!;
     }
 
+    // 기능: 유효한 테스트 items.json에서 한 조각만 바꿔 규칙 하나만 깨진 문자열을 만든다.
+    // 입력: from - 바꿀 원문 조각(반드시 있어야 한다), to - 대신 넣을 조각.
+    // 출력: 바뀐 JSON 문자열. 원문 조각이 없으면 테스트가 실패한다.
     // Replaces one exact piece of the valid test file, so each case breaks exactly one rule.
     private static string Broken(string from, string to)
     {

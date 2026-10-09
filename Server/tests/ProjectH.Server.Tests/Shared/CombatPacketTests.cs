@@ -9,6 +9,9 @@ public class CombatPacketTests
 {
     private readonly byte[] _buffer = new byte[ProtocolConstants.MaxPacketSize];
 
+    // 기능: 테스트 버퍼의 앞 length 바이트로 Reader를 만들고 Packet Id가 expected인지 확인한 뒤 Id 다음 위치의 Reader를 돌려준다.
+    // 입력: length - 버퍼에 쓰인 바이트 수, expected - 기대하는 Packet Id.
+    // 출력: Packet Id를 읽은 뒤의 PacketReader. Id가 다르면 Assert 실패.
     private PacketReader ReaderAfterId(int length, PacketId expected)
     {
         var reader = new PacketReader(_buffer.AsSpan(0, length));
@@ -19,6 +22,9 @@ public class CombatPacketTests
 
     private static readonly ProjectileInfo[] NoProjectiles = System.Array.Empty<ProjectileInfo>();
 
+    // 기능: 테스트용 무기 정보를 만든다 (피해 20, 발사 간격 3, 탄창 30, 재장전 60, 사거리 150, 자동, 중형 탄, 1 Pellet 고정).
+    // 입력: id - 무기 ID, name - 무기 이름.
+    // 출력: 지정한 ID·이름과 고정 수치를 가진 WeaponInfo.
     private static WeaponInfo Weapon(byte id, string name) => new WeaponInfo
     {
         WeaponId = id,

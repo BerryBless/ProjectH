@@ -18,12 +18,18 @@ public class HitBoxModeTests
     private readonly Dictionary<int, uint> _seq = new();
     private readonly Match _match;
 
+    // 기능: 보낸 패킷을 _sent에 모으는 3인 개발 모드 Match를 만든다.
+    // 입력: 없음.
+    // 출력: 참가자 없는 Match를 든 테스트 인스턴스.
     public HitBoxModeTests()
     {
         _match = new Match(new ServerOptions { MaxPlayers = 3, DevRespawn = true }, TestGameData.Create(),
             (peer, data, _) => _sent.Add((peer, (PacketId)data[0], data.ToArray())), TestGameData.CombatLoadout);
     }
 
+    // 기능: 플레이어를 경기에 들여보내고 주어진 자리에 세운다(지연 보상 이력도 그 자리로 맞춘다).
+    // 입력: peer - 연결 id, feet - 발 위치.
+    // 출력: 들어온 플레이어. 입장이 거절되면 테스트가 실패한다.
     private PlayerEntity Join(int peer, Vector3 feet)
     {
         Assert.Equal(JoinResult.Ok, _match.TryJoin(peer, "p" + peer));
@@ -33,6 +39,9 @@ public class HitBoxModeTests
         return player;
     }
 
+    // 기능: 입력 하나에 그 플레이어의 다음 순번을 붙여 경기 입력 큐에 넣는다(Tick은 돌리지 않는다).
+    // 입력: player - 보내는 플레이어, command - 보낼 입력(Seq는 덮어쓴다).
+    // 출력: 반환값 없음. 입력이 큐에 쌓이고 순번이 올라간다.
     private void Send(PlayerEntity player, InputCommand command)
     {
         _seq.TryGetValue(player.PeerId, out uint seq);
@@ -43,8 +52,14 @@ public class HitBoxModeTests
         _match.EnqueueInput(player.PeerId, packet);
     }
 
+    // 기능: 한 peer가 받은 HitConfirmed 수를 센다.
+    // 입력: peer - 받는 연결 id.
+    // 출력: HitConfirmed 패킷 수.
     private int Hits(int peer) => _sent.Count(s => s.Peer == peer && s.Id == PacketId.HitConfirmed);
 
+    // 기능: 대상을 몇 Tick 앉힌 뒤 사수가 대상 발 위 주어진 높이를 한 발 쏜다.
+    // 입력: height - 대상 발 위 조준 높이.
+    // 출력: 사수가 HitConfirmed를 받았으면 true. 대상이 앉지 않았으면 테스트가 실패한다.
     // The target crouches (held) for a few ticks, then the shooter fires at a point height above the target's feet.
     private bool ShootAtCrouched(float height)
     {

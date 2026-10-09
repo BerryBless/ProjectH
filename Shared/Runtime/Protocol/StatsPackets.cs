@@ -39,6 +39,9 @@ namespace ProjectH.Shared.Protocol
     // StatsResponse and silently drops requests above its per-connection rate (D8).
     public static class StatsRequest
     {
+        // 기능: 본문 없는 StatsRequest 패킷(id 1바이트)을 쓴다.
+        // 입력: writer - 쓸 Writer.
+        // 출력: 반환값 없음. writer에 1바이트가 쓰인다.
         public static void Write(ref PacketWriter writer)
         {
             writer.WriteByte((byte)PacketId.StatsRequest);
@@ -61,8 +64,14 @@ namespace ProjectH.Shared.Protocol
         public StatsSummary Summary;
         public StatsRow[] Rows = Array.Empty<StatsRow>();   // newest first; only the first MaxRows are written
 
+        // 기능: 요약과 행이 없는 응답(NoRecord·Unavailable·Busy 같은 오류 답)을 만든다.
+        // 입력: status - 응답 상태.
+        // 출력: Status만 설정되고 Summary는 0, Rows는 빈 배열인 새 StatsResponse.
         public static StatsResponse Of(StatsStatus status) => new StatsResponse { Status = status };
 
+        // 기능: 통계 응답을 StatsResponse 패킷(id, 상태, 24바이트 요약, 행 수, 20바이트 행들)으로 쓴다.
+        // 입력: writer - 쓸 Writer, r - 보낼 응답(Rows는 newest first, 처음 MaxRows개만 쓴다).
+        // 출력: 반환값 없음. Status가 Ok가 아니면 요약은 0, 행 수는 0으로 쓰인다.
         public static void Write(ref PacketWriter writer, StatsResponse r)
         {
             bool ok = r.Status == StatsStatus.Ok;
@@ -92,6 +101,9 @@ namespace ProjectH.Shared.Protocol
             }
         }
 
+        // 기능: 패킷 id 다음부터 StatsResponse 본문을 읽어 새 응답 객체를 만든다(응답마다 한 번 할당).
+        // 입력: reader - 패킷 id를 지난 Reader, r - 읽은 응답을 받을 변수.
+        // 출력: 상태가 아는 값이고 행 수가 MaxRows 이하(Ok가 아니면 0)이며 바이트가 충분하면 true와 응답, 아니면 false와 null.
         public static bool TryRead(ref PacketReader reader, out StatsResponse r)
         {
             r = null;

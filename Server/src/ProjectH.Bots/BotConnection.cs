@@ -152,14 +152,18 @@ public sealed class BotConnection : IDisposable
         _peer = _net.Connect(_host!, _port, data);
     }
 
-    // Receive, run LiteNetLib's timers and raise this bot's events. elapsedMs since the previous Update.
+    // 기능: 수신하고 LiteNetLib의 타이머를 돌리고 이 봇의 이벤트(연결·끊김·패킷)를 이 스레드에서 일으킨다.
+    // 입력: elapsedMs - 이전 Update 이후 경과 시간(ms).
+    // 출력: 반환값 없음. BotView와 연결 상태가 갱신된다.
     public void Update(float elapsedMs)
     {
         _net.ManualUpdate(elapsedMs);
         _net.PollEvents();
     }
 
-    // One new input: Seq is assigned here, and the packet repeats the last ones for loss (D8, like the client).
+    // 기능: 새 입력 하나를 보낸다. Seq를 여기서 매기고, 손실에 대비해 최근 입력들을 한 패킷에 함께 되풀이한다(D8, Unity Client와 같다).
+    // 입력: command - 이번 Tick의 입력(Seq는 여기서 채운다).
+    // 출력: 반환값 없음. 연결되어 있으면 Unreliable로 패킷이 전송되고 InputsSent가 는다.
     public void SendInput(InputCommand command)
     {
         if (_peer == null || !Connected || Disconnected) return;
@@ -181,7 +185,9 @@ public sealed class BotConnection : IDisposable
         InputsSent++;
     }
 
-    // Phase 13 D8: one build request on the building channel (ReliableOrdered; the server answers there too).
+    // 기능: 건설 요청 하나를 건설 채널로 보낸다(Phase 13 D8, ReliableOrdered, 서버 답도 같은 채널).
+    // 입력: request - 건설 요청.
+    // 출력: 반환값 없음. 연결되어 있으면 패킷이 전송되고 BuildsSent가 는다.
     public void SendBuild(in BuildRequest request)
     {
         if (_peer == null || !Connected || Disconnected) return;
@@ -243,6 +249,9 @@ public sealed class BotConnection : IDisposable
         return true;
     }
 
+    // 기능: 소켓을 닫는다(서버에 끊김을 알리고 멈춘다).
+    // 입력: 없음.
+    // 출력: 반환값 없음. NetManager가 멈춘다.
     public void Dispose() => _net.Stop();
 
     // 기능: QA 도구(D14, request §127): 바이트를 그대로 신뢰 채널로 보낸다(MTU보다 크면 조각). 잘못된 패킷 시험 전용, 봇은 쓰지 않는다.
@@ -266,6 +275,9 @@ public sealed class BotConnection : IDisposable
     // QA tool: round trip time of the connection in ms (0 before it connects). Read on the thread that calls Update.
     public int RoundTripTimeMs => _peer?.RoundTripTime ?? 0;
 
+    // 기능: QA 도구용: 서버에 알리지 않고 소켓을 닫는다(선을 뽑은 것처럼). 서버는 자기 타임아웃으로만 알아채 유예 경로로 간다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. 이 연결은 바로 Disconnected("Aborted (QA)")가 된다(로컬 정지엔 LiteNetLib가 끊김 이벤트를 내지 않는다).
     // QA tool: close the socket without telling the server, like a pulled cable. The server notices only through its
     // own timeout, so the drop takes the network-loss path (grace) instead of a clean leave. Marks this connection gone
     // at once: LiteNetLib raises no disconnect event for a local stop.
@@ -279,6 +291,9 @@ public sealed class BotConnection : IDisposable
         }
     }
 
+    // 기능: 연결이 맺어지면 Connected로 표시하고 JoinMatch 요청을 보낸다.
+    // 입력: 없음.
+    // 출력: 반환값 없음. ReliableOrdered로 JoinMatchRequest가 전송된다.
     private void OnConnected()
     {
         Connected = true;

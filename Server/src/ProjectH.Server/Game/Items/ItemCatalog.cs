@@ -8,6 +8,9 @@ namespace ProjectH.Server.Game.Items;
 
 public sealed class AmmoDefinition
 {
+    // 기능: 검증이 끝난 탄 종류 정의를 만든다.
+    // 입력: type - 탄 종류, name - 표시 이름, pickupAmount - 탄 아이템 하나의 탄 수, max - 예비 탄 상한(D3).
+    // 출력: 바뀌지 않는 AmmoDefinition.
     public AmmoDefinition(AmmoType type, string name, ushort pickupAmount, ushort max)
     {
         Type = type;
@@ -24,6 +27,10 @@ public sealed class AmmoDefinition
 
 public sealed class ConsumableDefinition
 {
+    // 기능: 검증이 끝난 소모품 정의를 만든다.
+    // 입력: type - 소모품 종류, name - 표시 이름, useTicks - 채널 Tick(D11, 수류탄은 0), heal - 회복 체력, shield - 회복 보호막,
+    //   maxStack - 소지 상한.
+    // 출력: 바뀌지 않는 ConsumableDefinition.
     public ConsumableDefinition(ConsumableType type, string name, ushort useTicks, ushort heal, ushort shield, byte maxStack)
     {
         Type = type;
@@ -51,6 +58,10 @@ public sealed class ItemCatalog
     private readonly AmmoDefinition[] _ammo;              // index = AmmoType - 1
     private readonly ConsumableDefinition[] _consumables; // index = ConsumableType - 1
 
+    // 기능: 검증이 끝난 값들로 카탈로그를 만들고 ItemCatalog 패킷용 와이어 값을 한 번 만든다(TryParse만 호출한다).
+    // 입력: rarityNames - 등급 이름(색인 = 등급), damageMultipliers - 등급별 피해 배율, ammo - 탄 정의(색인 = 종류 - 1),
+    //   consumables - 소모품 정의(색인 = 종류 - 1), simHz - 변환에 쓴 Tick 속도.
+    // 출력: 바뀌지 않는 ItemCatalog.
     private ItemCatalog(string[] rarityNames, float[] damageMultipliers, AmmoDefinition[] ammo,
         ConsumableDefinition[] consumables, int simHz)
     {
@@ -86,12 +97,29 @@ public sealed class ItemCatalog
     // Built once for the ItemCatalog packet sent at every join.
     public ItemCatalogData Wire { get; }
 
+    // 기능: 등급의 피해 배율을 돌려준다.
+    // 입력: rarity - 등급 색인(0..RarityCount-1).
+    // 출력: 피해 배율.
     public float DamageMultiplier(int rarity) => _damageMultipliers[rarity];
+
+    // 기능: 등급의 이름을 돌려준다.
+    // 입력: rarity - 등급 색인(0..RarityCount-1).
+    // 출력: 등급 이름.
     public string RarityName(int rarity) => _rarityNames[rarity];
+
+    // 기능: 탄 종류의 정의를 돌려준다.
+    // 입력: type - 탄 종류(None 제외).
+    // 출력: 그 종류의 AmmoDefinition.
     public AmmoDefinition Ammo(AmmoType type) => _ammo[(int)type - 1];
+
+    // 기능: 소모품 종류의 정의를 돌려준다.
+    // 입력: type - 소모품 종류(None 제외).
+    // 출력: 그 종류의 ConsumableDefinition.
     public ConsumableDefinition Consumable(ConsumableType type) => _consumables[(int)type - 1];
 
-    // Index of a rarity name, or -1 (loot.json refers to rarities by name).
+    // 기능: 등급 이름으로 색인을 찾는다(loot.json은 등급을 이름으로 가리킨다).
+    // 입력: name - 등급 이름.
+    // 출력: 등급 색인. 없으면 -1.
     public int RarityIndex(string name)
     {
         for (int i = 0; i < _rarityNames.Length; i++)
@@ -101,6 +129,9 @@ public sealed class ItemCatalog
         return -1;
     }
 
+    // 기능: items.json 파일을 읽어 검증한 카탈로그를 만든다(시작 시 한 번).
+    // 입력: path - 파일 경로, simHz - Tick 속도.
+    // 출력: 검증된 카탈로그. 파일이 없거나 내용이 틀리면 InvalidOperationException.
     public static ItemCatalog LoadFile(string path, int simHz)
     {
         if (!File.Exists(path)) throw new InvalidOperationException($"Item data not found: {path}");
@@ -109,6 +140,9 @@ public sealed class ItemCatalog
         return catalog!;
     }
 
+    // 기능: items.json을 읽고 등급·탄·소모품을 검증한다.
+    // 입력: json - 파일 내용, simHz - Tick 속도, catalog·error - 결과.
+    // 출력: 맞으면 true와 카탈로그, 틀리면 false와 이유.
     public static bool TryParse(string json, int simHz, out ItemCatalog? catalog, out string? error)
     {
         catalog = null;
@@ -147,6 +181,9 @@ public sealed class ItemCatalog
         }
     }
 
+    // 기능: 등급 목록을 읽는다(정확히 RarityCount개, 이름 중복 없음, 배율 0 초과 10 이하).
+    // 입력: list - JSON 항목들, names·multipliers - 결과(색인 = 등급).
+    // 출력: 맞으면 null, 틀리면 이유.
     private static string? ParseRarities(List<RarityJson?>? list, out string[]? names, out float[]? multipliers)
     {
         names = null;
@@ -254,6 +291,9 @@ public sealed class ItemCatalog
         return null;
     }
 
+    // 기능: 표시 이름이 비어 있지 않고 UTF-8 MaxNameBytes 이하인지 본다.
+    // 입력: name - 검사할 이름.
+    // 출력: 맞으면 null, 틀리면 이유.
     private static string? CheckName(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return "name is required.";

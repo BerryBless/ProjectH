@@ -10,6 +10,9 @@ namespace ProjectH.Shared.Simulation
         public readonly float Z;
         public readonly float Radius;
 
+        // 기능: 이름 있는 장소 하나를 만든다.
+        // 입력: name - 표시 이름, x·z - 중심의 평면 위치, radius - 그 장소로 치는 반지름.
+        // 출력: 주어진 값을 담은 장소.
         public MapPoi(string name, float x, float z, float radius)
         {
             Name = name;

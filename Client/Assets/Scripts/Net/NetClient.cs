@@ -409,11 +409,17 @@ namespace ProjectH.Client.Net
             _hasCookie = false;
         }
 
+        // 기능: 쌓인 LiteNetLib 이벤트를 메인 스레드에서 처리한다(아래 INetEventListener 콜백이 이 안에서 불린다). Update마다 부른다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. 소켓이 열려 있으면 받은 패킷·연결 변화가 이벤트로 올라간다.
         public void Poll()
         {
             if (_net.IsRunning) _net.PollEvents();
         }
 
+        // 기능: 플레이어 입력 패킷 하나를 비신뢰(Unreliable)로 보낸다.
+        // 입력: packet - 보낼 입력(순번·버튼·조준 등).
+        // 출력: 반환값 없음. 참가 중(Joined)일 때만 전송되고, 아니면 아무것도 하지 않는다.
         public void SendInput(in PlayerInputPacket packet)
         {
             if (State != ClientState.Joined) return;
@@ -422,11 +428,17 @@ namespace ProjectH.Client.Net
             _server.Send(writer.WrittenSpan, DeliveryMethod.Unreliable);
         }
 
+        // 기능: 지금 연결을 끊는다(CancelConnect와 달리 끝이 OnPeerDisconnected로 처리되어 Disconnected 이벤트가 올라간다).
+        // 입력: 없음.
+        // 출력: 반환값 없음. 연결된 peer가 있으면 끊기 요청이 나가고, 없으면 아무것도 하지 않는다.
         public void Disconnect()
         {
             if (_server != null) _net.DisconnectPeer(_server);
         }
 
+        // 기능: 조각 배치 요청 하나를 건설 채널(1)로 신뢰 순서 전송한다(Phase 13 D8).
+        // 입력: request - 배치 요청(순번·조각 종류·격자 위치·재질).
+        // 출력: 보냈으면 true, 참가 중이 아니면 false(아무것도 보내지 않음).
         // Phase 13 D8: one placement on the building channel. False when not joined.
         public bool SendBuild(in BuildRequest request)
         {
@@ -461,6 +473,9 @@ namespace ProjectH.Client.Net
             return true;
         }
 
+        // 기능: 내 누적 전적을 서버에 요청한다(Phase 11 D8). 답은 StatsReceived 이벤트로 온다.
+        // 입력: 없음.
+        // 출력: 요청을 보냈으면 true, 참가 중이 아니면 false(아무것도 보내지 않음).
         // Phase 11 D8: asks for this player's statistics; the answer comes as StatsReceived. False when not joined.
         public bool RequestStats()
         {
@@ -587,6 +602,9 @@ namespace ProjectH.Client.Net
             Disconnected?.Invoke(reason);
         }
 
+        // 기능: 서버가 보낸 끊기 코드를 사람이 읽을 문장으로 바꾼다.
+        // 입력: code - 서버의 DisconnectCode.
+        // 출력: 코드별 상수 문장. 모르는 코드는 "Disconnected".
         // Constant strings: no allocation.
         private static string Describe(DisconnectCode code)
         {
@@ -843,21 +861,33 @@ namespace ProjectH.Client.Net
             }
         }
 
+        // 기능: 들어오는 접속 요청을 거절한다(Client는 접속을 받지 않는다).
+        // 입력: request - 들어온 접속 요청.
+        // 출력: 반환값 없음. 요청이 거절된다.
         void INetEventListener.OnConnectionRequest(ConnectionRequest request)
         {
             // A client never accepts incoming connections.
             request.Reject();
         }
 
+        // 기능: 소켓 오류를 LastError에 기록한다.
+        // 입력: endPoint - 오류가 난 주소(쓰지 않는다), socketError - 소켓 오류 코드.
+        // 출력: 반환값 없음. LastError가 오류 문장으로 바뀐다.
         void INetEventListener.OnNetworkError(IPEndPoint endPoint, SocketError socketError)
         {
             LastError = "Network error: " + socketError;
         }
 
+        // 기능: 연결 없는 메시지를 무시한다.
+        // 입력: remoteEndPoint - 보낸 주소, reader - 데이터, messageType - 종류(모두 쓰지 않는다).
+        // 출력: 반환값 없음. 아무것도 바뀌지 않는다.
         void INetEventListener.OnNetworkReceiveUnconnected(IPEndPoint remoteEndPoint, NetPacketReader reader, UnconnectedMessageType messageType)
         {
         }
 
+        // 기능: 지연 갱신 알림을 무시한다(RoundTripMs가 peer에서 직접 읽는다).
+        // 입력: peer - 대상 peer, latency - 새 지연(ms)(모두 쓰지 않는다).
+        // 출력: 반환값 없음. 아무것도 바뀌지 않는다.
         void INetEventListener.OnNetworkLatencyUpdate(NetPeer peer, int latency)
         {
         }

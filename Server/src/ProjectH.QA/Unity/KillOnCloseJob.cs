@@ -17,6 +17,9 @@ internal static class KillOnCloseJob
 
     private static readonly Lazy<SafeFileHandle?> s_job = new(Create, LazyThreadSafetyMode.ExecutionAndPublication);
 
+    // 기능: 프로세스를 kill-on-close Job Object에 넣는다(Windows만).
+    // 입력: process - 넣을 프로세스.
+    // 출력: 넣었으면 true, 아니면 false와 error에 사유(Windows 아님, job 생성 실패, Win32 오류).
     // False (with why) when the process could not be put in the job; the caller logs it and carries on.
     public static bool TryAssign(System.Diagnostics.Process process, out string? error)
     {
@@ -37,6 +40,9 @@ internal static class KillOnCloseJob
         return false;
     }
 
+    // 기능: KILL_ON_JOB_CLOSE 제한이 걸린 Job Object를 만든다(Lazy 초기화, 프로세스에 하나).
+    // 입력: 없음.
+    // 출력: Job 핸들. Windows가 아니거나 생성·설정에 실패하면 null.
     private static SafeFileHandle? Create()
     {
         if (!OperatingSystem.IsWindows()) return null;

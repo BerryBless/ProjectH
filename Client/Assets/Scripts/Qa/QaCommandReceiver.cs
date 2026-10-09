@@ -70,6 +70,9 @@ namespace ProjectH.Client.Qa
 
         private readonly struct Reply
         {
+            // 기능: 요청 하나의 답(상태 코드와 JSON 본문)을 담는다.
+            // 입력: status - HTTP 상태 코드, json - 응답 본문.
+            // 출력: 두 값이 채워진 Reply.
             public Reply(int status, string json)
             {
                 Status = status;
@@ -82,6 +85,9 @@ namespace ProjectH.Client.Qa
 
         private sealed class Request
         {
+            // 기능: 메인 스레드로 넘길 요청 하나를 만든다(답은 Done으로 돌아온다).
+            // 입력: route - 해석된 경로, body - 요청 본문 텍스트(Status는 null).
+            // 출력: 아직 답하지 않은 Request(Done은 RunContinuationsAsynchronously로 만든 TaskCompletionSource).
             public Request(QaRoute route, string body)
             {
                 Route = route;
@@ -279,6 +285,9 @@ namespace ProjectH.Client.Qa
             if (_client != null) _client.QaAssumeCursorLocked = false;
         }
 
+        // 기능: 주어진 포트로 HttpListener를 연다(127.0.0.1 먼저, 안 되면 localhost).
+        // 입력: port - 들을 포트.
+        // 출력: 시작된 HttpListener. 둘 다 못 열면(포트 사용 중 등) 경고 한 줄을 남기고 null.
         // D26: 127.0.0.1 first; "localhost" only when that cannot start. A port in use (another Editor clone, another
         // client) logs one warning and leaves the receiver off.
         private static HttpListener StartListener(int port)
@@ -304,6 +313,9 @@ namespace ProjectH.Client.Qa
             return null;
         }
 
+        // 기능: Accept 스레드 본체. 연결을 받아 HandleAsync에 넘기고, 동시 처리 수가 MaxInFlight를 넘으면 바로 503으로 답한다.
+        // 입력: 없음(_listener와 _stopping을 읽는다).
+        // 출력: 반환값 없음. _stopping이 되거나 GetContext가 예외(Listener 닫힘)를 내면 스레드가 끝난다. Unity API는 쓰지 않는다.
         private void AcceptLoop()
         {
             HttpListener listener = _listener;
@@ -331,6 +343,10 @@ namespace ProjectH.Client.Qa
             }
         }
 
+        // 기능: 연결 하나를 Thread Pool에서 처리한다. loopback·경로·메서드·Content-Type을 검사하고, 본문을 읽어 메인 스레드 큐에
+        //       넣은 뒤 답을 기다려 응답을 쓴다. 본문 읽기부터 답까지 TimeoutMs 하나로 제한한다.
+        // 입력: context - 받은 HTTP 연결.
+        // 출력: 반환값 없음. 응답(200/400/403/404/405/408/413/415/500/503/504)이 쓰이고 _inFlight가 하나 줄어든다.
         private async Task HandleAsync(HttpListenerContext context)
         {
             int status = 500;
@@ -417,6 +433,9 @@ namespace ProjectH.Client.Qa
 
         private readonly struct BodyResult
         {
+            // 기능: 본문 읽기 결과를 담는다.
+            // 입력: body - 읽은 본문 텍스트(MaxBodyBytes 초과나 시간 초과면 null), timedOut - 기한이 먼저 지났는지.
+            // 출력: 두 값이 채워진 BodyResult.
             public BodyResult(string body, bool timedOut)
             {
                 Body = body;
@@ -427,6 +446,9 @@ namespace ProjectH.Client.Qa
             public bool TimedOut { get; }
         }
 
+        // 기능: 요청 본문을 UTF-8 텍스트로 읽는다. Content-Length나 실제 도착량이 MaxBodyBytes를 넘으면 남은 본문을 비우고 null로 둔다.
+        // 입력: http - 읽을 요청, deadline - 요청 전체 기한 Task.
+        // 출력: 본문 텍스트(본문이 없으면 빈 문자열), 16 KB 초과면 Body null, 기한이 먼저 지나면 TimedOut true.
         // The body as text, null when it is larger than MaxBodyBytes (by Content-Length or by what actually arrives),
         // or TimedOut when the deadline passed while reading.
         private static async Task<BodyResult> ReadBodyAsync(HttpListenerRequest http, Task deadline)
@@ -449,6 +471,9 @@ namespace ProjectH.Client.Qa
             return new BodyResult(Encoding.UTF8.GetString(buffer, 0, total), false);
         }
 
+        // 기능: 남은 요청 본문을 읽어 버린다(최대 MaxDrainBytes). 안 읽은 바이트가 남으면 Windows가 연결을 리셋해 413/415가 전달되지 않는다.
+        // 입력: input - 요청 본문 스트림, buffer - 읽기 버퍼, deadline - 요청 전체 기한 Task.
+        // 출력: 본문 끝이나 상한까지 비웠으면 true, 기한이 먼저 지났으면 false.
         // Closing a socket with unread request bytes resets the connection on Windows and the caller never sees the
         // 413/415. Reads and discards at most MaxDrainBytes; a larger body is left to the reset. False = the deadline
         // passed first.
@@ -465,6 +490,9 @@ namespace ProjectH.Client.Qa
             return true;
         }
 
+        // 기능: 스트림 읽기 하나를 기한과 경쟁시킨다(Listener 스트림은 취소 토큰을 따르지 않는다).
+        // 입력: input - 읽을 스트림, buffer·offset·count - 받을 버퍼 구간, deadline - 요청 전체 기한 Task.
+        // 출력: 읽은 바이트 수(0이면 스트림 끝), 기한이 먼저 지났으면 ReadTimedOut(-1).
         // The listener's stream does not honour cancellation tokens, so the read races the deadline instead. A read
         // that loses keeps running until the response closes the connection; its fault is observed so it is not
         // reported as an unobserved task exception. The buffer belongs to that request only, so a late write is harmless.
@@ -476,6 +504,10 @@ namespace ProjectH.Client.Qa
             return ReadTimedOut;
         }
 
+        // 기능: 요청을 메인 스레드 큐에 넣고 답을 기다린다.
+        // 입력: request - 넘길 요청, deadline - 요청 전체 기한 Task.
+        // 출력: 메인 스레드의 답. 종료 중이면 503 "shutting down", 큐가 차면 503 "queue full", 기한 안에 답이 없으면 504
+        //       (그때 요청을 완료시켜 메인 스레드가 건너뛰게 한다; 그 사이 답했다면 그 답).
         private async Task<Reply> SubmitAsync(Request request, Task deadline)
         {
             if (_stopping) return new Reply(503, ErrorJson("shutting down"));
@@ -522,6 +554,9 @@ namespace ProjectH.Client.Qa
             }
         }
 
+        // 기능: 오류 응답 JSON을 만든다.
+        // 입력: error - 오류 문장.
+        // 출력: {"error": ...} 형식의 JSON 문자열.
         private static string ErrorJson(string error)
         {
             var sb = new StringBuilder(64);
@@ -874,6 +909,10 @@ namespace ProjectH.Client.Qa
             Answer(request, applied ? 200 : 409, _json.ToString());
         }
 
+        // 기능: POST /qa/screenshot 하나를 검사하고 프레임 끝에 찍는 Capture Coroutine을 시작한다.
+        // 입력: request - Body가 {"name": ...}인 요청.
+        // 출력: 반환값 없음. 이름이 잘못되면 400, 대기 중인 스크린샷이 MaxQueued면 503으로 바로 답하고, 아니면 _pendingShots에 넣고
+        //       Coroutine이 나중에 답한다.
         private void ProcessScreenshot(Request request)
         {
             QaJsonResult result = QaJsonReader.TryGetString(request.Body, "name", out string name);
@@ -891,6 +930,9 @@ namespace ProjectH.Client.Qa
             StartCoroutine(Capture(request, Path.Combine(_shotDir, name + ".png")));
         }
 
+        // 기능: 프레임 렌더링이 끝난 뒤 화면을 찍어 PNG로 저장하고 요청에 답하는 Coroutine.
+        // 입력: request - 답할 스크린샷 요청, path - 저장할 PNG 경로.
+        // 출력: Coroutine 열거자. 저장되면 200(경로 포함), 찍기·쓰기 실패면 500으로 답한다. 이미 시간 초과로 완료된 요청은 찍지 않는다.
         // Captures after this frame finished rendering (UI included) and answers only after the PNG is written.
         // A window that never renders (minimized without a swap chain, -nographics) leaves the request to the 5 s
         // timeout; the coroutine then finds it completed and skips the capture.
@@ -921,11 +963,17 @@ namespace ProjectH.Client.Qa
             }
         }
 
+        // 기능: 요청의 답을 정한다(이미 답했거나 시간 초과된 요청이면 무시된다).
+        // 입력: request - 답할 요청, status - HTTP 상태 코드, json - 응답 본문.
+        // 출력: 반환값 없음. 기다리던 HandleAsync가 Thread Pool에서 이어져 응답을 쓴다.
         private static void Answer(Request request, int status, string json)
         {
             request.Done.TrySetResult(new Reply(status, json));
         }
 
+        // 기능: UI 화면을 상태 JSON의 이름으로 바꾼다.
+        // 입력: screen - UiRoot.QaScreen.
+        // 출력: "Title", "Connecting", "InGame", "Menu", "Disconnected", "Result" 또는 "Unknown".
         private static string ScreenName(UiScreen screen)
         {
             switch (screen)
@@ -940,8 +988,14 @@ namespace ProjectH.Client.Qa
             }
         }
 
+        // 기능: 앱 종료 때 수신기를 멈춘다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Shutdown이 실행된다(OnDestroy와 먼저 오는 쪽이 한다).
         private void OnApplicationQuit() => Shutdown();
 
+        // 기능: 컴포넌트 파괴 때 수신기를 멈춘다.
+        // 입력: 없음.
+        // 출력: 반환값 없음. Shutdown이 실행된다(OnApplicationQuit와 먼저 오는 쪽이 한다).
         private void OnDestroy() => Shutdown();
 
         // 기능: 수신기를 한 번만 멈춘다. 남은 요청에 503으로 답하고, Listener를 닫고 Accept 스레드를 Join하고, QA 입력을 끝낸다.

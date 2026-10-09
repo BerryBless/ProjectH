@@ -6,6 +6,9 @@ namespace ProjectH.Server.Tests.Game;
 
 public class PositionHistoryTests
 {
+    // 기능: X축 위의 위치를 만든다.
+    // 입력: x - X 좌표.
+    // 출력: (x, 0, 0) 위치.
     private static Vector3 X(float x) => new(x, 0f, 0f);
 
     [Fact]

@@ -15,6 +15,9 @@ namespace ProjectH.Client.Game
         private readonly Material[] _materials = new Material[4];
         private ulong _shownMask;
 
+        // 기능: GameMap.Harvestables마다 충돌체 있는 큐브를 만들고 종류별 공유 Material 4개를 붙인다(Phase 13 D6, 모두 서 있는 상태).
+        // 입력: 없음.
+        // 출력: 모든 채집 대상이 보이는 뷰(Root 아래; Apply가 파괴 마스크에 맞춰 숨기고 Dispose가 해제한다).
         public HarvestableViews()
         {
             var root = new GameObject("Harvestables");
@@ -44,7 +47,9 @@ namespace ProjectH.Client.Game
 
         public GameObject Root { get; }
 
-        // HarvestStates: bit i = harvestable i is destroyed.
+        // 기능: 서버의 파괴 마스크(HarvestStates)를 뷰에 반영한다(마스크가 바뀌었을 때만; 파괴된 것은 숨기고 서 있는 것은 보인다).
+        // 입력: destroyedMask - 비트 i = 채집 대상 i가 파괴됨.
+        // 출력: 반환값 없음. 큐브의 활성 상태가 바뀐다.
         public void Apply(ulong destroyedMask)
         {
             if (destroyedMask == _shownMask) return;
@@ -56,6 +61,9 @@ namespace ProjectH.Client.Game
             }
         }
 
+        // 기능: Root(큐브 포함)와 Material 4개를 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void Dispose()
         {
             if (Root != null) Object.Destroy(Root);

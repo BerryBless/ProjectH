@@ -121,6 +121,9 @@ public class ConnectRateTests
         int slot = limiter.SlotOf(A);
         const int Rounds = 10_000;
         using var start = new System.Threading.Barrier(2);
+        // 기능: 두 스레드가 같이 출발해 한 슬롯에 Acquired·Release를 Rounds번 반복한다.
+        // 입력: 없음(바깥의 limiter·slot·start를 쓴다).
+        // 출력: 반환값 없음. 슬롯의 활성 수가 늘었다 줄기를 반복한다.
         void Run()
         {
             start.SignalAndWait();

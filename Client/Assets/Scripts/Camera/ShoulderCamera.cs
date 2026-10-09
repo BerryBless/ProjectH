@@ -26,6 +26,9 @@ namespace ProjectH.Client.CameraControl
         // Phase 17 D3: our own shots' camera kick, added on top of Pitch (Pitch grows downwards, so the kick is subtracted).
         private readonly RecoilKick _recoil = new RecoilKick();
 
+        // 기능: 따라갈 Unity Camera를 받아 어깨 카메라를 만들고 Near Clip을 충돌 반지름보다 작게 맞춘다.
+        // 입력: camera - 조작할 Unity Camera.
+        // 출력: Yaw 0, Pitch 10, 허리 거리로 시작하는 ShoulderCamera.
         public ShoulderCamera(Camera camera)
         {
             _camera = camera;
@@ -46,7 +49,7 @@ namespace ProjectH.Client.CameraControl
 
         // 기능: 반동을 없앤다(사망·부활·끊김).
         // 입력: 없음.
-        // 출력: 반환값 없음.
+        // 출력: 반환값 없음. 반동 Offset이 0이 된다.
         public void ResetRecoil() => _recoil.Reset();
 
         // Screen-centre ray. It starts at the shoulder point, which lies on the camera's forward axis,
@@ -95,6 +98,9 @@ namespace ProjectH.Client.CameraControl
         // 0.1-0.3 s after a misprediction near a wall the origin can still be inside a collider.
         private sealed class PhysicsSphereCaster : ISphereCaster
         {
+            // 기능: 카메라 충돌 반지름의 구를 Physics.SphereCast로 쏘아 가장 가까운 월드 충돌을 찾는다(Trigger 제외).
+            // 입력: origin - 시작점, direction - 방향, maxDistance - 최대 거리, hitDistance - 맞은 거리를 돌려받는 out.
+            // 출력: 무언가에 맞으면 true와 맞은 거리, 아니면 false와 0.
             public bool Cast(Vector3 origin, Vector3 direction, float maxDistance, out float hitDistance)
             {
                 if (Physics.SphereCast(origin, CollisionRadius, direction, out RaycastHit hit, maxDistance,

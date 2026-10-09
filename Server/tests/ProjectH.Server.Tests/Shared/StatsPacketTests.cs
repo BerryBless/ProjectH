@@ -11,6 +11,9 @@ public class StatsPacketTests
 {
     private readonly byte[] _buffer = new byte[ProtocolConstants.MaxPacketSize];
 
+    // 기능: 테스트 버퍼의 앞 length 바이트로 Reader를 만들고 Packet Id가 expected인지 확인한 뒤 Id 다음 위치의 Reader를 돌려준다.
+    // 입력: length - 버퍼에 쓰인 바이트 수, expected - 기대하는 Packet Id.
+    // 출력: Packet Id를 읽은 뒤의 PacketReader. Id가 다르면 Assert 실패.
     private PacketReader ReaderAfterId(int length, PacketId expected)
     {
         var reader = new PacketReader(_buffer.AsSpan(0, length));
@@ -19,6 +22,9 @@ public class StatsPacketTests
         return reader;
     }
 
+    // 기능: i에 따라 모든 필드 값이 달라지는 시험용 전적 행 하나를 만든다.
+    // 입력: i - 행 번호(각 필드의 기준값에 더해진다).
+    // 출력: 채워진 StatsRow.
     private static StatsRow Row(int i) => new StatsRow
     {
         EndedUnixSeconds = 1_790_000_000u + (uint)i,
@@ -30,6 +36,9 @@ public class StatsPacketTests
         SurvivalMs = 4_000_000u + (uint)i,
     };
 
+    // 기능: Ok 상태와 고정 요약, rows개의 행을 가진 StatsResponse를 만든다.
+    // 입력: rows - 넣을 행 수(MaxRows보다 커도 된다).
+    // 출력: 행이 채워진 StatsResponse.
     private static StatsResponse Full(int rows)
     {
         var r = new StatsResponse

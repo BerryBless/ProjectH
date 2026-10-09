@@ -10,6 +10,9 @@ namespace ProjectH.Client.Tests
     // (15-tick interval, 2 rounds, 60-tick reload, Heavy), slot 2 empty; reserves Medium 60, Heavy 30.
     public class WeaponStateTests
     {
+        // 기능: 서버 TestWeapons와 같은 수치의 시험용 무기 카탈로그(Test Auto, Test Semi, Test Light)를 만든다.
+        // 입력: 없음.
+        // 출력: 무기 세 자루(WeaponId 1..3)의 카탈로그.
         private static WeaponInfo[] Catalog() => new[]
         {
             new WeaponInfo { WeaponId = 1, Name = "Test Auto", Damage = 30, FireIntervalTicks = 3, MagazineSize = 6, ReloadTicks = 30, Range = 100f, Automatic = true, AmmoType = AmmoType.Medium },
@@ -17,6 +20,9 @@ namespace ProjectH.Client.Tests
             new WeaponInfo { WeaponId = 3, Name = "Test Light", Damage = 10, FireIntervalTicks = 3, MagazineSize = 10, ReloadTicks = 15, Range = 50f, Automatic = true, AmmoType = AmmoType.Light },
         };
 
+        // 기능: 0번 칸 Test Auto(6발), 1번 칸 Test Semi(2발), 2번 칸이 빈 인벤토리를 만든다.
+        // 입력: medium - Medium 예비탄, heavy - Heavy 예비탄.
+        // 출력: InventoryState.
         private static InventoryState Loadout(int medium = 60, int heavy = 30) => new InventoryState
         {
             Slot0 = new InventorySlotState { WeaponId = 1, MagAmmo = 6 },
@@ -31,8 +37,14 @@ namespace ProjectH.Client.Tests
         [SetUp]
         public void ResetSeq() => _seq = 0;
 
+        // 기능: 다음 Seq를 매겨 무기 상태를 한 걸음 진행한다(행동 가능 상태).
+        // 입력: state - 대상 무기 상태, buttons - 이 걸음의 버튼.
+        // 출력: 이 걸음에 발사했으면 true.
         private bool Step(WeaponState state, InputButtons buttons) => state.Step(++_seq, buttons);
 
+        // 기능: 시험용 카탈로그로 WeaponState를 만들고 기본 인벤토리를 적용한다.
+        // 입력: medium - Medium 예비탄, heavy - Heavy 예비탄.
+        // 출력: 0번 칸 Test Auto를 든 WeaponState.
         private static WeaponState Armed(int medium = 60, int heavy = 30)
         {
             var state = new WeaponState(Catalog());
@@ -370,6 +382,9 @@ namespace ProjectH.Client.Tests
             Assert.IsFalse(state.Reloading);
         }
 
+        // 기능: Shells 산탄총(WeaponId 4)과 Rockets 로켓(WeaponId 6)의 시험용 카탈로그를 만든다.
+        // 입력: 없음.
+        // 출력: 무기 두 자루의 카탈로그.
         // Phase 17 D13: Shells and Rockets are reserves like the first three (index = type - 1).
         private static WeaponInfo[] Phase17Catalog() => new[]
         {

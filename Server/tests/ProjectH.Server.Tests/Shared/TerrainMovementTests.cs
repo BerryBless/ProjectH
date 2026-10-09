@@ -18,6 +18,9 @@ public class TerrainMovementTests
     // A 1 m box standing on flat ground far from the hill: x 29..31, y 0..1, z -1..1.
     private static readonly Box[] LowBoxFar = { Box.FromCenterSize(new Vector3(30f, 0.5f, 0f), new Vector3(2f, 1f, 2f)) };
 
+    // 기능: 발 높이가 그 자리의 지형 표면 높이와 1e-4 이내로 같은지 확인한다.
+    // 입력: s - 검사할 이동 상태, terrain - 지형, where - 실패 메시지에 붙일 위치 설명.
+    // 출력: 반환값 없음. 표면에서 벗어나 있으면 Assert 실패.
     private static void AssertOnTheSurface(in MoveState s, HeightField terrain, string where)
     {
         Assert.True(MathF.Abs(s.Position.Y - terrain.Height(s.Position.X, s.Position.Z)) <= 1e-4f,

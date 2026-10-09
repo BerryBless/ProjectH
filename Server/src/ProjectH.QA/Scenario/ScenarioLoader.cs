@@ -17,6 +17,9 @@ public static class ScenarioLoader
         MaxDepth = 32,
     };
 
+    // 기능: 시나리오 파일의 존재·크기(MaxFileBytes)를 확인한 뒤 읽어 파싱한다.
+    // 입력: path - 시나리오 파일 경로.
+    // 출력: 파싱 결과. 파일이 없거나 너무 크면 시나리오 없이 오류 하나만 담긴 결과.
     public static ScenarioLoadResult LoadFile(string path)
     {
         var info = new FileInfo(path);
@@ -25,6 +28,9 @@ public static class ScenarioLoader
         return Parse(File.ReadAllText(path), Path.GetFullPath(path));
     }
 
+    // 기능: 시나리오 JSON을 DTO로 읽는다. 형식 오류는 모아서 돌려주고(멈추지 않음), Action 검증은 하지 않는다.
+    // 입력: json - 시나리오 JSON 텍스트, sourcePath - 파일 경로(이름 기본값과 SourcePath에 쓰임, 테스트 텍스트는 빈 문자열).
+    // 출력: 시나리오와 오류 목록. JSON이 깨졌거나 객체가 아니면 시나리오 없이 오류 하나.
     public static ScenarioLoadResult Parse(string json, string sourcePath = "")
     {
         JsonDocument document;
@@ -150,6 +156,9 @@ public static class ScenarioLoader
         }
     }
 
+    // 기능: `parameters` 배열을 파라미터 세트 목록으로 읽는다.
+    // 입력: root - 시나리오 JSON 객체, errors - 형식 오류를 모을 목록.
+    // 출력: 복제된 세트 객체 목록(MaxParameterSets까지). 없으면 빈 목록. 배열이 아니거나 비었거나 객체가 아닌 항목은 errors에 기록된다.
     // D31: `parameters` is an array of objects (at most MaxParameterSets). The names are checked by the validator.
     private static List<JsonElement> ReadParameters(JsonElement root, List<string> errors)
     {
@@ -176,6 +185,9 @@ public static class ScenarioLoader
         return list;
     }
 
+    // 기능: `baseline.values`와 `baselineWarnPercent`를 읽는다.
+    // 입력: root - 시나리오 JSON 객체, errors - 형식 오류를 모을 목록.
+    // 출력: (기준선 값 이름 목록, 경고 비율). 없으면 (빈 목록, 기본 50). 모르는 baseline 필드·잘못된 형식은 errors에 기록된다.
     // D33: `baseline: { "values": ["name", ...] }` and `baselineWarnPercent` (default 50). Unknown baseline fields are
     // errors so a typo does not silently record nothing.
     private static (List<string> Values, double WarnPercent) ReadBaseline(JsonElement root, List<string> errors)
@@ -209,6 +221,9 @@ public static class ScenarioLoader
         return (values, percent);
     }
 
+    // 기능: `server` 객체(mode, qaUrl, host, gamePort, options)를 ServerSpec으로 읽는다.
+    // 입력: root - 시나리오 JSON 객체, errors - 형식 오류를 모을 목록.
+    // 출력: ServerSpec. server가 없거나 객체가 아니면 기본값(launch). options 값은 문자열이 아니면 원문 JSON 텍스트로 보관된다.
     private static ServerSpec ReadServer(JsonElement root, List<string> errors)
     {
         if (!root.TryGetProperty("server", out JsonElement s)) return new ServerSpec();
@@ -239,6 +254,9 @@ public static class ScenarioLoader
         };
     }
 
+    // 기능: 액터의 `unity` 객체를 UnitySpec으로 읽는다.
+    // 입력: actor - 액터 JSON 객체, errors - 형식 오류를 모을 목록.
+    // 출력: UnitySpec. unity가 없거나 null이거나 객체가 아니면 null. 모르는 필드·잘못된 형식은 errors에 기록된다.
     // `"unity": { "exe"?, "attachPort"?, "width"?, "height"? }` (QA-4). Unknown fields are errors.
     private static UnitySpec? ReadActorUnity(JsonElement actor, List<string> errors)
     {
@@ -255,6 +273,9 @@ public static class ScenarioLoader
         return new UnitySpec(ReadString(u, "exe", errors), ReadInt(u, "attachPort", errors), ReadInt(u, "width", errors), ReadInt(u, "height", errors));
     }
 
+    // 기능: 단계 객체를 StepDefinition으로 읽는다. 공통 필드 외는 Params로 모으고, "assert" 약식을 action=assert·path로 바꾸며, phase 선언을 다음 선언까지 이어 EffectivePhase를 정한다.
+    // 입력: s - 단계 JSON, index - 단계 인덱스, phase - 현재 유효한 phase(선언이 있으면 갱신됨), errors - 형식 오류를 모을 목록, actors - 선언된 액터(ActorType 조회).
+    // 출력: StepDefinition. 객체가 아니거나 action이 없으면 null(오류는 errors에).
     private static StepDefinition? ReadStep(JsonElement s, int index, ref string? phase, List<string> errors, List<ActorSpec> actors)
     {
         string where = $"steps[{index}]";
@@ -317,6 +338,9 @@ public static class ScenarioLoader
         };
     }
 
+    // 기능: 액터의 `network.proxy` 값을 읽는다.
+    // 입력: actor - 액터 JSON 객체, errors - 형식 오류를 모을 목록.
+    // 출력: proxy가 true면 true. 없거나 false이거나 형식 오류면 false(오류는 errors에).
     // An actor's `"network": { "proxy": true }` (QA-3). Only `proxy` is known; anything else is an error so a typo does
     // not silently run without the proxy.
     private static bool ReadActorNetwork(JsonElement actor, List<string> errors)
@@ -337,6 +361,9 @@ public static class ScenarioLoader
         return proxy;
     }
 
+    // 기능: 객체의 문자열 필드를 읽는다.
+    // 입력: e - JSON 객체, name - 필드 이름, errors - 형식 오류를 모을 목록.
+    // 출력: 문자열 값. 없거나 null이면 null, 문자열이 아니면 errors에 기록하고 null.
     private static string? ReadString(JsonElement e, string name, List<string> errors)
     {
         if (!e.TryGetProperty(name, out JsonElement v) || v.ValueKind == JsonValueKind.Null) return null;
@@ -345,6 +372,9 @@ public static class ScenarioLoader
         return null;
     }
 
+    // 기능: 객체의 정수 필드를 읽는다.
+    // 입력: e - JSON 객체, name - 필드 이름, errors - 형식 오류를 모을 목록.
+    // 출력: int 값. 없거나 null이면 null, 32비트 정수가 아니면 errors에 기록하고 null.
     private static int? ReadInt(JsonElement e, string name, List<string> errors)
     {
         if (!e.TryGetProperty(name, out JsonElement v) || v.ValueKind == JsonValueKind.Null) return null;
@@ -353,6 +383,9 @@ public static class ScenarioLoader
         return null;
     }
 
+    // 기능: 객체의 숫자 필드를 읽는다.
+    // 입력: e - JSON 객체, name - 필드 이름, errors - 형식 오류를 모을 목록.
+    // 출력: double 값. 없거나 null이면 null, 숫자가 아니면 errors에 기록하고 null.
     private static double? ReadDouble(JsonElement e, string name, List<string> errors)
     {
         if (!e.TryGetProperty(name, out JsonElement v) || v.ValueKind == JsonValueKind.Null) return null;
@@ -361,6 +394,9 @@ public static class ScenarioLoader
         return null;
     }
 
+    // 기능: 객체의 bool 필드를 읽는다.
+    // 입력: e - JSON 객체, name - 필드 이름, errors - 형식 오류를 모을 목록.
+    // 출력: bool 값. 없거나 null이면 null, true/false가 아니면 errors에 기록하고 null.
     private static bool? ReadBool(JsonElement e, string name, List<string> errors)
     {
         if (!e.TryGetProperty(name, out JsonElement v) || v.ValueKind == JsonValueKind.Null) return null;
@@ -372,6 +408,9 @@ public static class ScenarioLoader
 
 public sealed class ScenarioLoadResult
 {
+    // 기능: 파싱 결과를 만든다.
+    // 입력: scenario - 읽힌 시나리오(파싱 불가면 null), errors - 형식 오류 목록.
+    // 출력: 시나리오와 오류가 담긴 결과.
     public ScenarioLoadResult(ScenarioDefinition? scenario, IReadOnlyList<string> errors)
     {
         Scenario = scenario;
@@ -383,5 +422,8 @@ public sealed class ScenarioLoadResult
     // Unparseable: no scenario at all (malformed JSON, not an object, unreadable file).
     public bool Malformed => Scenario == null;
 
+    // 기능: 시나리오 없이 오류 하나만 담긴 결과를 만든다.
+    // 입력: error - 오류 메시지.
+    // 출력: Malformed가 true인 결과.
     public static ScenarioLoadResult Fail(string error) => new(null, new[] { error });
 }

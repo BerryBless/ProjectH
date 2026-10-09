@@ -9,6 +9,9 @@ namespace ProjectH.Client.Tests
     // Phase 19 D6, D15: the client's copy of the server's enter rule (the server test compares the two on the same records).
     public class VehiclePromptTests
     {
+        // 기능: 체력이 가득한 시험용 차량 레코드를 만든다.
+        // 입력: id - 차량 ID, x - 위치 x, z - 위치 z, heading - 방향(도), driver - 운전자 ID(0이면 빈 자리), passenger - 동승자 ID(0이면 빈 자리), state - 차량 상태.
+        // 출력: 높이 0에 놓인 VehicleRecord.
         private static VehicleRecord Car(byte id, float x, float z, float heading = 0f, ushort driver = 0, ushort passenger = 0,
             VehicleState state = VehicleState.Active) =>
             new VehicleRecord { Id = id, State = state, Position = new Num.Vector3(x, 0f, z), Heading = heading, Driver = driver,

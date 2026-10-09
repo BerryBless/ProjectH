@@ -16,6 +16,9 @@ public static class FaultActions
     public static readonly string[] InvalidKinds = { "unknownId", "truncated", "oversized", "garbage", "inputFlood" };
     private static readonly string[] s_directions = { "both", "toServer", "toClient" };
 
+    // 기능: 장애 주입 액션(네트워크 장애·차단·연결 끊김, 잘못된 패킷, 서버 프로세스, DB 컨테이너)을 Registry에 등록한다.
+    // 입력: r - 등록 대상 Registry.
+    // 출력: 반환값 없음. Registry에 장애 액션 Handler가 추가된다.
     public static void Register(ActionRegistry r)
     {
         // ---- network (actor must have a proxy) ----
@@ -62,6 +65,9 @@ public static class FaultActions
 
     // ---- validation of literal values ----
 
+    // 기능: networkFault 단계의 Literal 인자(direction, latencyMs·jitterMs 정수 범위, loss·duplicate 0-100)를 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckNetworkFault(StepDefinition s)
     {
         foreach (string e in CheckDirection(s)) yield return e;
@@ -78,6 +84,9 @@ public static class FaultActions
         }
     }
 
+    // 기능: direction 인자가 both·toServer·toClient 중 하나인지 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckDirection(StepDefinition s)
     {
         if (s.Params.TryGetValue("direction", out JsonElement v) && !Variables.HasReference(v)
@@ -85,12 +94,18 @@ public static class FaultActions
             yield return $"'direction' must be one of {string.Join(", ", s_directions)}.";
     }
 
+    // 기능: container 인자가 문자열(컨테이너 이름)인지 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckContainer(StepDefinition s)
     {
         if (s.Params.TryGetValue("container", out JsonElement v) && !Variables.HasReference(v) && v.ValueKind != JsonValueKind.String)
             yield return "'container' must be a container name.";
     }
 
+    // 기능: sendInvalidPackets 단계의 Literal 인자(kinds 배열과 종류 이름, count 범위, 종류 x count 총량)를 검사한다.
+    // 입력: s - 단계 정의.
+    // 출력: 오류 문장들(없으면 빈 목록).
     private static IEnumerable<string> CheckInvalid(StepDefinition s)
     {
         if (s.Params.TryGetValue("kinds", out JsonElement k) && !Variables.HasReference(k))
@@ -115,6 +130,9 @@ public static class FaultActions
             yield return $"{lk.GetArrayLength()} kinds x {perKind} = {lk.GetArrayLength() * perKind} packets: more than {SendRawCommand.MaxRawPackets} in one step.";
     }
 
+    // 기능: 방향 이름(both, toServer, toClient)을 FaultDirection으로 파싱한다(대소문자 무시).
+    // 입력: text - 방향 이름, direction - 파싱된 방향(out, 실패 시 Both).
+    // 출력: 아는 이름이면 true와 방향, 아니면 false.
     internal static bool TryDirection(string? text, out FaultDirection direction)
     {
         direction = FaultDirection.Both;
@@ -124,6 +142,9 @@ public static class FaultActions
         return false;
     }
 
+    // 기능: 단계의 direction 인자를 읽는다(없으면 Both).
+    // 입력: ctx - 단계 문맥.
+    // 출력: FaultDirection. 모르는 이름이면 QaStepException.
     private static FaultDirection Direction(StepContext ctx)
     {
         string? text = ctx.String("direction");
@@ -133,6 +154,9 @@ public static class FaultActions
 
     // ---- network ----
 
+    // 기능: Actor Proxy의 해당 방향에 지연·Jitter·손실·중복을 설정한다(안 준 값은 0, 차단 상태는 유지).
+    // 입력: ctx - 단계 문맥(latencyMs, jitterMs, lossPercent, duplicatePercent, direction), token - 취소 토큰(사용 안 함).
+    // 출력: Pass(saveAs: Proxy 장애 설명). 값이 범위 밖이면 QaStepException.
     // Sets the direction's latency, jitter, loss and duplication (unset values are 0); a block stays as it was.
     private static Task<StepOutcome> NetworkFaultAsync(StepContext ctx, CancellationToken token)
     {
@@ -161,12 +185,18 @@ public static class FaultActions
         return Task.FromResult(StepOutcome.Pass(text, JsonPath.From(ctx.Run.Network.Describe(alias))));
     }
 
+    // 기능: Actor Proxy의 모든 네트워크 장애를 지운다.
+    // 입력: ctx - 단계 문맥, token - 취소 토큰(사용 안 함).
+    // 출력: Pass(saveAs: Proxy 장애 설명).
     private static Task<StepOutcome> ClearNetworkFaultAsync(StepContext ctx, CancellationToken token)
     {
         ctx.Run.Network.Clear(ctx.ActorAlias);
         return Task.FromResult(StepOutcome.Pass("cleared", JsonPath.From(ctx.Run.Network.Describe(ctx.ActorAlias))));
     }
 
+    // 기능: Actor Proxy의 해당 방향을 차단하거나 푼다.
+    // 입력: ctx - 단계 문맥(direction), blocked - true면 차단, false면 해제.
+    // 출력: Pass(saveAs: Proxy 장애 설명).
     private static Task<StepOutcome> BlockAsync(StepContext ctx, bool blocked)
     {
         FaultDirection direction = Direction(ctx);
@@ -176,6 +206,9 @@ public static class FaultActions
 
     // Request §74: the network goes away without a word (LiteNetLib stopped, no disconnect packet). The server notices
     // only through its DisconnectTimeoutMs and graces the player like any network loss. Works with or without a proxy.
+    // 기능: Disconnect 패킷 없이 Actor의 연결을 끊고 연결이 닫힐 때까지 기다린다(request §74).
+    // 입력: ctx - 단계 문맥, token - 취소 토큰.
+    // 출력: 연결이 닫히면 Pass, Timeout이면 Fail.
     private static async Task<StepOutcome> DropConnectionAsync(StepContext ctx, CancellationToken token)
     {
         IQaActor actor = ctx.Actor();
@@ -188,6 +221,9 @@ public static class FaultActions
 
     // ---- invalid packets ----
 
+    // 기능: 종류마다 count개의 잘못된 패킷을 Run·단계 Seed로 만들어 Actor 연결로 보낸다(D14).
+    // 입력: ctx - 단계 문맥(kinds, count), token - 취소 토큰.
+    // 출력: 모두 보내지면 Pass(saveAs: sent, total, handedToConnection), 미Join·미적용·일부만 전송이면 Fail. 총량 초과면 QaStepException.
     private static async Task<StepOutcome> SendInvalidAsync(StepContext ctx, CancellationToken token)
     {
         IQaActor actor = ctx.Actor();
@@ -284,9 +320,15 @@ public static class FaultActions
 
     // ---- server process ----
 
+    // 기능: 도구가 띄운 서버의 제어 객체를 가져온다.
+    // 입력: ctx - 단계 문맥.
+    // 출력: IServerControl. 기존 서버에 붙은 Run이면 QaStepException.
     private static IServerControl Server(StepContext ctx) => ctx.Run.ServerControl
         ?? throw new QaStepException($"'{ctx.Step.Action}' needs a server the tool launched; this run attaches to a running server.");
 
+    // 기능: 띄운 서버에 정상 종료를 요청하고 종료까지 기다린다.
+    // 입력: ctx - 단계 문맥, token - 취소 토큰.
+    // 출력: 종료되면 Pass(saveAs: 종료 정보), 실행 중이 아니거나 유예 안에 안 끝나면 Fail.
     private static async Task<StepOutcome> StopServerAsync(StepContext ctx, CancellationToken token)
     {
         IServerControl server = Server(ctx);
@@ -299,6 +341,9 @@ public static class FaultActions
             : StepOutcome.Fail($"The server did not exit after the stop request: {exit.Message}", $"exit within {ServerProcessManager.StopGrace.TotalSeconds:0} s", exit.Message);
     }
 
+    // 기능: 띄운 서버 프로세스를 강제 종료한다.
+    // 입력: ctx - 단계 문맥, token - 취소 토큰.
+    // 출력: 종료되면 Pass(saveAs: 종료 정보), 실행 중이 아니거나 Kill 실패면 Fail.
     private static async Task<StepOutcome> KillServerAsync(StepContext ctx, CancellationToken token)
     {
         IServerControl server = Server(ctx);
@@ -310,6 +355,9 @@ public static class FaultActions
             : StepOutcome.Fail($"Kill failed: {exit.Message}", "exited", exit.Message);
     }
 
+    // 기능: 멈춘 서버를 다시 띄운다.
+    // 입력: ctx - 단계 문맥, token - 취소 토큰.
+    // 출력: 시작되면 Pass(saveAs: 시작 정보), 이미 실행 중이면 Fail. 시작 실패면 QaStepException.
     private static async Task<StepOutcome> StartServerAsync(StepContext ctx, CancellationToken token)
     {
         IServerControl server = Server(ctx);
@@ -318,6 +366,9 @@ public static class FaultActions
         return StepOutcome.Pass($"started: game port {info.GamePort}, pid {info.Pid} ({info.StartMs} ms)", JsonPath.From(info));
     }
 
+    // 기능: 서버가 실행 중이면 정상 종료한 뒤 다시 띄운다.
+    // 입력: ctx - 단계 문맥, token - 취소 토큰.
+    // 출력: 재시작되면 Pass(saveAs: exit, start), 종료가 안 되면 Fail. 시작 실패면 QaStepException.
     private static async Task<StepOutcome> RestartServerAsync(StepContext ctx, CancellationToken token)
     {
         IServerControl server = Server(ctx);
@@ -331,6 +382,9 @@ public static class FaultActions
         return StepOutcome.Pass($"restarted: exit {exit?.ExitMs ?? 0} ms, game port {info.GamePort}", JsonPath.From(new { exit, start = info }));
     }
 
+    // 기능: 서버를 띄우고 도구 예외를 단계 예외로 바꾼다.
+    // 입력: server - 서버 제어 객체, token - 취소 토큰.
+    // 출력: 시작 정보. 시작 실패면 QaStepException.
     // A server that will not start again fails the step (exit 1) with the tool's reason; the run's cleanup still runs.
     private static async Task<ServerStartInfo> StartAsync(IServerControl server, CancellationToken token)
     {
@@ -346,6 +400,9 @@ public static class FaultActions
 
     // ---- database ----
 
+    // 기능: 단계의 container(기본 DefaultContainer)에 대한 Docker DB 제어 객체를 가져온다.
+    // 입력: ctx - 단계 문맥(container), token - 취소 토큰.
+    // 출력: Docker가 있으면 (제어 객체, null), 없으면 (null, 나머지 단계까지 건너뛰는 Skip).
     private static async Task<(DockerDbController? Db, StepOutcome? Skip)> DbAsync(StepContext ctx, CancellationToken token)
     {
         string container = ctx.String("container") ?? DefaultContainer;
@@ -354,6 +411,9 @@ public static class FaultActions
         return db != null ? (db, null) : (null, StepOutcome.Skip(unavailable!, skipRest: true));
     }
 
+    // 기능: DB 컨테이너를 멈춘다(Run이 멈춘 것은 정리 때 다시 시작된다).
+    // 입력: ctx - 단계 문맥(container), token - 취소 토큰.
+    // 출력: 멈추면 Pass(saveAs: container, stoppedByRun), Docker가 없으면 Skip, docker stop 실패면 Fail.
     private static async Task<StepOutcome> StopDbAsync(StepContext ctx, CancellationToken token)
     {
         (DockerDbController? db, StepOutcome? skip) = await DbAsync(ctx, token).ConfigureAwait(false);
@@ -365,6 +425,9 @@ public static class FaultActions
         return StepOutcome.Pass(text, JsonPath.From(new { container = db.ContainerName, stoppedByRun = db.StoppedByThisController }));
     }
 
+    // 기능: DB 컨테이너를 시작하고 Healthy가 될 때까지 기다린다.
+    // 입력: ctx - 단계 문맥(container), token - 취소 토큰.
+    // 출력: Healthy면 Pass, Docker가 없으면 Skip, docker start 실패나 Healthy Timeout이면 Fail.
     private static async Task<StepOutcome> StartDbAsync(StepContext ctx, CancellationToken token)
     {
         (DockerDbController? db, StepOutcome? skip) = await DbAsync(ctx, token).ConfigureAwait(false);
@@ -376,6 +439,9 @@ public static class FaultActions
 
     // The DB must already be up. A container that exists but is stopped is skipped like a missing one: the tool does
     // not start a DB the user stopped (cleanup only restarts what the run itself stopped).
+    // 기능: 이미 실행 중인 DB 컨테이너가 Healthy가 될 때까지 기다린다(멈춰 있으면 시작하지 않고 건너뛴다).
+    // 입력: ctx - 단계 문맥(container), token - 취소 토큰.
+    // 출력: Healthy면 Pass, Docker가 없거나 컨테이너가 멈춰 있으면 Skip, inspect 실패나 Timeout이면 Fail.
     private static async Task<StepOutcome> WaitDbHealthyAsync(StepContext ctx, CancellationToken token)
     {
         (DockerDbController? db, StepOutcome? skip) = await DbAsync(ctx, token).ConfigureAwait(false);
@@ -387,6 +453,9 @@ public static class FaultActions
         return await HealthyAsync(ctx, db, token).ConfigureAwait(false);
     }
 
+    // 기능: 단계의 남은 시간(최소 1초) 안에 컨테이너 Health 검사가 healthy가 되기를 기다린다.
+    // 입력: ctx - 단계 문맥, db - DB 컨테이너 제어 객체, token - 취소 토큰.
+    // 출력: healthy면 Pass(saveAs: container, healthy, status), 아니면 Fail.
     private static async Task<StepOutcome> HealthyAsync(StepContext ctx, DockerDbController db, CancellationToken token)
     {
         TimeSpan left = TimeSpan.FromMilliseconds(Math.Max(1000, ctx.TimeoutMs - ctx.ElapsedMs));

@@ -28,6 +28,9 @@ namespace ProjectH.Client.Game
         private BuildMaterialType _material;
         private float _noticeHideTime = -1f;
 
+        // 기능: 건설 HUD Canvas(자원·모드·키·알림 글자)를 숨긴 채 만든다.
+        // 입력: 없음.
+        // 출력: 숨겨진 HUD(Dispose가 Canvas를 파괴한다).
         public BuildHud()
         {
             _root = UiFactory.CreateCanvas("BuildHud", 92, interactive: false);
@@ -44,6 +47,9 @@ namespace ProjectH.Client.Game
             _root.SetActive(false);
         }
 
+        // 기능: HUD 전체를 보이거나 숨긴다(바뀔 때만 SetActive).
+        // 입력: visible - 보일지.
+        // 출력: 반환값 없음.
         public void SetVisible(bool visible)
         {
             if (_root == null || visible == _visible) return;
@@ -51,6 +57,9 @@ namespace ProjectH.Client.Game
             _root.SetActive(visible);
         }
 
+        // 기능: 자원 줄을 정한다. 세 값 중 하나라도 바뀌었을 때만 문자열을 다시 만든다.
+        // 입력: wood, stone, metal - 보일 자원 수(서버 수치에서 대기 배치 비용을 뺀 것).
+        // 출력: 반환값 없음.
         public void SetResources(int wood, int stone, int metal)
         {
             if (_root == null || (wood == _wood && stone == _stone && metal == _metal)) return;
@@ -86,6 +95,9 @@ namespace ProjectH.Client.Game
             _keys.text = buildMode ? UiText.BuildKeys : string.Empty;
         }
 
+        // 기능: 거절 알림을 NoticeSeconds 동안 보인다(이미 보이는 중이면 시간을 늘린다).
+        // 입력: message - 알림 문구(상수 UiText.BuildRefusal: 할당 없음, null이면 무시), now - 현재 시각(초).
+        // 출력: 반환값 없음. Tick이 시간이 지나면 지운다.
         // message: a constant (UiText.BuildRefusal), so a notice allocates nothing.
         public void ShowNotice(string message, float now)
         {
@@ -94,6 +106,9 @@ namespace ProjectH.Client.Game
             _noticeHideTime = now + NoticeSeconds;
         }
 
+        // 기능: 알림의 표시 시간이 지났으면 지운다(매 프레임).
+        // 입력: now - 현재 시각(초).
+        // 출력: 반환값 없음.
         public void Tick(float now)
         {
             if (_root == null || _noticeHideTime < 0f || now < _noticeHideTime) return;
@@ -101,6 +116,9 @@ namespace ProjectH.Client.Game
             _notice.text = string.Empty;
         }
 
+        // 기능: HUD Canvas를 파괴한다.
+        // 입력: 없음.
+        // 출력: 반환값 없음.
         public void Dispose()
         {
             if (_root != null) Object.Destroy(_root);
