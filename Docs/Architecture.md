@@ -1,69 +1,125 @@
 # Architecture
 
-Phase 13 Harvesting & Building 기준. 설계 근거: `Docs/specs/2026-09-30-phase0-network-sync-design.md`, `Docs/specs/2026-09-30-phase1-character-prototype-design.md`, `Docs/specs/2026-10-01-phase3-combat-design.md`, `Docs/specs/2026-10-01-phase4-inventory-loot-design.md`, `Docs/specs/2026-10-01-phase5-battle-royale-design.md`, `Docs/specs/2026-10-01-phase6-map-design.md`, `Docs/specs/2026-10-01-phase7-bots-design.md`, `Docs/specs/2026-10-01-phase8-optimization-design.md`(Snapshot 분할·양자화, 부하 재측정), `Docs/specs/2026-10-01-phase9-persistence-design.md`(MySQL 경기 기록·통계), `Docs/specs/2026-10-01-phase10-hardening-design.md`(끊기 코드, 재접속 유예, Timeout, 예외 복구, 관측), `Docs/specs/2026-10-01-phase11-game-ui-design.md`(게임 UI, 전적 조회, 이름), `Docs/specs/2026-10-02-phase12-deployment-traversal-design.md`(공중 투입, 이동 모드, 문, 낙하 피해), `Docs/specs/2026-10-02-phase13-harvesting-building-design.md`(채집, 자원, 건설, 지지, 건설 스트림, `Building.md`).
+Phase 19 + 리뷰 수정 A–D 기준(2026-10-09, Protocol v19).
+
+- **설계 근거:** Phase별 `Docs/specs/*-design.md`의 결정 표(D번호).
+- **기능별 문서 지도:** [Features.md](Features.md)
+- **증상별로 볼 곳:** [Troubleshooting.md](Troubleshooting.md)
 
 ```mermaid
 flowchart LR
     subgraph Client[Unity Client]
-        Input[InputReader] --> Predictor[LocalPlayerPredictor]
-        Predictor --> Doors[PredictedDoors]
-        Input --> Camera[ShoulderCamera]
-        Net[NetClient] --> Remote[RemotePlayers]
+        Input[InputReader] --> Predictor[LocalPlayerPredictor + PredictedDoors]
+        Input --> VehP[VehiclePredictor]
+        Input --> Camera[ShoulderCamera, RecoilKick]
+        Net[NetClient + AuthPacketLayer] --> Remote[RemotePlayers]
         Net --> Predictor
-        Net --> Hud[CombatHud, WeaponState]
-        Net --> Items[WorldItemViews, InventoryHud]
-        Net --> MatchC[MatchHud, ZoneView, SpectatorCamera, PoiLabel]
-        Net --> BuildC[BuildStore, BuildController, BuildPieceViews, BuildPreview]
+        Net --> Hud[CombatHud, WeaponState, InventoryHud, SquadHud]
+        Net --> World[WorldItemViews, ContainerViews, SupplyDropViews, ProjectileViews, VehicleViews]
+        Net --> BuildC[BuildStore, BuildController, BuildEditController, BuildPieceViews]
+        Net --> MapC[MapSystem: MapHud, WorldMarkers, PingInput]
+        Net --> Audio[GameAudio: AudioSynth, AudioMixerModel, FootstepModel]
         BuildC --> Predictor
         UI[UiRoot: UiFlow, screens, KillFeed] --> Game[GameClient]
         Net --> UI
-        World[MapWorld: terrain mesh, boxes]
+        Qa[Qa: QaCommandReceiver, editor/dev only]
     end
     subgraph Shared[/Shared UPM package/]
-        Protocol[Protocol: packets, DisconnectCode, DisconnectCodes]
-        Sim[Simulation: MovementSimulation, CollisionWorld, BuildGrid, PieceGrid, MovementMode, MovementTuning, DropTransport, HeightField, GameMap + Doors + Harvestables, LootPoints, DropPoints, MapPois]
+        Protocol[Protocol: packets per feature, SessionAuth, ProtocolLimits, DisconnectCode]
+        Sim[Simulation: MovementSimulation, VehicleSimulation, CollisionWorld, BuildGrid/BuildEdit, GameMap + map data]
     end
     subgraph Server[.NET 10 Server]
-        Listener[NetworkListener] -->|Channels| Loop[GameLoop thread]
-        Loop --> Match
-        Match --> Combat[Combat: WeaponRules, HitScan, PositionHistory]
-        Match --> ItemsS[Items: Inventory, WorldItems, LootSpawner]
-        Match --> Flow[Flow: MatchFlow, DropPlanner / Zone: SafeZone]
-        Match --> DoorsS[DoorSet, DoorRules, MovementLimits]
-        Match --> BuildS[Build: BuildWorld, BuildRules, BuildSupport, BuildReplication, PieceTrace / Harvest: HarvestWorld]
-        Listener -->|Build channel| Loop
-        Match -->|MatchRecord, TryEnqueue| History[MatchHistoryQueue] --> Writer[MatchHistoryWriter] --> MySQL[(MySQL)]
+        Listener[NetworkListener: cookie, per-IP cap, auth tail] -->|Channels| Loop[GameLoop thread]
+        Loop --> Match[Match + partials: Squad, Map, Loot, Projectiles, Vehicles]
+        Match --> Systems[Combat, Items, Build, Harvest, Flow, Zone, Doors]
+        Match -->|MatchRecord| History[MatchHistoryQueue] --> Writer[MatchHistoryWriter] --> MySQL[(MySQL)]
         Listener -->|StatsQuery| StatsQ[StatsQueryQueue] --> StatsSvc[StatsQueryService] --> MySQL
-        StatsSvc -->|StatsReply| StatsQ
-        Loop -->|sends replies| StatsQ
-        Loop --> Health[HealthCounters] --> Meter[ServerMeter: ProjectH.Server]
+        Loop --> Health[HealthCounters] --> Meter[ServerMeter]
         Watchdog[StallWatchdog] -.reads.-> Loop
+        QaS[Qa: HTTP 127.0.0.1, QA mode only] -->|bounded queue| Loop
     end
-    Bots[ProjectH.Bots: headless clients]
-    Client <-->|UDP / LiteNetLib, channel 0 state, channel 1 build| Server
-    Bots <-->|UDP / LiteNetLib| Server
-    Client -.uses.-> Shared
-    Bots -.uses.-> Shared
-    Server -.uses.-> Shared
+    Bots[ProjectH.Bots]
+    QaTool[ProjectH.QA: scenarios, Web UI]
+    Client <-->|UDP, ch0 state, ch1 build| Server
+    Bots <-->|UDP| Server
+    QaTool -->|uses| Bots
+    QaTool -->|HTTP| QaS
+    Client -.-> Shared
+    Server -.-> Shared
+    Bots -.-> Shared
 ```
 
-| 폴더 | 역할 |
+## 원칙
+
+| 원칙 | 어디서 지키나 |
 |---|---|
-| `Client/` | Unity. 입력·표시·예측·보간. 결과를 확정하지 않는다. 카메라·조준점은 Client 표시 전용이고, 발사는 입력에 조준 방향만 실어 보낸다(누구를 맞혔는지는 보내지 않는다). Zone 원(`ZoneMath`)과 관전은 표시 전용이고 Shared에 두지 않는다(서버 식과 같은지는 테스트로 고정). 화면 흐름은 `UiFlow`(순수, 서버 테스트가 소스 링크로 시험한다). Phase 12: 이동 모드·위치는 예측하되 서버가 확정한다. 문은 예측 문(`PredictedDoors`)이 서버의 `DoorStates` 위에 내 예측을 겹쳐 쓰고, 예측 문 규칙(`DoorRule`)은 서버 규칙의 복사본이다. 카메라 목표·원격 자세·수송기 표시는 Client 전용이다. Phase 13: 도구는 예측(`ToolState`, 서버 규칙의 복사본)하고, 건설은 미리보기와 대기 표시만 하며 확정 조각(`BuildStore`)만으로 충돌을 예측한다 |
-| `Server/` | .NET 10 Dedicated Server. 이동 결과와 명중·피해·사망·부활, Loot 배치·줍기·버리기·회복, 투입 지점 배정, 지형 사격 판정, 경기 상태·Safe Zone·Zone 피해·순위·승자를 결정하고 인벤토리를 소유한다. Phase 12: 수송기 경로(`DropPlanner`)와 탑승·강제 뛰어내리기, 문 상태·충돌 세계(`DoorSet`)와 E 규칙(`DoorRules`), 낙하 피해, 모드별 행동 제한, 이동 이상 검사(`MovementLimits`)도 서버가 한다. Phase 13: 채집(`HarvestWorld`)·자원·건설 배치 검사(`BuildRules`)·저장(`BuildWorld`)·지지와 붕괴(`BuildSupport`)·건설 스트림과 관심 영역(`BuildReplication`)을 Game Loop가 한다. 데이터는 `weapons.json`, `items.json`, `loot.json`, `zones.json`, `building.json`. `src/ProjectH.Bots`: 부하·경기 테스트용 Headless 봇 Client(서버를 참조하지 않는다, `Bots.md`) |
-| `Shared/` | 패킷 DTO, 프로토콜 상수, 전적 패킷(`StatsPackets`), 끊는 이유 코드(`DisconnectCode`)와 재접속 표(`DisconnectCodes`, Client와 봇이 같이 쓴다), 이동 계산과 그 지형(박스, 높이 격자)·충돌(`Simulation/`, 로직 예외: `game-core-rules` 4절. Phase 12: 이동 모드 `MovementMode`·수치 `MovementTuning`·수송기 경로와 `Ride`(`DropTransport`)·문 상자(`GameMap.Doors`)), v10 패킷(`TraversalPackets`: `TransportRoute`, `DoorStates`. 그 밖에 Snapshot의 `Flags`·Self 블록, `Crouch` 버튼, `PlayerRespawned.Mode`, `PlayerDied.Cause`), 맵 배치 데이터(`LootPoints`, `DropPoints`, `MapPois`, 좌표·이름 상수만: 4절 예외 2). Phase 13(4절 예외 4): 건설 격자와 조각 모양(`BuildGrid`), 공간 색인(`PieceGrid`), 충돌 후보(`CollisionWorld`), 채집 대상 상자(`GameMap.Harvestables`), v11 패킷(`BuildPackets`, `HarvestPackets`). 배치 규칙·지지·채집 규칙은 서버에만 있다 |
-| `Docs/` | 이 문서들(맵 데이터와 규칙은 `Map.md`, 이동 모드와 수치는 `Movement.md`, 채집과 건설은 `Building.md`) |
+| Client는 입력만 보낸다. 결과는 서버가 정한다 | 이동·차량은 Shared Simulation을 양쪽에서 같은 입력으로 돌린다. 명중·피해·Loot·건설·분대 규칙은 서버에만 있다 |
+| Shared는 예측에 필요한 계산과 맵 배치 상수만 둔다 | 범위는 `game-core-rules` 4절 예외 1–8에 정해 둔다. 규칙의 Client 복사본(`DoorRule`, `ContainerRule`, `SquadPrompt`, `VehiclePrompt`, `ToolState`)은 서버 비교 테스트로 묶는다 |
+| 경기 상태는 Game Loop 스레드 하나가 소유한다 | 다른 스레드는 크기가 정해진 Channel이나 큐로만 넘긴다(수신, DB, 전적, QA). Lock은 `SessionKeys._sendLock` 하나(leaf)뿐이다 |
+| Game Loop는 아무것도 기다리지 않는다 | DB 저장·전적 조회·QA 명령은 별도 서비스가 처리한다 |
+| 모든 Collection에 상한이 있다 | 플레이어 100, 월드 아이템 256, 투사체 32(소유자당 4), 차량 8, Ping(사람당 3, 팀당 8), 큐 크기는 `Server.md` "Queue" |
+| 함수마다 기능·입력·출력 주석이 있고 코드와 어긋나지 않는다 | 메서드·생성자·Handler·로직 있는 local function 위 세 줄(`.claude/skills/code-comments`). 2026-10-10 전체 일괄 적용(8c5bdef). 제외: record 선언, 프로퍼티, 한 줄 local function, 테스트 메서드 |
+
+## 코드 배치
+
+```text
+Server/
+  src/ProjectH.Server/        Dedicated Server (GameLoop, ServerHost, GameServerService, ServerOptions)
+    Net/                      NetworkListener, InboundChannels/Messages, PeerState,
+                              ConnectCookie, ConnectRateLimiter, ServerIdentity, AuthPacketLayer (리뷰 A·B)
+    Game/                     Match (+ Match.Squad/.Map/.Loot/.Projectiles/.Vehicles), PlayerEntity,
+                              PlayerInputBuffer, Doors, MovementLimits, GameData/DataJson
+      Build/ Harvest/         건설·편집·지지·복제 / 채집 (Phase 13, 13.5)
+      Combat/                 HitScan, PositionHistory, WeaponCatalog/Rules/Spread, Projectiles (Phase 3, 17)
+      Items/ Loot/            인벤토리·월드 아이템·Loot 표 / 상자·보급 (Phase 4, 16)
+      Flow/ Zone/             MatchFlow, DropPlanner / SafeZone (Phase 5, 12)
+      Squad/ Map/ Vehicles/   SquadCatalog (14) / MapCatalog: Ping (15) / Vehicle, VehicleCatalog (19)
+    Persistence/              MatchHistory*, MatchStore, StatsQuery* (Phase 9, 11, 리뷰 C)
+    Diagnostics/              HealthCounters, ServerMeter, ServerStats, StallWatchdog, TickMetrics
+    Qa/                       QA 모드 HTTP 제어 (QA-1)
+    keys/                     개발용 서버 키 (리뷰 B, 운영에서는 거부)
+    *.json                    weapons, items, loot, zones, building, squad, map, vehicles (시작 때 검증)
+  src/ProjectH.Bots/          Headless 봇 Client
+  src/ProjectH.QA/            QA 시나리오 실행기 + Web UI (봇 코드 재사용)
+  src/ProjectH.Shared/        Shared 소스를 netstandard2.1로 컴파일하는 csproj
+  tests/ProjectH.Server.Tests Game, Shared, Integration, Net, Bots, ClientUi, Qa, Persistence, Diagnostics
+  tests/ProjectH.QA.Tests     QA 도구 테스트
+Shared/Runtime/
+  Protocol/                   기능별 패킷(Build, Combat, Harvest, Item, Loot, Map, Match, Projectile, Squad,
+                              Stats, Traversal, Vehicle), PacketReader/Writer, SessionAuth, ProtocolLimits
+  Simulation/                 MovementSimulation/Mode/Tuning, MoveState/MoveSettings, VehicleSimulation/Settings, CollisionWorld,
+                              BuildGrid/PieceGrid/BuildEdit, GameMap, HeightField,
+                              맵 배치(LootPoints, LootContainers, DropPoints, MapPois, RebootStations, VehicleSpawns)
+Client/Assets/Scripts/
+  Bootstrap/ Camera/ Input/ Net/ UI/ Qa/
+  Game/                       예측·보간·HUD·무기·Loot·분대·차량·Zone·관전
+    Audio/ Build/ Map/        합성 오디오 (18) / 건설·편집 (13, 13.5) / 지도·Ping (15)
+Client/Assets/Tests/EditMode  EditMode 테스트
+QA/                           Scenarios/<분류>/*.json, Suites/*.json
+```
+
+Monitoring Server(`Server/src/ProjectH.Monitoring`)는 `monitoring` 브랜치에 있고 아직 main에 합치지 않았다.
 
 ## Shared 소비 방식
 
-- `Shared/`는 Unity UPM 패키지(`com.projecth.shared`, `Shared/package.json`)다. Client는 `Packages/manifest.json`의 `file:../../Shared`로 참조하고, asmdef `ProjectH.Shared`(`noEngineReferences`)로 컴파일된다.
-- Server는 같은 소스(`Shared/Runtime/**/*.cs`)를 `Server/src/ProjectH.Shared/ProjectH.Shared.csproj`로 컴파일한다. `netstandard2.1`, `LangVersion 9.0`이라 Unity 6에서 안 되는 문법·API는 서버 빌드에서 먼저 실패한다.
-- Shared에는 엔진 타입이 없다(위치는 `System.Numerics.Vector3`; Client는 `VectorConversions`로 Unity 타입과 변환).
+- `Shared/`는 Unity UPM 패키지(`com.projecth.shared`, `Shared/package.json`)다.
+  - Client는 `Packages/manifest.json`의 `file:../../Shared`로 참조한다.
+  - asmdef `ProjectH.Shared`(`noEngineReferences`)로 컴파일된다.
+- Server는 같은 소스(`Shared/Runtime/**/*.cs`)를 `Server/src/ProjectH.Shared/ProjectH.Shared.csproj`로 컴파일한다.
+  - `netstandard2.1`, `LangVersion 9.0`이라 Unity 6에서 안 되는 문법·API는 서버 빌드에서 먼저 실패한다.
+- Shared에는 엔진 타입이 없다. 위치는 `System.Numerics.Vector3`이고, Client는 `VectorConversions`로 Unity 타입과 변환한다.
+- 새 `.cs`에는 Unity `.meta`를 함께 커밋한다.
 
 ## LiteNetLib
 
-- Server: NuGet `LiteNetLib` 2.1.4.
-- Client: 같은 버전(2.1.4, netstandard2.1)의 DLL을 `Client/Assets/Plugins/LiteNetLib/LiteNetLib.dll`에 둔다. Git UPM 패키지는 `.meta` 파일이 없어 Unity가 무시하므로 쓰지 않는다. `manifest.json`과 `ProjectH.Client.asmdef` 참조에 LiteNetLib 항목이 없고, DLL은 자동 참조된다.
+- **Server:** NuGet `LiteNetLib` 2.1.4.
+- **Client:** 같은 버전(2.1.4, netstandard2.1)의 DLL을 `Client/Assets/Plugins/LiteNetLib/LiteNetLib.dll`에 둔다. Git UPM 패키지는 `.meta` 파일이 없어 Unity가 무시하므로 쓰지 않는다.
+- **채널 2개:** 0은 상태다(Snapshot Sequenced, 이벤트 Reliable, `VehicleStates` Unreliable). 1은 건설 전용 ReliableOrdered다.
+- **데이터그램 인증(리뷰 B):** 모든 데이터그램 끝에 20 B 인증 꼬리(카운터 + HMAC)를 붙인다. 연결 요청에는 쿠키와 세션 키가 들어간다(`Networking.md`, `Server.md`).
 
-DB(Phase 9): 경기가 끝나면 Game Loop가 `MatchRecord` 하나를 큐에 넣고, 별도 async Writer가 한 Transaction으로 MySQL에 저장한다. Game Loop는 DB를 기다리지 않고, DB가 없어도 서버는 돈다(`Database.md`).
-Phase 11: Client가 요청하면 `StatsQueryService`가 읽어 답한다. Game Loop는 답을 보내기만 한다(`Networking.md` "전적 조회", `Database.md` "조회 경로").
+## 영속 데이터
+
+- 경기가 끝나면 Game Loop가 `MatchRecord` 하나를 큐에 넣는다. 별도 async Writer가 한 Transaction으로 MySQL에 저장한다.
+- Game Loop는 DB를 기다리지 않는다. DB가 없어도 서버는 돈다.
+- 스키마는 `schema_version` v2다. 리뷰 C에서 anti-cheat 기록 열이 추가됐다(`Database.md`).
+- 전적은 Client가 요청하면 `StatsQueryService`가 읽어 답한다. Game Loop는 답을 보내기만 한다.

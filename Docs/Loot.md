@@ -1,6 +1,6 @@
 # Loot Container와 Supply Drop (Phase 16)
 
-설계 근거: `Docs/specs/2026-10-08-phase16-loot-containers-design.md` D1–D11. 패킷은 `Networking.md` "Loot Container와 Supply Drop (Phase 16)", 데이터 형식은 `Server.md`의 `loot.json` 항목이다. 바닥 Loot(`LootPoints`)는 `BattleRoyale.md`와 `Networking.md` "인벤토리와 Loot"다.
+Phase 19 + 리뷰 수정 기준(2026-10-09). 설계 근거: `Docs/specs/2026-10-08-phase16-loot-containers-design.md` D1–D11, 구현 기록(Spec과 다른 점): `Docs/plans/2026-10-08-phase16-loot-containers.md`. 이후 닿는 Spec: 표별 무기·탄 목록과 수류탄 `Docs/specs/2026-10-08-phase17-weapons-throwables-design.md` D13, Container 열림·Supply Drop 착지 소리 `Docs/specs/2026-10-08-phase18-audio-design.md` D9, E로 차량 타기 `Docs/specs/2026-10-08-phase19-vehicle-design.md` D6, 경기 비밀 시드 `Docs/specs/2026-10-08-review-fixes-design.md` C1. 패킷은 `Networking.md` "Loot Container와 Supply Drop (Phase 16)", 데이터 형식은 `Server.md`의 `loot.json` 항목이다. 바닥 Loot(`LootPoints`)는 `BattleRoyale.md`와 `Networking.md` "인벤토리와 Loot"다.
 
 ## Container 배치 (D1)
 
@@ -38,9 +38,9 @@
 
 ## 열기 (D4)
 
-- **E 순서:** 소생·재투입 대상 → (문, Container) 중 더 가까운 쪽(같은 거리면 문) → 줍기. Container 후보는 생성되고 닫힌 Chest·Ammo Box와 착지하고 닫힌 Supply Drop이다.
+- **E 순서:** 소생·재투입 대상 → (문, Container) 중 더 가까운 쪽(같은 거리면 문) → (Phase 19) 탈 수 있는 차량 → 줍기. Container 후보는 생성되고 닫힌 Chest·Ammo Box와 착지하고 닫힌 Supply Drop이다.
 - **대상 고르기:** 서버 순수 함수 `ContainerRules.FindTarget`(문과 같은 기하: 발에서 수평 `DoorInteractRange` 2.5 m, 조준 ±`DoorInteractHalfAngle` 60°, 발 높이가 대상 바닥 ±1 m). 가장 가까운 것, 같은 거리면 Container 먼저·작은 id. 문과의 선택은 `ContainerRules.PreferContainer`. Client에 같은 규칙 복사본(`Client/Assets/Scripts/Game/ContainerRule.cs`, "[E] 열기" 안내용)이 있고 서버 테스트가 source link로 컴파일해 결과를 비교한다(`ContainerRulesTests.TheClientsCopy_PicksTheSameTarget`). Shared에는 두지 않는다(`DoorRules`와 같다).
-- **서버 검증:** 경기 중(`InMatch`) 또는 개발 모드(결과 화면·대기실에서는 후보가 없다: E는 문·줍기 그대로), 생성됨, 닫힘(후보 마스크를 누를 때마다 지금 상태로 만든다), 살아 있고 행동 가능한 모드(`ActionsAllowed`: 기절·낙하·탑승 불가), 거리·각도, **시선**(눈 → Container 가운데가 맵 상자·닫힌 문·지형·건설 조각에 막히지 않음. 채집 대상은 보지 않는다. Supply Drop은 건물을 지나 착지하므로 건설 조각을 보지 않는다(리뷰 수정: 조각 아래 Drop이 잠기지 않게)). 시선이 막히면 **그 E는 아무것도 하지 않는다**(Health `opensBlocked`만 센다). Client는 시선을 모르고 그 자리에서 "[E] 열기"를 띄우며 줍기 안내·문 예측을 끄므로, 안내 없는 줍기(무기 교체 포함)나 예측 없는 문 움직임이 생기지 않게 하려는 것이다(Phase 16 리뷰).
+- **서버 검증:** 경기 중(`InMatch`) 또는 개발 모드(결과 화면·대기실에서는 후보가 없다: E는 문·줍기 그대로), 생성됨, 닫힘(후보 마스크를 누를 때마다 지금 상태로 만든다), 살아 있고 행동 가능한 모드(`ActionsAllowed`: 기절·낙하·탑승 불가), 거리·각도, **시선**(눈 → Container 가운데가 맵 상자·닫힌 문·지형·건설 조각에 막히지 않음. 채집 대상은 보지 않는다. Supply Drop은 건물을 지나 착지하므로 건설 조각을 보지 않는다(리뷰 수정: 조각 아래 Drop이 잠기지 않게)). 시선이 막히면 **그 E는 아무것도 하지 않는다**(Health `loot blocked`만 센다). Client는 시선을 모르고 그 자리에서 "[E] 열기"를 띄우며 줍기 안내·문 예측을 끄므로, 안내 없는 줍기(무기 교체 포함)나 예측 없는 문 움직임이 생기지 않게 하려는 것이다(Phase 16 리뷰).
 - 열기는 즉시다(진행 시간 없음). 같은 Tick에 두 사람이 누르면 플레이어 처리 순서상 먼저인 한 명만 연다. 두 번째 사람의 E는 줍기로 간다. 열기 전용 응답 패킷은 없다(`ContainerStates`·`ItemSpawned`로 안다).
 
 ## Supply Drop (D6, D7)
@@ -63,7 +63,24 @@
 
 - 관찰: `GET /qa/loot`(Container 상태·Loot, Supply Drop 목록, 지점 주변 월드 아이템 목록: 종류·등급·양과 종류별 수), `/qa/match`의 `containersSpawned`·`containersOpened`·`supplyDrops`.
 - 명령: `spawnSupplyDrop`(위치 규칙 또는 좌표), `setContainer`(none/closed/open 강제).
-- 시나리오 `QA/Scenarios/Loot/`와 `suite:loot`(`QA.md` "Scenario Library"). Unity 스크린샷 `visual_loot`(리더가 작성)는 `unity.json`에 들어갈 예정이다.
+- 시나리오 `QA/Scenarios/Loot/`와 `suite:loot`(`QA.md` "Scenario Library"). Unity 스크린샷 시나리오 `Loot/visual_loot.json`은 `QA/Suites/unity.json`에 들어 있다.
+- Unity `/qa/status`(Phase 16 C4): `lootPrompt`(이 프레임의 "[E] 열기" 안내 대상: `none`/`chest`/`ammoBox`/`supplyDrop`), `mapSupplyDrops`(미니맵에 그린 Supply Drop 아이콘 수).
+
+## Client (D8)
+
+- **상태(`LootState`, 순수 코드):** `ContainerStates`가 두 마스크를, `SupplyDrops`가 목록 전체를 바꾼다(둘 다 멱등, 예측 없음). 패킷 상한 크기의 고정 배열이라 늘지 않는다. 서버가 경기 시작·라운드 리셋에 보내는 0 마스크·빈 목록과 끊김(`Clear`)에만 비운다. `MatchState` 카운트다운에서는 비우지 않는다(접속 순서상 `MatchState`가 Loot 패킷보다 늦게 와서 받은 상태를 지울 수 있다, 계획 C3). `Active`는 서버의 열 수 있는 때(경기 중 Playing·FinalPhase, 경기 정보가 없으면 개발 모드)를 따른다.
+- **Container 뷰(`ContainerViews`):** `LootContainers` 항목마다 하나(최대 64)를 한 번 만들고 `Dispose`까지 지우지 않는다. Chest는 갈색 상자에 금색 띠를 두른 뚜껑, 열리면 뚜껑이 뒤로 젖혀지고 모두 어두워진다. Ammo Box는 작은 초록 상자, 열리면 어두워진다. 생성되지 않은 Container는 숨긴다. 내장 큐브 Mesh와 공유 Material 6개만 쓰고 **Collider가 없다**(서버에서도 충돌체가 아니다). `ContainerVersion`이 바뀔 때만, 상태가 바뀐 것만 다시 그린다.
+- **Supply Drop 뷰(`SupplyDropViews`):** `SupplyDropsPacket.MaxSupplyDrops`(4)개 고정 풀. 파란 상자, 낙하 중에는 위에 낙하산(원뿔)이 있고 높이는 그리는 서버 Tick으로 `SupplyDropFall.HeightAt`(서버와 같은 식, 물리 없음)을 쓴다. 착지하면 가는 빛기둥(40 m)이 서고, 열리면 상자가 회색이 되고 기둥이 사라진다. 목록은 `DropVersion`이 바뀔 때만 반영하고 매 프레임에는 낙하 중인 것의 높이만 바꾼다. Collider가 없다.
+- **안내(`ContainerRule`, 서버 규칙 복사본):** 종류별 문구 "[E] 상자 열기", "[E] 탄약 상자 열기", "[E] 보급품 열기"(`UiText`, 계획 C1). 소생·재투입 대상이 있으면 그 안내가 먼저이고, 문과 함께 범위에 들면 서버처럼 더 가까운 쪽(같은 거리면 문)을 안내한다. 시선은 보지 않는다(서버만 본다).
+- **문 예측:** 같은 E로 서버가 더 가까운 Container나 착지한 Supply Drop을 열 경우 `LocalPlayerPredictor`가 문을 예측하지 않는다(`ContainerRule.PreferContainer`, 계획 C2).
+- **지도:** 미니맵과 전체 지도(`MapHud`)에 Supply Drop 아이콘을 그린다. 색은 상태별(낙하 중 옅은 파랑, 착지 파랑, 열림 회색, `MapColors`). 낙하 중·착지한 것은 지도 밖이면 테두리에 붙이고, 열린 것은 보이는 범위 안에만 그린다.
+- **테스트(EditMode):** `ContainerRuleTests`(규칙 복사본의 대상 고르기·문과의 선택), `LootStateTests`(마스크·목록 적용, 비우는 때, `Active`, 높이). 서버 쪽 비교는 `ContainerRulesTests.TheClientsCopy_PicksTheSameTarget`.
+
+## Known Issues
+
+- Container Loot는 떨어진 아이템과 같은 규칙이라 월드 아이템이 256개로 가득 차면 나중의 사망 드롭에 밀려날 수 있다.
+- 다음 원 중심 3 m 안에 플레이어가 계속 머물면 그 경기 동안 매 Tick 위치를 다시 고른다(할당 없음, Spec대로).
+- Client 이동 예측은 소생·재투입 대상이 범위 안에 있어도 E로 문을 예측한다(Phase 14부터. Phase 16은 Container 경우만 막았다). 서버 `DoorStates`가 고친다.
 
 ## 지금 넣지 않은 것 (D11)
 

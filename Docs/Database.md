@@ -1,6 +1,6 @@
 # Database
 
-Phase 9(Persistence), Phase 10(DB 재연결). MySQL에는 영속 데이터만 저장한다: 계정, 프로필, 누적 통계, 경기 기록. 실시간 위치·전투 상태는 저장하지 않는다. 설계 근거: `Docs/specs/2026-10-01-phase9-persistence-design.md`, `Docs/specs/2026-10-01-phase10-hardening-design.md`(D8).
+Phase 9(Persistence), Phase 10(DB 재연결), 리뷰 수정 C7(schema v2, 2026-10-08). Phase 19 + 리뷰 수정(2026-10-09) 기준. MySQL에는 영속 데이터만 저장한다: 계정, 프로필, 누적 통계, 경기 기록. 실시간 위치·전투 상태는 저장하지 않는다. 설계 근거: `Docs/specs/2026-10-01-phase9-persistence-design.md`, `Docs/specs/2026-10-01-phase10-hardening-design.md`(D8).
 
 Game Loop는 DB를 기다리지 않는다. DB가 없거나 꺼져 있어도 서버는 정상 동작하고, 기록만 남지 않는다.
 
@@ -15,7 +15,7 @@ docker compose down      # 중지(데이터는 볼륨에 남는다)
 
 - 저장소 루트의 `docker-compose.yml`. `127.0.0.1:3306`에만 열고, 데이터는 이름 있는 볼륨(`projecth-mysql-data`)에 둔다.
 - 개발용 계정: DB `projecth`, 사용자 `projecth`, 비밀번호 `projecth_dev`. 127.0.0.1 전용 컨테이너의 더미 값이다.
-- 서버는 시작할 때 스키마를 만든다(`CREATE TABLE IF NOT EXISTS`). 따로 초기화할 것이 없다.
+- 서버는 시작할 때(그리고 DB를 다시 찾을 때) 스키마를 준비한다: 표를 `CREATE TABLE IF NOT EXISTS`로 만들고, `schema_version`이 2보다 낮으면 `match_player`에 Anti-cheat 열 8개를 `ALTER TABLE`로 더한다(멱등, 아래 "스키마 버전"). 따로 초기화할 것이 없다.
 - 덮어쓰기: 컨테이너 비밀번호는 환경 변수 `PROJECTH_DB_PASSWORD`(root는 `PROJECTH_DB_ROOT_PASSWORD`), 서버 연결은 `Persistence__ConnectionString`. 운영이나 공유 환경에서는 반드시 덮어쓴다.
 - `appsettings.json`의 `Persistence` 절:
 
@@ -29,7 +29,7 @@ docker compose down      # 중지(데이터는 볼륨에 남는다)
 
 잘못된 값이면 시작 시 종료된다(`PersistenceOptions.Validate`).
 
-개발 DB 초기화: 스키마가 `CREATE TABLE IF NOT EXISTS`라서, 이 Phase의 정의가 바뀌기 전에 만든 개발 DB는 옛 정의를 그대로 유지한다(예: 대소문자 구분 Collation이 없는 표). 처음부터 다시 만들려면 아래를 실행한다. **로컬 DB의 모든 데이터가 지워진다.**
+개발 DB 초기화: 스키마가 `CREATE TABLE IF NOT EXISTS`라서, 이 Phase의 정의가 바뀌기 전에 만든 개발 DB는 옛 정의를 그대로 유지한다(예: 대소문자 구분 Collation이 없는 표). 리뷰 수정 C7의 열 8개는 예외다: v2 마이그레이션이 기존 DB에도 더한다(기존 행은 0). 그 밖의 정의 차이는 자동으로 고치지 않는다. 처음부터 다시 만들려면 아래를 실행한다. **로컬 DB의 모든 데이터가 지워진다.**
 
 ```bash
 docker compose down -v
@@ -38,7 +38,7 @@ docker compose up -d
 
 ## 스키마
 
-`MatchStore.Schema`와 같다. InnoDB, `utf8mb4`, Collation `utf8mb4_0900_bin`이다(NO PAD, 대소문자·끝 공백을 구분하므로 DB의 같음 비교가 서버의 `DevPlayerId` 비교와 일치한다). 시각은 UTC `DATETIME(3)`이다. `MATCH`는 예약어라 `game_match`를 쓴다. 비밀번호 열은 없다(DevPlayerId 인증).
+`MatchStore.Schema`와 같다. InnoDB, `utf8mb4`, Collation `utf8mb4_0900_bin`이다(NO PAD, 대소문자·끝 공백을 구분하므로 DB의 같음 비교가 서버의 `DevPlayerId` 비교와 일치한다). 시각은 UTC `DATETIME(3)`이다. `MATCH`는 예약어라 `game_match`를 쓴다. 비밀번호 열은 없다. 계정은 연결 요청의 자기 신고 DevPlayerId다(인증 없음). 리뷰 수정 B4의 Resume 증명은 유예 캐릭터를 같은 Client만 되찾게 할 뿐 계정을 인증하지 않는다. 같은 이름으로 새로 접속하면 같은 계정에 전적이 쌓인다(외부 인증은 다음 단계).
 
 | 표 | 열 | 키 |
 |---|---|---|
@@ -146,7 +146,7 @@ LIMIT 10;
 ## 테스트
 
 - DB 없는 테스트(기록 내용, 큐, 설정, DB 없는 Writer)는 항상 돈다.
-- MySQL 테스트(`MySqlTests`, `[MySqlFact]` 9개)는 환경 변수 `PROJECTH_TEST_MYSQL`에 연결 문자열이 있을 때만 돈다. 없으면 건너뛰므로 DB 없이 `dotnet test`는 통과하고 건너뛴 테스트가 9개 보인다.
+- MySQL 테스트(`MySqlTests`, `[MySqlFact]` 10개)는 환경 변수 `PROJECTH_TEST_MYSQL`에 연결 문자열이 있을 때만 돈다. 없으면 건너뛰므로 DB 없이 `dotnet test`는 통과하고 건너뛴 테스트가 10개 보인다.
 
 ```bash
 docker compose up -d
@@ -155,6 +155,7 @@ dotnet test Server/ProjectH.Server.slnx --filter "FullyQualifiedName~Persistence
 ```
 
 - 내용: 저장하면 통계가 누적되고 전적이 최신순으로 나온다 / 실패하는 저장은 아무것도 남기지 않는다(롤백) / 같은 DevPlayerId는 한 번만(가장 좋은 순위로) 저장되고 경기는 남는다 / Hosted Writer가 큐의 기록을 저장한다 / 종료 시간에 걸린 진행 중 저장은 `Discarded`로 센다 / DB 없이 시작한 Writer는 나중에 DB가 생기면 저장한다(`TheWriter_StartedWithoutTheDatabase_SavesOnceItAppears`. Writer가 쓰는 포트에 아무도 없을 때 기록 하나를 넣어 `Failed`로 세게 한 뒤, 그 포트에서 테스트 MySQL로 잇는 TCP 중계기를 열고 다음 기록이 저장되는지 본다).
+- 리뷰 수정 C7: `AV1Database_IsMigratedToV2_AndTheColumnsAreSaved`(v1 정의의 `match_player`를 v2로 올리고 Anti-cheat 열 8개가 저장되는지 본다). 2026-10-08 리뷰 수정 실행에서는 DB가 없어 건너뛰었다. 개발 DB에서 한 번 돌려야 한다.
 - Phase 11: `AStatsQuery_AfterSavedMatches_AnswersOk_WithTotalsAndTheNewestMatchFirst`(저장한 경기를 `StatsQueryService`가 `Ok`와 통계·최근 경기로 답한다), `AStatsQuery_ForAnIdWithNoMatch_AnswersNoRecord`. DB 없는 `StatsQueryTests`(응답 변환, Persistence 꺼짐, 멈춘 DB에 대한 시간 제한 포함)는 항상 돈다.
 - 테스트도 개발 DB(`projecth`)에 그대로 쓴다. 별도 테스트 스키마는 없고, 이름 충돌을 피하려고 무작위 id를 쓴다. 지우려면 위 "개발 DB 초기화"를 쓴다.
 
@@ -162,4 +163,4 @@ dotnet test Server/ProjectH.Server.slnx --filter "FullyQualifiedName~Persistence
 
 - 실제 인증·비밀번호, 표시 이름 바꾸기
 - 실패한 기록의 디스크 보관
-- 마이그레이션 도구, 읽기 API 서버
+- 마이그레이션 도구(지금은 `EnsureSchemaAsync`의 열 추가 한 단계뿐), 읽기 API 서버

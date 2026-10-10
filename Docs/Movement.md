@@ -1,6 +1,6 @@
 # Movement
 
-Phase 12 기준. 설계 근거와 결정 D1–D17: `Docs/specs/2026-10-02-phase12-deployment-traversal-design.md`(5절은 계획 단계에서 바뀐 것). 이동은 Shared `MovementSimulation`이 한다. 서버(`Match.Tick`)와 Client 예측(`LocalPlayerPredictor`)이 같은 코드를 같은 입력으로 돌린다. 상태는 `MoveState`(위치, `VelocityY`, `Yaw`, `Mode`, `HorizontalVelocity`, `EnergySpent`, `EnergyDelayTicks`, `ModeTicks`, `Exhausted`)이고, 수치는 Phase 12의 `MovementTuning`과 그 전의 `MoveSettings`(걷기 4.5·달리기 7 m/s, 중력 −20, 점프 7 m/s, 반폭 0.35 m, 높이 1.8 m, `Skin`, `GroundProbe`, `MaxSlope`)에 모여 있다. Client는 위치·속도·모드를 보내지 않고 입력(이동 벡터, Yaw, 버튼)만 보낸다. 서버가 같은 `Step`으로 결과를 만들므로 속도·가속·공중 이동·기력·글라이더·순간 이동은 Client가 바꿀 수 없다(D12). 충돌 규칙과 지형은 `Networking.md` "이동 충돌", 맵은 `Map.md`다.
+Phase 12에서 만든 문서이고 Phase 19 + 리뷰 수정(2026-10-09) 기준으로 고쳤다(Phase 13 조각 충돌, 13.5 편집 모양, 14 기절, 19 차량 좌석, 리뷰 수정 D1 맵 경계). 설계 근거와 결정 D1–D17: `Docs/specs/2026-10-02-phase12-deployment-traversal-design.md`(5절은 계획 단계에서 바뀐 것). 이동은 Shared `MovementSimulation`이 한다. 서버(`Match.Tick`)와 Client 예측(`LocalPlayerPredictor`)이 같은 코드를 같은 입력으로 돌린다. 상태는 `MoveState`(위치, `VelocityY`, `Yaw`, `Mode`, `HorizontalVelocity`, `EnergySpent`, `EnergyDelayTicks`, `ModeTicks`, `Exhausted`)이고, 수치는 Phase 12의 `MovementTuning`과 그 전의 `MoveSettings`(걷기 4.5·달리기 7 m/s, 중력 −20, 점프 7 m/s, 반폭 0.35 m, 높이 1.8 m, `Skin`, `GroundProbe`, `MaxSlope`)에 모여 있다. Client는 위치·속도·모드를 보내지 않고 입력(이동 벡터, Yaw, 버튼)만 보낸다. 서버가 같은 `Step`으로 결과를 만들므로 속도·가속·공중 이동·기력·글라이더·순간 이동은 Client가 바꿀 수 없다(D12). 충돌 규칙과 지형은 `Networking.md` "이동 충돌", 맵은 `Map.md`다.
 
 ## 모드
 
@@ -146,7 +146,7 @@ Jump 비트가 켜진 입력(Client는 누른 Step에만 싣는다)이고, 땅 �
 ### 바깥벽 경계
 
 - 외곽벽은 높이 4 m뿐이라 공중에서는 그 위로 넘을 수 있다. 그래서 `StepAir`가 자유 낙하·글라이드의 위치를 ±(80 − 0.35 − `Skin`)으로 자르고 그 축의 속도를 0으로 한다(맵 안에 머문다).
-- **지상·Vault도 같다(리뷰 수정 D1, STB-0).** 2층 이상 바닥, 외곽벽에 붙은 경사로, 그 위에서의 점프는 벽 위로 나갈 수 있었다. 이제 같은 자르기(`MovementSimulation.ClampToMap`)를 `StepGround` 끝(위치를 쓰기 직전), `StepVault`의 한 Tick 이동 뒤, `StepAir`에서 부른다. `TryStartVault`는 착지점의 X·Z가 그 경계 밖이면 Vault를 시작하지 않는다(벽 위로 올라서거나 넘는 Vault, Vault는 충돌을 보지 않는다). Shared 코드라 서버와 Client 예측이 같은 결과를 낸다. 경계에 붙은 플레이어는 예측이 서버와 같으므로 보정이 생기지 않는다(오래된 Client와 섞이면 한 번 보정된다). 테스트: `MovementSimulationTests`의 `ARampAtTheOuterWall_DoesNotLetARunningJumpLeaveTheMap`, `WalkingOnALevelTwoFloor_AtTheOuterWall_StaysInside`, `ClampToMap_ZeroesHorizontalVelocity_LikeStepAir`, `TryStartVault_RefusesALandingOutsideTheMap`.
+- **지상·Vault도 같다(리뷰 수정 D1, STB-0).** 2층 이상 바닥, 외곽벽에 붙은 경사로, 그 위에서의 점프는 벽 위로 나갈 수 있었다. 이제 같은 자르기(`MovementSimulation.ClampToMap`)를 `StepGround`에서는 수평 Sweep 바로 뒤(지형·바닥 따라가기 전. 바닥과 내리막을 자른 X·Z에서 찾게, 리뷰 D 1차)에 부르고, 위치를 쓰기 직전에 한 번 더 부른다(따라가기 단계가 첫 자르기 전 위치를 고를 수 있어서 두는 안전망). `StepVault`는 한 Tick 이동 뒤, `StepAir`는 수평 이동 뒤에 부른다. `TryStartVault`는 착지점의 X·Z가 그 경계 밖이면 Vault를 시작하지 않는다(벽 위로 올라서거나 넘는 Vault, Vault는 충돌을 보지 않는다). Shared 코드라 서버와 Client 예측이 같은 결과를 낸다. 경계에 붙은 플레이어는 예측이 서버와 같으므로 보정이 생기지 않는다(오래된 Client와 섞이면 한 번 보정된다). 테스트: `MovementSimulationTests`의 `ARampAtTheOuterWall_DoesNotLetARunningJumpLeaveTheMap`, `WalkingOnALevelTwoFloor_AtTheOuterWall_StaysInside`, `ClampToMap_ZeroesHorizontalVelocity_LikeStepAir`, `TryStartVault_RefusesALandingOutsideTheMap`.
 
 ### 낙하 피해 (`CombatRules.FallDamage`)
 
@@ -175,10 +175,17 @@ Jump 비트가 켜진 입력(Client는 누른 Step에만 싣는다)이고, 땅 �
 - 맞닿은 상자에서 밀어내기: 겹친 상자에서 가장 짧게 밀되, 원래 겹치지 않았던 다른 상자로 들어가는 쪽은 고르지 않는다(없으면 가장 짧은 쪽). 두 번 돈다. 벽이 이어진 줄, 지붕이 걸친 집에서 캐릭터가 벽 속으로 밀려 들어가지 않는다(`PieceCollisionTests`의 무작위 1000건 이상).
 - 슬라이드는 경사로에서 경사 가속을 받지 않는다(지형 기울기만 쓴다). 글라이더 자동 전개의 지면 거리는 모은 층(±2) 안의 조각만 본다. 2층보다 더 아래의 조각은 무시한다(문서화된 한계). 후보 조각이 상한을 넘으면 id가 낮은 쪽을 남긴다.
 - 받은 적 없는 조각(관심 창 밖, 아직 Sync 전)은 예측에 없다. 그 경우 서버가 막고 Client는 보정을 받는다.
+- **편집된 조각(Phase 13.5 D3):** 조각은 실제 모양으로 충돌한다. `CollisionWorld.Gather`는 조각마다 `BuildGrid.PartsOf`를 불러 상자들(편집된 벽·바닥은 남은 칸을 묶은 상자 최대 `MaxPartsPerPiece` = 6개, 평지붕은 판 하나, 통로 지붕은 가운데 2.5 m 구멍을 뺀 판 4개) 또는 경사면 하나(경사로, 경사 지붕)를 넣는다. 이동·사격·채집·배치 검사가 같은 함수를 쓰고, Shared 코드라 예측도 같은 모양으로 막힌다(`Building.md` "편집 (Phase 13.5)").
+
+### 차량 좌석 (Phase 19 D5)
+
+- 차에 탄 플레이어는 이동 `Step`도 `Ride`도 부르지 않는다. 서버(`Match.TickSeated`)는 그 입력을 차량 입력으로만 쓰고(E로 내리기), 차량을 움직인 뒤(`UpdateVehicles`) 탄 사람을 좌석 위치에 놓는다. 그동안 이동 상태는 쉬는 `Ground`(`ModeTicks` 0)이고 행동은 막힌다(`CanAct`가 `InVehicle`이면 false). Snapshot의 탄 플레이어 위치는 좌석이고 모드는 `Ground`다(`Networking.md` "차량 (Phase 19)").
+- 타기는 `Ground`·`Crouch`에서만 되고, 탈 때와 내릴 때 상태를 쉬는 `Ground`로 바꾸고 위치 기록을 다시 시작한다(순간 이동). 내린 뒤 Jump(브레이크)를 쥐고 있으면 뗄 때까지 걷는 입력의 Jump를 지운다(`MaskJumpAfterExit`).
+- 운전자의 차량 예측은 이동 예측과 따로 Shared `VehicleSimulation`으로 한다. 규칙은 `Vehicles.md`다.
 
 ## 수송기
 
-- **경로(`DropPlanner.Plan`, 서버 전용, spec과 다른 점 1·2):** 시드(`SpawnSeed + 판 번호`)로 방향을 하나 굴려, 맵 중심을 지나는 직선을 만든다. 양 끝은 그 방향의 외곽벽에서 경로를 따라 밖으로 20 m인 지점이다. 그래서 길이는 방향에 따라 200 m(축 방향, 10초)에서 약 266 m(대각선, 2 × (중심에서 모서리까지 113 m + 20 m), 400 Tick = 약 13.3초)까지다(`DeploymentMovementTests.TheRouteLength_IsTwoHundredToAbout266Metres`가 시드 5,000개로 잰다). 고도 90 m, 속도 20 m/s이고 시작 Tick은 경기를 시작하는 Tick + 1이다. 시드 난수는 Shared에 두지 않아(`game-core-rules` 4절) Shared에는 경로 값(`DropRoute`)과 위치 계산(`PositionAt`)만 있다. 경로는 `TransportRoute`로 한 번 보낸다(경기 시작, Join·Resume).
+- **경로(`DropPlanner.Plan`, 서버 전용, spec과 다른 점 1·2):** 시드(리뷰 수정 C1부터 경기 비밀에 경로 용도와 판 번호를 섞은 값. `Server:DeterministicSeeds`일 때만 예전처럼 `SpawnSeed + 판 번호`)로 방향을 하나 굴려, 맵 중심을 지나는 직선을 만든다. 양 끝은 그 방향의 외곽벽에서 경로를 따라 밖으로 20 m인 지점이다. 그래서 길이는 방향에 따라 200 m(축 방향, 10초)에서 약 266 m(대각선, 2 × (중심에서 모서리까지 113 m + 20 m), 400 Tick = 약 13.3초)까지다(`DeploymentMovementTests.TheRouteLength_IsTwoHundredToAbout266Metres`가 시드 5,000개로 잰다). 고도 90 m, 속도 20 m/s이고 시작 Tick은 경기를 시작하는 Tick + 1이다. 시드 난수는 Shared에 두지 않아(`game-core-rules` 4절) Shared에는 경로 값(`DropRoute`)과 위치 계산(`PositionAt`)만 있다. 경로는 `TransportRoute`로 한 번 보낸다(경기 시작, Join·Resume).
 - **뛰어내리기 구간(`DropRoute.JumpWindow`, 다른 점 3):** 수송기가 벽 안쪽 10 m 이상, 즉 ±70 m 사각형 안에 있는 Tick들이다. 구간 안에서 Jump를 누르면 `Freefall`이 된다. 구간 앞의 Jump는 무시한다. 구간이 끝날 때까지 안 뛰면 그 지점에서 강제로 뛰어내린다(경로 끝이 아니다. 끝에서는 벽 밖이라 맵으로 돌아올 수 없다). 입력이 없는 탑승자(끊긴 사람)도 같다.
 - **`Ride`와 `Step`을 같은 Tick에 부르지 않는 이유:** `Ride`는 `Transport`일 때만 일하고(아니면 false) 그 Tick의 위치를 경로에서 정한 뒤 모드를 `Freefall`로 바꾼다. 서버와 예측 모두 `Ride`가 true를 돌려준 Tick에는 `Step`을 부르지 않는다. 같은 Tick에 `Step`이 이어지면 방금 뛰어내리게 한 Jump 입력이 자유 낙하 안에서 글라이더 전개로도 읽혀 낙하 없이 바로 `Glide`가 된다. 낙하는 다음 Tick의 `Step`부터 시작한다.
 - **Tick 대응:** `Ride`는 그 입력이 시뮬레이션되는 서버 Tick으로 위치를 정한다. 서버는 `ServerTick + 1`(그 Tick의 Snapshot이 보고하는 Tick)을 쓰고, Client 예측은 입력 Seq의 서버 Tick을 `ServerTick − Ack + Seq`로 구한다(`LocalPlayerPredictor`가 Snapshot마다 `_tickBase = ServerTick − Ack`로 갱신). Ack가 0인 동안은 입력이 어느 Tick에 처리될지 모르므로 추측한 Tick으로 탑승을 예측하지 않는다. 탑승자는 제자리에 두고 Ack 0인 Snapshot마다 서버 위치를 그대로 받는다(보정으로 세지 않는다). 첫 Ack가 오면 기준을 잡고 그 Ack부터 다시 계산한다. 이것도 보정으로 세지 않는다(최종 검토 B6).
@@ -187,7 +194,7 @@ Jump 비트가 켜진 입력(Client는 누른 Step에만 싣는다)이고, 땅 �
 
 ## 테스트
 
-`Server/tests/ProjectH.Server.Tests`(전체 1082개, 1073 통과, MySQL 9개는 `PROJECTH_TEST_MYSQL` 없이 건너뜀).
+`Server/tests/ProjectH.Server.Tests`(Phase 12 당시 전체 1082개, 1073 통과, MySQL 9개는 `PROJECTH_TEST_MYSQL` 없이 건너뜀. 지금 MySQL 테스트는 10개다, `Database.md`).
 
 - `Shared/MovementModesTests`: 기력(소모, 0이 되면 끝, 20 회복, 1초 대기), 웅크리기(1.2 m, 낮은 틈, 머리 위가 막히면 유지), 슬라이드(시작·감속·내리막·13 m/s 한계·Jump·막힘, Shift 없이·기력 소진·웅크린 채 착지면 웅크리기, 시작 비용 15, 슬라이드 홉 연쇄가 기력이 떨어져 멈춤), 달리며 점프와 공중 조작(공중 Shift는 기력·밀치기 없음), `HeightField.Gradient`
 - `Shared/VaultTests`: Hurdle·Mantle, 걷는 속도·3 m 벽·너무 먼 장애물, 도착점이 막힌 경우, 얇은 벽 너머(`IsPathClear`), 발 높이와 맞지 않는 착지, 재생(속도와 `ModeTicks`), 맵의 Gearworks 상자

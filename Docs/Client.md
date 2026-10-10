@@ -1,6 +1,8 @@
 # Client
 
-Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(RuntimeInitializeOnLoadMethod, AfterSceneLoad)가 `GameClient`+`UiRoot`를 만들고, `GameClient.Awake`가 맵(`MapWorld`)을 만든다. 화면(타이틀·메뉴·끊김·결과·내 전적)은 `UiRoot`가 코드로 만든 UGUI다("화면과 흐름 (Phase 11)").
+Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(RuntimeInitializeOnLoadMethod, AfterSceneLoad)가 `GameClient`+`UiRoot`를 만들고(Editor·Development Build에서 `-qaPort`가 있으면 `QaCommandReceiver`도), `GameClient.Awake`가 맵(`MapWorld`)을 만든다. 화면(타이틀·메뉴·끊김·결과·내 전적)은 `UiRoot`가 코드로 만든 UGUI다("화면과 흐름 (Phase 11)").
+
+이 문서는 Phase 19와 리뷰 수정 A–D(2026-10-09, main) 기준이다. Phase 13.5–19의 Client 쪽은 각 Phase 절에 있고, 규칙은 각 기능 문서(`Building.md`, `Squad.md`, `Map.md`, `Loot.md`, `Weapons.md`, `Audio.md`, `Vehicles.md`)에 있다.
 
 ## 구조
 
@@ -9,10 +11,11 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
 | `Bootstrap/GameBootstrap` | GameClient와 UiRoot를 한 GameObject에 1개 생성(DontDestroyOnLoad) |
 | `Bootstrap/MapWorld` | Shared `GameMap`의 지형 Mesh 1개(`TerrainMesh`, 81 × 81 꼭짓점, 서버와 같은 삼각형, 앞면이 위)와 MeshCollider, 박스마다 Cube(BoxCollider), 맵 밖 400 m 바닥(y −0.05), 공유 Material 3개(지형·구조물·엄폐물), 그림자 없음. Collider는 카메라 충돌·조준 광선용이고 이동 충돌은 `MovementSimulation`이 한다 |
 | `Bootstrap/LaunchArgs` | 실행 인자(`-host`, `-port`, `-devId`, `-autoConnect`). `-autoConnect`면 `UiRoot.Start`가 타이틀을 거치지 않고 바로 접속한다. QA 인자(`-qaPort`, `-qaShotDir`, `-qaRecord`)는 `Qa/QaLaunchOptions`가 읽는다("QA 자동화") |
-| `Qa/*` | QA-4·QA-5. Editor와 Development Build에만 있다(`#if UNITY_EDITOR \|\| DEVELOPMENT_BUILD`). `QaCommandReceiver`(localhost HTTP), `QaInputRecorder`(입력 녹화), 순수 코드 `QaProtocol`·`QaInputRecordFormat`("QA 자동화") |
-| `Net/NetClient` | LiteNetLib, 메인 스레드 전용(`UnsyncedEvents = false`, `Update`에서 Poll). 전투 패킷 6종(WeaponCatalog, ShotFired, HitConfirmed, DamageTaken, PlayerDied, PlayerRespawned)과 아이템 패킷(ItemCatalog, WorldItems·ItemSpawned → `ItemReceived`, ItemRemoved, InventoryState, PickupResult), 경기 패킷(MatchState, ZoneState, MatchResult), 전적 응답(`StatsReceived`)을 이벤트로 올린다. `RequestStats()`가 `StatsRequest`를 보낸다(Join한 뒤에만). `PlayerSpawned.Name`을 함께 전달하고, 마지막 Join 결과·거절 사유·시작 실패를 끊김 화면용으로 보관한다 |
+| `Qa/*` | QA-4·QA-5. Editor와 Development Build에만 있다(`#if UNITY_EDITOR \|\| DEVELOPMENT_BUILD`). `QaCommandReceiver`(localhost HTTP), `QaInputRecorder`(입력 녹화), 순수 코드 `QaProtocol`(`QaLaunchOptions`, 경로·명령·키 표, `/qa/status` JSON 쓰기)·`QaInputRecordFormat`("QA 자동화") |
+| `Net/NetClient` | LiteNetLib, 메인 스레드 전용(`UnsyncedEvents = false`, `Update`에서 Poll). 전투 패킷 6종(WeaponCatalog, ShotFired, HitConfirmed, DamageTaken, PlayerDied, PlayerRespawned)과 아이템 패킷(ItemCatalog, WorldItems·ItemSpawned → `ItemReceived`, ItemRemoved, InventoryState, PickupResult), 경기 패킷(MatchState, ZoneState, MatchResult), 전적 응답(`StatsReceived`)을 이벤트로 올린다. `RequestStats()`가 `StatsRequest`를 보낸다(Join한 뒤에만). `PlayerSpawned.Name`을 함께 전달하고, 마지막 Join 결과·거절 사유·시작 실패를 끊김 화면용으로 보관한다. Phase 12–19의 패킷(수송기·문·건설·분대·지도·Loot·투사체·소리·차량)도 같은 방식의 이벤트이고, `GameClient`의 구독은 모두 47개다(아래 "Lifetime"). 리뷰 수정 A3·B부터 쿠키 재시도·세션 키·Resume 증명을 맡는다("접속 인증") |
+| `Net/AuthPacketLayer` | 리뷰 수정 B3. 모든 데이터그램에 인증 꼬리 20 B를 붙이고 검사하는 LiteNetLib `PacketLayerBase`(Shared `SessionAuth`의 얇은 어댑터, 키 한 벌). 아래 "접속 인증" |
 | `Net/VectorConversions` | System.Numerics ↔ UnityEngine 벡터 변환 |
-| `Input/InputReader` | Input System 격리. Move, Look, Jump, Sprint, Fire(좌클릭), Aim(우클릭), Reload(R), Slot1–3(1·2·3), Interact(E), Drop(G), UseMedkit(4), UseShieldCell(5), Crouch(C 토글, Ctrl 누르는 동안. Phase 12), Esc(메뉴), F1(디버그 줄). Esc·F1은 `GameClient`가 `UiRoot`에 넘긴다. 누름은 `QueuedButtons`에 모았다가 다음 예측 Step이 가져간다. Crouch는 누른 상태라 매 Step에 실린다. C 토글은 Jump나 Sprint를 누르면 꺼지고, 입력이 막혀 있으면(메뉴, 풀린 커서) C는 토글하지 않는다(`Update(gameInputBlocked)`) |
+| `Input/InputReader` | Input System 격리. Move, Look, Jump, Sprint, Fire(좌클릭), Aim(우클릭), Reload(R), Slot1–3(1·2·3), Interact(E, Phase 14부터 누르고 있는 동안 `InteractHeld`도), Drop(G), UseMedkit(4), UseShieldCell(5), Crouch(C 토글, Ctrl 누르는 동안. Phase 12), Esc(메뉴), F1(디버그 줄), Phase 13: ToolHarvest(F), ToolBuild(Q), 조각 Z·X·V·B, 재료 T, Phase 13.5: Edit(H), Phase 15: Map(M, 전체 지도), Ping(가운데 버튼), Point(마우스 위치, 지도 클릭), Phase 17: ThrowGrenade(6). 차량 타기·내리기는 새 키 없이 E다(Phase 19). Esc·F1·M은 `GameClient`가 `UiRoot`에 넘긴다. 누름은 `QueuedButtons`에 모았다가 다음 예측 Step이 가져간다. Crouch는 누른 상태라 매 Step에 실린다. C 토글은 Jump나 Sprint를 누르면 꺼지고, 입력이 막혀 있으면(메뉴, 풀린 커서) C는 토글하지 않는다(`Update(gameInputBlocked)`) |
 | `Game/TerrainMesh` | 높이 격자 → Mesh 꼭짓점·삼각형(순수 계산) |
 | `Game/PoiLookup`, `PoiLabel` | 따라가는 발이 있는 POI 이름을 왼쪽 위에 표시(글꼴은 `UiFont`). POI가 바뀔 때만 Text를 바꾼다 |
 | `Game/GameClient` | 구성 루트, 생성·해제 책임 |
@@ -30,7 +33,7 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
 | `Game/MatchHud`, `MatchHudText` | 상단 상태 문구("플레이어를 기다리는 중 1/2", "시작까지 7초", "생존 3/5", "경기 종료"), Zone 안내("자기장 축소까지 12초", "자기장 축소 중"), Zone 밖이면 화면 가장자리 붉게, 관전 줄("관전 중: <이름>", 이름을 모르면 "플레이어 <id>"). 글꼴은 `UiFont`. 결과 줄은 결과 화면(`UI/ResultScreen`)으로 옮겼다. 문자열은 `MatchHudText`가 값이 바뀔 때만 만든다 |
 | `Game/SpectatorCamera`, `SpectatorTargets` | 경기 중 죽으면 카메라가 처치자를, 좌클릭마다 다음 생존자(EntityId 오름차순, 순환)를, 따라가던 사람이 죽으면 다음 사람을 원격 보간 위치로 따라간다. 대상 규칙은 순수 계산(`SpectatorTargets`) |
 | `Game/Crosshair` | 코드로 만든 Screen Space Overlay Canvas 조준점(UGUI, GraphicRaycaster 없음). 살아 있고 게임 입력이 통할 때(화면이 없고 커서가 잠김, 입력 차단과 같은 값)만 보인다 |
-| `Game/LocalFireEffects`, `RingCursor` | 발사 연출: 내 발사는 `WeaponState`가 쏜다고 한 입력마다(프레임당 최대 3발) 총구 → 조준점 광선, 다른 사람 발사는 `ShotFired`의 시작 → 끝. 궤적 16·탄착 32 고정 링 풀 |
+| `Game/LocalFireEffects`, `RingCursor` | 발사 연출: 내 발사는 `WeaponState`가 쏜다고 한 입력마다(프레임당 최대 3발) 총구 → 조준점 광선, 다른 사람 발사는 `ShotFired`의 시작 → 끝. 궤적 24·탄착 32 고정 링 풀 |
 | `Game/RemotePlayers`, `RemotePlayerInterpolator`, `ServerClock` | 다른 플레이어 보간. Snapshot 생존 비트로 회색·눕힘, 부활하면 보간 기록을 비운다. 다른 플레이어의 `PlayerRespawned`(경기 시작·판 재시작은 생존 비트가 바뀌지 않는다)는 `Teleport`로 Spawn 위치 5 m 안의 최근 샘플만 남기고 이전 샘플을 버린다. 살아 있는 뷰는 회전하지 않는다(서버 AABB와 같은 축 정렬 Collider 유지) |
 | `Game/PlayerViewFactory`, `PlayerView` | 캡슐 뷰 생성, 공유 Material(내 색, 남 색, 사망 회색). 원격 뷰는 캡슐 Collider 대신 서버 판정 상자와 같은 크기(0.7 × 높이 × 0.7)의 `BoxCollider`를 `Ignore Raycast` 레이어(2)에 둔다(조준 광선만 이 레이어를 본다). 높이는 모드에 따라 1.8 m 또는 1.2 m다(Phase 12). 내 뷰에는 Collider가 없다. `PlayerView`는 몸·날개 자식·Collider를 들고 `PlayerPose`대로 모양을 바꾼다(바뀔 때만) |
 | `Game/PlayerPose` | 모드마다 캡슐을 어떻게 그리는지(몸 높이, 기울기, 엎드림, 날개, 숨김, 맞는 높이)를 정하는 순수 계산. UnityEngine이 없고 EditMode 테스트가 Unity 밖에서도 돈다 |
@@ -39,9 +42,19 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
 | `Game/Build/ToolState` | 도구 예측(서버 `HarvestRules.SelectTool`의 복사본, 서버 테스트가 소스 링크로 비교). 입력마다 Step, Snapshot Self의 도구가 다르면 Ack에서 다시 계산. 무기는 도구가 무기일 때만 Step한다 |
 | `Game/Build/BuildTargeting`, `BuildController`, `BuildStore` | 순수 코드(UnityEngine 없음). 미리보기 격자 계산과 선택(조각·재료·회전), Turbo, 요청 번호·대기(최대 8, 1초), 판정(사거리·자리·자원). `BuildStore`는 확정 조각(id로 적용, 관심 칸 마스크)과 예측 충돌용 `PieceGrid` |
 | `Game/Build/PieceMeshes`, `BuildPieceViews`, `BuildPreview`, `BuildPieceLook` | 조각 Mesh 3개(상자, 경사로 판, 지붕 사각뿔)를 코드로 한 번 만든다. 조각 뷰는 뿌리(전체 크기 Collider: 카메라·조준 광선이 멈춘다)와 몸(건설 높이로 줄여 그림), 종류별 풀(최대 256), Material 9개(재료 3 × 손상 3단계). 손상 단계는 지금까지 자란 체력 대비 피해라 피해 없는 짓는 중 조각은 Healthy로 보인다. 바뀐 조각과 짓는 중인 조각만 다시 그린다. 미리보기 유령 4개와 대기 8개는 `Sprites/Default` 반투명이고 Collider가 없다 |
-| `Game/Build/HarvestEffects`, `BuildHud`, `BuildAudio` | 약점 표시(맞으면 커진다, 4초), 부서질 때 연기, 내 휘두르기. HUD: 자원 줄(대기 비용을 뺀 값), 건축 줄과 키 안내, 거절 안내(1.5초). `BuildAudio`는 소리 자리(아직 클립 없음, 횟수만 센다) |
+| `Game/Build/HarvestEffects`, `BuildHud`, `BuildAudio` | 약점 표시(맞으면 커진다, 4초), 부서질 때 연기, 내 휘두르기. HUD: 자원 줄(대기 비용을 뺀 값), 건축 줄과 키 안내, 거절 안내(1.5초). `BuildAudio`는 건설·채집 소리 종류(`BuildSound`)를 Phase 18부터 `GameAudio`로 넘긴다("오디오 (Phase 18)") |
+| `Game/Build/BuildEditController`, `BuildEditOverlay`, `BuildRequestCounter` | Phase 13.5 편집(아래 "채집과 건설"의 편집 항목) |
 | `Game/HarvestableViews` | `GameMap.Harvestables`마다 상자 하나(종류별 Material 4개, Collider). `HarvestStates`가 바뀔 때만 켜고 끈다 |
-| `Camera/ShoulderCamera`, `ShoulderCameraMath` | 오른쪽 어깨 카메라, 우클릭 ADS(거리 3.5→1.6 m, 오른쪽 0.55→0.65 m, FOV 60→42, 감도 ×0.6), 두 단계 SphereCast(반경 0.2 m) 충돌. 1단계(머리 기준점 → 어깨점)는 부딪힌 거리에서 0.02 m(`ShoulderClearance`) 덜 나가 2단계가 벽에 붙은 채 시작하지 않게 한다. 계산은 `ShoulderCameraMath` 순수 함수. Phase 12: 모드마다 목표(기준 높이·거리·FOV, `CameraTargets`)를 정하고(`TargetsFor`) 현재 값이 `ModeSharpness` 5로 부드럽게 따라간다("이동과 투입") |
+| `Game/SquadState`, `SquadHud`, `SquadHudText`, `SquadPrompt`, `TeammateMarkers`, `RebootStationViews` | Phase 14 분대(아래 "분대 (Phase 14)") |
+| `Game/Map/*` | Phase 15 지도(아래 "지도·Ping (Phase 15)"). `MapSystem`(지도 쪽 소유자: 텍스처·HUD·월드 표지·팀 표시·Ping 누름 규칙), `MapHud`(미니맵·전체 지도 UGUI), `MapTextures`(지도 그림·고리·점·화살표 텍스처, 색), `MapRaster`(Shared 맵 데이터로 그린 지도 픽셀, 순수 코드), `MapProjection`(월드 ↔ 지도 uv, 순수 코드), `WorldMarkers`(월드의 Ping 기둥·Waypoint 기둥·거리 글자), `PingInput`(`PingTap` 두 번 누름 규칙과 `PingContext` 맥락 고르기, 순수 코드), `TeamMarkerState`(받은 `TeamMarkers`, 순수 코드) |
+| `Game/ContainerRule`, `LootState`, `ContainerViews`, `SupplyDropViews` | Phase 16 Loot Container·Supply Drop(아래 "상자·보급 (Phase 16)", 자세한 것은 `Loot.md`) |
+| `Game/SpreadCone`, `ProjectileTracks`, `ProjectileViews` | Phase 17(아래 "무기·투척 (Phase 17)"). 내 예광탄의 퍼짐 원뿔(표시용), 투사체 표(32칸, 외삽), 투사체·폭발 뷰 |
+| `Game/Audio/*` | Phase 18 소리(`GameAudio`, `AudioCatalog`, `AudioMixerModel`, `FootstepModel`, `AudioEventRules`, `AudioSynth`, `AudioClipBank`, `AudioVoicePool`, `UiSound`). 파일별 역할은 `Audio.md` "구조" |
+| `Game/VehicleStore`, `VehiclePredictor`, `VehicleViews`, `VehiclePrompt` | Phase 19 차량(아래 "차량 (Phase 19)", 규칙은 `Vehicles.md`) |
+| `Game/LitMaterial` | 실행 중에 만드는 모든 Material의 원본(`Resources/ProjectHLit.mat`, URP Lit 사본). 기본 도형의 Material은 Player 빌드에서 Standard라 URP가 자홍색으로 그리므로 쓰지 않는다. 불러온 에셋은 복사해서만 쓴다 |
+| `Game/UnityObjects` | 리뷰 수정 D. Play 중에는 `Object.Destroy`, Play 밖(EditMode 테스트)에서는 즉시 파괴(아래 "받기 검증"의 EditMode 정리) |
+| `Camera/ShoulderCamera`, `ShoulderCameraMath` | 오른쪽 어깨 카메라, 우클릭 ADS(거리 3.5→1.6 m, 오른쪽 0.55→0.65 m, FOV 60→42, 감도 ×0.6), 두 단계 SphereCast(반경 0.2 m) 충돌. 1단계(머리 기준점 → 어깨점)는 부딪힌 거리에서 0.02 m(`ShoulderClearance`) 덜 나가 2단계가 벽에 붙은 채 시작하지 않게 한다. 계산은 `ShoulderCameraMath` 순수 함수. Phase 12: 모드마다 목표(기준 높이·거리·FOV, `CameraTargets`)를 정하고(`TargetsFor`) 현재 값이 `ModeSharpness` 5로 부드럽게 따라간다("이동과 투입"). Phase 14: 기절이면 기준 높이 0.7 m. Phase 19: 차량 카메라(뒤 8 m·위 2.5 m) |
+| `Camera/RecoilKick` | Phase 17 D3. 내 사격의 카메라 반동(표시용). 한 발에 무기의 `RecoilDegrees`를 바로 더하고 초당 12(`RecoverPerSecond`)로 지수 감쇠한다. `ShoulderCamera`가 마우스 피치 위에 더하므로 조준점·조준 광선·서버로 보내는 조준이 모두 화면을 따른다. 서버는 반동을 모의하지 않는다. 순수 코드 |
 | `UI/UiFlow`, `UiText`, `KillFeedModel` | 순수 코드(UnityEngine 없음). `UiFlow`: 화면 상태 기계(D3)와 전적 창의 대기(`StatsWait`). `UiText`: 한국어 문구와 이름·포트·주소 검사. `KillFeedModel`: 5칸 링, 줄마다 6초. 서버 테스트 프로젝트가 소스 링크로 시험한다(`Server/tests/ProjectH.Server.Tests/ClientUi`) |
 | `UI/UiFont`, `UiFactory` | `UiFont`: 모든 UI 글자의 글꼴 하나(D2, 아래 "글꼴"). `UiFactory`: Canvas·`CanvasScaler`(1920 × 1080 기준, 가로·세로 0.5)·패널·글자·버튼·입력칸(Legacy `InputField`) 생성 도우미, `EventSystem` 생성 |
 | `UI/KillFeed`, `DebugOverlay` | 각자 자기 Canvas를 쓴다(GraphicRaycaster 없음). `KillFeed`는 Canvas 정렬 순서 94, `GameClient`가 갖는다. `DebugOverlay`는 정렬 순서 120이고 F1로 켠다. Phase 12: F1에 이동 줄과 수송기 경로 줄이 더해졌다 |
@@ -57,6 +70,8 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
 3. 원격 플레이어 렌더(`ServerClock.RenderTick`로 보간 대상 Tick 계산, 이 값이 입력의 ViewTick이 된다)
 4. 카메라 Look(ADS 중 감도 ×0.6. 입력이 막혀 있으면 시점·이동·발사·조준이 0이고 입력 패킷은 빈 입력으로 계속 간다) → `LocalPlayerPredictor.Advance`(고정 스텝 예측, Sprint·Fire·Crouch는 매 Step, 눌림은 마지막 Step) → 로컬 뷰 자세(사망이면 눕힘)
 5. `LateUpdate`: 관전 대상 갱신(`SpectatorCamera.Update`) → 카메라 Follow(관전 중이면 대상의 보간 위치, 아니면 내 렌더 위치. 머리 기준점 → 어깨점 → 카메라 두 번 SphereCast, 막히면 즉시 당기고 풀리면 감쇠 복귀) → 조준점(`Physics.SyncTransforms` 후 화면 중앙 Raycast, 원격 플레이어 포함) → 이번 프레임 입력들에 조준(눈은 예측 위치 기준)·ViewTick 기록 → `WeaponState` Step → `PlayerInput` 전송 → 내 발사 연출(카메라가 움직인 뒤라 조준점과 일치) → HUD → 아이템 회전 → 인벤토리 HUD·"[E]" 안내(예측 위치 기준 `PickupRule`) → 경기 HUD·Zone 원(서버 현재 Tick 추정 = 렌더 Tick + 보간 지연)
+
+Phase 13–19에서 더해진 것(`GameClient.Update`·`LateUpdateGame`·`LateUpdate`): `Update`는 Poll 뒤 차량 숨김(`VehicleStore.Expire`)과 렌더 Tick 표본, 앉았을 때의 제동(Space)·좌석 위치, 수류탄 키를 걸러 예측에 넣는다. 원격 플레이어는 예측 뒤에 그린다(내가 운전하는 차의 조수석 사람이 예측 좌석에 앉도록). `LateUpdateGame` 앞부분은 예측기 유무와 상관없이 문·수송기·Container·Supply Drop·투사체(서버 Tick 추정)·차량을 그린다. 예측기가 있으면 차량 카메라, 편집·건설, 분대, E 안내(위 "이동과 투입"의 E 우선순위), 지도(`UpdateMap`)가 이어진다. `LateUpdate`는 `LateUpdateGame` 뒤에 `TickAudio`(Phase 18)를 부른다.
 
 아이템 회전(`WorldItemViews.Tick`)은 예측기 유무와 상관없이 `LateUpdate` 맨 앞에서 돌아 첫 Spawn 전에도 아이템이 돈다(할당 없음).
 
@@ -78,7 +93,7 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
   - Shift: 달리기(기력 소모)
   - C: 웅크리기 켜고 끄기. Ctrl: 누르는 동안 웅크리기. Jump나 Sprint를 누르면 C 토글이 꺼진다
   - 달리며 C(또는 Ctrl): 슬라이드
-  - E: 문 열기·닫기(없으면 줍기)
+  - E: 문 열기·닫기(없으면 줍기). 지금 E 우선순위는 서버(`Vehicles.md` "E 우선순위")와 같다: 차량에 앉아 있으면 내리기 → 소생·재투입 대상 → 문과 Container·Supply Drop 중 더 가까운 것(같으면 문, `ContainerRule.PreferContainer`) → 차량 타기(Ground·Crouch 모드만) → 줍기. 안내 문구도 이 순서로 하나만 보인다(`GameClient.LateUpdateGame`)
 - **카메라 목표(D14, `ShoulderCameraMath.TargetsFor`):** 모드가 정하는 목표로 현재 값이 부드럽게 따라간다(`ModeSharpness` 5). 조준(우클릭)은 이 값에서 조준 카메라로 섞인다. 흔들림은 없다.
 
   | 모드 | 기준 높이 | 거리 | FOV |
@@ -94,7 +109,7 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
   - 안내 문구(화면 중앙 아래): 수송기에서 뛰어내릴 수 있는 구간이면 "[Space] 뛰어내리기", 자유 낙하면 "[Space] 글라이더 펼치기", 문 앞(`DoorRule`)이면 "[E] 문 열기"·"[E] 문 닫기". 문 앞에서는 "[E] 줍기" 안내를 숨긴다. 탑승·낙하·글라이더·Vault 중에는 줍기 안내도 없다(서버가 행동을 막는다). 문구는 `UiText` 상수이고 바뀔 때만 Text를 바꾼다. `MatchHud`가 아니라 `CombatHud`에 있어 `MatchHud`가 숨는 개발 모드에서도 문 안내가 보인다.
 - **F1 두 줄(`DebugOverlay`):**
   - 이동: "이동 Ground   수평 0.0 m/s   수직 0.0 m/s   기력 100   보정 0.00 m"(모드 이름, 속도, 기력, 마지막 예측 보정 거리). 0.1초에 한 번 바뀐다. 평소 보정은 0.00 m이고 문을 밀치는 순간만 잠깐 커질 수 있다.
-  - 수송기 경로: "수송기 (x, z) → (x, z)"(지도 UI가 없어 경로를 알 곳이다). 경로를 받은 뒤부터 보인다.
+  - 수송기 경로: "수송기 (x, z) → (x, z)". 경로를 받은 뒤부터 보인다. Phase 12에는 지도 UI가 없어 경로를 알 곳이 이 줄뿐이었고, Phase 15부터는 전체 지도(M)에도 경로 선이 그려진다(`MapHud.SetRoute`).
 - **원격 자세(`PlayerPose`):** 원격 캐릭터의 Snapshot 모드와 달리는 중 플래그로 정한다. 모드·달리기·기력 소진은 보간 샘플마다 저장하고(`RemotePlayerInterpolator`), 그리는 Tick 이하의 가장 새 샘플 것을 쓴다. 서버 `PositionHistory.Sample`과 같은 규칙이라 그려진 위치·자세·조준 Collider 높이가 서버가 되감은 Tick의 모드와 맞는다(최종 검토 A1). 웅크리기는 짧은 캡슐, 슬라이드는 짧은 캡슐이 뒤로 기운다, Vault는 앞으로 기운다, 자유 낙하는 엎드린다, 글라이더는 머리 위 납작한 상자(날개), 수송기는 숨긴다, 달리기는 앞으로 약간 기운다. 조준 광선용 Collider의 높이는 서버의 맞는 높이(웅크리기·슬라이드 1.2 m)와 같다. 내 캐릭터도 같은 자세 함수를 쓰고(예측 모드), 수송기는 탑승 중에는 내 몸을 그리지 않는다.
 - **수송기 상자와 문:** `TransportView`가 경로를 한 번 받아 렌더 Tick마다 위치를 계산한다. `DoorViews`는 `PredictedDoors`에 맞춰 닫힌 문만 보인다.
 
@@ -103,12 +118,12 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
 `Building.md`가 규칙이다. Client 쪽:
 
 - **조작:** F 채집 도구, Q 건축 모드(다시 누르면 이전 도구), 1–3 무기. 건축 모드에서 Z 벽, X 바닥, V 경사로, B 지붕(누르면 건축 모드로 들어간다), T 재료(나무 → 돌 → 금속), R 회전(재장전 대신), 좌클릭 배치(누르고 있으면 Turbo).
-- **편집(Phase 13.5, `Building.md` "편집"):** H로 조준한 내 조각의 편집을 시작하고 다시 H로 확정한다. 칸 격자(벽 3 × 3, 나머지 2 × 2)에서 좌클릭(끌면 칠하기)으로 칸을 고르면 `BuildEdit.FromSelection`으로 바로 미리보기 모양이 된다(잘못된 모양은 빨강, 확정 불가). 편집 중 우클릭은 Reset을 바로 보낸다. Esc(메뉴를 열지 않음)·무기 키·Q·F는 취소다. 도구는 바뀌지 않고 편집 중에는 Fire·Aim을 뺀다. 파일: `Game/Build/BuildEditController`(편집 상태, 순수 코드), `BuildEditOverlay`(칸 격자·유령), `BuildRequestCounter`(배치·편집이 같이 쓰는 순번과 초당 20개 상한). `BuildStore`가 편집 예측 덧씌우기(최대 8개)를 갖고 거절이면 롤백한다. Mesh는 (종류, Edit)마다 처음 쓸 때 만들어 캐시하고, 편집된 조각의 Collider는 `PartsOf` 상자마다 BoxCollider다.
+- **편집(Phase 13.5, `Building.md` "편집"):** H로 조준한 내 조각의 편집을 시작하고 다시 H로 확정한다. 칸 격자(벽 3 × 3, 나머지 2 × 2)에서 좌클릭(끌면 칠하기)으로 칸을 고르면 `BuildEdit.FromSelection`으로 바로 미리보기 모양이 된다(잘못된 모양은 빨강, 확정 불가). 편집 중 우클릭은 Reset을 바로 보낸다. Esc(메뉴를 열지 않음)·무기 키·Q·F는 취소다. 도구는 바뀌지 않고 편집 중에는 Fire·Aim을 뺀다. 파일: `Game/Build/BuildEditController`(편집 상태, 순수 코드), `BuildEditOverlay`(칸 격자·유령), `BuildRequestCounter`(배치·편집이 같이 쓰는 순번과 초당 20개 상한). `BuildStore`가 편집 예측 덧씌우기(최대 8개)를 갖고 거절이면 롤백한다. Mesh는 키(`PieceMeshes.CacheKey`: 종류, Edit, 벽이면 회전 홀짝)마다 처음 쓸 때 만들어 캐시한다. 남쪽 벽과 서쪽 벽은 같은 Edit라도 다른 Mesh다. 캐시는 나올 수 있는 키 수(`MaxCachedMeshes` = 1024 + 16 + 7)에서 멈추고, 넘으면 편집하지 않은 Mesh를 그린다. 편집된 조각의 Collider는 `PartsOf` 상자마다 BoxCollider다.
 - **예측:** 도구는 입력마다 예측한다(`ToolState`). 이동은 확정 조각과 충돌한다(`LocalPlayerPredictor.Pieces = BuildStore.Grid`). 대기 중인 배치는 그리기만 하고 충돌하지 않는다. 받아들여진 배치는 확정 조각이 도착할 때까지(최대 1초 시간 초과) 대기로 계속 보인다. 요청은 초당 20개까지만 보낸다(`BuildController.MaxRequestsPerSecond`).
 - **HUD:** 오른쪽 아래 "나무 n   돌 n   금속 n"(서버 값 − 대기 비용), 건축 모드에서 "건축: 벽 · 나무"와 키 안내, 거절 이유("자원이 부족합니다" 등, `UiText.BuildRefusal`).
 - **카탈로그:** `BuildCatalog`는 건설 채널(1)의 첫 패킷으로 온다(최종 리뷰 A3). 받는 순서대로 적용하므로 Client 코드는 바뀌지 않았다. `BuildStore.MaxPieces`(20,000)는 기본 경기 상한이고 카탈로그에서 받지 않는다(충돌 격자를 한 번 잡는다). 넘는 조각은 저장하지 않고 `Ignored`로 센다. `BuildStore.Reset`은 Version과 `Ignored`도 0으로 되돌린다.
 - **끊김 문구:** `Congested`(6)는 "연결이 너무 느려 끊겼습니다."이고 자동 재접속하지 않는다(`Networking.md`).
-- **소리:** `BuildAudio.Play`는 자리만 있고 아무것도 하지 않는다(읽지 않던 횟수를 지웠다). 클립이 생기면 이 클래스만 바꾼다.
+- **소리:** Phase 13에서는 `BuildAudio.Play`가 자리만 있었다. Phase 18부터 `BuildAudio`가 `GameAudio`를 받아 건설·채집 소리를 믹서 큐에 넣는다(`Audio.md`).
 - **F1:** 건설 줄 "도구 · 조각/재료 · 구조물 n(표시 n, 무시 n) · 요청 n(n/s) · 거절 n 코드"(0.25초마다, 바뀔 때만). 요청 §190에 따라 Development Build와 Editor에서만 보인다(`Debug.isDebugBuild`). 다른 F1 줄은 전과 같다.
 - **Lifetime:** `PieceMeshes`, `BuildPieceViews`, `BuildPreview`, `HarvestEffects`, `BuildHud`는 `Awake`에서 만들고 `OnDestroy`에서 해제한다. 이벤트 구독이 9개 늘었다(`BuildCatalogReceived`, `ResourcesReceived`, `BuildResultReceived`, `BuildPieceReceived`, `BuildHealthReceived`, `BuildDestroyedReceived`, `BuildResetReceived`, `BuildInterestReceived`, `HarvestHitReceived`). 연결이 끊기면(`ClearMatchState`) 조각·유령·효과를 모두 치운다.
 
@@ -126,6 +141,65 @@ Unity 6000.3.24f1, URP, Input System. Scene·Prefab 없이 `GameBootstrap`(Runti
 - **결과:** 우승 = 배치 1(팀 배치). 분대면 "순위 n / m팀", "우승 팀: 이름"(`UiText.Placement`·`Winner`의 teams 오버로드). `PlayerDied.Placement`는 잠정 값이라 쓰지 않는다. 신규 관전자 안내는 "피해자 = 나, Placement 0, 처치자 0, Zone, 내가 팀에 없음"일 때만이다.
 - **EditMode 테스트:** `SquadStateTests`, `SquadHudTextTests`, `SquadPromptTests`, `SpectatorTargetsTests`(분대 관전), `LocalPlayerPredictorTests`(InteractHeld, 기절 기어가기·행동 불가), `PlayerPoseTests`, `AimSolverTests`, `ShoulderCameraMathTests`.
 - **Lifetime:** `SquadHud`, `TeammateMarkers`, `RebootStationViews`는 `Awake`에서 만들고 `OnDestroy`에서 해제한다(각자 Material 소유). 이벤트 구독 4개(`TeamStateReceived`, `PlayerDownedReceived`, `ChannelStateReceived`, `RebootStationsReceived`). 끊김(`ClearMatchState`)과 새 라운드 카운트다운에 분대 상태를 비운다. 매 프레임 할당 없음.
+
+## 지도·Ping (Phase 15)
+
+설계: `Docs/specs/2026-10-08-phase15-map-ping-design.md`(D1–D15), 구현 기록: `Docs/plans/2026-10-08-phase15-map-ping.md`. 서버 규칙(누가·어디에·상한·수명)은 `Map.md` "지도 UI·Ping", 패킷은 `Networking.md` "지도 표시 (Phase 15)". `GameClient`는 `MapSystem`만 부르고, 보낼 요청(Ping, 지도 클릭 Waypoint)은 `MapSystem`이 돌려주면 `GameClient`가 `MapMarker`로 보낸다.
+
+- **지도 그림:** `MapRaster`가 Shared 맵 데이터(지형 높이를 초록 음영, 박스·문·채집 대상 발자국을 어두운 회색, 가장자리는 검정)로 256 × 256 픽셀을 한 번 계산한다. 그래서 맵을 바꾸면 지도도 저절로 맞는다. 텍스처는 Clamp라 맵 밖은 검게 보인다.
+- **미니맵(D3):** 오른쪽 위(여백 20 px), 200 px, 북쪽이 위, 카메라가 따라가는 사람(살아 있으면 나, 관전 중이면 그 사람) 둘레 60 m(`MapHud.MiniSize`·`WindowMeters`). `RectMask2D`로 자른다. 맵 가장자리에서도 창을 자르지 않아 맵 밖(검정)이 보인다. Kill Feed는 그 아래로 내렸다.
+- **전체 지도(D4):** M으로 열고 닫는다. 화면 가운데 900 px, 맵 전체, POI 이름 5개, 팀원(이름), Waypoint, Reboot Station 4개, Ping, Supply Drop(Phase 16), 수송기 경로 선, 조작 안내. 왼쪽 클릭 = 그 점(높이는 지형 높이)에 내 Waypoint, 오른쪽 클릭 = 내 Waypoint 지우기(있을 때만 보낸다). 지도는 죽어 있어도 열리지만 클릭 요청은 살아 있을 때만 보낸다.
+  - `UiFlow.MapOpen`은 화면(`UiScreen`)이 아니라 InGame 위에 얹는 플래그다(`StatsOpen`과 같은 방식). 열린 동안 커서가 풀리고 게임 입력이 막힌다(`BlocksGameInput`, 움직일 수 없다). Esc는 지도부터 닫는다. 메뉴·결과·접속 화면에서는 M이 아무것도 하지 않는다.
+- **아이콘(D12):** 모두 생성 때 만든 고정 풀이다(팀원 3, Ping 8, Waypoint 4, POI 5, 스테이션 4, Supply Drop 4, 자기장 고리 2, 나, 경로 선). 프레임마다 위치(반 픽셀 넘게 움직일 때만)·각도·고리 크기·색만 바꾸고, 닫힌 전체 지도는 건너뛴다. 창 밖의 팀원·Ping·Waypoint는 미니맵 가장자리에 붙여 그린다. 색: Location 노랑, Enemy 빨강, Item 하늘색, Danger 주황, 나 흰 화살표, 팀원 초록(기절 빨강), 내 Waypoint 흰색, 팀원 Waypoint 연두.
+- **자기장:** 현재 원(흰색)과 다음 원(파랑). 다음 원은 축소가 끝나기(`ZoneState.ShrinkEndTick`) 전까지만 그린다(그 뒤에는 다음 원을 모른다). 경기 중(Playing·FinalPhase)이고 Zone 단계가 0보다 클 때만 보인다.
+- **월드 표지(D11, `WorldMarkers`):** Ping마다 가는 기둥 하나(풀 8개, 종류별 공유 Material, 위 색과 같다)와 그 위의 거리 글자 "n m"(정수 m가 바뀔 때만 다시 만든다). 화면 밖이면 화면 가장자리의 화살표가 가리킨다. Waypoint는 높은 기둥(풀 4개, 내 것 흰색, 팀원 초록). Collider·그림자가 없어 카메라와 조준 광선을 막지 않는다.
+- **Ping 입력(D6, `PingInput`):** 가운데 버튼을 누르면 조준 광선과 별도로 300 m 광선(`GameClient.PingRange`)을 그때만 쏜다. 맥락으로 종류를 고른다: 적 Collider → Enemy(대상 Entity id), 맞은 점 2 m 안의 가장 가까운 월드 아이템 → Item(아이템 위치), 그 밖 → Location. 아무것도 맞지 않거나 맵 밖이면 보내지 않는다. 0.3초(`PingTap.DangerWindow`) 안에 한 번 더 누르면 첫 누름 자리의 Danger 하나만 보내고, 아니면 창이 끝날 때 첫 누름의 Ping을 보낸다(두 번 누름 = 요청 하나). 살아 있거나 기절 중이고, 경기 중이면 참가자이고, 화면·지도가 닫혀 있고 커서가 잠겼고, 관전 중이 아닐 때만 보낸다(`PingContext.CanPing`). 죽음·지도 열기·끊김·라운드 리셋이면 기다리던 누름을 버린다.
+- **팀 표시(D10, `TeamMarkerState`):** 받은 `TeamMarkers`가 목록 전체를 바꾼다(예측 없음). 끝 Tick이 지난 Ping은 서버 Tick 추정으로 숨긴다. 새 라운드 카운트다운과 끊김에 비운다.
+- **QA(D14):** `/qa/status`에 지도 필드(`mapOpen`, `minimapSelfU/V`, `mapZoneCurrentRadiusU`, `mapZoneCenterU/V`, `mapTeammates`, `mapPings`, `mapWaypoints`)와 그 uv를 `MapProjection`으로 되돌린 월드 좌표(`minimapSelfWorldX/Z`, `mapZoneCenterWorldX/Z`, `mapZoneRadiusWorld`, 값이 없으면 null)를 둔다. 같은 변환을 왕복하므로 그려진 위치를 서버 값과 바로 비교한다. `/qa/ui`에 `openMap`·`closeMap`.
+- **Lifetime:** `MapSystem`은 `Awake`에서 만들고 `OnDestroy`에서 `UiFont.Release`보다 먼저 해제한다(텍스처, 캔버스 2개, 표지 Material). 구독 1개(`TeamMarkersReceived`). 지도 Tick은 할당이 없다.
+- **Known Issues:** 전체 지도에서 팀원 이름이 POI 이름과 겹칠 수 있고, 지도 아래 조작 안내가 무기 칸 번호와 살짝 겹친다. 지도를 연 채로는 움직일 수 없다(D4). QA 가상 마우스는 포인터 위치를 정할 수 없어 지도 클릭 Waypoint는 Unity에서 재현하지 않는다(헤드리스 `waypoint` 동작으로 시험한다). 미니맵의 자기장 고리는 경기 초반 미니맵보다 훨씬 큰 투명 Quad로 그려지고 `RectMask2D`가 잘라 낸다(GPU 비용 측정 필요, 고치지 않음). 차량에는 Collider가 없어 Ping 광선이 차체를 지나간다(Phase 19).
+
+## 상자·보급 (Phase 16)
+
+규칙과 Client 표시의 자세한 것은 `Loot.md`다. Client 쪽 구조만 적는다.
+
+- `LootState`: 받은 `ContainerStates`(생성·열림 마스크)와 `SupplyDrops`(목록 전체)를 그대로 둔다(예측 없음, 순수 코드). 서버가 보내는 0 마스크·빈 목록과 끊김 때만 비운다. MatchState 카운트다운에서는 비우지 않는다(접속 순서상 MatchState가 Loot 패킷보다 늦게 와서 막 받은 상태를 지울 수 있다).
+- `ContainerRule`: 서버 열기 대상 규칙의 사본(문과 같은 거리·각도). "[E] 상자 열기"·"[E] 탄약 상자 열기"·"[E] 보급품 열기" 안내용이고 시선 검사는 서버에만 있다. 서버 테스트가 소스 링크로 비교한다.
+- E 안내 순서: 소생·재투입 → 문과 Container·Supply Drop 중 더 가까운 것(같으면 문) → 차량 타기 → 줍기. 같은 E로 서버가 더 가까운 Container를 연다면 `LocalPlayerPredictor`가 문을 예측하지 않는다.
+- `ContainerViews`(Container마다 뷰 하나, 공유 Material, Collider 없음), `SupplyDropViews`(풀 4개, 낙하 중 높이는 렌더 Tick에서 Shared `SupplyDropFall`로 계산, 착지하면 빛기둥). 미니맵·전체 지도에 Supply Drop 아이콘. `/qa/status`에 `mapSupplyDrops`, `lootPrompt`.
+
+## 무기·투척 (Phase 17)
+
+규칙은 `Weapons.md`. Client는 표시와 예측만 한다.
+
+- **내 예광탄(D3, `SpreadCone`):** 무기의 퍼짐 원뿔 안에서 Client가 고른 방향이다(표시용). 서버의 퍼짐은 경기 비밀·서버 Tick·광선 번호로 정해져 Client가 재현할 수 없다. 산탄총은 산탄 수만큼 그린다. 로켓은 예광탄이 없고 `ProjectileSpawned`가 그린다. 다른 사람의 사격은 `ShotFired.End`(서버의 실제 끝점)다.
+- **반동(`RecoilKick`):** 한 발마다 무기의 반동 각을 카메라 피치에 더하고 부드럽게 돌아온다. 서버로 가는 조준도 화면을 따른다(서버 반동 모의 없음).
+- **교체 대기 예측(리뷰 수정 C2):** `WeaponState`가 서버 `WeaponRules.Equip`과 같은 규칙으로 무기가 바뀐 뒤 `WeaponCatalog`의 `EquipTicks` 동안 발사를 막는다. 서버 테스트 `ClientWeaponStateParityTests`가 같은 입력열로 비교한다.
+- **투사체 무기 예측:** Starting·Finished·Closing에서는 투사체 무기의 발사·탄 감소·재장전·반동을 예측하지 않는다(`WeaponState.LaunchAllowed`). 서버 투사체 칸이 찬 경우는 Snapshot 교정에 맡긴다.
+- **수류탄 키 6:** 입력 비트 `ThrowGrenade`. 행동할 수 없는 모드(기절·탑승·낙하·차량 좌석 등)이거나 수류탄이 0이면 입력에서 뺀다(서버도 막는다). 인벤토리 HUD 소모품 줄에 수류탄 수("[6] 수류탄 x2")가 보이고, 무기 줄에 탄 종류 이름이 붙는다.
+- **투사체 표시(D7):** `ProjectileTracks`(고정 32칸)가 마지막 사건(`ProjectileSpawned`·`ProjectileState`)의 위치·속도·Tick을 들고, 렌더 Tick이 아니라 지금 서버 Tick 추정에서 종류의 중력으로 외삽한다(폭발 사건이 올 때 로켓이 그 자리에 닿도록). `ProjectileViews`가 수류탄은 작은 구, 로켓은 원통과 꼬리로 그리고, 폭발은 고정 8개 링의 반투명 구가 0.4초 동안 폭발 반지름까지 커진다. Collider 없음. 표는 끊김, Join·Resume, MatchState가 Waiting·Starting·Finished로 **바뀔 때**(입장 뒤 첫 MatchState는 바뀜이 아니다) 비우고, 서버가 말없이 지운 것은 `Expire`가 치운다.
+- **Known Issues:** 서버 투사체 칸이 찬 상태에서 로켓을 쏘면 쏜 것으로 예측했다가 Snapshot으로 바로잡는다. 아주 짧은 클릭(Step 하나보다 짧은 누름)은 반자동 사격에서 빠질 수 있다. 3인칭 기본 조준선은 약 24 m 앞 바닥을 가리켜 그대로 쏜 로켓은 바닥에서 터진다.
+
+## 오디오 (Phase 18)
+
+`Audio.md`가 구조·우선순위·믹서·발소리·출처 표를 모두 다룬다. Client 구성 쪽 요점:
+
+- `GameClient.Awake`가 맨 먼저 `GameAudio`를 만들고, `BuildAudio`에 넘기고, `UiSound.Sink`에 연결한다(모든 UI 버튼 클릭음). `OnDestroy`는 Sink를 끊고 `GameAudio`를 해제한다(클립 파괴, 목소리 GameObject 파괴).
+- 네트워크 처리기·UI 클릭은 큐에 넣기만 하고, `LateUpdate` = `LateUpdateGame`(내 예측 사격의 총성 포함) → `TickAudio`(문 변화, 발소리, 재장전 시작, 자기장 축소, 그리고 `GameAudio.Tick`)다. 듣는 위치는 어깨 카메라의 AudioListener다.
+- 차량에 앉은 사람(나는 예측기의 `Seated`, 원격은 렌더 Tick의 좌석)은 발소리가 없다(Phase 19).
+- `/qa/status`에 `audio` 카운터(`Audio.md` "QA").
+
+## 차량 (Phase 19)
+
+규칙·수치·Known Issues는 `Vehicles.md`. Client 파일:
+
+- `VehicleStore`: `VehicleStates`(Unreliable)를 받는 고정 8칸(`VehicleSettings.MaxVehicles`), 차량마다 기록 8개의 고리(`SampleCapacity`)로 렌더 Tick에 보간한다(원격 플레이어와 같은 지연). 마지막으로 적용한 Tick 이하의 패킷은 버리고, 리뷰 수정 D3으로 마지막 적용 Tick보다 `SimHz × (10초 + 그 뒤 지난 로컬 시간)`을 넘게 앞선 패킷도 버린다(`TickRejects`, F1 "Tick 거절"에 더한다. 아래 "받기 검증"). 1초(`HideSeconds`) 동안 패킷에 없는 차량은 숨기고 칸을 비운다. 다시 오면 첫 기록은 기준이라 소리가 없다. 누가 어디 앉았는지는 최신 패킷 기준이고, 원격 플레이어는 렌더 Tick 표본부터 앉은 자세로 그린다. 끊김·입장에 `Reset`.
+- `VehiclePredictor`: 운전자일 때만 내 차량을 예측한다. 나를 운전자로 적은 첫 기록과 그 ack에서 시작해 입력마다 Shared `VehicleSimulation.Step`(서버와 같은 충돌 수집)을 돌리고, 기록과 그 입력의 결과가 다르면 기록에서 다시 시작해 ack 뒤 입력을 다시 적용한다. 2 m(`SnapDistance`) 넘게 틀리면 바로 옮기고 아니면 부드럽게 맞춘다. 예측이 끝나면(내리기) 그린 위치에서 표본으로 이어 그린다.
+- `LocalPlayerPredictor`: 앉은 동안 이동 예측·문 예측·Reconcile을 멈추고 내리면 Snap한다. 앉아 있으면 누르고 있는 Space를 제동(Jump)으로 모든 입력에 싣고, 내리기 입력 뒤의 입력에는 싣지 않는다(서버가 내리기를 거절하면 다시 싣는다).
+- `VehicleViews`: 고정 8개 뷰(몸통 + 바퀴 4, 앞바퀴 조향, 지형 기울기는 표시만, 체력 30 % 아래 회색 연기, Wrecked는 검게). Collider가 없다(카메라 SphereCast와 조준 광선이 차에서 멈추지 않게).
+- `VehiclePrompt`: "[E] 탑승" 대상(`FindEnterTarget`)과 HUD 체력 기준(`MaxHealth`). 서버 규칙의 표시용 사본이고 서버 테스트가 비교한다.
+- 앉아 있으면 차량 카메라(뒤 8 m·위 2.5 m, FOV 66, 조준 줌 없음), 조준점 숨김, 발사·조준 없음, 차량 HUD(속도 km/h, 체력 막대), 무기 칸 목록 숨김, 안내 "[E] 내리기". 관전 중 탄 사람을 볼 때는 표준 카메라다.
+- 소리: 기록 사이 변화로 `VehicleEnter`·`VehicleExit`·`VehicleImpact`, 파괴는 `Explosion`(`Audio.md`). `/qa/status`에 `vehicle` 객체.
 
 ## 화면과 흐름 (Phase 11)
 
@@ -161,7 +235,7 @@ stateDiagram-v2
 - 끊김 화면: `UiText.Disconnect`의 문구(시작 실패 → 경기 가득 참 → 거절 이유 → 서버 끊기 코드 → LiteNetLib 이유 순서). 자동 재접속 중이면 "재접속 중 (n/3) - k초 뒤 다시 시도"와 재접속 취소, 아니면 다시 접속·타이틀로. 다시 접속은 앞 연결이 완전히 끊긴 뒤에만 눌린다(타이틀의 접속과 같다). 끊김 화면에서 타이틀로를 누르면 타이틀에 같은 이유가 보인다. 메뉴의 접속 끊기나 접속 취소로 직접 나갔을 때는 이유 문구가 없다.
 - 결과 화면: 승리/탈락, 순위/인원, 처치, 승자, 탈락 원인(처치자 이름 또는 자기장), 다음 판까지 남은 초. 피해량·생존 시간은 결과 패킷에 없어서 "내 전적"에서 본다. 다음 판 대기·시작이 오면 저절로 닫힌다. 버튼은 계속 관전과 내 전적이다. `Finished` 중에 재접속(Resume)하면 Join 답과 `MatchResult`가 같은 프레임에 와서 게임 화면을 거치지 않고 결과 화면으로 간다. 결과 수가 지난번보다 커야 새 결과다.
 - 내 전적: 열 때 요청 1개(2.5초 안에 다시 열면 앞 요청을 쓴다. 서버가 연결당 2초에 한 번만 답하기 때문이다), 5초 안에 답이 없으면 "응답 없음". 상태별 문구("아직 기록이 없습니다.", "기록을 볼 수 없음", Busy 문구), 요약 두 줄, 최근 경기 최대 10줄(현지 시각, 최신순). 프로토콜은 `Networking.md` "전적 조회".
-- Kill Feed: 오른쪽 위, 최근 5줄, 6초. "가해자 ▸ 피해자", Zone이면 "자기장 ▸ 피해자". 경기 중 합류 알림(킬러·순위가 없는 `PlayerDied`)은 넣지 않는다.
+- Kill Feed: 오른쪽 위(Phase 15부터 미니맵 아래), 최근 5줄, 6초. "가해자 ▸ 피해자", Zone이면 "자기장 ▸ 피해자". 경기 중 합류 알림(킬러·순위가 없는 `PlayerDied`)은 넣지 않는다.
 - 이름 표: `PlayerSpawned.Name`. Despawn과 끊김 때 지운다. 모르는 이름은 "플레이어 <id>".
 - 모든 UI Text(화면, HUD, Kill Feed, POI, F1 줄, 입력칸)는 Rich Text를 끈다(`supportRichText = false`). 이름에 `<color=red>`가 있어도 글자 그대로 보인다. 태그를 쓰는 문구는 없다.
 - F1: `DebugOverlay`(상태, RTT, Entity, 그리고 0이 아닐 때만 "인증 버림 n"·"Tick 거절 n"·"Spawn 거절 n": 리뷰 수정 B3·D3, "받기 검증" 절). 처음에는 숨겨져 있고, 숨겨진 동안은 문자열을 만들지 않는다. 보이는 값이 바뀔 때만 다시 만든다.
@@ -179,9 +253,9 @@ stateDiagram-v2
 
 ## Lifetime
 
-생성 순서: 월드(+박스 Material) → InputReader → ShoulderCamera → Crosshair → CombatHud → InventoryHud → WorldItemViews → LocalFireEffects → MatchHud → ZoneView → PoiLabel → KillFeed → TransportView → DoorViews → NetClient. `UiRoot`는 같은 GameObject의 다른 컴포넌트라 `GameClient.Awake`가 끝난 뒤 `Start`에서 접속한다. `GameClient.OnDestroy`는 역순으로 해제한다: 이벤트 구독 해제(23개, `StatsReceived`·`TransportRouteReceived`·`DoorStatesReceived` 포함) → NetClient Dispose(`NetManager.Stop`) → 매치 상태(예측기·로컬 뷰·원격 뷰·ServerClock·WeaponState·카탈로그·마지막 InventoryState·월드 아이템 목록과 뷰 반납, 이름 표·Kill Feed·마지막 전적 응답, 마지막 MatchState·ZoneState·결과, 관전 종료, Zone 숨김, 조준점·HUD·인벤토리 HUD·경기 HUD 숨김, 발사 연출 숨김, Phase 12: 예측 문을 모두 닫힘으로(`PredictedDoors.Reset`)·수송기 경로와 상자 지움) → KillFeed Dispose(Canvas) → DoorViews Dispose(문 상자 5개와 Material) → TransportView Dispose(상자와 Material) → ZoneView Dispose(루트, 원통 Mesh, Material 3개) → MatchHud Dispose(Canvas) → PoiLabel Dispose(Canvas) → LocalFireEffects Dispose(풀 GameObject·Material) → WorldItemViews Dispose(루트와 풀 전체, Material 8개) → InventoryHud Dispose(Canvas) → CombatHud Dispose(Canvas) → Crosshair Dispose(Canvas) → InputAction Dispose → 플레이어 공유 Material(3개) → 월드·박스 Material 파괴 → 마지막으로 `UiFont.Release`(글꼴을 쓰던 HUD가 모두 사라진 뒤 OS 글꼴 파괴). 연결이 끊기면(`OnDisconnected`) 매치 상태를 지운다. 종료 때 Unity가 오브젝트를 먼저 파괴했을 수 있어(OnDestroy 순서는 보장되지 않음) `Crosshair.SetVisible`, `CombatHud`의 메서드, `LocalFireEffects.HideAll`은 루트가 파괴됐으면 아무것도 하지 않고 돌아온다. 예외가 나면 뒤의 해제가 건너뛰어지기 때문이다.
+생성 순서(`GameClient.Awake`, Phase 19 + 리뷰 수정 기준): GameAudio → BuildAudio → `UiSound.Sink` 연결 → 월드(+박스 Material, 지형 Mesh) → InputReader → ShoulderCamera(카메라가 없으면 AudioListener와 함께 만든다) → Crosshair → CombatHud → InventoryHud → WorldItemViews → LocalFireEffects → MatchHud → ZoneView → PoiLabel → KillFeed → TransportView → DoorViews → HarvestableViews → (Lit 원본 Material) → PieceMeshes → BuildPieceViews → BuildPreview → BuildEditOverlay → HarvestEffects → BuildHud → SquadHud → TeammateMarkers → RebootStationViews → MapSystem → ContainerViews → SupplyDropViews → ProjectileViews → VehicleViews → (Editor·Development Build: QaInputRecorder) → NetClient(서버 공개키) → BuildController·BuildEditController → 이벤트 구독 47개. `UiRoot`는 같은 GameObject의 다른 컴포넌트라 `GameClient.Awake`가 끝난 뒤 `Start`에서 접속한다. `GameClient.OnDestroy`의 해제 순서(엄밀한 역순은 아니다): 이벤트 구독 해제(47개) → NetClient Dispose(`NetManager.Stop`, 키 해제) → `ClearMatchState` → `UiSound.Sink` 끊기 → GameAudio Dispose → QaInputRecorder Dispose → KillFeed → VehicleViews → ProjectileViews → SupplyDropViews → ContainerViews → MapSystem → RebootStationViews → TeammateMarkers → SquadHud → BuildHud → HarvestEffects → BuildPreview → BuildEditOverlay(공유 Mesh보다 먼저) → BuildPieceViews → PieceMeshes → HarvestableViews → DoorViews → TransportView → ZoneView → MatchHud → PoiLabel → LocalFireEffects → WorldItemViews → InventoryHud → CombatHud → Crosshair → InputAction → 플레이어 공유 Material → 월드·박스 Material·지형 Mesh → 마지막으로 `UiFont.Release`. Phase 12까지의 각 단계 내용은 다음과 같다. 매치 상태(예측기·로컬 뷰·원격 뷰·ServerClock·WeaponState·카탈로그·마지막 InventoryState·월드 아이템 목록과 뷰 반납, 이름 표·Kill Feed·마지막 전적 응답, 마지막 MatchState·ZoneState·결과, 관전 종료, Zone 숨김, 조준점·HUD·인벤토리 HUD·경기 HUD 숨김, 발사 연출 숨김, Phase 12: 예측 문을 모두 닫힘으로(`PredictedDoors.Reset`)·수송기 경로와 상자 지움) → KillFeed Dispose(Canvas) → DoorViews Dispose(문 상자 5개와 Material) → TransportView Dispose(상자와 Material) → ZoneView Dispose(루트, 원통 Mesh, Material 3개) → MatchHud Dispose(Canvas) → PoiLabel Dispose(Canvas) → LocalFireEffects Dispose(풀 GameObject·Material) → WorldItemViews Dispose(루트와 풀 전체, Material 8개) → InventoryHud Dispose(Canvas) → CombatHud Dispose(Canvas) → Crosshair Dispose(Canvas) → InputAction Dispose → 플레이어 공유 Material(3개) → 월드·박스 Material 파괴 → 마지막으로 `UiFont.Release`(글꼴을 쓰던 HUD가 모두 사라진 뒤 OS 글꼴 파괴). 연결이 끊기면(`OnDisconnected`) 매치 상태를 지운다. 종료 때 Unity가 오브젝트를 먼저 파괴했을 수 있어(OnDestroy 순서는 보장되지 않음) `Crosshair.SetVisible`, `CombatHud`의 메서드, `LocalFireEffects.HideAll`은 루트가 파괴됐으면 아무것도 하지 않고 돌아온다. 예외가 나면 뒤의 해제가 건너뛰어지기 때문이다.
 `UiRoot`: `EventSystem`(장면에 없을 때만 만든다. 꺼진 것도 있는 것으로 친다. `InputSystemUIInputModule`은 기본 UI Action을 `OnEnable`에서 붙이고 `OnDisable`에서 뗀다), 화면 Canvas(`UiScreens`), `DebugOverlay`를 만들고 `OnDestroy`에서 지운다. 버튼 리스너는 Canvas와 함께 사라진다. `KillFeed`는 링 5칸 고정이라 늘어나지 않고 줄은 죽음마다 한 번만 만든다. 이름 표(Entity Id → 이름)는 플레이어 수만큼이고 Despawn과 끊김·매치 초기화 때 지운다.
-`renderer.material`은 쓰지 않는다(복제됨). 캡슐은 스폰/디스폰 때만 생성·파괴하므로 풀링하지 않는다. `RemotePlayers`는 Spawn/Despawn/Clear로만 증감하고, 보간 히스토리는 플레이어당 8개 고정이다. 발사 연출은 궤적 16·탄착 32개를 생성자에서 한 번 만들고 `RingCursor`로 오래된 것부터 재사용하므로 늘어나지 않는다. 발사·카메라의 Physics 호출은 단일 결과 버전만 쓴다.
+`renderer.material`은 쓰지 않는다(복제됨). 캡슐은 스폰/디스폰 때만 생성·파괴하므로 풀링하지 않는다. `RemotePlayers`는 Spawn/Despawn/Clear로만 증감하고, 보간 히스토리는 플레이어당 8개 고정이다. 발사 연출은 궤적 24·탄착 32개를 생성자에서 한 번 만들고 `RingCursor`로 오래된 것부터 재사용하므로 늘어나지 않는다. 발사·카메라의 Physics 호출은 단일 결과 버전만 쓴다.
 
 ## 끊김과 자동 재접속 (Phase 10)
 
@@ -259,7 +333,7 @@ stateDiagram-v2
 1. 서버: `dotnet run --project Server/src/ProjectH.Server`
 2. Multiplayer Play Mode: Window > Multiplayer > Multiplayer Play Mode에서 Player 2 활성화 → Play → 각 창의 타이틀에서 접속
 3. Standalone: 빌드 후 `ProjectH.exe -autoConnect -devId p2` + Editor Play (`-host`, `-port`도 지정 가능. 기본 127.0.0.1:7777, devId 미지정 시 `dev-<8자리>` 자동 생성)
-4. 조작: 좌클릭(Join한 뒤 한 번 눌러야 커서가 잠기고 움직인다. 잠긴 뒤 누르고 있으면 발사. 경기 중 죽어 있으면 다음 관전 대상), 우클릭(누르는 동안 조준), R(재장전), 1·2·3(무기 칸), E(줍기), G(현재 무기 버리기), 4(Medkit), 5(Shield Cell), WASD, Shift(달리기), Space(점프·Vault·뛰어내리기·글라이더), C(웅크리기 토글)·Ctrl(누르는 동안 웅크리기), 달리며 C(슬라이드), Esc(메뉴), F1(디버그 줄). E는 문이 앞에 있으면 문을 먼저 연다("이동과 투입"). 시작은 빈손이라 먼저 아이템을 주워야 쏠 수 있다.
+4. 조작: 좌클릭(Join한 뒤 한 번 눌러야 커서가 잠기고 움직인다. 잠긴 뒤 누르고 있으면 발사. 경기 중 죽어 있으면 다음 관전 대상), 우클릭(누르는 동안 조준), R(재장전), 1·2·3(무기 칸), E(줍기), G(현재 무기 버리기), 4(Medkit), 5(Shield Cell), WASD, Shift(달리기), Space(점프·Vault·뛰어내리기·글라이더), C(웅크리기 토글)·Ctrl(누르는 동안 웅크리기), 달리며 C(슬라이드), Esc(메뉴), F1(디버그 줄), F(채집 도구)·Q(건축 모드)·Z·X·V·B·T·R(건설, "채집과 건설"), H(편집), M(전체 지도), 가운데 버튼(Ping, 0.3초 안에 두 번이면 Danger), 6(수류탄). E의 우선순위는 내리기 → 소생·재투입 → 문과 상자 중 가까운 것 → 차량 타기 → 줍기다("이동과 투입"의 E 항목). 시작은 빈손이라 먼저 아이템을 주워야 쏠 수 있다.
 5. 경기 확인(Phase 5): 두 Client가 접속하면 "시작까지 10초" 카운트다운 → 모두 Spawn으로 옮겨지고 Loot가 생긴다 → Zone 원과 "자기장 축소까지 …초" → Zone 밖이면 화면 가장자리가 붉고 체력이 1초마다 준다 → 한 명이 죽으면 관전("관전 중: <이름>") → 결과 화면(승리/탈락, 순위, 처치) → 10초 뒤 다음 판 카운트다운이 오면 결과 화면이 저절로 닫힌다. Unity Editor에서의 확인은 사용자가 한다.
 6. 재접속 확인(Phase 10): 경기 중 Client 하나를 끄고 10초 안에 같은 `-devId`(타이틀의 이름)로 다시 켜면 같은 캐릭터(위치·체력·인벤토리)로 돌아온다. 서버를 Ctrl+C로 끄면 끊김 화면에 "서버가 종료되었습니다."가 보이고 재접속하지 않는다. Unity Editor에서의 확인은 사용자가 한다.
 7. 게임 UI 확인(Phase 11): 아래 "Unity 확인 순서 (Phase 11)"를 따른다.
@@ -275,7 +349,7 @@ stateDiagram-v2
 4. 서버를 켜고 접속: 경기 화면. 클릭 전에는 움직이지 않고, 클릭하면 커서가 잠기고 움직인다.
 5. Esc: 메뉴가 열리고 커서가 풀린다. 메뉴가 열린 동안 WASD·마우스로 캐릭터와 시점이 움직이지 않는다. 10초 넘게 열어 두어도 끊기지 않는다(Input Timeout). Esc·계속하기로 닫힌다.
 6. 메뉴 → 내 전적: "불러오는 중..." 뒤에 기록 또는 "아직 기록이 없습니다."(DB 있음), "기록을 볼 수 없음"(`Persistence:Enabled=false` 또는 DB 없음). 닫고 바로 다시 열어도 "응답 없음"이 되지 않는다.
-7. 두 Client로 한 판(Player 2의 타이틀에 같은 이름이 미리 채워져 있으면 다른 이름으로 바꾼다. `PlayerPrefs`를 같이 쓸 수 있다): Kill Feed(오른쪽 위)에 "이름 ▸ 이름", 관전 줄 "관전 중: <이름>", 결과 화면(승리/탈락, 순위, 처치, 승자, 탈락 원인, 다음 판까지 남은 초). 다음 판 카운트다운이 오면 결과 화면이 닫힌다.
+7. 두 Client로 한 판(Player 2의 타이틀에 같은 이름이 미리 채워져 있으면 다른 이름으로 바꾼다. `PlayerPrefs`를 같이 쓸 수 있다): Kill Feed(오른쪽 위, Phase 15부터 미니맵 아래)에 "이름 ▸ 이름", 관전 줄 "관전 중: <이름>", 결과 화면(승리/탈락, 순위, 처치, 승자, 탈락 원인, 다음 판까지 남은 초). 다음 판 카운트다운이 오면 결과 화면이 닫힌다.
 8. 경기 중 서버를 Ctrl+C로 끈다: 끊김 화면 "서버가 종료되었습니다.", 재접속하지 않는다. 타이틀로를 누르면 타이틀에 같은 이유가 보인다.
 9. 자동 재접속: 경기 중 서버 프로세스를 강제로 끝낸다(작업 관리자. 끊기 코드가 없어 Client는 5초 뒤 Timeout으로 안다). 끊김 화면에 "서버의 응답이 끊겼습니다."와 "재접속 중 (1/3) - k초 뒤 다시 시도", 재접속 취소가 보인다. 바로 서버를 다시 켜면 새 경기 화면으로 돌아간다. 다시 해 보고 이번에는 재접속 취소를 누르면 다시 접속·타이틀로가 나오고 이유 문구는 그대로다.
 10. 메뉴 → 접속 끊기: 타이틀로 가고 이유 문구가 없다. F1이 디버그 줄(상태, RTT, Entity)을 켜고 끈다. 게임 종료는 빌드에서만 창을 닫는다(Editor에서는 아무 일도 없다).
@@ -340,7 +414,7 @@ Editor에는 Play마다 다른 명령줄이 없다. 그래서 명령줄에 없�
 
 명령(`QaCommandReceiver`):
 
-- `GET /qa/status`가 돌려주는 값: `{ok, devPlayerId, connected, joined, screen, statsOpen, debugVisible, alive, health, fps, frame, tool, preview, cursorLocked}`.
+- `GET /qa/status`가 돌려주는 값: `{ok, devPlayerId, connected, joined, screen, statsOpen, debugVisible, alive, health, fps, frame, tool, preview, cursorLocked}`, 그 뒤에 Phase 15 지도 필드(`mapOpen`, `minimapSelfU/V`, `mapZoneCurrentRadiusU`, `mapZoneCenterU/V`, `mapTeammates`, `mapPings`, `mapWaypoints`, `minimapSelfWorldX/Z`, `mapZoneCenterWorldX/Z`, `mapZoneRadiusWorld`), Phase 16 `mapSupplyDrops`·`lootPrompt`, Phase 17 `projectiles`, Phase 18 `audio`, Phase 19 `vehicle`(`{seated, vehicleId, seat, speed, health, visibleVehicles}`)가 이 순서로 붙는다. 필드의 뜻은 `Qa/QaProtocol.cs`의 `QaMapStatus` 주석에 있다.
   - `devPlayerId`는 첫 접속 전에 null이다.
   - `screen`은 Title, Connecting, InGame, Menu, Disconnected, Result 중 하나다.
   - `tool`은 예측 도구 `Weapon`·`Harvest`·`Build`, Join 전이면 `none`이다.
@@ -349,7 +423,7 @@ Editor에는 Play마다 다른 명령줄이 없다. 그래서 명령줄에 없�
 - `POST /qa/screenshot {"name"}`은 프레임이 끝난 뒤(`WaitForEndOfFrame`) 화면을 찍어 `<dir>/<name>.png`에 쓴다. 파일이 생긴 뒤에 `{ok, path}`로 답한다.
   - name은 `[A-Za-z0-9_-]{1,64}`만 받는다.
   - Windows 장치 이름(CON, PRN, AUX, NUL, COM1–9, LPT1–9)은 거절한다.
-- `POST /qa/ui {"command"}`의 명령 다섯 가지는 Esc·메뉴 버튼·F1과 같은 `UiFlow`/`DebugOverlay` 경로를 쓴다. 가짜 입력은 만들지 않는다.
+- `POST /qa/ui {"command"}`의 명령 일곱 가지는 Esc·메뉴 버튼·F1·M과 같은 `UiFlow`/`DebugOverlay` 경로를 쓴다. 가짜 입력은 만들지 않는다.
 
   | 명령 | 동작하는 화면 |
   |---|---|
@@ -358,6 +432,8 @@ Editor에는 Play마다 다른 명령줄이 없다. 그래서 명령줄에 없�
   | `openStats` | Menu나 Result |
   | `closeStats` | 통계 창이 열려 있을 때 |
   | `toggleDebug` | 어느 화면에서나 |
+  | `openMap` | Phase 15. InGame이고 지도가 닫혀 있을 때 |
+  | `closeMap` | Phase 15. 지도가 열려 있을 때 |
 
   - 화면은 바로 다시 그린다. 그래서 같은 프레임의 스크린샷에 바뀐 화면이 찍힌다.
   - 맞지 않는 화면이면 409를 돌려주고 아무것도 바꾸지 않는다.
@@ -369,11 +445,11 @@ Editor에는 Play마다 다른 명령줄이 없다. 그래서 명령줄에 없�
   | `{"key":"q"}` | 누름: 이번에 누르고 다음 프레임에 뗀다(`WasPressedThisFrame`이 한 번) |
   | `{"key":"w","holdMs":1500}` | 누르고 holdMs(1–10000, 정수) 뒤 뗀다. 적어도 한 프레임은 눌려 있다 |
   | `{"key":"w","action":"down"}` / `"up"` | 직접 누르기·떼기. 떼지 않은 down은 10초 뒤 저절로 뗀다. 눌려 있지 않은 키의 up도 200이다 |
-  | `{"button":"left"}` | 마우스 `left`·`right`. holdMs·action은 키와 같다 |
+  | `{"button":"left"}` | 마우스 `left`·`right`·`middle`(Phase 15, Ping). holdMs·action은 키와 같다 |
   | `{"lookX":120,"lookY":-30,"ms":300}` | 마우스 이동(픽셀)을 ms(0–5000, 정수, 0 = 한 프레임) 동안 시간에 맞게 나눠 보낸다. 합계는 프레임 속도와 상관없이 정확하다. 절댓값 20000 이하 |
   | `{"releaseAll":true}` | 눌린 키·버튼을 모두 떼고 진행 중인 이동을 멈춘다. Join 전에도 된다(200) |
 
-  - 허용 키: `w a s d space leftShift leftCtrl c q f z x v b t r e g 1 2 3 4 5 escape f1 h`(Input System 이름, 대소문자 구분. 숫자는 윗줄 숫자키).
+  - 허용 키: `w a s d space leftShift leftCtrl c q f z x v b t r e g 1 2 3 4 5 escape f1 h m 6`(Input System 이름, 대소문자 구분. 숫자는 윗줄 숫자키. 순서는 `QaInput.KeyNames`이고 새 키는 끝에 더한다: Phase 15 `m`, Phase 17 `6`).
   - key·button·look 중 정확히 하나만 온다. holdMs와 action은 함께 쓸 수 없고, ms는 look에만, 다른 필드는 받지 않는다(오타가 누름으로 처리되지 않게). 어기면 400이다.
   - 성공하면 `{"ok":true,"applied":"press q"}`(`hold w 1500ms`, `down left`, `look 120,-30 300ms`, `releaseAll`)로 답한다. 키·버튼은 답하기 전에 Input System 큐에 들어가 있고, hold와 look은 그 뒤에도 이어진다.
   - Join 전이면 409(releaseAll 제외), 누르고 있는 키·버튼과 진행 중인 look이 이미 16칸을 쓰고 있으면 503이다. 같은 키·버튼은 한 칸을 같이 쓰고 새 요청이 해제 시각을 바꾼다. look은 요청마다 한 칸이다.
@@ -433,3 +509,5 @@ Phase 11의 순수 코드 `UI/UiFlow.cs`, `UiText.cs`, `KillFeedModel.cs`는 서
 (Editor가 프로젝트를 열고 있지 않을 때)
 
 Phase 13: EditMode에 `ToolStateTests`, `BuildTargetingTests`, `BuildStoreTests`, `BuildControllerTests`, `BuildPieceLookTests`가 더해졌다(모두 순수 코드라 `EditTests` 도구로도 돈다). Phase 13.5: `BuildEditControllerTests`(13개)와 `BuildStoreTests` 편집 예측 4개가 더해졌고 `QaInputProtocolTests`의 키 수가 26이다. `MovementPredictionTests`에 조각 위 일치 3개가 더해졌다. 조각 뷰·유령·효과·HUD는 위 "Unity 확인 순서 (Phase 13)"가 본다.
+
+Phase 14–19와 리뷰 수정에서 더한 EditMode 파일: Phase 14 `SquadStateTests`, `SquadHudTextTests`, `SquadPromptTests`. Phase 15 `MapProjectionTests`, `MapRasterTests`, `PingInputTests`, `TeamMarkerStateTests`, `UiFlowMapTests`. Phase 16 `ContainerRuleTests`, `LootStateTests`. Phase 17 `ProjectileTracksTests`, `WeaponPresentationTests`(Phase 13.5에서 더한 `PieceMeshesTests`는 편집 Mesh 캐시 키를 본다). Phase 18 `AudioEventRulesTests`, `AudioMixerModelTests`, `AudioSynthTests`, `FootstepModelTests`. Phase 19 `VehiclePredictionTests`, `VehiclePromptTests`, `VehicleStoreTests`. 리뷰 수정 `NetClientConnectDataTests`, `NetClientCookieTests`, `SessionAuthTests`, `ServerClockTests`, `GameClientSpawnTests`, `RemotePlayersTests`, `BuildPieceViewsTests`. Phase마다 Unity에서 돌린 수는 `QA.md`의 "Phase n Unity 검증" 절에 있다(Phase 19 끝 433/433). 리뷰 수정 A–D의 Client 변경은 Unity에서 EditMode를 돌리지 못했고, 서버 테스트 프로젝트의 소스 링크 컴파일로만 확인했다(`Docs/plans/2026-10-08-review-fixes.md`).

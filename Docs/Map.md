@@ -1,11 +1,12 @@
 # Map
 
-Phase 12 기준(문 5개 추가). 설계 근거와 결정 D1–D14: `Docs/specs/2026-10-01-phase6-map-design.md`, 문: `Docs/specs/2026-10-02-phase12-deployment-traversal-design.md` D9. 데이터는 모두 Shared `Shared/Runtime/Simulation`의 코드 상수이고, 서버와 Client가 같은 값을 쓴다.
+Phase 19 + 리뷰 수정 기준(2026-10-09). 설계 근거와 결정 D1–D14: `Docs/specs/2026-10-01-phase6-map-design.md`, 문: `Docs/specs/2026-10-02-phase12-deployment-traversal-design.md` D9, 채집 대상: `Docs/specs/2026-10-02-phase13-harvesting-building-design.md` D6, Reboot Station: `Docs/specs/2026-10-08-phase14-squad-dbno-design.md` D10, 지도 UI·Ping: `Docs/specs/2026-10-08-phase15-map-ping-design.md`, Loot Container: `Docs/specs/2026-10-08-phase16-loot-containers-design.md` D1, 차량 생성 위치: `Docs/specs/2026-10-08-phase19-vehicle-design.md` D8, 바깥벽 경계: `Docs/specs/2026-10-08-review-fixes-design.md` D1. 데이터는 모두 Shared `Shared/Runtime/Simulation`의 코드 상수이고, 서버와 Client가 같은 값을 쓴다.
 
 ## 크기와 경계
 
 - 160 × 160 m. 바깥벽 안쪽 면이 ±80 m에 있다. 벽은 높이 4 m, 두께 1 m다.
 - 모서리는 0.25 m 틈(`GameMap.CornerSlit`)이다. 캐릭터(0.7 m)보다 좁아 빠져나갈 수 없다.
+- **발 위치 경계(리뷰 수정 D1):** 벽은 4 m뿐이라 2층 이상 바닥·외곽벽에 붙은 경사로·점프·Vault로 넘을 수 있었다. 이제 지상·공중·Vault 이동이 모두 Shared `MovementSimulation.ClampToMap`으로 발을 ±(80 − 몸 반폭 − Skin) 안에 자르고 잘린 축의 수평 속도를 0으로 한다. 착지점이 경계 밖인 Vault는 시작하지 않는다. 서버와 Client 예측이 같은 코드를 쓴다(`Movement.md` "바깥벽 경계").
 
 ## 지형 (`HeightField`, `Hill`, `GameMap.Terrain`)
 
@@ -63,7 +64,7 @@ Phase 12 기준(문 5개 추가). 설계 근거와 결정 D1–D14: `Docs/specs/
 - **크기:** 폭 1.5 m, 높이 3 m(벽과 같다), 두께 0.2 m(`GameMap.DoorThickness`). 벽 두께(0.5 m) 한가운데에 선다. 바닥은 높이 0이다.
 - **`Boxes`에 들어가지 않는 이유:** 문은 열려 있을 수 있고, 닫힌 문은 양옆의 벽 조각에 옆으로 닿는다. `Boxes`에는 "옆으로 닿는 상자가 없다"는 규칙이 있다(박스를 하나씩 밀어내므로 면을 공유하는 두 상자 사이에서 캐릭터가 갇힐 수 있다). 그래서 문은 따로 두고, 닫혀 있을 때만 충돌 세계에 넣는다.
 - **충돌 세계:** 이동·사격·Vault 판정 모두 `Boxes` 뒤에 닫힌 문을 붙인 배열을 쓴다. 서버는 `DoorSet`이, Client 예측은 `PredictedDoors`가 같은 순서로 만든다. 문이 바뀔 때만 배열의 문 부분을 다시 쓴다(Tick마다 할당이 없다). 열린 문은 세계에 없다.
-- **E 규칙(`DoorRules.FindTarget`, 서버. Client 복사본은 `DoorRule`):** E를 누르면 문이 줍기보다 먼저다. 발에서 문 중심까지 수평 2.5 m 안, 바라보는 방향에서 좌우 ±60° 안, 같은 층(발이 문 바닥 1 m 아래부터 문 윗면까지)의 가장 가까운 문이 대상이다. 닫혀 있으면 열고, 열려 있으면 닫는다. 대상 문이 없으면 줍기다.
+- **E 규칙(`DoorRules.FindTarget`, 서버. Client 복사본은 `DoorRule`):** E 누름의 순서는 소생·재투입 대상(Phase 14, 범위 안에 있으면 E는 그것만 한다, `Squad.md`) → 문과 Loot Container(착지한 Supply Drop 포함) 중 더 가까운 쪽(같은 거리면 문, `ContainerRules.PreferContainer`, Phase 16, `Loot.md`) → (Phase 19) 탈 수 있는 차량 → 줍기다. 문 대상은 발에서 문 중심까지 수평 2.5 m 안, 바라보는 방향에서 좌우 ±60° 안, 같은 층(발이 문 바닥 1 m 아래부터 문 윗면까지)의 가장 가까운 문이 대상이다. 닫혀 있으면 열고, 열려 있으면 닫는다.
 - **닫기 조건:** 문 자리에 살아 있는 캐릭터가 하나라도 겹쳐 있으면(겹침은 그 캐릭터의 모드 높이로 본다) 닫히지 않는다. Vault 중인 캐릭터는 남은 직선 경로(현재 위치 → 위치 + 속도 × 남은 Tick, 서 있는 상자로 쓸어 낸 공간)도 문 자리를 차지한 것으로 본다. Vault는 충돌 없이 움직이기 때문이다(최종 검토 B5).
 - **지연 보상:** 문은 되감지 않는다. 사격은 지금 닫혀 있는 문에 막힌다.
 - **밀치기:** 달리는 중이거나 슬라이드 중에 닫힌 문에 막히면 그 문이 열린다. `Step`이 막은 상자를 알려 주고(`StepResult.BlockedBy`, Z 축은 `BlockedByZ`, `Charging`) 둘 중 하나가 문이면 서버가 연다(`DoorSet.DoorBlocking`, Client `PredictedDoors.DoorBlocking`). 문틀 쪽으로 비스듬히 달려 들어가 X 축은 문틀, Z 축은 문에 막혀도 열린다. 공중에서는 달리기가 아니라 밀치지 못한다. 걷기로는 안 열린다. 그 Tick의 이동은 막힌 채로 끝나고 다음 Tick부터 이어진다. 봇은 달리기로 자연히 연다.
@@ -113,16 +114,36 @@ Phase 12 기준(문 5개 추가). 설계 근거와 결정 D1–D14: `Docs/specs/
   - 높이는 지형 높이다.
 - **사용:** 경기 시작에 서버가 쓴다(`BattleRoyale.md` "경기 시작").
 
+## Reboot Station (`RebootStations`, 4곳, Phase 14 D10)
+
+- 바깥 POI마다 하나: Rustvale (−42, 42), Gearworks (52, 38), Lookout (40, −38), Stonefield (−50, −54). Y는 지형 높이다. 배치 상수만 Shared에 있고 사용 규칙·대기·거리는 서버(`squad.json`, `Squad.md` "Reboot Station")다.
+- 충돌체가 아니다. Client가 기둥을 그리고 플레이어는 지나간다.
+- 목록 순서가 id이고 `RebootStations` 패킷의 대기 비트 번호·`ChannelState`의 스테이션 대상이다(`RebootStations.Count` 4가 패킷 크기를 정한다).
+- 배치 규칙(`RebootStationsTests`): 평평한 지형 위, 외곽벽 안, 광장 밖, 맵 상자·문·채집 대상에서 `ClearRadius` 2 m, Loot 지점과 떨어짐, 재투입 자리(1.2 m)가 평평함.
+
+## Loot Container (`LootContainers`, 34곳, Phase 16 D1)
+
+- Chest 20개, Ammo Box 14개(최대 64). 항목은 종류·바닥 중심 위치·방향(Yaw 0·90·180·270)이다. 생성 여부·Loot·열기 규칙은 서버(`loot.json`, `ContainerRules`, `Loot.md`)다.
+- 충돌체가 아니다(이동·사격·`CollisionWorld`가 모른다).
+- 목록 순서가 id이고 `ContainerStates`의 생성·열림 비트 번호다. 순서를 바꾸지 않는다. 리더는 `LootContainers.Count` 위의 비트를 거부한다.
+- 배치 규칙(`LootContainersTests`): 벽 안·광장 밖, 평평한 지형이나 상자 위, 맵 상자·문·채집 대상·Loot 지점·스테이션과 떨어짐, 문 중심과 `DoorInteractRange` + 1 m 넘게, 걸어서 닿음(`Loot.md` "Container 배치").
+
+## 차량 생성 위치 (`VehicleSpawns`, 4곳, Phase 19 D8)
+
+- POI 사이 길가: (30, 12) 방향 90°, (−30, 10) 270°, (−14, −30) 180°, (−12, 34) 0°. Y는 지형 높이이고 서버가 생성 때 `VehicleSimulation.GroundHeight`로 다시 맞춘다. 경기 시작에 모두 생기고 라운드 리셋·경기 끝에 지운다(`BattleRoyale.md`). 차량 운동은 Shared, 탑승·피해·`vehicles.json`은 서버다.
+- 배치 규칙(`VehicleSpawnsTests`): 4개이고 차량 상한 안, 지형 위·경계 안·광장과 모든 POI 밖, 맵 상자·문·채집 대상 발자국과 Loot 지점·Container·스테이션에서 `ClearRadius` 4 m, 생성 방향의 차체 발자국이 아무것과도 겹치지 않고 그 아래 지형을 달릴 수 있음.
+
 ## 맵 바꾸기
 
-1. `GameMap`(박스·언덕), `LootPoints`, `DropPoints`, `MapPois`를 함께 고친다.
-2. `dotnet test Server/ProjectH.Server.slnx --filter "FullyQualifiedName~GameMapTests|FullyQualifiedName~LootPointsTests|FullyQualifiedName~DropPointsTests|FullyQualifiedName~MapPoisTests"`가 통과해야 한다.
+1. `GameMap`(박스·언덕·문·채집 대상), `LootPoints`, `DropPoints`, `MapPois`, `RebootStations`, `LootContainers`, `VehicleSpawns`를 함께 고친다.
+2. `dotnet test Server/ProjectH.Server.slnx --filter "FullyQualifiedName~GameMapTests|FullyQualifiedName~LootPointsTests|FullyQualifiedName~DropPointsTests|FullyQualifiedName~MapPoisTests|FullyQualifiedName~HarvestableMapTests|FullyQualifiedName~DoorTests|FullyQualifiedName~RebootStationsTests|FullyQualifiedName~LootContainersTests|FullyQualifiedName~VehicleSpawnsTests"`가 통과해야 한다.
 3. 맵이 바뀌면 이동 결과가 바뀐다. `ProtocolConstants.ProtocolVersion`을 올린다.
    - 문을 바꾸면(개수나 순서) `GameMap.DoorCount`와 `DoorStatesPacket`의 비트 수(마스크 1바이트라 8개까지, 없는 비트는 읽기 실패)를 함께 본다. `Doors` 순서가 비트 번호이므로 순서를 바꾸면 프로토콜이 달라진다. `DoorTests`가 문 5개가 벽 틈을 채우고 다른 상자와 닿지 않는지 검사한다.
    - Vault 높이 구분(`MovementTuning`의 Hurdle·Mantle 높이)에 걸리는 박스 높이를 바꾸면 `VaultTests`의 맵 테스트(Gearworks 상자)도 본다.
    - 채집 대상을 바꾸면 `HarvestableMapTests`를 돌린다. 개수나 순서를 바꾸면 `HarvestStates` 비트가 달라지므로 프로토콜이 달라진다.
+   - Reboot Station과 Loot Container도 목록 순서가 패킷 비트 번호다(`RebootStations` 대기 마스크·`ChannelState` 대상, `ContainerStates` 두 마스크). 개수나 순서를 바꾸면 프로토콜이 달라진다. 스테이션 개수는 `RebootStationsState` 크기(2 + 4 × 개수 B)도 바꾸고, 대기 마스크가 1바이트라 8개까지다.
 4. 넓이가 바뀌면 `zones.json`도 맞춘다. 첫 원이 맵 전체를 덮어야 한다(`ZoneDataTests.ShippedFile_CoversTheWholeMap`).
-   - 넓이(`GameMap.HalfSize`)가 바뀌면 지도 표시의 맵 안 검사(서버 `Match.Map`의 `InMap`, `TeamMarkersPacket`의 ±`MapMarkerConstants.MaxHorizontal`)도 같이 바뀐다. int16 1/100 m 좌표는 ±327 m까지라 맵이 그보다 넓어지면 패킷 형식을 바꿔야 한다.
+   - 넓이(`GameMap.HalfSize`)가 바뀌면 지도 표시의 맵 안 검사(서버 `Match.Map`의 `InMap`, `TeamMarkersPacket`의 ±`MapMarkerConstants.MaxHorizontal`)와 `SupplyDropsPacket` 리더의 위치 한계(±`HalfSize` + 0.01 = ±80.01 m), 이동 경계(`ClampToMap`)도 같이 바뀐다. int16 1/100 m 좌표는 ±327 m까지라 맵이 그보다 넓어지면 패킷 형식을 바꿔야 한다.
 
 ## 지도 UI·Ping (Phase 15)
 
@@ -139,4 +160,5 @@ Phase 12 기준(문 5개 추가). 설계 근거와 결정 D1–D14: `Docs/specs/
 - **정리:** 플레이어가 나가면 그 사람의 Ping과 Waypoint가 지워진다(유예 중에는 남는다). 경기 시작에 모두 지우고 새 팀마다 빈 목록을 보낸다. 경기 끝(`Finished`)에 모두 지우고 빈 목록을 보낸다(결과 화면에서는 새 요청을 받지 않는다). 라운드 리셋에 남은 표시가 있으면 팀이 지워지기 전에 빈 목록을 보낸다.
 - **수치:** `map.json`(서버 GameData, 시작 때 검증, 틀리면 서버가 시작하지 않는다. `Server.md` "데이터 파일").
 - **저장 구조와 비용:** 팀마다 고정 배열 8칸(`Match.Map`의 256 × 8 배열, 생성 때 한 번), 플레이어의 Waypoint는 `PlayerEntity` 필드. 요청 처리·만료·전송 모두 할당이 없다(`MapMatchTests.MarkersAndTheirTicks_AllocateNothing`). 만료 검사는 활성 Ping이 있을 때만, 전송은 바뀐 팀만 돈다.
+- **테스트:** Server `MapMatchTests`(Ping·Waypoint 검사, 상한, 수명, 팀에만 전송, 다시 보내기·정리, 할당 없음), `MapCatalogTests`(`map.json` 읽기·검증), `MarkerRateTests`(수신 경로의 토큰 버킷·1초 개수·Join 검사·채널), Shared `MapSharedTests`(`MapMarker`·`TeamMarkers` 왕복·한계·거부), `QaMapTests`(QA 관찰), `BotMarkerTests`(봇이 다 읽힌 `TeamMarkers`만 반영), QA.Tests `MapActionTests`(Ping·Waypoint 동작의 정적 검사).
 - **관측:** Health 줄 `map pings enemyConfirmed enemyDemoted refused replaced expired waypoints packets markerDrops markerInboxDrops`와 `badPackets markerRate`, Meter `projecth.map.events`·`projecth.map.marker_drops`(`Server.md` "관측"). QA는 `/qa/players`의 `waypoint`·`teamPingCount`·`teamPings`·`teamWaypointCount`·`teamWaypoints`와 `/qa/health`의 `map`(`QA.md`).

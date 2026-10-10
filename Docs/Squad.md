@@ -1,6 +1,6 @@
 # Squad (Phase 14)
 
-한 경기 안의 팀(Solo / Duo / Squad), 기절(DBNO), 소생, Reboot 카드와 스테이션. 설계 근거는 `Docs/specs/2026-10-08-phase14-squad-dbno-design.md`(D1–D17), 요청서는 `Docs/requests/2026-10-05-roadmap-phase13_5-19-request.md` §32–§48이다. 패킷은 `Networking.md` "분대 (Phase 14)", 기어가기는 `Movement.md` "기절", QA는 `QA.md` "Squad", Client 표시는 `Client.md` "Phase 14"에 있다.
+Phase 19 + 리뷰 수정 기준(2026-10-09). 한 경기 안의 팀(Solo / Duo / Squad), 기절(DBNO), 소생, Reboot 카드와 스테이션. 설계 근거는 `Docs/specs/2026-10-08-phase14-squad-dbno-design.md`(D1–D17), 구현 기록(Spec과 다른 점)은 `Docs/plans/2026-10-08-phase14-squad-dbno.md`, 요청서는 `Docs/requests/2026-10-05-roadmap-phase13_5-19-request.md` §32–§48이다. 이후 닿는 Spec: 폭발 피해 `Docs/specs/2026-10-08-phase17-weapons-throwables-design.md`, 차량(치기·파괴 피해, 탄 사람은 소생·재투입 불가) `Docs/specs/2026-10-08-phase19-vehicle-design.md`. 패킷은 `Networking.md` "분대 (Phase 14)", 기어가기는 `Movement.md` "기절", QA는 `QA.md` "Scenario Library"(`Squad/` 시나리오, `squad` Suite)와 "Phase 14 Unity 검증", Client 표시는 `Client.md` "분대 (Phase 14)"에 있다.
 
 코드: `Server/src/ProjectH.Server/Game/Match.Squad.cs`(Match의 partial, 규칙 전부), `Game/Squad/SquadCatalog.cs`(`squad.json`), `Game/Flow/MatchFlow.cs`(팀 배치), Shared `Protocol/SquadPackets.cs`, `Simulation/RebootStations.cs`.
 
@@ -38,7 +38,7 @@ Client는 표시용으로 거리·출혈 기본값을 복사해 쓴다(`SquadPro
 
 ## 치명 경로 하나 (D5, D6)
 
-사격(`ApplyHit`), 자기장(`UpdateZone`), 낙하(`ApplyFallDamage`, 기절한 채 기어서 떨어져도), QA `damagePlayer`가 체력 0을 만들면 모두 `ApplyFatal`을 지난다.
+사격(`ApplyHit`, Phase 19 차량 치기 포함), 폭발(`ApplyExplosionHit`, Phase 17 로켓·수류탄과 Phase 19 차량 파괴 피해), 자기장(`UpdateZone`), 낙하(`ApplyFallDamage`, 기절한 채 기어서 떨어져도), QA `damagePlayer`가 체력 0을 만들면 모두 `ApplyFatal`을 지난다.
 
 1. 이미 기절한 사람 → 탈락. 처치 = 마무리한 사람, 공격자가 없으면(자기장·낙하) 기절시킨 사람(`DownedBy`, 아직 경기에 있을 때만).
 2. 같은 팀에 서 있는(살아 있고 기절 아닌) 다른 구성원이 있으면 → 기절.
@@ -66,7 +66,7 @@ QA `killPlayer`는 기절 없이 바로 `Kill`이다(시나리오 준비용). `H
 ## 소생 (D7, D8)
 
 - 입력 비트 `InteractHeld`(16384): Client는 E가 눌려 있는 동안 매 입력에 켠다. `Interact`(누른 순간)는 줍기·문 그대로다.
-- **E 우선순위:** 소생 대상이나 쓸 수 있는 스테이션이 범위 안이면 그 Tick의 E 누름은 문·줍기를 하지 않는다.
+- **E 우선순위:** 소생 대상이나 쓸 수 있는 스테이션이 범위 안이면 그 Tick의 E 누름은 문·Container(Phase 16)·차량 타기(Phase 19)·줍기를 하지 않는다(`Map.md` "문"의 E 규칙).
 - **시작:** 서 있고 행동 가능 모드인 플레이어가 `InteractHeld`이고, 같은 팀의 기절 구성원이 `reviveRange` 안에 있으며, 두 눈(기절 0.6 m) 사이에 맵 상자·닫힌 문·채집물·지형·조각이 없고, 아직 아무도 그 사람을 소생하지 않으며, 그 자리에서 웅크린 상자(1.2 m)가 무엇에도 박히지 않으면 시작한다. 가장 가까운 대상. 진행 중인 회복은 끊는다. 한 대상에 소생자 한 명, 한 소생자는 한 대상.
 - **진행:** `reviveSeconds`. 대상의 출혈이 멈춘다. 서버 Tick으로만 센다.
 - **취소:** E를 놓음, 거리 > `reviveRange + 0.5`, 소생자 피해(`reviveCancelOnDamage`), 소생자 기절·사망·연결 끊김(유예 중에는 놓친 입력 반복이 있어도 바로 취소), 대상 탈락, 소생자의 다른 행동(Fire·회복 키를 누르고 있음, 무기 키·도구 키·드롭·재장전 누름, 배치·편집 성공).
@@ -118,3 +118,18 @@ QA `killPlayer`는 기절 없이 바로 `Kill`이다(시나리오 준비용). `H
 | `PlayerEntity.DownedBy`·`ReviveTarget`·`RevivedBy` | 참조 1개씩 | 소생·탈락·리셋에 지운다. 나간 사람을 가리킬 수 있지만 처치는 경기에 있을 때만 준다(`DownedKiller`) |
 
 Tick마다 하는 일(출혈, 채널 검사, 팀 상태 비교, 카드 수명 검사)은 할당하지 않는다(`SquadMatchTests.SquadTicks_AllocateNothing`). 카드 수명 검사는 카드가 없으면 바로 끝난다. Lock은 없다(Game Loop 스레드 전용).
+
+## 테스트
+
+- Server: `SquadMatchTests`(팀, 아군 사격, 기절·출혈, 분대 전멸·팀 배치, 소생, 카드·스테이션, 할당 없음. 실제 입력으로 `Match.Tick`), `SquadCatalogTests`(`squad.json` 읽기·검증, Client 표시 복사본(`SquadPrompt`)과 기본값 비교, `MatchFlow`의 팀 수), `QaSquadTests`(QA 명령 `downPlayer`·`giveRebootCard`·`setStationCooldown`과 관찰 필드).
+- Shared: `SquadSharedTests`(`Downed` 이동 모드, 분대 패킷), `RebootStationsTests`(스테이션 배치).
+- Bots: `BotSquadTests`(팀원을 표적으로 삼지 않음, 기절한 적은 표적, 기절하면 팀원 쪽으로 기어감).
+- Client EditMode: `SquadStateTests`(`TeamState`·채널 진행, 서버 Tick 기준), `SquadHudTextTests`(분대 HUD 문구), `SquadPromptTests`(소생·재투입 안내 대상, 출혈 초), `SpectatorTargetsTests`(`FollowSquad`: 탈락하면 살아 있는 팀원부터 관전).
+- QA: `squad` Suite(헤드리스 8개, TeamSize 2)와 Unity `visual_squad`(`QA.md` "Scenario Library", "Phase 14 Unity 검증").
+
+## Known Issues
+
+- 소생은 대상 자리에 웅크린 상자(1.2 m)가 들어가야 시작되는데(계획 S1) Client 안내에는 이 검사가 없다. 그래서 낮은 틈 같은 드문 자리에서는 안내가 떠도 소생이 시작되지 않는다.
+- 출혈 문구가 밝은 배경에서 잘 안 읽힌다.
+- 기절 팀원과 문이 함께 있는 곳에서 E를 누르면 Client의 문 예측이 한 번 틀릴 수 있다(E 우선순위는 서버만 안다). 서버 `DoorStates`가 바로 고친다(계획 C6).
+- 봇은 소생·재투입을 하지 않는다(D15).

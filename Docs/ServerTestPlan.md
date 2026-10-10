@@ -1,6 +1,6 @@
 # 서버 테스트 플랜 (반응성 1순위, 보안 2순위, 피크 20만 동접)
 
-이 문서는 서버를 무엇으로 어떻게 시험하고 무엇을 합격으로 볼지 정한다. 측정 결과는 여기가 아니라 `LoadTest.md`에 쌓는다. 이 문서의 시나리오를 실행하려면 8절의 도구가 먼저 필요하다. 도구 구현은 별도 Phase로 한다.
+Phase 19 + 리뷰 수정(2026-10-09) 기준. 이 문서는 서버를 무엇으로 어떻게 시험하고 무엇을 합격으로 볼지 정한다. 측정 결과는 여기가 아니라 `LoadTest.md`에 쌓는다. 이 문서의 시나리오를 실행하려면 8절의 도구가 먼저 필요하다. 도구 구현은 별도 Phase로 한다.
 
 ## 1. 목표와 우선순위
 
@@ -160,24 +160,24 @@ L2 한계의 80 % 부하에서, Match 하나에 공격 클라이언트를 넣어
 | ID | 공격 | 기대 동작 (현재 방어) | 비고 |
 |---|---|---|---|
 | S1 | 잘못된 패킷 폭주: 알 수 없는 PacketId, 잘린 형식, 서버→클라이언트 방향 패킷 | 이유별 `badPackets` 증가, 20건이면 Kick(`BadPacketDisconnectThreshold`) | 공격자 수 1, 10, 50 |
-| S2 | Input 속도 초과: 초당 60패킷 초과, 패킷당 Input 3개 초과, 먼 미래 Seq | 공유 Input 채널에 넣기 전에 피어별 Rate Limit이 걸린다(`NetworkListener` `TryCountInputPacket`). 정상 플레이어의 Input이 밀려나지 않는다 | 지금 코드로 막히는 것이 확인된 경로다. 회귀 방지 케이스로 둔다 |
+| S2 | Input 속도 초과: 초당 60패킷 초과, 패킷당 Input 3개 초과, 먼 미래 Seq | 공유 Input 채널에 넣기 전에 피어별 Rate Limit이 걸린다(`NetworkListener` `TryCountInputPacket`, 초과는 `inputRate`). 패킷당 4개 이상·남는 바이트는 `Malformed`. 마지막 Seq보다 `InputSeqWindow`(기본 180) 넘게 앞선 Seq는 버리고 `inputSeqDrops`로 센다(리뷰 수정 A4). 공유 Input 채널은 `MaxPlayers × InputBurst`라 정상 플레이어의 Input이 밀려나지 않는다(A5) | 지금 코드로 막히는 것이 확인된 경로다. 회귀 방지 케이스로 둔다 |
 | S3 | 스피드 핵: Tick보다 빠른 Input 주기 | 공격자 자신의 버퍼 8칸에서 잘리고(`PlayerInputBuffer` DropOldest), 이동 결과는 서버가 정한다. 다른 플레이어의 R1, R2는 변화 없음 | L3와 같은 장치로 공격자에게만 +50 % 적용 |
-| S4 | 접속 슬롯 고갈: 접속 후 Join하지 않고 5초 Join Timeout 직전에 끊고 다시 접속하기를 반복 | 현재는 막는 장치가 없다. 공격자 수가 남은 슬롯 이상이면 정상 접속이 `ServerFull`로 거부될 수 있다 | 정상 접속 성공률을 측정한다. 실패하면 7절 G2로 옮긴다 |
-| S5 | MaxPlayers 초과 접속 폭주, 연결 전 쓰레기 UDP 데이터그램 | LiteNetLib 단계에서 거부, GameLoop까지 오지 않음 | 거부 처리 비용(서버 CPU, 다른 Match R1)을 측정한다 |
-| S6 | 큰 패킷, MTU 경계(1,200 B / 1,232 B 초과) | 거부 또는 `Malformed`, 다른 피어 정상 | |
+| S4 | 접속 슬롯 고갈: 접속 후 Join하지 않고 5초 Join Timeout 직전에 끊고 다시 접속하기를 반복 | 리뷰 수정 A2·A3: 한 IP(칸)는 동시 연결 `MaxConnectionsPerIp`(4)개까지(`rejects perIp`), 연결 요청은 IP별 Bucket(20, 초당 5)과 전역 수락 Bucket(MaxPlayers, 초당 20, `rejects accept`)을 넘지 못한다. 위조 출발지는 쿠키를 받지 못해 연결을 열지 못한다. 남은 갭: 실제 주소가 많은 공격자는 IP당 4개 × 주소 수만큼 슬롯을 잡을 수 있고, 전역 Bucket과 5초 Join Timeout만 이를 늦춘다. 공격자 수가 남은 슬롯 이상이면 정상 접속이 `ServerFull`로 거부될 수 있다 | 정상 접속 성공률을 측정한다(단일 IP·다수 IP 두 경우) |
+| S5 | MaxPlayers 초과 접속 폭주, 연결 전 쓰레기 UDP 데이터그램 | `OnConnectionRequest`에서 `RejectForce`로 거부(임시 peer 없음), GameLoop까지 오지 않음. 쿠키 없는 요청은 16B 쿠키만 받고(`cookieChallenges`), 틀린 쿠키는 `rejects cookie`. RSA 복호는 쿠키·빈도를 통과한 요청만 하고, 복호가 60초에 3번 실패한 IP 칸은 60초 벌점(`penalties`). 키가 있는 연결로 온 위조 데이터그램은 인증 꼬리에서 버려진다(`authDrops`) | 거부 처리 비용(서버 CPU, 다른 Match R1)을 측정한다. RSA 복호가 수신 스레드 비용의 대부분이다 |
+| S6 | 큰 패킷, MTU 경계(1,200 B / 1,232 B 초과), 많은 조각 | Client 패킷은 128B(`MaxClientPacketBytes`)를 넘으면 파싱하지 않고 `Malformed`. 조각이 2개(`MaxFragments`)를 넘는 메시지는 LiteNetLib이 재조립 전에 버린다. 다른 피어 정상 | |
 | S7 | 불가능한 좌표, NaN/±Inf, 범위 밖 Id | 검증에서 거부. 서버 상태 오염 없음 | 기존 `ProtocolFuzzTests`, `InputFuzzTests`, `FuzzIntegrationTests` 입력 생성기를 부하 중 공격 클라이언트로 재사용 |
 | S8 | StatsRequest 폭주: 정상 범위 간격으로 다수 피어가 동시에 요청 | 피어별 최소 간격, 큐가 차면 `Busy` 응답 | MySQL 부하와 GameLoop R1 영향을 측정한다(L7과 함께) |
 
 ## 7. 보안 갭 목록 (공개 서버 전 차단 항목)
 
-Phase 10(spec D12)에서 "개발용 LAN 서버"라는 이유로 미룬 항목이다. 지금은 실패가 예상되며, 구현이 들어오면 합격으로 바뀌어야 한다. 공개 서버로 열기 전에 모두 합격해야 한다.
+Phase 10(spec D12)에서 "개발용 LAN 서버"라는 이유로 미룬 항목이다. 처음에는 모두 실패가 예상됐다. 2026-10-08 리뷰 수정으로 G1·G2·G4·G5는 일부 또는 전부 구현됐고, G3·G6과 G1의 계정 인증은 아직 열려 있다(표 아래 "상태"). 공개 서버로 열기 전에 모두 합격해야 한다.
 
 | ID | 갭 | 테스트 케이스 | 합격 조건 (구현 후) |
 |---|---|---|---|
-| G1 | 인증 없음 | 다른 플레이어의 DevPlayerId로 접속해 재접속 유예 중인 캐릭터를 가져간다(`Networking.md` 알려진 위험) | 세션 토큰 없이 유예 캐릭터를 재개할 수 없다 |
+| G1 | 인증 없음(계정은 자기 신고 DevPlayerId) | 다른 플레이어의 DevPlayerId로 접속해 재접속 유예 중인 캐릭터를 가져간다. 다른 사람의 이름으로 접속해 그 전적에 기록을 쌓는다 | 세션 토큰(Resume 증명) 없이 유예 캐릭터를 재개할 수 없다(구현됨). 계정은 외부 인증으로만 쓴다(미구현) |
 | G2 | IP별 연결 수·속도 제한 없음 | 한 IP에서 S4, S5를 반복한다 | IP당 연결 수와 초당 연결 시도 상한, 초과 시 차단 |
 | G3 | 볼륨형 DDoS | 서버 앱으로는 막을 수 없다. 인프라 요구사항(상류 필터링, 스크러빙)으로 기록하고 테스트 대상에서 뺀다 | 인프라 계약·구성 문서로 확인 |
-| G4 | 암호화·변조 방지 없음 | 경로 중간에서 Input을 바꿔 다시 보낸다(Replay) | 변조·재전송 패킷 거부 |
+| G4 | 암호화·변조 방지 없음 | 경로 중간에서 Input을 바꿔 다시 보낸다(Replay) | 변조·재전송 패킷 거부(구현됨, HMAC 꼬리 + 64칸 창). 내용 암호화는 하지 않기로 했다 |
 | G5 | Anti-cheat 통계·Hit 기록 없음 | 비정상 명중률 봇을 돌린다 | 사후 판정에 쓸 기록이 남는다 |
 | G6 | DB 자격 증명이 `appsettings.json`에 평문(개발용) | 배포 산출물에 비밀번호가 있는지 검사한다 | 환경 변수나 비밀 저장소로만 주입 |
 
@@ -188,6 +188,9 @@ Phase 10(spec D12)에서 "개발용 LAN 서버"라는 이유로 미룬 항목이
 - G4: **HMAC·재전송 창 구현(암호화 없음).** 모든 데이터그램에 counter + HMAC 꼬리, 64칸 재전송 창, 서버 RSA 공개키 핀으로 세션 키 교환(묶음 B3, `SessionAuthTests`, `AuthPacketLayerTests`). 경로 위 변조·재전송은 버려지고 `authDrops`로 센다. 내용은 평문이다.
 
 - G5: **사후 판정 기록 구현(판정은 없음).** 참가자마다 사격·광선·명중 광선·가장 먼 명중·되감기 합·RTT 허용으로 자른 횟수·이동 이상·가장 큰 조준 회전을 경기 기록과 `match_player`(schema v2)에 남긴다(묶음 C7, `MatchRecordTests.AFinishedMatch_RecordsTheAntiCheatCounters`, `MySqlTests.AV1Database_IsMigratedToV2_AndTheColumnsAreSaved`). 함께 막은 것: 경기 비밀 시드(C1), 교체 대기(C2), 되감기 RTT 제한(C3), 줍기 시선(C4), 투사체 개인 상한(C5), 아이템 행동 간격(C6).
+- G2 남은 것: 실제 주소를 많이 가진 공격자(위 S4)와 G3 수준의 볼륨은 IP별 제한으로 막지 못한다.
+- G3: 그대로 인프라 요구사항이다.
+- G6: **열려 있다.** `appsettings.json`의 `Persistence:ConnectionString`에 개발 DB 비밀번호가 평문으로 있다(환경 변수로 덮어쓸 수는 있다, `Database.md`). 비밀 분리는 리뷰 수정 Spec이 다음 묶음(E)으로 미뤘다. 서버 개인키는 이미 환경 변수·파일로 주고, 개발용 키는 Production에서 거부한다(B1).
 
 ## 8. 필요한 도구 (별도 Phase로 구현)
 
@@ -210,7 +213,7 @@ Phase 10(spec D12)에서 "개발용 LAN 서버"라는 이유로 미룬 항목이
 | D5 | 최악 기준을 DevRespawn 100명 가득 찬 Match로 | 배틀로얄은 인원이 줄어 부하가 낮다. 위쪽 경계로 잡아야 대수 부족이 없다 | 실제보다 서버를 많이 잡는다. 2단계에서 실제 경기 분포로 보정한다 |
 | D6 | 여유분 1.3 | 장애 대체, 배포 교체, 피크 쏠림 | 부족하면 피크에 접속 거부. 과하면 유휴 비용 |
 | D7 | 보안 합격에 정상 Probe R1 저하(≤ 5 ms)를 포함 | "반응성 1순위, 보안 2순위"를 테스트로 확인하려면 공격이 반응성을 깎는지를 봐야 한다 | 공격자를 막아도 반응성이 떨어지면 불합격이 된다. 의도한 동작이다 |
-| D8 | 없는 방어(G1–G6)는 케이스만 정의 | 지금은 개발용 LAN 서버이고 구현 범위 밖이다. 공개 전 차단 목록으로 남긴다 | 공개 일정이 당겨지면 G1, G2가 바로 선행 작업이 된다 |
+| D8 | 없는 방어(G1–G6)는 케이스만 정의 | 정할 때는 개발용 LAN 서버이고 구현 범위 밖이었다. 공개 전 차단 목록으로 남긴다. 2026-10-08 리뷰 수정이 G1(Resume 증명)·G2·G4·G5를 구현했고, 남은 것은 G1의 계정 인증, G3, G6이다 | 공개 일정이 당겨지면 계정 인증(G1)과 비밀 분리(G6)가 바로 선행 작업이 된다 |
 | D9 | R2(버퍼 깊이)를 별도 지표로 | Tick당 Input 1개, 따라잡기 없음이라 시계 드리프트로 지연이 최대 267 ms까지 늘 수 있다 | 측정 결과 문제가 있으면 서버 Input 처리 개선이 별도 과제로 생긴다 |
 | D10 | 서버와 부하 생성기를 다른 머신에 | 루프백은 지연, 손실, NIC 한계가 없고 CPU를 나눠 쓴다 | 머신이 더 필요하다 |
 
@@ -218,12 +221,14 @@ Phase 10(spec D12)에서 "개발용 LAN 서버"라는 이유로 미룬 항목이
 
 - `Server/src/ProjectH.Server/GameLoop.cs`
   - `WaitUntil`: 남은 시간 2 ms 초과면 Sleep, 이하면 `Thread.Yield`
-  - `RunTick` 순서: `DrainControl` → `DrainInput` → `SweepPeers` → `SendStatsReplies` → `Match.Tick`
+  - `RunTick` 순서: `DrainControl` → `DrainInput` → `DrainBuild` → `DrainMarkers` → `SweepPeers` → `SendStatsReplies` → `Match.Tick`
 - `Server/src/ProjectH.Server/Game/Match.cs` `TakeInput`: Tick당 Input 1개
 - `Server/src/ProjectH.Server/Game/PlayerInputBuffer.cs`: 용량 `InputBufferPerPlayer`(8). 가득 차면 가장 오래된 것을 버린다
 - `Server/src/ProjectH.Server/Net/NetworkListener.cs`: `TryCountInputPacket` 확인 뒤 공유 Input 채널에 넣는다
 - `Shared/Runtime/Protocol/ServerPackets.cs`: Snapshot 헤더의 `AckInputSeq`(오프셋 5)
 - `Server/src/ProjectH.Bots/BotRunner.cs`, `BotConnection.cs`: 30 Hz 단일 스레드, 연결마다 `NetManager`
 - `Docs/LoadTest.md`: 100봇 기준 수치
-- `Docs/Networking.md`: 인증 없음에 따른 알려진 위험
+- `Docs/Networking.md`: 접속 순서(쿠키·세션 키·Resume 증명), "재접속 유예"의 남은 위험(계정 인증 없음), "Validation"(크기 상한·Seq 창·IP별 제한)
+- `Docs/Server.md` "보안·접속 허가 (리뷰 수정 A·B)"
 - `Docs/specs/2026-10-01-phase10-hardening-design.md` D12: 미룬 보안 항목
+- `Docs/specs/2026-10-08-review-fixes-design.md`: 리뷰 수정 A–D(G1·G2·G4·G5)와 다음 묶음으로 미룬 것(G6 등)

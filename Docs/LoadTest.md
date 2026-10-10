@@ -1,6 +1,6 @@
-# 부하 테스트 (Phase 7·8)
+# 부하 테스트 (Phase 7·8, Phase 10–13 확인)
 
-이 문서는 Phase 7(봇 10–50명)과 Phase 8(Protocol v7, 봇 50·64·100명)의 측정을 함께 담는다. 아래 "측정 환경"·"절차"·"결과"는 Phase 7 기준이고, Phase 8은 마지막 절에 있다.
+이 문서는 Phase 7(봇 10–50명)과 Phase 8(Protocol v7, 봇 50·64·100명)의 측정을 함께 담고, Phase 10–13의 확인 측정이 뒤에 이어진다. 아래 "측정 환경"·"절차"·"결과"는 Phase 7 기준이고, Phase 8은 그 다음 절에 있다. Phase 14 이후(Phase 19, 리뷰 수정 2026-10-09까지)의 측정은 QA 도구의 Stress Suite로 했고 이 문서에 옮기지 않았다. 위치는 마지막 절 "Phase 14 이후의 측정"에 있다.
 
 ## 목적
 
@@ -358,3 +358,16 @@ Health 줄의 건설 값(첫 줄 → 마지막 줄, 약 110초 사이):
 - 이제 한 Tick의 비용은 파괴 수와 상관없이 검색 한 번이다. 연결된 조각 수에만 비례한다.
 - 예산을 넘던 경우(N=50, 64 ms)가 2.45 ms가 되었다.
 - 참고: 테스트 seam `DestroyPiece(id)`는 지금도 부를 때마다 바로 검색한다. 그 경로로 재면 이전 값과 같다(N=50에서 64 ms). 게임 Tick은 모아서 처리하는 경로를 쓴다.
+
+## Phase 14 이후의 측정
+
+Phase 14부터는 봇을 직접 띄우는 이 문서의 절차 대신 QA 도구의 Stress Suite(봇 50명, `suite:stress-quick` = baseline·movement·combat·building·mixed, steady 30 s)로 쟀다. 실행 방법·시나리오·기준선 비교와 2026-10-02 Phase A·B 측정은 `Docs/QA.md` "Stress"에 있고, Phase마다의 결과는 각 계획 문서에 있다.
+
+| 언제 | 결과 위치 | 요약 |
+|---|---|---|
+| Phase 14–18 | `Docs/plans/2026-10-08-phase14-squad-dbno.md`, `…phase15-map-ping.md`, `…phase16-loot-containers.md`, `…phase17-weapons-throwables.md`, `…phase18-audio.md` | 모두 `stress-quick` 5/5 PASS. Mixed Match Tick p95 0.311–0.338 ms |
+| Phase 19 | `Docs/plans/2026-10-08-phase19-vehicle.md` | `stress-quick` 5/5, `stress-gameplay` 10/10 PASS. 경고 두 건은 재실행으로 잡음 판정 |
+| 리뷰 수정 A–D | `Docs/plans/2026-10-08-review-fixes.md` | `stress-quick` 5/5 PASS(두 번). movement steady Tick p99 0.171 → 0.284 ms(재실행 0.289 ms, +66–69 %). 데이터그램 HMAC 봉인(B3)의 비용으로 받아들였다(`Server.md` "보안·접속 허가") |
+
+- 리뷰 수정(A2) 뒤로는 한 PC의 봇이 4명을 넘으면 서버에 `--Server:ConnectBurstPerIp=200 --Server:MaxConnectionsPerIp=200`이 필요하다(위 "절차"). QA 도구가 띄우는 서버는 스스로 넣는다(`Server.md` 설정 표).
+- 100명 stress는 리뷰 수정 뒤에 다시 재지 않았다.

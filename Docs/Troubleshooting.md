@@ -1,58 +1,46 @@
 # Troubleshooting — 문제가 터졌을 때 볼 곳
 
-2026-10-02, Phase 12 Task 5까지 기준. 이 문서는 길잡이다. 상세 규칙은 링크한 문서에 있다.
+2026-10-09, main(Phase 19 + 리뷰 수정 A–D, Protocol v19) 기준이다. 이 문서는 길잡이이고, 상세 규칙은 링크한 문서에 있다. 기능 목록은 [Features.md](Features.md)에 있다.
 
 **찾는 순서**
 
 1. 아래 "증상별 위치"에서 해당 줄을 찾는다.
 2. 서버 로그의 `Stats`·`Health` 줄로 어느 쪽 문제인지 좁힌다("관측 도구").
-3. 의심 코드의 테스트를 돌린다.
+3. 의심 코드의 테스트나 QA 시나리오를 돌린다.
 4. 언제부터 그랬는지는 "작업 이력"의 Phase와 커밋으로 거슬러 올라간다.
 
 ## 1. 작업 이력
 
-| Phase | 한 일 | 커밋 | Protocol | 설계 / 계획 |
+| Phase | 한 일 | 대표 커밋 | Protocol | 문서 |
 |---|---|---|---|---|
-| 기반 | 프로젝트 골격, Claude Code 하네스 | `cddcfdf` | – | – |
-| 0 | 네트워크 이동 동기화: 서버 Tick, 입력·Snapshot, 예측·보정, 보간 | `a76861f` | 1 | `specs/…phase0-network-sync-design.md` |
-| 1 | 캐릭터 프로토타입: 박스 충돌, 어깨 카메라, 로컬 발사 표현 | `9059a5a` | 2 | `specs/…phase1-character-prototype-design.md` |
-| 3 | 서버 권한 전투: Hitscan, 지연 보상, 사망·부활, HUD | `5082b3e` | 3 | `specs/…phase3-combat-design.md` |
-| 4 | 인벤토리·Loot: 월드 아이템, 줍기·버리기, 소모품 | `3ab3600` | 4 | `specs/…phase4-inventory-loot-design.md` |
-| 5 | 배틀로얄 규칙: 경기 흐름, Safe Zone, 영구 사망, 결과 | `8c74caf`, `131adfc` | 5 | `specs/…phase5-battle-royale-design.md` |
-| 6 | 맵: 높이 격자 지형, POI, 건물 박스, Loot·투입 지점 | `9e6f018` | 6 | `specs/…phase6-map-design.md` |
-| 7 | 봇: Headless 봇 Client, 부하 테스트 | `b464a9c` | 6 | `specs/…phase7-bots-design.md` |
-| 8 | Snapshot 최적화: 분할·양자화, 100명 | `ebb3af8` | 7 | `specs/…phase8-optimization-design.md` |
-| 9 | 영속화: MySQL 경기 기록·통계, Game Loop 밖 저장 | `bf28afa` | 7 | `specs/…phase9-persistence-design.md` |
-| 10 | Hardening: 끊기 코드, 재접속 유예, Timeout, 예외 복구, 관측 | `d0cddbf` | 8 | `specs/…phase10-hardening-design.md` |
-| 11 | 게임 UI: 타이틀·메뉴·끊김·결과·전적 화면, 이름, Kill Feed | `560d8ea`, `0e1b3e4` | 9 | `specs/…phase11-game-ui-design.md` |
-| 12 (진행 중) | 투입·이동: 이동 모드, 기력, 웅크리기·슬라이드, Vault, 수송기·자유 낙하·글라이더, 낙하 피해, 행동 제한, 모드별 Hit Box | `0841508` → `89ac904` | 10 | `specs/…phase12-deployment-traversal-design.md` |
+| 0 | 네트워크 이동 동기화 | `a76861f` | 1 | Networking |
+| 1 | 박스 충돌, 어깨 카메라 | `9059a5a` | 2 | Networking |
+| 3 | 서버 권한 전투, 지연 보상 | `5082b3e` | 3 | Networking, Weapons |
+| 4 | 인벤토리·Loot | `3ab3600` | 4 | Networking |
+| 5 | 배틀로얄 규칙, Safe Zone | `8c74caf` | 5 | BattleRoyale |
+| 6 | 맵(지형, POI, 건물) | `9e6f018` | 6 | Map |
+| 7 | Headless 봇, 부하 테스트 | `b464a9c` | 6 | Bots, LoadTest |
+| 8 | Snapshot 분할·양자화, 100명 | `ebb3af8` | 7 | Networking, LoadTest |
+| 9 | MySQL 경기 기록·통계 | `bf28afa` | 7 | Database |
+| 10 | Hardening(끊기 코드, 재접속, Timeout, 예외 복구) | `d0cddbf` | 8 | Server, Networking |
+| 11 | 게임 UI, 전적 조회 | `560d8ea` | 9 | Client |
+| 12 | 이동 모드, 공중 투입, 문, 낙하 피해 | `89ac904`, main `7f9a559` | 10 | Movement |
+| 13 | 채집·건설, 지지, 건설 채널 | main `923ff3a` | 11 | Building |
+| QA-1–5 | QA 시나리오 도구, 스트레스 | `5a581d3`–`3add189` | – | QA |
+| 13.5 | 건설 편집 | `963bed8` | 12 | Building "편집" |
+| 14 | 분대·기절·소생·Reboot | `a6ea942` | 13 | Squad |
+| 15 | 미니맵·지도·Ping | `2b8eee1` | 14 | Map, Client |
+| 16 | Loot 상자·보급 | `c43e07c`, 리뷰 `121ce78` | 15 | Loot |
+| 17 | 무기 6종, 탄 퍼짐·반동, 투척·로켓 | `fa78616` | 16 | Weapons |
+| 18 | 합성 오디오 | `339b923` | 17 | Audio |
+| 19 | 차량 | `2adf601`, 리뷰 `69a3f63` | 18 | Vehicles |
+| 리뷰 A–D | 접속 허가, 세션 키·데이터그램 인증, 시드 비밀값·전투 규칙, 맵 경계·수신 검증 | `ee7b65a`, `a74cf24`, `7b40f88`, `39ff83e` | 19 | Server, Networking, `plans/2026-10-08-review-fixes.md` |
+| 주석 일괄(2026-10-10) | 전체 코드의 함수 주석(기능/입력/출력) 추가·수정. 코드 변경 없음 | `8c5bdef` | 19 | `code-comments` 스킬 |
 
-Phase 2는 따로 없다(번호를 건너뛰었다). 설계 문서의 "결정과 추천 이유" 표에 각 결정의 근거와 "틀렸을 때의 비용"이 있다. 동작이 의도된 것인지 헷갈리면 거기서 D번호를 찾는다.
-
-### Phase 12 진행 상태 (중요)
-
-계획은 `Docs/plans/2026-10-02-phase12-deployment-traversal.md`(Task 1–10)다.
-
-**완료 (Task 1–5)**
-
-- Shared 이동: `MovementMode`, `MovementTuning`, `MovementSimulation`, `DropTransport`
-- Protocol v10: `TraversalPackets`, 14바이트 Self 블록, `Crouch` 버튼
-- 서버 통합: 수송기 투입, 낙하 피해, 행동 제한, 모드별 Hit Box, 이동 이상 검사
-
-**남음 (Task 6–10)**
-
-- 문(`GameMap.Doors`, `DoorStates` 처리)
-- 봇 투입(봇은 아직 `TransportRoute`를 쓰지 않는다)
-- Client 예측·표현(Client 코드는 아직 `MovementMode`를 모른다)
-- 문서 갱신
-
-따라서 지금은 이런 일이 **예상된 동작**이다.
-
-- Unity Client로 경기를 시작하면 수송기·낙하 구간에서 화면이 서버와 어긋나거나 보정이 계속 일어날 수 있다.
-- 봇은 수송기에서 뛰어내리지 않고 경로 끝에서 강제로 떨어진다.
-- 문 패킷 Id는 있지만 문은 아직 맵에 없다.
-
-이 구간의 버그를 고치기 전에 해당 Task가 끝났는지 먼저 본다.
+- Phase 2는 없다(번호만 건너뛰었다).
+- 설계 문서의 "결정과 추천 이유" 표에 결정마다 근거와 "틀렸을 때의 비용"이 있다. 동작이 의도된 것인지 헷갈리면 거기서 D번호를 찾는다.
+- 각 Plan의 "Known Issues"·"spec와 다른 점" 절은 알려진 한계다. 버그로 고치기 전에 먼저 본다.
+- Monitoring Server는 `monitoring` 브랜치에만 있다(main 미병합).
 
 ## 2. 증상별 위치
 
@@ -63,117 +51,119 @@ Phase 2는 따로 없다(번호를 건너뛰었다). 설계 문서의 "결정과
 - `C/` = `Client/Assets/Scripts/`
 - `T/` = `Server/tests/ProjectH.Server.Tests/`
 
-### 접속·끊김
+### 서버 시작·접속·인증
 
 | 증상 | 먼저 볼 코드 | 문서 | 확인 수단 |
 |---|---|---|---|
-| 접속하자마자 거절 | `S/Net/NetworkListener.cs`(연결 요청 검사), `Sh/Protocol/ProtocolConstants.cs` | Networking "접속 순서", "Validation" | Health `rejects full/badRequest/version`. `version`이 늘면 Client·서버의 `ProtocolVersion`이 다르다. Shared를 바꾼 뒤 한쪽만 빌드했는지 본다 |
-| 이름 때문에 거절(`BadRequest`) | `ProtocolConstants.IsValidPlayerName`, `ConnectRequestData.TryRead` | Networking "Validation" | `T/Shared/PacketTests`, `T/Integration/PlayerNameIntegrationTests` |
-| 접속은 되는데 경기에 안 들어감 | `S/Game/Match.cs` `TryJoin`(`MatchFull`, `AlreadyJoined`) | Server "Lifetime"(Join 거절) | Health `joins`, `peers` 대비 `players` |
-| 5초·10초 뒤 끊김 | `S/GameLoop.cs` `SweepPeers`(Join·Input Timeout) | Networking "Timeout" | Health `kicks joinTimeout/inputTimeout`. 디버거로 Client를 10초 넘게 멈추면 `InputTimeout`이 정상이다 |
-| `Kicked`로 끊김 | `NetworkListener` 패킷 검증, `BadPacketReason` | Networking "Validation" | Health `badPackets` 이유별 7개 항목 |
-| 재접속이 안 되거나 다른 캐릭터로 돌아옴 | `Match.Disconnect`·`FindGraced`·`Resume`·`ExpireGrace`, `Sh/Protocol/DisconnectCode.cs`(`DisconnectCodes.ShouldReconnect`), `C/Game/GameClient.cs`(재접속 사이클) | Networking "끊기와 재접속", Client "끊김과 자동 재접속" | Health `graced`·`resumed`·`graceExpiries`, `T/Game/ReconnectGraceTests`, `T/Integration/ReconnectIntegrationTests` |
-| 모두 `ServerError`로 끊기고 판이 새로 시작 | `GameLoop` `RunTickGuarded`(Tick 3초 연속 실패 → 경기 초기화) | Server "예외 복구" | Health `tickFailures`·`matchResets`. 같은 주기의 첫 예외 로그(Tick 번호·상태·판)를 찾는다 |
-| 서버가 혼자 종료(코드 1) | `GameLoop`: 10분 안에 초기화 3번 | Server "예외 복구" | Critical 로그 |
-| 서버가 시작하지 않음 | `S/ServerOptions.cs` `Validate`, `S/Game/GameData.cs`(JSON 4개 검증), `PersistenceOptions.Validate` | Server "실행" | 시작 예외 메시지. `weapons/items/loot/zones.json`이 출력 폴더로 복사됐는지 본다 |
+| 서버가 "The development server key is refused in Production"으로 시작하지 않음 | `S/Net/ServerIdentity.cs` | Server "실행" | 빌드한 dll은 `--environment Development`로 띄운다(`dotnet run`은 `launchSettings.json`이 해 준다). 운영은 `Server:PrivateKeyPem`(환경 변수에는 XML을 넣는다) 또는 `Server:PrivateKeyPath` |
+| 서버가 그 밖의 이유로 시작하지 않음 | `S/ServerOptions.cs` `Validate`, `S/Game/GameData.cs`(JSON 8개 검증), `PersistenceOptions.Validate` | Server "실행" | 시작 예외 메시지. `*.json`이 출력 폴더에 복사됐는지 본다 |
+| 접속하자마자 거절(`VersionMismatch`) | `Sh/Protocol/ProtocolConstants.cs` | Networking "접속 순서" | Health `rejects version`. Shared를 바꾼 뒤 한쪽만 빌드한 경우다 |
+| 접속 거절(`BadRequest`) | `S/Net/NetworkListener.cs`, `Sh/Protocol/SessionAuth.cs` | Networking "Validation" | 공개 키 불일치(Client `Resources/ServerPublicKey.txt`, 봇 `--server-public-key`)나 이름 규칙 위반. `T/Net/*` |
+| 같은 PC에서 봇 5개째부터 접속 실패 | `S/Net/ConnectRateLimiter.cs`(IP당 4) | Server "보안·접속 허가", Bots "실행" | Health `perIpRejects`·`acceptRateRejects`. 서버에 `--Server:ConnectBurstPerIp=200 --Server:MaxConnectionsPerIp=200`을 준다 |
+| 연결이 쿠키 단계에서 멈춤, 연결이 끊김 반복 | `S/Net/ConnectCookie.cs`, `ConnectRateLimiter`(벌점) | Server | Health `cookieRejects`·`cookieChallenges`·`penaltyRejects` |
+| 연결은 되는데 패킷이 무시됨 | `S/Net/AuthPacketLayer.cs`(HMAC 꼬리, 재전송 창 64) | Networking | Health `authDrops`·`authDropsRetired`·`inputSeqDrops` |
+| 접속은 되는데 경기에 안 들어감 | `S/Game/Match.cs` `TryJoin`(`MatchFull`, `AlreadyJoined`) | Server "Lifetime" | Health `joins`, `peers` 대비 `players` |
+| 5초·10초 뒤 끊김 | `S/GameLoop.cs` `SweepPeers` | Networking "Timeout" | Health `kicks joinTimeout/inputTimeout`. 디버거로 10초 넘게 멈추면 `InputTimeout`이 정상이다 |
+| `Kicked`·`Congested`로 끊김 | `NetworkListener` 패킷 검증, 건설 채널 대기열 | Networking "Validation", Building "네트워크" | Health `badPackets` 이유별 항목 |
+| 재접속이 안 됨 | `Match.Resume`, 재접속 증명(`SessionAuth`), `C/Game/GameClient.cs` 재접속 사이클 | Networking "끊기와 재접속" | Health `resumes`·`graceExpiries`, QA `Reconnect/`. 같은 이름만으로는 안 되고 증명이 있어야 한다 |
+| 모두 `ServerError`로 끊기고 판이 새로 시작 | `GameLoop` `RunTickGuarded`(Tick 3초 연속 실패하면 초기화) | Server "예외 복구" | Health `tickFailures`·`matchResets`, 같은 주기의 첫 예외 로그 |
 
-### 이동·예측
-
-| 증상 | 먼저 볼 코드 | 문서 | 확인 수단 |
-|---|---|---|---|
-| 내 캐릭터가 계속 튐(보정) | `C/Game/LocalPlayerPredictor.cs`, `Sh/Simulation/MovementSimulation.cs`. 서버와 Client가 같은 `Step`·지형·박스를 쓰는지 본다 | Networking "Movement" | F1 디버그 줄, Client EditMode `LocalPlayerPredictorTests`·`MapPredictionTests`. Shared를 바꿨다면 Unity가 다시 컴파일했는지 본다 |
-| 다른 플레이어가 끊기며 움직임 | `C/Game/RemotePlayerInterpolator.cs`, `ServerClock.cs` | Networking "Movement" | `RemotePlayerInterpolatorTests` |
-| 벽·박스 통과, 지형에 빠짐 | `MovementSimulation`(충돌), `Sh/Simulation/HeightField.cs`, `GameMap.cs`, `Box.cs` | Networking "이동 충돌", Map | `T/Shared/CollisionTests`, `HeightFieldTests`, `TerrainMovementTests`, `GameMapTests` |
-| 입력이 안 먹힘(Client) | `C/Input/InputReader.cs`, `C/UI/UiFlow.cs`(메뉴가 열렸거나 커서가 안 잠김) | Client "프레임 흐름" | 클릭해 커서를 잠갔는지 본다 |
-| 기력·웅크리기·슬라이드·달리며 점프가 이상함 (P12) | `MovementSimulation`, `Sh/Simulation/MovementTuning.cs`(모든 수치) | spec P12 D1–D3, D7 | `T/Shared/MovementModesTests` |
-| Mantle·Hurdle이 안 되거나 엉뚱한 곳에 섬 (P12) | `MovementSimulation` Vault 판정(앞 상자, 높이 범위, 윗면 공간, 도착 겹침) | spec P12 D8 | `T/Shared/VaultTests` |
-| 수송기·자유 낙하·글라이더 (P12) | `Sh/Simulation/DropTransport.cs`(경로, `Ride`), `Match.StartMatch`, `S/Game/Flow/DropPlanner.cs`, `Match.SendRoute` | spec P12 D4–D6 | `T/Shared/DeploymentMovementTests`, `T/Game/MatchDeploymentTests`, `T/Shared/TraversalPacketTests` |
-| 낙하 피해가 이상함, 원인이 "낙하"로 안 나옴 (P12) | `Match.ApplyFallDamage`, `Kill(…, DeathCause)`, `PlayerDied.Cause` | spec P12 D10 | `T/Game/FallDamageTests` |
-| 서버 로그에 `movementAnomalies` > 0 (P12) | `S/Game/MovementLimits.cs`, `Match.Move`. 정상이면 언제나 0이다. 0이 아니면 시뮬레이션 버그다(치트가 아니다) | spec P12 D12 | Health 줄, Meter `projecth.movement_anomalies` |
-
-### 전투
+### 이동·예측·차량
 
 | 증상 | 먼저 볼 코드 | 문서 | 확인 수단 |
 |---|---|---|---|
-| 맞혔는데 피해가 없음 | `S/Game/Combat/HitScan.cs`, `PositionHistory.cs`(지연 보상, 32칸), `Match.FireShot`·`ApplyHit`. 경기 전에는 피해가 없다(`MatchFlow.DamageAllowed`) | Networking "전투" | `T/Game/HitScanTests`, `LagCompensationTests`, `TerrainTraceTests` |
-| 웅크렸는데 머리가 맞음, 탑승자가 맞음 (P12) | `HitScan`(모드별 높이), `PositionHistory`(모드 기록) | spec P12 D13 | `T/Game/HitBoxModeTests` |
-| 발사·재장전 간격, 탄 | `S/Game/Combat/WeaponRules.cs`, `weapons.json`, `C/Game/WeaponState.cs`(Client 표시) | Networking "전투" | `WeaponRulesTests`, `WeaponCatalogTests` |
-| 공중·수송기에서 사격·줍기가 안 됨 | `Match.ActionsAllowed`. P12에서 의도한 동작이다 | spec P12 D12 | – |
-| 조준점과 실제 탄 방향이 다름 | `C/Game/AimSolver.cs`, `C/Camera/ShoulderCamera*.cs` | Client | `AimSolverTests`, `ShoulderCameraMathTests` |
+| 내 캐릭터가 계속 튐(보정) | `C/Game/LocalPlayerPredictor.cs`, `Sh/Simulation/MovementSimulation.cs`. 서버와 Client가 같은 Shared를 쓰는지 본다 | Networking "Movement" | F1 디버그 줄(마지막 보정 거리), `LocalPlayerPredictorTests` |
+| 벽·조각 통과, 맵 밖으로 나감 | `MovementSimulation`(`ClampToMap`), `CollisionWorld`, `BuildGrid.PartsOf`(편집 모양) | Movement, Building | `CollisionTests`, `PieceCollisionTests`, `EditedPieceCollisionTests` |
+| 슬라이드·Vault·글라이더·수송기가 이상함 | `MovementSimulation`, `MovementTuning`, `DropTransport` | Movement | `MovementModesTests`, `VaultTests`, `DeploymentMovementTests` |
+| `movementAnomalies` > 0 | `S/Game/MovementLimits.cs`. 정상이면 0이다. 시뮬레이션 버그다(치트가 아니다) | Movement | Health 줄 |
+| 차량이 튐, 벽을 뚫고 타고 내림 | `Sh/Simulation/VehicleSimulation.cs`, `S/Game/Match.Vehicles.cs`, `C/Game/VehiclePredictor.cs`, `VehicleStore`(너무 앞선 Tick은 버린다) | Vehicles | `VehicleSimulationTests`, suite `vehicle` |
+| 기절 상태 이동 | `MovementSimulation`(Downed 모드 7) | Movement "기절", Squad | `SquadMatchTests` |
 
-### Loot·인벤토리
-
-| 증상 | 먼저 볼 코드 | 문서 | 확인 수단 |
-|---|---|---|---|
-| 줍기가 안 됨 | `Match.Pickup`·`PickupWeapon`, `S/Game/Items/ItemRules.cs`(수평 2 m, 높이 2 m), `C/Game/PickupRule.cs` | Networking "인벤토리와 Loot" | `T/Game/PickupDropTests` |
-| 아이템이 안 생기거나 사라짐 | `S/Game/Items/LootSpawner.cs`, `LootTable`, `WorldItems`(256개 상한, 오래된 Drop부터 지움), `Sh/Simulation/LootPoints.cs` | Map "Loot 지점" | `LootTableTests`, `WorldItemsTests`, `MatchWorldItemsTests` |
-| 사망·이탈 때 아이템 Drop | `Match.DropEverything`·`DropAround` | Server "Lifetime" | `InventoryMatchTests` |
-| 회복이 안 됨 | `S/Game/Items/ConsumableRules.cs` | – | `ConsumableTests` |
-
-### 경기 흐름·Zone
+### 전투·무기
 
 | 증상 | 먼저 볼 코드 | 문서 | 확인 수단 |
 |---|---|---|---|
-| 경기가 시작하지 않음 | `S/Game/Flow/MatchFlow.cs`(`MinPlayers` 2) | BattleRoyale "상태 기계" | Health `match=<State>#<Round>` |
-| 투입 위치가 이상함 | `Match.ShuffleDropOrder`·`DropSpot`, `Sh/Simulation/DropPoints.cs`, P12부터는 수송기 | Map "투입 지점", spec P12 D4 | `DropAssignmentTests`, `DropPointsTests` |
-| Zone 원·피해가 이상함, Client 원과 서버가 다름 | `S/Game/Zone/SafeZone.cs`, `ZoneData`(`zones.json`), `C/Game/ZoneMath.cs`(표시 전용) | BattleRoyale "Safe Zone" | `SafeZoneTests`, `ZoneMathParityTests`(서버·Client 식이 같은지) |
-| 순위·승자·결과 화면 | `Match.FinishMatch`·`Kill`, `C/UI/ResultScreen.cs` | BattleRoyale "사망·순위·승자" | `MatchEliminationTests`, `BattleRoyaleIntegrationTests` |
+| 맞혔는데 피해가 없음 | `S/Game/Combat/HitScan.cs`, `PositionHistory`(되감기 한도는 RTT로 정한다), 경기 전 피해 없음, 같은 팀 피해 없음 | Networking "전투", Weapons | `HitScanTests`, `LagCompensationTests`, DB `match_player` 의 anti-cheat 열(`RewindClamped`) |
+| 무기를 바꾼 직후 안 쏴짐 | 장착 지연 `equipSeconds`(0.4초, 리뷰 C), `C/Game/WeaponState.cs`가 예측 | Weapons, Networking | `WeaponRulesTests` |
+| 산탄·퍼짐·반동 | `S/Game/Combat/WeaponSpread.cs`(서버 결정), `C/Game/SpreadCone.cs`(표시만), `C/Camera/RecoilKick.cs` | Weapons | suite `weapons` |
+| 수류탄·로켓이 안 나감 | `S/Game/Combat/Projectiles.cs`(전체 32, 소유자당 4), `Match.Projectiles.cs` | Weapons "투사체" | `ProjectilePhase17Tests` |
+| 공중·수송기·기절 중 행동 불가 | `Match.ActionsAllowed`. 의도한 동작이다 | Movement | – |
 
-### DB·전적
-
-| 증상 | 먼저 볼 코드 | 문서 | 확인 수단 |
-|---|---|---|---|
-| 경기 기록이 안 남음 | `S/Persistence/MatchHistoryWriter.cs`, `MatchStore.cs`, `MatchHistoryQueue`(16, 넘치면 버림) | Database "실패 처리와 종료" | Health `db saved/failed/discarded/dropped`, 시작 로그 `Match history: …`. `Persistence:Enabled`, `docker compose ps`를 확인한다 |
-| 전적 창이 "기록을 볼 수 없음" 또는 "응답 없음" | `S/Persistence/StatsQueryService.cs`, `StatsQueryQueue`, `C/UI/StatsWindow.cs` | Database "조회 경로" | Health `stats requests/limited/busy/unavailable/undelivered` |
-| 스키마가 옛 정의 그대로 | `MatchStore.Schema`(`CREATE TABLE IF NOT EXISTS`) | Database "실행" | `docker compose down -v`. **로컬 데이터가 모두 지워진다** |
-
-### Client UI·화면
+### Loot·인벤토리·상자
 
 | 증상 | 먼저 볼 코드 | 문서 | 확인 수단 |
 |---|---|---|---|
-| 화면 전환이 이상함 | `C/UI/UiFlow.cs`(순수 로직), `UiRoot.cs` | Client "화면과 흐름" | `T/ClientUi/UiFlowTests` |
-| 한글이 네모로 보임 | `C/UI/UiFont.cs` | Client "글꼴" | Console "UI font: …" |
-| 빌드에서 재질이 분홍색 | `C/Game/LitMaterial.cs`(URP Lit 기반) | 커밋 `0e1b3e4` | – |
-| Kill Feed, HUD 문구 | `C/UI/KillFeed*.cs`, `UiText.cs`, `C/Game/MatchHudText.cs`, `InventoryHudText.cs` | Client | `KillFeedModelTests`, `UiTextTests`, `MatchHudTextTests` |
+| 줍기가 안 됨 | `Match.Pickup`, `S/Game/Items/ItemRules.cs`(거리, 시선 검사, 행동 간격 0.25초) | Networking "인벤토리와 Loot" | `PickupDropTests` |
+| E가 엉뚱한 대상에 반응함 | E 우선순위: 탑승 중이면 내리기 → 소생·Reboot 대상 → 문·상자 중 가까운 것(같으면 문) → 차량 탑승 → 줍기 (`Match.Loot.Interact`) | Squad, Loot | `ContainerRuleTests`, `SquadPromptTests` |
+| 상자가 안 열림, 보급이 안 떨어짐 | `S/Game/Match.Loot.cs`, `S/Game/Loot/ContainerRules.cs`, `Sh/Simulation/LootContainers.cs`(`SupplyDropFall`) | Loot | `LootContainerMatchTests`, suite `loot`. 빈자리가 없으면 10초 재시도 뒤 건너뛴다 |
+| 바닥 Loot 배치가 바뀜 | 상자·보급은 시드가 따로다 | Loot | `FloorLootRegressionTests` |
 
-### 봇·부하
+### 건설·편집
 
 | 증상 | 먼저 볼 코드 | 문서 | 확인 수단 |
 |---|---|---|---|
-| 봇이 멈춤·벽에 낌 | `Server/src/ProjectH.Bots/BotBrain.cs`, `BotSteering.cs` | Bots "판단 규칙" | `T/Bots/BotBrainTests` |
-| 봇이 끊김 | `BotConnection.cs`, `--reconnect` 옵션 | Bots "실행" | 봇 통계 줄 `reconnects` |
-| Tick이 밀림, CPU·메모리 증가 | `GameLoop`, `Match.SendSnapshots` | Server "관측", LoadTest | Stats `tickMs p95/p99`, `lateTicksSkipped`, `gc`, `workingSetMB`. Health `stalls`(`StallWatchdog`) |
+| 배치가 거절됨 | `S/Game/Build/BuildRules.cs`(이유 코드) | Building "검증" | Health `buildRejected`, F1 건설 줄 |
+| 편집이 거절되거나 되돌아감 | `BuildRules.CanEdit`(소유자만), 공유 큐 8칸(`RateLimited`) | Building "편집" | `BuildEditTests`, QA `building_edit_*` |
+| 무너져야 하는데 서 있음(또는 반대) | `S/Game/Build/BuildSupport.cs` | Building "지지" | `SupportTests`, Health `buildCollapsed` |
+| 조각이 안 보이거나 늦게 보임 | `BuildReplication`(관심 영역, Sync 대기), `C/Game/Build/BuildStore.cs` | Building "네트워크" | Health `buildSyncDeferred` |
+
+### 분대·지도
+
+| 증상 | 먼저 볼 코드 | 문서 | 확인 수단 |
+|---|---|---|---|
+| 기절·소생·Reboot 이상 | `S/Game/Match.Squad.cs`, `squad.json` | Squad | Health `downs/revives/reboots/bleedOuts`, suite `squad` |
+| 팀 순위·경기 종료 이상 | `MatchFlow`(남은 팀 ≤ 1이면 끝) | BattleRoyale, Squad | `MatchFlowTests` |
+| Ping이 안 보이거나 위치 Ping으로 바뀜 | `S/Game/Match.Map.cs`(적 Ping은 시선·팀·거리 검사), `C/Game/Map/PingInput.cs` | Map "지도 UI·Ping" | Health `enemyDemoted`·`markersRefused`·`markerDrops`, suite `map` |
+| 지도·미니맵 위치가 어긋남 | `C/Game/Map/MapProjection.cs` | Client | `MapProjectionTests`, QA `minimap_position` |
+
+### 경기 흐름·Zone·DB·UI·오디오·봇
+
+| 증상 | 먼저 볼 코드 | 문서 | 확인 수단 |
+|---|---|---|---|
+| 경기가 시작하지 않음 | `S/Game/Flow/MatchFlow.cs`(`MinPlayers`) | BattleRoyale | Health `match=<State>#<Round>` |
+| 재현이 안 됨(시드가 매번 다름) | 시드는 경기마다 비밀값으로 만든다(리뷰 C). 재현은 `DeterministicSeeds=true`일 때만 된다 | Server, BattleRoyale | QA 도구는 이 옵션을 켜고 띄운다 |
+| Zone 원이 서버와 다름 | `S/Game/Zone/SafeZone.cs`, `C/Game/ZoneMath.cs` | BattleRoyale | `ZoneMathParityTests` |
+| 경기 기록이 안 남음 | `S/Persistence/*`, `schema_version` v2 마이그레이션 | Database | Health `db saved/failed/dropped`, 시작 로그 |
+| 화면 흐름·한글·Kill Feed | `C/UI/UiFlow.cs`, `UiFont.cs`, `KillFeed*.cs` | Client | `UiFlowTests`, QA `UI/` |
+| 소리가 안 나거나 겹침 | `C/Game/Audio/*`(Voice 24, 프레임당 새 소리 8) | Audio | `AudioMixerModelTests`, QA `Audio/` |
+| 봇이 멈춤·낌·끊김 | `Server/src/ProjectH.Bots/BotBrain.cs`, `BotSteering.cs`, `BotConnection.cs` | Bots | `BotBrainTests`, 봇 통계 줄 |
+| Tick이 밀림, 메모리 증가 | `GameLoop`, `Match.SendSnapshots`, 건설 복제 | Server "관측", LoadTest, QA "Stress" | Stats `tickMs p95/p99`, `gc`, `workingSetMB`, Health `stalls`, suite `stress-quick` |
 
 ## 3. 관측 도구
 
-**서버 로그(10초마다)**
-
-- `Stats …`: 성능 지표다. 인원, 패킷, 바이트, `tickMs` 분위수, 입력 Drop, 잘못된 패킷, GC, CPU, `matchSinkFailures`.
-- `Health …`: 상태 지표다. 연결·Join·유예, 끊김과 Kick 이유, 잘못된 패킷 이유, Tick 실패·초기화·Stall, `movementAnomalies`, DB, 전적 조회. 대부분 서버 시작부터의 누적값이다.
-
-필드의 뜻은 `Server.md` "관측"에 있다.
-
-**나머지 도구**
-
-- **Meter:** `ServerMeter`(이름 `ProjectH.Server`). `dotnet-counters monitor -n ProjectH.Server --counters ProjectH.Server`로 본다.
-- **Client:** F1 디버그 줄(상태, RTT, Entity).
-- **봇:** `--stats-interval` 초마다 한 줄을 남긴다.
-- **재현:** `LootSeed`·`ZoneSeed`·`SpawnSeed` + 판 번호가 같으면 Loot 배치·Zone·투입 순서가 같다. 봇은 `--seed`로 고정한다.
-- **아레나 모드:** `DevRespawn=true`이면 경기 흐름 없이 피해·3초 부활·Loot 재생성만 돈다. 전투·Loot만 볼 때 쓴다.
-
-**테스트**
-
-- `dotnet test Server/ProjectH.Server.slnx`가 서버, Shared, 봇, Client UI 순수 코드를 시험한다.
-- 한 묶음만 돌리려면 `--filter FullyQualifiedName~VaultTests`처럼 쓴다.
-- `MySqlTests`는 환경 변수 `PROJECTH_TEST_MYSQL`(연결 문자열)이 있을 때만 돈다. 없으면 Skip된다.
-- Client EditMode 테스트 명령은 `Client.md` "자동 검사"에 있다.
+| 도구 | 쓰는 법 |
+|---|---|
+| 서버 로그(10초마다) | `Stats`는 성능(Tick 분위수, 패킷, 바이트, GC, CPU), `Health`는 상태(연결·거절·Kick·인증·건설·분대·Ping·Loot·DB). 필드 뜻은 `Server.md` "관측" |
+| Meter | `dotnet-counters monitor -n ProjectH.Server --counters ProjectH.Server` |
+| Client | F1 디버그 줄(상태, RTT, 모드, 속도, 보정 거리, 건설 줄) |
+| QA 도구 | `dotnet run --project Server/src/ProjectH.QA -- run <시나리오>` 또는 `ui`(Web UI). Suite `smoke`, `pre-push`, `full-regression`, `stress-quick`. 사용법은 `QA.md` |
+| 재현 | `--Server:DeterministicSeeds=true`이면 시드 + 판 번호로 Loot·Zone·투입이 같아진다. 봇은 `--seed` |
+| 아레나 | `DevRespawn=true`이면 경기 흐름 없이 피해·부활·Loot 재생성만 돈다 |
+| 테스트 | `dotnet test Server/ProjectH.Server.slnx`(`--filter FullyQualifiedName~클래스`). `MySqlTests`는 `PROJECTH_TEST_MYSQL`이 있을 때만 돈다. Client EditMode는 `Client.md` "자동 검사" |
 
 ## 4. 바꿀 때 자주 터지는 곳
 
-- **패킷 형식을 바꿨다:** `ProtocolConstants.ProtocolVersion`을 올린다(주석에 이력이 있다). 서버와 Client(Unity 재컴파일)를 함께 갱신한다. 하나만 바뀌면 `VersionMismatch`로 접속이 거절된다.
-- **Shared를 바꿨다:** 서버는 `netstandard2.1`·C# 9로 컴파일하므로 Unity에서 안 되는 문법이 서버 빌드에서 먼저 실패한다. 새 `.cs`에는 Unity `.meta` 파일도 커밋한다.
-- **맵을 바꿨다:** 박스, 지형, Loot·투입 지점, POI, 문을 함께 고친다(`Map.md` "맵 바꾸기"). 이동 결과가 바뀌면 Protocol 버전도 올린다(Phase 6 선례).
-- **이동 수치를 바꿨다:** `MovementTuning`, `MoveSettings`는 서버와 Client 예측이 같이 쓴다. 둘이 다르게 빌드되면 보정이 계속된다.
-- **Snapshot에 필드를 더한다:** 90명 패킷에 남은 공간이 3바이트다. Self를 더 늘리면 패킷당 인원을 89로 줄여야 한다(spec P12 D11).
-- **Game Loop에서 DB·I/O를 부르면 안 된다:** 큐(`MatchHistoryQueue`, `StatsQueryQueue`)로 넘긴다. 우리 코드에는 Lock이 없다. 추가하면 `Server.md`에 순서를 적는다.
-- **Tick 경로에 할당을 넣으면 안 된다:** `…_AllocatesNothing`, `…_DoNotAllocate` 테스트가 깨진다.
+- **패킷 형식을 바꿨다**
+  - `ProtocolVersion`을 올린다. 주석에 v1–v19 이력이 있다.
+  - Client(Unity 재컴파일), 봇, QA 도구를 함께 갱신한다.
+  - 받는 쪽 범위 검사(`ProtocolLimits`)도 맞춘다.
+- **Shared를 바꿨다**
+  - 서버는 `netstandard2.1`·C# 9로 컴파일한다.
+  - 새 `.cs`에는 `.meta`를 커밋한다.
+  - Shared에 넣어도 되는 범위는 `game-core-rules` 4절 예외 1–8이다.
+- **규칙 복사본이 있는 곳**
+  - `DoorRule`, `ContainerRule`, `SquadPrompt`, `VehiclePrompt`, `ToolState`는 서버 규칙의 Client 복사본이다.
+  - 한쪽만 바꾸면 비교 테스트가 깨진다.
+- **맵을 바꿨다**
+  - 다음을 함께 고친다(`Map.md` "맵 바꾸기"): 박스, 지형, 문, 채집 대상, Loot 지점, 상자, Reboot 스테이션, 차량 생성 위치, POI.
+  - 상자·스테이션 목록 순서는 프로토콜 비트 순서다.
+- **이동·차량 수치를 바꿨다**
+  - `MovementTuning`, `MoveSettings`, `VehicleSettings`는 서버와 예측이 같이 쓴다.
+- **Snapshot에 필드를 더한다**
+  - 90명 패킷은 MTU에 거의 꽉 찬다(Entity 13 B).
+  - 상태는 빈 플래그 비트나 별도 패킷으로 보낸 선례를 따른다(모드, 도구, `VehicleStates`).
+- **Game Loop에서 DB·I/O를 부르면 안 된다**
+  - 큐로 넘긴다.
+  - 새 Lock을 쓰면 `Server.md`에 순서를 적는다(지금은 `SessionKeys._sendLock` 하나).
+- **Tick 경로에 할당을 넣으면 안 된다**
+  - `…_AllocatesNothing` 테스트가 잡는다.

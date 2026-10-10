@@ -38,7 +38,7 @@ dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 779
 |---|---|
 | `BotOptions` | 명령줄 파싱과 검증 |
 | `BotConnection` | 봇 하나의 LiteNetLib 수동 모드 연결. 패킷을 읽어 `BotView`를 갱신하고 입력 패킷을 보낸다 |
-| `BotView` | 봇이 아는 세계: 내 상태(Phase 12: 이동 모드), 다른 플레이어(최대 100), 월드 아이템(최대 256), 경기·Zone 상태, 수송기 경로(Phase 12), 무기·아이템 Catalog |
+| `BotView` | 봇이 아는 세계: 내 상태(Phase 12: 이동 모드), 다른 플레이어(최대 100), 월드 아이템(최대 256), 경기·Zone 상태, 수송기 경로(Phase 12), 무기·아이템 Catalog, Phase 14–19: 팀·채널·스테이션, 팀 표시, Container·Supply Drop, 투사체 사건 수, 차량과 내 좌석(모두 고정 크기) |
 | `BotBrain` | 판단과 그 결과의 입력 하나를 만든다(Phase 12: 투입 목표·뛰어내리기·낙하 조종). 시각과 난수는 인자로 받는다 |
 | `BotSteering` | 직선 조향, 막힘 탈출 |
 | `BotAim`, `LineOfSight` | 조준 각과 오차, 시선 검사 |
@@ -59,12 +59,14 @@ dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 779
    - **목표:** 투입 계획은 투입마다 한 번 세운다. 목표 하나를 POI 5곳과 지금까지 받은 월드 아이템 위치 중에서 봇의 난수로 고른다(봇마다 시드가 달라 맵에 흩어진다). Loot 지점 목록은 서버 데이터라 쓰지 않는다. 아직 `TransportRoute`를 받지 못했으면 입력 없이 기다린다.
    - **뛰어내리기 Tick(`PlanJumpTick`):** 수송기가 목표의 수평 투영에 가장 가까워지는 Tick이고, 뛰어내리기 구간 안으로 자른다(봇은 경로를 안다). `Transport` 모드에서 서버 Tick + 1이 그 Tick에 닿으면 Jump를 보내고, 0.5초(`ButtonRepeatSeconds`)마다 다시 보낸다. Snapshot에 낙하가 보이기까지 늦기 때문이다. 자유 낙하 중의 두 번째 Jump는 글라이더를 일찍 펴므로, 모드가 바뀌어 `Freefall`이 되면 더는 보내지 않는다.
    - **낙하 조종:** 목표 쪽으로 Yaw를 두고 앞으로 간다(`MoveY` 1). 목표까지 수평 5 m 안(`LandingStopDistance`)이면 멈춘다. 글라이더는 지면 30 m에서 서버가 저절로 펴므로 봇은 펴지 않는다. 탑승 중에는 이동을 보내지 않는다.
-3. 경기 전·결과 화면이면 제자리에 선다. `MatchState`를 받은 적이 없는 `DevRespawn` 서버는 항상 경기 중으로 본다.
-4. Zone: 현재 원 밖이거나, 다음 원이 정해졌는데 그 밖이면 다음 원 중심으로 간다.
-5. 교전: 보이는(시선 검사) 살아 있는 가장 가까운 적이 사거리 안(무기 사거리, 최대 60 m)에 있고 탄이 있으면 조준하고 쏘며 좌우로 움직인다. 탄창이 비면 장전하거나 탄 있는 칸으로 바꾼다. Phase 17 D15: 투사체 무기(로켓)는 탄이 없는 칸처럼 보고 고르지 않으며, 수류탄은 던지지 않는다.
-6. 회복: 근처 15 m에 적이 없으면 Health 60 미만일 때 Medkit, Shield 25 미만일 때 Shield Cell을 쓴다.
-7. Loot: 쓸모 있는 아이템(빈 무기 칸이 있을 때의 무기(Phase 17: 로켓 제외), 가진 무기의 탄약, 최대 미만인 회복. 수류탄은 줍지 않는다) 중 가장 가까운 것으로 간다. 수평 1.5 m, 높이 차 1.8 m 안(`BotBrain.PickupReach`·`PickupHeight`, 서버 허용은 2 m)이면 E를 누른다.
-8. 배회: Zone 다음 원(없으면 맵 중앙 60 m) 안의 무작위 지점으로 간다.
+3. **기절(Phase 14 D15):** 자기 모드가 `Downed`이면 기어가기만 한다(서버가 다른 행동을 막는다). 가장 가까운 살아 있는(기절하지 않은) 팀원 쪽으로 걷고(Jump·Sprint 없음), 수평 1.5 m(`CrawlStopDistance`, 서버 소생 거리 2 m 안) 안이면 멈춘다. 팀원이 없으면 제자리다. 봇은 소생·재투입을 하지 않는다(남을 소생시키지도, 카드를 줍지도 않는다).
+4. **차량(Phase 19 D16):** 봇은 운전하지 않는다. 아이템 옆의 E로 차에 탔으면(`VehicleStates`가 자기 좌석을 적으면) 입력 하나 걸러 E를 눌러 바로 내린다(서버는 누름에 반응하므로 사이에 뗌이 필요하다). 탄 동안 가속·제동은 보내지 않는다.
+5. 경기 전·결과 화면이면 제자리에 선다. `MatchState`를 받은 적이 없는 `DevRespawn` 서버는 항상 경기 중으로 본다.
+6. Zone: 현재 원 밖이거나, 다음 원이 정해졌는데 그 밖이면 다음 원 중심으로 간다.
+7. 교전: 보이는(시선 검사) 살아 있는 가장 가까운 적(Phase 14: 팀원은 대상이 아니다. 기절한 적은 대상이다)이 사거리 안(무기 사거리, 최대 60 m)에 있고 탄이 있으면 조준하고 쏘며 좌우로 움직인다. 탄창이 비면 장전하거나 탄 있는 칸으로 바꾼다. Phase 17 D15: 투사체 무기(로켓)는 탄이 없는 칸처럼 보고 고르지 않으며, 수류탄은 던지지 않는다.
+8. 회복: 근처 15 m에 적(팀원 제외)이 없으면 Health 60 미만일 때 Medkit, Shield 25 미만일 때 Shield Cell을 쓴다.
+9. Loot: 쓸모 있는 아이템(빈 무기 칸이 있을 때의 무기(Phase 17: 로켓 제외), 가진 무기의 탄약, 최대 미만인 회복. 수류탄·재투입 카드·건설 자원은 줍지 않는다) 중 가장 가까운 것으로 간다. 수평 1.5 m, 높이 차 1.8 m 안(`BotBrain.PickupReach`·`PickupHeight`, 서버 허용은 2 m)이면 E를 누른다.
+10. 배회: Zone 다음 원(없으면 맵 중앙 60 m) 안의 무작위 지점으로 간다.
 
 수치(코드의 상수, 옵션이 아니다):
 
@@ -73,7 +75,7 @@ dotnet Server/src/ProjectH.Bots/bin/Release/net10.0/ProjectH.Bots.dll --port 779
 | 이동 | 목표 방향으로 걷고 10 m 넘게 남으면 달린다. 막혔을 때(막힘 탈출 중)도 달린다(Phase 12: 달리며 점프하면 낮은 상자는 Hurdle로 넘고, 닫힌 문은 밀쳐 열린다) |
 | 투입 | 뛰어내리기 재입력 0.5초, 낙하 조종은 목표 5 m 안에서 멈춤, 목표는 POI 또는 받은 아이템 |
 | 막힘 탈출 | 0.5초 동안 0.3 m도 못 가면 점프 1회, 1초째도 막혔으면 좌우 90° 중 하나로 1–2초 우회, 8초 동안 목표에 가까워지지 않으면 그 목표(아이템, 지점)를 30초 버린다 |
-| 조준 | 눈(발 + 1.6 m)에서 적 가슴(발 + 1.2 m)으로. 적 위치는 마지막 Snapshot 값. 오차는 Yaw·Pitch에 ±(1° + 0.04° × 거리 m) 균등 분포를 0.3초마다 다시 뽑는다. ViewTick은 마지막 Snapshot의 서버 Tick |
+| 조준 | 눈(발 + 1.6 m)에서 적 가슴(발 + 1.2 m)으로. 기절한 적(키 0.9 m)은 몸 가운데(발 + 0.45 m, `BotAim.DownedChestHeight`). 적 위치는 마지막 Snapshot 값. 오차는 Yaw·Pitch에 ±(1° + 0.04° × 거리 m) 균등 분포를 0.3초마다 다시 뽑는다. ViewTick은 마지막 Snapshot의 서버 Tick |
 | 시선 검사 | 눈에서 가슴까지 0.5 m 간격 점. 점이 박스 안이거나 지형 아래면 막힘. 서버 `HitScan`은 쓰지 않는다. Fire를 45 Tick(`BotBrain.FireTicksWithoutHit`) 누르는 동안 `HitConfirmed`가 한 번도 없으면 그 적을 5초 동안 무시(자동 무기는 약 1.5초, 반자동은 한 Tick 걸러 눌러서 더 길다) |
 | 교전 사거리 | 무기 사거리, 최대 60 m |
 | 회복 | Health < 60 → Medkit, Shield < 25 → Shield Cell, 근처 15 m에 적 없을 때만 |
@@ -95,16 +97,23 @@ Client가 받는 정보만 쓴다. 서버 내부 상태는 보지 않는다.
 - 이벤트: 아이템, 인벤토리, 경기 상태, Zone, 사망
 - Phase 12: `TransportRoute`(수송기 경로. 뛰어내리기 Tick 계산), 자기 Entity의 모드(Snapshot `Flags`, 투입 규칙의 입구), `PlayerRespawned.Mode`(경기 시작 때 `Transport`)
 - Phase 13: `BuildCatalog`, `ResourcesState`, `BuildResult`, 건설 스트림의 조각 id(최대 4096개 기억), `DamageTaken`의 방향
+- Phase 14: `TeamState`(우리 팀만 온다. `BotView.IsTeammate`로 교전·회복 판단에서 팀원을 뺀다), 자기 `Downed` 모드(기어가기 규칙의 입구), `PlayerDowned`·`ChannelState`·`RebootStations`는 기억만 한다(QA가 읽는다)
+- Phase 15: `TeamMarkers`(Ping·Waypoint 목록). 임시 배열에 먼저 읽고 패킷 전체가 맞을 때만 View에 반영한다. 봇은 Ping을 보내지 않는다(D15). QA Actor가 읽는다
+- Phase 16: `ContainerStates`(생성·열림 마스크)와 `SupplyDrops`(목록, `TeamMarkers`처럼 임시 배열 뒤 반영). 봇은 Container·Supply Drop을 열지 않는다(D11). QA Actor가 읽는다
+- Phase 17: 투사체 패킷 3종은 세기만 한다(그리지도 피하지도 않는다)
+- Phase 19: `VehicleStates`(고정 8칸, 오래된 Tick은 버림)에서 자기 좌석을 찾는다(내리기 규칙의 입구)
 - Shared 맵 데이터: `GameMap` 박스·지형
 
 ## 한계
 
-지금 넣지 않은 것: 길찾기(NavMesh, A*: 건물 안 Loot를 놓칠 때가 있다), 봇 난이도 단계, 팀 AI, 서버 안 봇, 100명 초과, Unity의 봇 전용 표시(봇은 일반 원격 플레이어로 보인다). 조준 오차 등 수치는 옵션이 아니라 코드 상수다. 행동은 단조롭다. 목적은 경기·부하 테스트다.
+지금 넣지 않은 것: 길찾기(NavMesh, A*: 건물 안 Loot를 놓칠 때가 있다), 봇 난이도 단계, 협동하는 팀 AI(Phase 14부터 팀원을 쏘지 않고 기절하면 팀원 쪽으로 기어가지만, 함께 움직이거나 소생·재투입·Ping을 하지는 않는다), 서버 안 봇, 100명 초과, Unity의 봇 전용 표시(봇은 일반 원격 플레이어로 보인다). 조준 오차 등 수치는 옵션이 아니라 코드 상수다. 행동은 단조롭다. 목적은 경기·부하 테스트다.
 
 Phase 12에서 봇이 쓰지 않는 것:
 - 웅크리기·슬라이드·E로 문 여닫기는 쓰지 않는다. 닫힌 문은 달리기 밀치기로 자연히 열린다(막혔을 때 달린다).
 - 시야 판정(`LineOfSight`)은 문을 모른다(`GameMap.Boxes`와 지형만 본다). 닫힌 문 너머의 적을 보인다고 보고 쏘면 서버가 문에서 막는다. 맞히지 못하는 사격은 기존 규칙으로 그 적을 잠시 무시한다(Fire 45 Tick 동안 `HitConfirmed`가 없으면).
 - 글라이더를 일부러 펴지 않는다(서버의 자동 전개에 맡긴다). 낙하 중 목표에 도달하지 못하면 그냥 내린다.
+
+Phase 14–19에서 봇이 쓰지 않는 것: 소생·재투입(카드 줍기 포함), Ping·Waypoint, Container·Supply Drop 열기, 투사체 무기(로켓·로켓 탄·수류탄은 줍지도 쓰지도 않는다), 운전(탔으면 바로 내린다). 무기 교체 대기(리뷰 수정 C2, 0.4 s)를 따로 모델링하지 않는다. 칸을 바꾼 직후의 Fire는 서버가 대기 동안 무시한다.
 
 ## 테스트
 
@@ -120,9 +129,13 @@ Phase 12에서 봇이 쓰지 않는 것:
   - 배회 지점은 다음 원 안
   - `ATick_AllocatesNothing`: 판단 Tick 무할당
 - `BotDeployTests`(Phase 12): 뛰어내리기 Tick은 수송기가 목표에 가장 가까워지는 Tick이고 구간 안이다. 탑승 중에는 이동 없이 그 Tick부터 0.5초마다 Jump를 보낸다. 낙하 중에는 목표를 보고 앞으로 가다 5 m 안에서 멈춘다. 목표는 맵 안이고 POI·아이템에 흩어진다. 착지하면 전과 같이 논다. 경로가 없으면 기다린다. 막힌 봇은 달린다
+- `BotSquadTests`(Phase 14): 팀원은 대상이 아니고 적은 대상이다, 기절한 적은 대상으로 남고 낮게(0.45 m) 조준한다, 기절한 봇은 가장 가까운 팀원 쪽으로 기어가고 쏘지 않는다, 팀원 옆(1.5 m 안)이면 멈춘다
+- `BotMarkerTests`(Phase 15): 거절된 `TeamMarkers`는 마지막 목록을 그대로 둔다
+- `BotVehicleTests`(Phase 19): `ApplyVehicles`가 자기 좌석을 찾고 오래된 Tick을 버린다, 앉은 봇은 입력 하나 걸러 E를 누르고 운전하지 않는다
 - `BotBuilderTests`(Phase 13): 방어 벽 방향·확률·대기, 경사로 조건, 스팸 일정, 실제 서버에서 스팸 요청이 받아들여짐
 - `BotPartsTests`: `LineOfSight`(트인 곳, 벽, 언덕), `BotAim`(오차 0이면 서버 `CombatRules`와 같은 방향, 오차는 범위 안), `BotSteering`(직진, 점프 → 우회 → 포기, 진전이 있으면 포기를 미룸), `BotOptions`(파싱·범위 검증)
 - `BotIntegrationTests`: 같은 프로세스에서 서버 `GameLoop`를 띄우고 봇이 실제 UDP로 접속
   - `ABot_FindsAndPicksUpAWeapon`: `DevRespawn`, 빈손, 무기만 나오는 Loot에서 20초 안에 무기를 줍는다
   - `TwoArmedBots_FightUntilOneDies`: 전투 장비 봇 2명이 30초 안에 한 명을 처치한다
   - `FourBots_PlayAWholeMatch_AndTheNextRoundStarts`: 경기 서버에서 봇 4명이 경기를 끝까지 하고 `MatchResult`를 받고 다음 판 카운트다운이 시작된다
+  - `ABotConnection_ReadsContainerStatesAndSupplyDrops`(Phase 16): 봇 연결(QA Actor도)이 `ContainerStates`·`SupplyDrops`를 받는다(생성 마스크 ≠ 0, 열림 0)

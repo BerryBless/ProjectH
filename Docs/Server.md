@@ -26,14 +26,14 @@ MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 �
 | BadPacketDisconnectThreshold | 20 | ≥ 1 |
 | DisconnectTimeoutMs | 5000 | ≥ 500 |
 | StatsIntervalSeconds | 10 | ≥ 1 |
-| LootSeed | 1 | ≥ 0. Loot 난수 시드. 경기마다 `LootSeed + 판 번호`로 굴린다(같으면 배치가 같다) |
+| LootSeed | 1 | ≥ 0. Loot 난수 시드. `DeterministicSeeds`일 때만 쓴다: 경기마다 `LootSeed + 판 번호`로 굴린다(같으면 배치가 같다). 기본(false)은 경기 비밀로 굴린다(아래 `DeterministicSeeds`) |
 | LootRespawnSeconds | 30 | 0–3600. 다 가져간 Spawn Point를 다시 채우는 시간, 0이면 끔. `DevRespawn`일 때만 쓴다 |
 | MinPlayers | 2 | 2–MaxPlayers (1명이면 경기가 첫 Tick에 끝나 판이 무한 반복되므로 2 이상). 이 인원이 모이면 카운트다운 |
 | StartCountdownSeconds | 10 | 1–300. 카운트다운(`Starting`) |
 | ResultSeconds | 10 | 1–300. 결과 화면(`Finished`) |
 | DevRespawn | false | true = Phase 3·4 테스트 아레나(경기 흐름 없음, 피해 항상, 3초 부활, Loot 처음부터·재생성, 경기 패킷 없음). 운영은 false |
-| ZoneSeed | 1 | ≥ 0. Zone 중심 난수 시드. 경기마다 `ZoneSeed + 판 번호` |
-| SpawnSeed | 1 | ≥ 0. 투입 지점 섞기 시드. 경기마다 `SpawnSeed + 판 번호`. `AirDrop`이면 수송기 경로의 시드이기도 하다 |
+| ZoneSeed | 1 | ≥ 0. Zone 중심 난수 시드. `DeterministicSeeds`일 때만 경기마다 `ZoneSeed + 판 번호` |
+| SpawnSeed | 1 | ≥ 0. 투입 지점 섞기 시드. `DeterministicSeeds`일 때만 경기마다 `SpawnSeed + 판 번호`. `AirDrop`이면 수송기 경로의 시드이기도 하다 |
 | DeterministicSeeds | false | 리뷰 수정 C1(SEC-6·11). false면 위 세 시드를 쓰지 않는다. 경기 시작마다 만드는 경기 비밀(8B 난수, 보내지 않는다)에 용도(Loot·Zone·투입 순서·경로)와 판 번호를 섞어 굴리고, 무기 퍼짐 해시에도 넣는다. 코드와 설정을 알아도 Loot·Zone·투입·퍼짐을 미리 알 수 없다. true면 예전처럼 `시드 + 판 번호`이고 퍼짐에 비밀이 없다(시험·QA 재현용, QA 도구가 띄우는 서버는 true). Production에서 true면 시작 때 Warning을 남긴다. `/qa/health`의 `seeds`는 true일 때만 값이 있다 |
 | AirDrop | true | Phase 12: 경기가 수송기에서 시작한다(`BattleRoyale.md` "공중 투입". Zone 시계는 경로가 끝나는 Tick에 시작). false면 Phase 6의 투입 지점에서 땅으로 시작한다(Phase 5–11 규칙 테스트와 Phase 11과의 부하 비교용). `DevRespawn`이 true면 이 값과 상관없이 땅에서 시작한다 |
 | BuildInfiniteResources | false | Phase 13: true면 건설에 자원이 들지 않는다(부하 테스트용, `Building.md` "자원"). 운영은 false |
@@ -49,24 +49,37 @@ MySQL에 경기 기록을 남기려면 먼저 `docker compose up -d`(개발용 �
 | FatalStallSeconds | 30 | 0 = 끔, 아니면 5–3600. 서버 리뷰 M8: Game Loop가 이 시간보다 오래 멈추면 새 연결을 막고 종료 코드 1로 끝낸다("예외 복구") |
 | InputTimeoutSeconds | 10 | 0 = 끔, 아니면 2–300이고 `InputTimeoutSeconds × 1000 ≥ DisconnectTimeoutMs + 2000`(기본 5000이면 7 이상, 최솟값 500이면 3 이상). Join한 peer가 입력을 보내야 하는 간격. 넘으면 `InputTimeout`으로 끊는다. LiteNetLib Timeout보다 먼저 오면 네트워크 끊김이 서버 끊기로 보여 유예를 잃으므로 이 조건을 둔다 |
 
-데이터 파일: `Server/src/ProjectH.Server/weapons.json`, `items.json`, `loot.json`, `zones.json`, `building.json`(Phase 13), `squad.json`(Phase 14), `map.json`(Phase 15, 출력 폴더로 복사). 시작 시 `GameData.LoadDirectory`가 일곱을 읽고 검증한다.
+데이터 파일: `Server/src/ProjectH.Server/weapons.json`, `items.json`, `loot.json`, `zones.json`, `building.json`(Phase 13), `squad.json`(Phase 14), `map.json`(Phase 15), `vehicles.json`(Phase 19). 모두 출력 폴더로 복사한다. 시작 시 `GameData.LoadDirectory`가 여덟을 읽고 검증한다.
+- `vehicles.json`(`VehicleCatalog`, Phase 19): 서버 전용 차량 수치. `maxHealth` 1–65535, `impactMinSpeed` 0–50 m/s, `impactDamagePerMps` 0–1000, `runOverMinSpeed` 0–50 m/s, `runOverDamagePerMps` 0–1000, `runOverCooldownSeconds` 0.1–60, `wreckSeconds` 0.5–600, `wreckOccupantDamage` 0–1000, `wreckCreditSeconds` 0.1–600, `interestRange` 10–1000 m(`VehicleStates`에 싣는 거리, 기본 120). 모두 유한해야 한다. 운동 수치·탑승 거리·좌석은 예측이 써야 해서 Shared `VehicleSettings`에 있다. 규칙은 `Vehicles.md`.
 - `map.json`(`MapCatalog`, Phase 15): Ping 수명(Location·Item·Danger `pingSeconds` 8, Enemy `enemyPingSeconds` 4, 각 1–60초), 플레이어당·팀당 활성 Ping(`pingsPerPlayer` 3 ≤ `pingsPerTeam` 8 ≤ 8, `TeamMarkers` 상한), Enemy·Item 확인 거리(`enemyPingRange` 150, `itemPingRange` 60, 1–500 m), 수신 스레드 속도 제한(`pingsPerSecond` 2, `pingBurst` 4, 각 1–20, `maxMarkerPacketsPerSecond` 20, 그 둘 이상 100 이하). 틀리면 서버가 시작하지 않는다. 코드 안의 같은 값(`MapCatalog.DefaultJson`, 파일과 같음을 `MapCatalogTests`가 고정)은 파일 없이 만드는 테스트용 `GameData`만 쓴다. 규칙은 `Map.md` "지도 UI·Ping".
 - `squad.json`(`SquadCatalog`, Phase 14): 기절 체력·출혈 시간, 소생 시간·거리·체력·피해 취소, 재투입 시간·거리, 카드 수명·소지 최대(1–3), 스테이션 대기, 재투입 장비(무기 id·탄은 `weapons.json`·`items.json`과 맞아야 한다). `friendlyFire`는 false만 된다. 틀리면 서버가 시작하지 않는다. 표는 `Squad.md`. 팀 크기는 설정 `Server:TeamSize`(1–4, 기본 1 Solo)다.
 - `building.json`(`BuildingCatalog`, Phase 13): 재료 Wood·Stone·Metal 각 1개(비용·최대 체력·처음 체력 비율·건설 초·피해 배율), 최대 자원, 채집 도구(사거리·간격·피해·약점 반지름·배율), 채집 대상 4종(체력·한 번 양·부술 때 추가), 건설(사거리, 시야각, 최소 간격, 경기·플레이어 조각 상한, 초당 요청 상한 1–1000), 관심 영역(칸 크기는 건설 칸의 배수이고 맵을 64칸 이하로 나눔, 반지름, 여유). 칸 크기는 20·40·80·160 m만 된다. 파일이 없거나 틀리면 서버가 시작하지 않는다. 코드 안의 같은 값(`BuildingCatalog.DefaultJson`, 파일과 같음을 `BuildingCatalogTests`가 고정)은 파일 없이 만드는 테스트용 `GameData`만 쓴다.
-- `weapons.json`(`WeaponCatalog`): 무기 1–8개, Id 1–255·이름 중복 없음, 이름 1–16 UTF-8 바이트, damage 1–65535, magazineSize 1–255, fireIntervalSeconds·reloadSeconds > 0이고 Tick으로 바꿔 65535 이하, range > 0, ammoType Light·Medium·Heavy·(Phase 17) Shells·Rockets, 모두 유한. Phase 17 D2(선택, 빠지면 옛 동작): `pellets` 1–16(기본 1), `spreadDegrees` 0–30(기본 0), `recoilDegrees` 0–30(Client만), `falloffStart` 0–range(기본 range = 감쇠 없음), `falloffMinRatio` 0–1(기본 1), `structureMultiplier` 0–10(기본 1), `projectile` "Grenade"·"Rocket"(`projectiles`에 정의가 있어야 하고 pellets 1). 옛 `spread`·`recoil` 필드는 읽지 않는다.
+- `weapons.json`(`WeaponCatalog`): 무기 1–8개, Id 1–255·이름 중복 없음, 이름 1–16 UTF-8 바이트, damage 1–65535, magazineSize 1–255, fireIntervalSeconds·reloadSeconds > 0이고 Tick으로 바꿔 65535 이하, range > 0, ammoType Light·Medium·Heavy·(Phase 17) Shells·Rockets, 모두 유한. Phase 17 D2(선택, 빠지면 옛 동작): `pellets` 1–16(기본 1), `spreadDegrees` 0–30(기본 0), `recoilDegrees` 0–30(Client만), `falloffStart` 0–range(기본 range = 감쇠 없음), `falloffMinRatio` 0–1(기본 1), `structureMultiplier` 0–10(기본 1), `projectile` "Grenade"·"Rocket"(`projectiles`에 정의가 있어야 하고 pellets 1). 리뷰 수정 C2(선택): `equipSeconds` 0–2 s(기본 0.4, 손에 든 뒤 쏠 수 있을 때까지. Tick으로 바꿔 256 이하, 0이 아니면 최소 1 Tick. `WeaponCatalog`으로 Client에 `EquipTicks`가 간다). 옛 `spread`·`recoil` 필드는 읽지 않는다.
   - Phase 17 `projectiles`(선택): 키 Grenade·Rocket. `speed` 0 초과–200, `gravity` 0–50, `lifetimeSeconds` 0 초과–30(수류탄의 퓨즈, 로켓의 수명), `explosionRadius` 0 초과–10, `explosionDamage`·`structureDamage` 0–65535(합 > 0), `bounce` 0–0.95(0 = 맞으면 폭발). Grenade는 bounce > 0, `throwIntervalSeconds` > 0, `throwUpDegrees` −45–45가 필요하다. 운영 시작(`GameData.LoadDirectory`)은 Grenade 정의가 있어야 한다(`WeaponCatalog.RequireGrenade`). 표와 규칙은 `Weapons.md`.
 - `items.json`(`ItemCatalog`): 등급 정확히 5개(이름 중복 없음, 배율 0 초과 10 이하), 탄약 Light·Medium·Heavy·(Phase 17) Shells·Rockets 각 1개(max 1–65535, pickupAmount 1–max), 소모품 Medkit·ShieldCell 각 1개(useSeconds > 0, heal·shield ≥ 0이고 합 > 0, maxStack 1–255)와 (Phase 17) Grenade 1개(useSeconds·heal·shield 없음 또는 0, maxStack 1–255). 이름은 1–16 UTF-8 바이트이고 목록 안에서 중복 없음.
 - `loot.json`(`LootTable`): rarityWeights에 5개 등급 이름이 모두 있고 가중치 1–1,000,000, 표 1개 이상, 표마다 항목 1개 이상, kind(Weapon, Ammo, Medkit, ShieldCell, Phase 16: Material, Phase 17: Grenade) 중복 없음, 가중치 1–1,000,000. Shared `LootPoints`가 쓰는 표 이름이 모두 있어야 한다. Phase 17 D13: 객체 표는 `weapons`(무기 id 목록, 중복 없음, 모두 `weapons.json`에 있어야 한다 — `GameData`가 검사)와 `ammo`(탄 종류 이름 목록)를 가질 수 있다. 없으면 카탈로그 전체·모든 탄 종류에서 고른다. 표는 `Loot.md`.
-  - Phase 16 D5: 표는 예전처럼 항목 배열(굴림 1번, 전역 등급)이거나 객체 `{ "rarityWeights"?, "rolls"?, "guaranteed"?, "entries" }`다. `rarityWeights`(표별, 선택)는 이름이 items.json에 있고 가중치 0–1,000,000, 합 > 0(빠진 등급 = 0: Supply Drop은 Epic·Legendary만). `rolls` 1–4(기본 1, Container 칸 수). `guaranteed`는 Weapon·Ammo·Medkit·ShieldCell 이름 목록(먼저 하나씩 나온다, rolls 이하, Material 불가). 남은 굴림은 `entries` 가중치로(남은 굴림이 있으면 항목 1개 이상). `Material` 항목은 `amount` 1–1000이 있어야 하고(재료는 나무·돌·금속 중 균등, DefId = 재료 + 1), 다른 종류에는 `amount`가 없어야 한다.
+  - Phase 16 D5: 표는 예전처럼 항목 배열(굴림 1번, 전역 등급)이거나 객체 `{ "rarityWeights"?, "rolls"?, "guaranteed"?, "entries" }`다. `rarityWeights`(표별, 선택)는 이름이 items.json에 있고 가중치 0–1,000,000, 합 > 0(빠진 등급 = 0: Supply Drop은 Epic·Legendary만). `rolls` 1–4(기본 1, Container 칸 수). `guaranteed`는 Weapon·Ammo·Medkit·ShieldCell·Grenade 이름 목록(먼저 하나씩 나온다, rolls 이하, Material 불가). 남은 굴림은 `entries` 가중치로(남은 굴림이 있으면 항목 1개 이상). `Material` 항목은 `amount` 1–1000이 있어야 하고(재료는 나무·돌·금속 중 균등, DefId = 재료 + 1), 다른 종류에는 `amount`가 없어야 한다.
   - `spawnChance`(선택): `{ "Chest": 0–1, "AmmoBox": 0–1 }`, 기본 1. 경기 시작의 Container 생성 확률.
-  - `supplyDrops`(선택): `{ "times": [초…], "fallSpeed": m/s }`. times는 자기장 시계(수송기 경로 끝) 기준 0–3600초 오름차순, 0–4개. fallSpeed 0.5–60(기본 4). 시작 높이 60 m는 Shared 상수 `SupplyDropFall.StartHeight`다(패킷에 없어서).
+  - `supplyDrops`(선택): `{ "times": [초…], "fallSpeed": m/s }`. times는 자기장 시계(수송기 경로 끝) 기준 0 초과 3600 이하의 초 오름차순, 0–4개. fallSpeed 0.5–60(기본 4). 시작 높이 60 m는 Shared 상수 `SupplyDropFall.StartHeight`다(패킷에 없어서).
   - 운영 시작(`GameData.LoadDirectory`)은 표 `Chest`·`AmmoBox`·`SupplyDrop`이 모두 있어야 한다(없으면 시작하지 않는다). 테스트용 `GameData` 생성자는 검사하지 않는다(그 표가 없으면 그 Container가 생기지 않는다).
 - `zones.json`(`ZoneData`): initialCenter [x, z]는 유한하고 ±arenaHalfSize 안, arenaHalfSize·initialRadius는 0 초과 10000 이하, 단계 1–16개, 단계마다 waitSeconds·shrinkSeconds > 0(Tick으로 65535 이하), targetRadius ≥ 0이고 첫 단계는 initialRadius 이하·그 뒤로는 계속 줄어든다, damagePerSecond 0–65535. 마지막 단계는 targetRadius 0이고 damagePerSecond > 0이어야 한다(모든 경기가 끝나도록).
 초 값은 `SimHz`로 반올림해 Tick으로 바꾼다(최소 1). 파일이 없거나 틀리면 `GameServerService` 생성자가 `InvalidOperationException`을 던져 서버가 시작하지 않는다.
 
-파생값: `SnapshotHz = SimHz / SnapshotEveryTicks`, `MaxInputPacketsPerSecond = SimHz * 2`(peer별 입력 Token Bucket이 초당 채워지는 수), `InputBurst = SimHz`(그 Bucket 크기. 서버 리뷰 M5, L5).
+파생값: `SnapshotHz = SimHz / SnapshotEveryTicks`, `MaxInputPacketsPerSecond = SimHz * 2`(peer별 입력 Token Bucket이 초당 채워지는 수), `InputBurst = SimHz`(그 Bucket 크기. 서버 리뷰 M5, L5), `InputSeqWindow = max(64, SimHz × (DisconnectTimeoutMs + 1000) / 1000)`(리뷰 수정 A4: 마지막으로 가져간 Seq보다 이만큼 넘게 앞선 입력은 버린다. 기본 30 × 6 = 180. `Networking.md` "Validation"), `AcceptBurst = MaxPlayers`(전역 수락 Bucket 크기, 리뷰 수정 A2).
 
 로그(서버 리뷰 M1): Console logger는 큐가 차면 기다리지 않고 줄을 버린다(`QueueFullMode = DropWrite`, `ServerHost` 코드와 `appsettings.json` 양쪽). 출력을 받지 않는 콘솔(Windows 콘솔에서 텍스트를 선택한 채 둔 QuickEdit, 아무도 읽지 않는 파이프)이 Game Loop와 LiteNetLib 스레드를 멈추지 않게 하기 위해서다. 운영 콘솔에서는 QuickEdit를 끈다. 연결마다 생기는 로그(연결·해제, Join, 유예 시작, Timeout·Join 거절 끊기)는 Debug이고 Health 줄이 센다.
+
+## 보안·접속 허가 (리뷰 수정 A·B)
+
+설계 근거: `Docs/specs/2026-10-08-review-fixes-design.md`. 형식과 순서는 `Networking.md` "접속 순서"·"Validation", 설정은 위 표(`MaxConnectionsPerIp`, `AcceptsPerSecond`, `PrivateKeyPem`, `PrivateKeyPath`), 표·버퍼는 아래 "Queue"에 있다. 여기에는 한곳에서 볼 값만 모은다.
+
+- **크기(A1):** Client 패킷은 `ProtocolLimits.MaxClientPacketBytes` 128B를 넘으면 파싱하지 않는다(`Malformed`). 서버·Client·봇의 `MaxFragmentsCount`는 `ProtocolLimits.MaxFragments` 2다(LiteNetLib이 재조립 전에 버린다).
+- **접속 허가(A2·A3·A6):** 같은 IP 칸의 동시 연결 4개(`MaxConnectionsPerIp`), IP별 연결 요청 Bucket 20개·초당 5개, 전역 수락 Bucket `AcceptBurst` = MaxPlayers개·초당 20개. 쿠키 = HMAC-SHA256(시작 때 만든 32B 비밀, 주소 ‖ 포트 ‖ 30초 창 번호)의 앞 16B이고 지금 창과 바로 전 창의 것만 통과한다. 같은 IP 칸에서 60초 안 플레이어 실패 3번(또는 세션 키 복호 실패 3번)이면 그 칸을 60초 거절한다(`penalties`).
+- **세션 키와 데이터그램 인증(B1–B3):** 서버 키는 RSA-2048, `RSA.ToXmlString` XML 텍스트다(Unity Mono에 PEM 가져오기가 없다). Client는 접속마다 32B 세션 키를 공개키 핀(개발용 `DevServerPublicKey.Xml`)으로 RSA-OAEP-SHA1 암호화해 보낸다. 모든 데이터그램 끝에 counter u32 + HMAC-SHA256 앞 16B = 20B 꼬리, 64칸 재전송 창. 암호화는 하지 않는다(무결성·재전송 방지만).
+- **키 찾는 순서(`ServerIdentity`):** `Server:PrivateKeyPem`(환경 변수 `Server__PrivateKeyPem`, XML 자체) → `Server:PrivateKeyPath`(XML 파일) → 서버 옆 `keys/dev-server-key.xml`. Production 환경에서 개발용 키면 시작을 거부한다. 빌드한 dll을 직접 띄우는 개발 서버는 `--environment Development`를 준다(위 "실행").
+- **Resume 증명(B4):** 유예 캐릭터는 이전 연결의 Resume 키로 만든 증명이 있어야 되찾는다. 계정은 여전히 자기 신고 DevPlayerId다(`Database.md`).
+- **한 PC의 봇:** IP 칸마다 연결 4개라, 봇을 4명 넘게 붙이는 부하 테스트는 `--Server:ConnectBurstPerIp=200 --Server:MaxConnectionsPerIp=200`을 준다(위 "실행", `LoadTest.md`).
+- **비용:** `stress-quick`(봇 50명) steady 구간의 movement Tick p99가 0.171 → 0.284 ms(재실행 0.289 ms, +66–69 %)가 됐다. Game Loop 스레드에서 송신 데이터그램마다 HMAC을 봉인하는 B3의 직접 비용으로 보고 받아들였다(Tick 예산 33 ms의 1 % 아래). 100명 stress는 다시 재지 않았다(`Docs/plans/2026-10-08-review-fixes.md`).
 
 ## 스레드와 소유권
 
@@ -86,13 +99,13 @@ Phase 12: 문 상태(`DoorSet`, 열린 문 마스크와 충돌 세계 배열)와
 우리 코드의 Lock은 하나다: Shared `SessionKeys._sendLock`(리뷰 수정 B3, 연결마다 하나). 데이터그램 하나의 송신 counter를 올리고 HMAC을 계산하는 동안만 잡는다. 안에서 콜백·I/O·다른 Lock을 부르지 않으므로 **leaf lock**이고 중첩되지 않는다. LiteNetLib가 자기 Lock을 잡은 채 계층을 부를 수 있지만, `_sendLock` 안에서 LiteNetLib로 돌아가는 호출이 없어 역순 획득이 생기지 않는다(Deadlock 불가). 키 표 청소는 `_sendLock`을 잡고 LiteNetLib를 부르지 않는다(`Dispose`만 `_sendLock` 안에서 HMAC을 해제). Lock Ordering: 단일 leaf lock, 중첩 없음. 그 밖의 스레드 간 전달은 `System.Threading.Channels`, 카운터는 `Interlocked`, 키 표는 `ConcurrentDictionary`다.
 Lock을 추가하게 되면 이 문서에 순서를 적는다.
 
-Tick 루프: `DrainControl` → `DrainInput` → `SweepPeers`(stale peer 정리 + Join·Input Timeout + Join 거절된 peer 끊기) → `SendStatsReplies`(전적 답 최대 32개) → `Match.Tick`(맨 앞에서 `ExpireGrace`). Tick이 5 Tick 이상 밀리면 밀린 분을 건너뛴다(`lateTicksSkipped`). Tick 예외는 "예외 복구"를 본다.
+Tick 루프: `DrainControl` → `DrainInput` → `DrainBuild`(Phase 13) → `DrainMarkers`(Phase 15) → `SweepPeers`(stale peer 정리 + Join·Input Timeout + Join 거절된 peer 끊기) → `SendStatsReplies`(전적 답 최대 32개) → `Match.Tick`(맨 앞에서 `ExpireGrace`). Tick이 5 Tick 이상 밀리면 밀린 분을 건너뛴다(`lateTicksSkipped`). Tick 예외는 "예외 복구"를 본다.
 
-`Match.Tick`은 플레이어마다 `MovementSimulation.Step(ref state, input, 1/SimHz, DoorSet.World, GameMap.Terrain)`를 호출한다(Shared 지형과 충돌. 규칙은 `Networking.md` "이동 충돌", 모드는 `Movement.md`). Phase 12: 세계는 `GameMap.Boxes` 뒤에 닫힌 문을 붙인 고정 배열이고(문이 바뀔 때만 다시 쓴다), 공중 투입 경기에서 `Transport` 탑승자는 `Step` 대신 `DropTransport.Ride`로 경로에 놓는다. `Step` 결과로 문 밀치기·이동 이상 검사·낙하 피해를 처리한다. 박스 58개(128개 이하) + 문 5개 × 100명 × 30 Hz, 지형 높이 조회는 칸 하나라 무시할 수준이고 할당이 없다. 대기 Spawn은 중앙 광장(반지름 12 m) 안의 5 m 원 위다(`GameMapTests`). 경기 시작은 수송기에서(`AirDrop`) 또는 투입 지점에서 한다(`BattleRoyale.md`).
+`Match.Tick`은 플레이어마다 `MovementSimulation.Step(ref state, input, 1/SimHz, DoorSet.World, GameMap.Terrain)`를 호출한다(Shared 지형과 충돌. 규칙은 `Networking.md` "이동 충돌", 모드는 `Movement.md`). Phase 12: 세계는 `GameMap.Boxes` 뒤에 닫힌 문을 붙인 고정 배열이고(문이 바뀔 때만 다시 쓴다), 공중 투입 경기에서 `Transport` 탑승자는 `Step` 대신 `DropTransport.Ride`로 경로에 놓는다. `Step` 결과로 문 밀치기·이동 이상 검사·낙하 피해를 처리한다. Phase 13부터 세계는 플레이어 주변에서 `CollisionWorld.Gather`가 모은 맵 상자·닫힌 문·채집 대상·건설 조각이다(편집된 조각은 `BuildGrid.PartsOf`의 상자들, `Movement.md` "건설 조각과 충돌 후보"). Phase 19: 차에 탄 플레이어는 `Step`을 부르지 않는다(좌석 위치, 쉬는 `Ground`. `Movement.md` "차량 좌석"). 박스 54개(128개 이하) + 문 5개 × 100명 × 30 Hz, 지형 높이 조회는 칸 하나라 무시할 수준이고 할당이 없다. 대기 Spawn은 중앙 광장(반지름 12 m) 안의 5 m 원 위다(`GameMapTests`). 경기 시작은 수송기에서(`AirDrop`) 또는 투입 지점에서 한다(`BattleRoyale.md`).
 
 Snapshot 송신(Phase 8): `Match.SendSnapshots`가 플레이어 목록을 90명씩 나눠 Part마다 버퍼 하나를 만들고, 수신자마다 Ack·수신자 블록만 덮어써 보낸다(100명이면 수신자당 2패킷, 할당 없음). 형식은 `Networking.md` "Snapshot 분할과 양자화".
 
-전투(Phase 3, 규칙은 `Networking.md` "전투"·"인벤토리와 Loot"): `Match.Tick`은 (Phase 5: 경기 흐름 전환 → Zone 진행·피해) → (`DevRespawn`만) 부활 → (`DevRespawn`만) Loot 재생성 → 입력·이동 → 재장전 완료 → 실제 입력의 사용 취소·칸 선택·버리기·줍기·재장전·발사(`HitScan`)·사용 시작 → 사용 완료 → (Phase 5: 종료 판정) → `ServerTick++` → 바뀐 인벤토리 전송 → (Phase 5: 바뀐 `MatchState`·`ZoneState` 전송) → History 기록 → Snapshot 순서다. 전투 코드는 `Game/Combat/`(`WeaponCatalog`, `WeaponDefinition`, `WeaponRules`, `HitScan`, `CombatRules`, `PositionHistory`)에 있고 Game Loop 스레드만 쓴다. `WeaponCatalog`는 시작 후 바뀌지 않는다. 발사 한 번은 박스 58개 + 지형 칸 + 플레이어 수만큼의 slab 교차이고, 전송은 `_sendBuffer` 하나를 재사용하므로 발사 Tick도 할당이 없다(`LagCompensationTests.FiringTick_AllocatesNothing`).
+전투(Phase 3, 규칙은 `Networking.md` "전투"·"인벤토리와 Loot"): `Match.Tick`의 순서(Phase 19 + 리뷰 수정 기준, 단계별 자세한 내용은 `Networking.md` "전투 (Phase 3)"의 서버 Tick 순서)는 유예 만료 → 경기 흐름 전환 → (경기 중) Zone 진행·피해 → (경기 중) Supply Drop → (`DevRespawn`만) 부활 → Loot 재생성 → (경기 중) 카드 만료 → 자원 자동 줍기 → 건설·편집 요청 → 투사체 이동·폭발 → 플레이어마다(격리) 입력·(기절 출혈)·(탑승 중이면 차량 입력만)·이동·재장전 완료·실제 입력의 행동(사용 취소·도구·칸 선택·버리기·E·재장전·발사(`HitScan`)·휘두르기·수류탄·사용 시작)·소생/재투입·사용 완료 → 실패한 플레이어 내보내기 → 차량(`UpdateVehicles`) → 조각 붕괴 → (경기 중) 종료 판정 → `ServerTick++` → 바뀐 상태 전송(인벤토리, `MatchState`·`ZoneState`, 문, 채집, Loot, 자원, 팀, 스테이션, 팀 표시, 건설 사건) → 플레이어 History 기록 → 차량 기록 → Snapshot과 `VehicleStates`다. 전투 코드는 `Game/Combat/`(`WeaponCatalog`, `WeaponDefinition`, `WeaponRules`, `HitScan`, `CombatRules`, `PositionHistory`)에 있고 Game Loop 스레드만 쓴다. `WeaponCatalog`는 시작 후 바뀌지 않는다. 발사 한 번은 박스 54개 + 지형 칸 + 플레이어 수만큼의 slab 교차이고, 전송은 `_sendBuffer` 하나를 재사용하므로 발사 Tick도 할당이 없다(`LagCompensationTests.FiringTick_AllocatesNothing`).
 
 경기 흐름(Phase 5, 규칙은 `BattleRoyale.md`): `Game/Flow/MatchFlow`(상태 기계, 판 번호, 참가자·생존자 수, 피해·부활 허용 여부)와 `Game/Zone/`(`ZoneData`, `SafeZone`: 경기마다 시드로 원을 모두 굴려 두고 `Sample`·`IsOutside`는 고정 배열만 읽는다. 반지름 0인 원은 안이 없다). 둘 다 `Match`가 소유하고 Game Loop 스레드만 쓰며 Lock이 없다. 서버는 빈 채로, 경기 전(`WaitingForPlayers`, 월드 아이템 없음)으로 시작한다. 경기 시작의 `System.Random` 생성(Loot·Zone·투입 지점 섞기, Phase 12의 수송기 경로 `DropPlanner`, Phase 16의 Container·Supply Drop 각 1개)만 할당이고(판 재시작은 할당이 없다), 진행 중인 경기의 Tick은 Zone 피해가 있어도 할당이 없다(`MatchEliminationTests.MatchTicks_WithZoneDamage_DoNotAllocate`). 경기 전에는 피해가 없고(`MatchFlow.DamageAllowed`), 경기 중 사망은 영구적이며(부활·Loot 재생성은 `DevRespawn`일 때만), 이탈은 탈락으로 처리해 인벤토리를 떨어뜨린다. `Match`의 테스트용 접근자(`Flow`, `Zone`, `MatchStartTick`, `WinnerId`)는 `InternalsVisibleTo`로만 보인다.
 
@@ -143,6 +156,10 @@ Game Loop는 Tick당 입력 메시지를 최대 `MaxInputMessagesPerTick`개만 
 | `Match._explosionPieces`(Phase 17 D8) | 폭발 한 번이 볼 수 있는 조각 상한(7 × 7 칸 × 16 층 × 5 = 3,920 id), 생성 때 한 번 | 폭발마다 처음부터 다시 쓴다. 상한을 넘는 조각은 피해를 받지 않는다(반지름 10 m 상한 안에서는 넘지 않는다) |
 | `Match._explosionLog`(Phase 17 D17, QA 관찰) | 16칸 Ring, 생성 때 한 번 | 가장 오래된 칸을 덮어쓴다 |
 | `Match._pelletTargets`·`_pelletPieces`(Phase 17 D4) | 16칸(`MaxPellets`) 고정 배열 | 사격마다 처음부터 쓰고, 끝나면 플레이어 참조를 지운다 |
+| 투사체 개인 상한(리뷰 수정 C5) | 한 사람(JoinOrder)이 동시에 가진 투사체 `ProjectileRules.MaxPerOwner` = 4개(32칸 안에서) | 넘으면 쏘지·던지지 않고 탄을 쓰지 않는다(`ProjectilesRefused`). 폭발·지움으로 줄어든다 |
+| `Match._vehicles`(Phase 19) | `VehicleSettings.MaxVehicles` = 8칸 고정 배열(`Vehicle` 객체, 생성 때 한 번). 기록 배열 `_vehicleRecords`·`_vehicleRecordOwners`도 8칸 | 칸은 생성(경기 시작)부터 제거(잔해 시간 끝, 경기 시작·끝, 라운드 리셋)까지 쓴다. id는 u8(1–255) 카운터이고 쓰는 id와 1초 안에 지운 id를 건너뛴다(`_vehicleRemovedTick`·`_vehicleRemoved`, 256칸 고정) |
+| `VehicleHistory`(Phase 19 D7, 차량마다) | 32칸 고정 링(`Capacity`, `PositionHistory`와 같다) | 가장 오래된 칸을 덮어쓴다. 차량을 만들 때 다시 시작한다 |
+| `Match._pelletVehicles`·`_pelletVehicleDamage`(Phase 19) | 16칸(`MaxPellets`) 고정 배열 | 사격마다 처음부터 쓴다 |
 
 ## Lifetime
 
@@ -172,8 +189,8 @@ Health peers players graced match=<State>#<Round>
   badPackets unknownId malformed beforeJoin duplicateJoin inputRate wrongDirection handlerException buildRate markerRate
   inputSeqDrops authDrops authDropsRetired
   tickFailures loopFailures matchResets stalls movementAnomalies networkErrors playerFailures penalties stallExits callbackErrors
-  build pieces cells requests accepted destroyed collapsed duplicates eventPackets syncPackets
-  buildRejects noResource outOfRange blocked unsupported occupied rateLimited invalidState invalidRequest budgetFull
+  build pieces cells requests accepted destroyed collapsed duplicates edits eventPackets syncPackets
+  buildRejects noResource outOfRange blocked unsupported occupied rateLimited invalidState invalidRequest budgetFull notOwner notFound
   harvest hits envDestroyed syncDeferred
   buildInboxDrops
   squad downs revives reboots bleedOuts cardsDropped cardsExpired wipes channelsCancelled
@@ -220,12 +237,12 @@ dotnet-counters monitor -n ProjectH.Server --counters ProjectH.Server
 | `projecth.cookie_challenges`, `projecth.penalties`, `projecth.input_seq_drops` | Counter | 리뷰 수정 A3, A6, A4 |
 | `projecth.auth_drops` | Counter | 리뷰 수정 B3. `where` = `live`(열린 연결의 키, 정상이면 0) / `retired`(은퇴 키, 리뷰 B 2차) |
 | `projecth.kicks` | Counter | `code` = `Kicked` / `JoinTimeout` / `InputTimeout` / `ServerError`(종료는 Kick이 아니라 `ServerShutdown` 계열이 없다) |
-| `projecth.bad_packets` | Counter | `reason` = `BadPacketReason` 7가지 |
+| `projecth.bad_packets` | Counter | `reason` = `BadPacketReason` 9가지(Phase 13 `BuildRate`, Phase 15 `MarkerRate` 포함) |
 | `projecth.tick_failures`, `projecth.loop_failures`, `projecth.match_resets`, `projecth.stalls` | Counter | |
 | `projecth.movement_anomalies` | Counter | Phase 12. 정상이면 0 |
 | `projecth.network_errors`, `projecth.player_failures`, `projecth.stall_exits`, `projecth.callback_errors` | Counter | 서버 리뷰 M1, M7, M8, L9 |
 | `projecth.build.pieces`, `projecth.build.cells` | Gauge | Phase 13. 서 있는 조각, 조각이 있는 건설 칸 |
-| `projecth.build.requests` | Counter | `result` = `Ok` / 거절 코드 이름 9개 / `Duplicate` |
+| `projecth.build.requests` | Counter | `result` = `Ok` / 거절 코드 이름 11개 / `Duplicate` |
 | `projecth.build.destroyed` | Counter | `cause` = `damage` / `collapse` |
 | `projecth.build.inbox_drops` | Counter | Phase 13. 건설 입력 채널이 넘쳐 버린 요청 |
 | `projecth.harvest.hits`, `projecth.harvest.destroyed` | Counter | Phase 13 |

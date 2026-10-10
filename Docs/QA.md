@@ -4,7 +4,7 @@ QA Tool은 서버를 띄우고 Headless Client(Actor)를 실제 게임 프로토
 
 - 요청: `Docs/requests/2026-10-02-qa-scenario-orchestrator-request.md`. § 번호는 이 요청서 기준이다.
 - 설계: `Docs/specs/2026-10-02-qa-tool-design.md`. D 번호는 이 설계서의 결정이다.
-- 현재 범위: QA-1(MVP), QA-2(Web UI, 아래 "Web UI"), QA-3(Fault Injection, 아래 "Fault Injection"), QA-4(Unity Client 자동화·Screenshot·Manual Check, 아래 "Unity Client Actor"와 "Manual Check"), QA-5(Parameter·Repeat·Seed Sweep·Baseline·Recording 재생·Load 시나리오, 아래 "QA-5"), Stress Phase A(측정 구간·Actor Group·Stress 시나리오 8개)와 Phase B(나머지 §18–49, §54–58, §65 시나리오 18개와 그 도구, 아래 "Stress").
+- 현재 범위: QA-1(MVP), QA-2(Web UI, 아래 "Web UI"), QA-3(Fault Injection, 아래 "Fault Injection"), QA-4(Unity Client 자동화·Screenshot·Manual Check, 아래 "Unity Client Actor"와 "Manual Check"), QA-5(Parameter·Repeat·Seed Sweep·Baseline·Recording 재생·Load 시나리오, 아래 "QA-5"), Stress Phase A(측정 구간·Actor Group·Stress 시나리오 8개)와 Phase B(나머지 §18–49, §54–58, §65 시나리오 18개와 그 도구, 아래 "Stress"). 게임 Phase 13.5–19도 시나리오·Suite·관측 경로를 더했다: 건설 편집(13.5, `Building/`·`suite:building`), 분대(14, `Squad/`·`suite:squad`), 지도·Ping(15, `Map/`·`suite:map`), Loot Container·Supply Drop(16, `Loot/`·`suite:loot`), 무기·투사체(17, `Weapons/`·`suite:weapons`), 소리(18, `Audio/`, Unity 전용이라 `suite:unity`), 차량(19, `Vehicle/`·`suite:vehicle`). Unity 시나리오는 `suite:unity`에 모았다.
 - Stress 요청: `Docs/requests/2026-10-02-server-stress-test-request.md`. Stress 절의 § 번호는 이 요청서 기준이고, 결정은 설계서 D36–D44다.
 
 ## Architecture
@@ -80,6 +80,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | GET | `/qa/build?x=&z=&radius=&max=` | `{count, pieces[]}` |
 | GET | `/qa/loot?x=&z=&radius=&max=` | Phase 16: `{containersSpawned, containersOpened, containers[{id, kind, position, yaw, state(none/closed/open), loot[{kind, defId, rarity, amount}]}], supplyDropCount, supplyDrops[{id, state, position, startTick, landTick, loot[], fallTicks, nearestPlayerDistance, insideTargetCircle}], items{count, truncated, weapons, ammo, consumables, materials, minWeaponRarity, maxWeaponRarity, list[{itemId, kind, defId, rarity, amount, position, dropped}]}}`. `x`·`z`·`radius`를 주면 `items`는 그 원 안의 월드 아이템만(없으면 전부, 목록은 `max`개까지) |
 | GET | `/qa/projectiles` | Phase 17: `{projectiles[{id, kind(Grenade/Rocket), ownerId, owner, position, velocity, resting, explodeTick}], explosions[{id, kind, position, tick, ownerId, playersHit, piecesHit}](최근 16개, 오래된 것부터), launched, refused, explosionsTotal, grenadesThrown}` |
+| GET | `/qa/vehicles` | Phase 19: `{count, vehicles[{id, state, health, maxHealth, position, heading, speed, steer, driver, driverId, passenger, passengerId, wreckEndTick}], <id>: 같은 DTO, spawned, wrecked, enters, exits, impacts, runOvers, statesSent}` |
 | GET | `/qa/metrics?windowSeconds=` | tick p50/p95/p99/max, workingSetMB, gc, activeSessions, health 카운터 |
 | GET | `/qa/events?after=&max=` | `{next, dropped, events[{seq,tick,utc,type,player,data}]}` |
 | POST | `/qa/server/stop` | 정상 종료 |
@@ -269,6 +270,8 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `spawnSupplyDrop` | `position` 또는 `x`,`z`(선택: 없으면 서버 위치 규칙) → `{id, x, z, y, startTick, landTick}`. Phase 16: 경기 중에만, 경기당 4개까지(넘으면·경기 밖이면·위치 규칙이 지금 자리를 못 찾으면 409). 일정과 별개다 |
 | `setContainer` | `container`(0–33, `LootContainers.All` 번호), `state`(none/closed/open) → `{container, state, loot}`. Phase 16 시나리오 준비용: closed는 Loot가 없으면 그 경기 흐름으로 굴린다, open은 Loot를 놓지 않고 열린 상태만. 경기 중·개발 모드에서만(아니면 409). Step의 `id`와 겹치지 않게 인자 이름이 `container`다 |
 | `editBuild` | `pieceId`, `edit`(0–4095), `rotation?` → `{code, edit, rotation}` | Phase 13.5. 플레이어 없이 편집한다(소유자·사거리·시선 검사 없음, 상태 유효성과 경사로 지지는 본다). 거절은 409 |
+| `spawnVehicle` | `position` 또는 `x`,`z`, `heading?`(기본 0) → `{vehicleId, x, y, z, heading}`. Phase 19: 경기 상태와 상관없이 차량 하나를 만든다(최대 `MaxVehicles`). 맵 상자·닫힌 문·채집 대상과 겹치거나 칸이 없으면 409 |
+| `damageVehicle` | `vehicleId`, `amount` → `{health, state}`. Phase 19: 공격자 없는 피해(0이 되면 잔해, 탄 사람은 내리고 피해). 없는 차량 404, 이미 잔해 409 |
 
 ## Assertions
 
@@ -284,6 +287,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | Phase 15 `server.health.map.*` | `/qa/health` | `pings`, `enemyConfirmed`, `enemyDemoted`, `refused`, `replaced`, `expired`, `waypoints`, `packets`, `markerDrops`(연결별 속도 제한이 버린 것), `markerInboxDrops`, `markerRateBadPackets`(1초 20개 초과) |
 | Phase 14 `actor.*` | Actor가 받은 것 | `actor.teamId`, `actor.teamIds`, `actor.teamStates`(TeamMemberState 이름), `actor.rebootCards`, `actor.downsSeen`, `actor.channelActive`, `actor.channelKind`, `actor.channelActor`, `actor.stationsCooling`(대기 마스크) |
 | Phase 17 `projectiles.*` | `GET /qa/projectiles` | `projectiles.projectiles.0.kind`·`resting`, `projectiles.explosions.0.playersHit`·`piecesHit`·`kind`, `projectiles.launched`, `projectiles.explosionsTotal`, `projectiles.grenadesThrown`. 플레이어 DTO: `player.grenades`, `player.nextGrenadeTick`, `player.ammo.shells`·`rockets`. Actor 상태: `actor.grenades`, `actor.projectilesSpawned`·`projectileStates`·`projectilesExploded`(그 Client가 들은 투사체 사건 수) |
+| Phase 19 `vehicle.*` | `GET /qa/vehicles`(`vehicleId`를 주면 그 차량, 없으면 뿌리) | `vehicle.health`·`speed`·`position.z`·`exists`(`vehicleId` = `${car.vehicleId}`), `vehicle.count`, `vehicle.<id>.health`, `vehicle.wrecked`·`impacts`·`enters`·`exits`. 플레이어 DTO: `player.vehicleId`, `player.seat`(0 운전석, 1 조수석, −1 없음). Actor 상태: `actor.vehicleId`, `actor.seat`, `actor.vehicleCount`, `actor.vehicleStatesReceived` |
 | Phase 16 `loot.*` | `GET /qa/loot`(`at`·`radius` 선택: `items`를 그 원 안으로) | `loot.containers.14.state`(none/closed/open), `loot.containers.14.loot.0.kind`, `loot.supplyDropCount`, `loot.supplyDrops.0.state`(Falling/Landed/Opened)·`position`·`landTick`·`fallTicks`·`nearestPlayerDistance`(지금 가장 가까운 살아 있는 플레이어까지 수평 거리)·`insideTargetCircle`(지금 목표 원 반지름 × 0.6 안), `loot.items.count`·`weapons`·`ammo`·`materials`·`minWeaponRarity` |
 | Phase 16 `match.*` | `GET /qa/match` | `match.containersSpawned`, `match.containersOpened`, `match.supplyDrops`(수) |
 | Phase 16 `server.health.loot.*` | `/qa/health` | `containersOpened`, `dropsSpawned`, `dropsLanded`, `dropsOpened`, `lootItems`, `opensBlocked`(시선에 막힌 열기), `packets` |
@@ -403,7 +407,7 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 
 ## Scenario Library
 
-모두 실제 서버에서 실행해 통과를 확인했다(2026-10-02). 시간은 실행 1회 기준이다.
+모두 실제 서버에서 실행해 통과를 확인했다(QA-1–5 시나리오는 2026-10-02, Phase 13.5–19 시나리오는 각 Phase의 실행일 2026-10-08, 헤드리스 Suite는 리뷰 수정 뒤 2026-10-09에 다시). 시간은 실행 1회 기준이다.
 
 | 파일 | § | 내용 | 시간 |
 |---|---|---|---|
@@ -477,6 +481,21 @@ QA Control API의 전체 명세(경로, 인자 범위, 상태 코드, DTO, 이�
 | `Map/minimap_position.json` | 49, 51, 58 | Unity Player를 두 곳으로 순간이동 → 미니맵의 내 아이콘을 `MapProjection`으로 월드 좌표로 되돌린 값(`minimapSelfWorldX/Z`)이 서버 위치와 0.5 m 안 | ~9 s |
 | `Map/map_zone.json` | 50, 58 | `setZone 2`(70 m 고정 원) → `openMap` → 지도에 그린 고리의 중심·반지름(`mapZoneCenterWorldX/Z`, `mapZoneRadiusWorld`)이 서버 값과 0.5 m 안, 커서 풀림, `closeMap` | ~8 s |
 | `Map/visual_map.json` | 49, 50, 54 | Duo의 Unity Player: 팀원의 Location·Enemy·Danger Ping과 Waypoint → 미니맵 수(3, 1, 1), 월드 표지·거리 스크린샷, 전체 지도 스크린샷, 수명 만료 뒤 실제 가운데 버튼 클릭 → 서버에 내 Location Ping | ~19 s |
+| `Audio/audio_gunshot.json` | 81, 82, 85 | Phase 18: Unity Player 10 m 앞 원격 AR 3발 → `plays.GunAR` 3(`ShotFired` 무기 id로 고른 3D 총성), 약 198 m(사거리 120 m 밖)에서 3발 → 재생 그대로, `droppedDistance` 3. 소리 품질이 아니라 로직만 본다 | ~13 s |
+| `Audio/audio_footstep.json` | 80, 85 | 서 있는 원격 플레이어는 발소리 0, 10 m 걸음 → `StepGroundWalk` 늘어남, 들리는 범위 안 순간이동 → 늘지 않음(순간이동 보호). Phase 19 실행에서 4번 중 1번 하나를 더 센 간헐 실패가 있다(아래 "Phase 19 Unity 검증") | ~14 s |
+| `Audio/audio_build.json` | 83, 85 | 다른 플레이어의 벽 설치·편집·피해·파괴가 각각 소리 하나, 받치던 바닥 두 개의 붕괴는 `BuildCollapse` 하나 | ~9.5 s |
+| `Audio/audio_budget.json` | 84, 85 | 20 m 안의 14명이 SMG 연사 → 많이 재생하고 목소리 예산 24에 닿음(`droppedBudget` > 0), 동시 목소리는 24 이하 | ~13 s |
+| `Audio/audio_no_duplicate.json` | 85 | 실제 클릭으로 벽 하나 설치 → `BuildPlace` 정확히 1(`BuildResult` Ok만 소리, 내 조각의 서버 Placed 사건은 무음) | ~10 s |
+| `Manual/audio_listen.json` | 85 | Editor 수동 확인(Phase 18): 서버를 127.0.0.1:7777에 띄우고 헤드리스 2명을 둔다. 사람이 Play로 접속해 소리 품질·방향감을 귀로 판정한다 | 사람 |
+| `Vehicle/vehicle_spawn.json` | 95 | Phase 19: 경기 시작에 `VehicleSpawns` 4곳마다 차량, `spawnVehicle`로 광장에 하나 더(Active, 체력 400), 두 Client가 `VehicleStates`로 받음(관심 범위 120 m) | ~3 s |
+| `Vehicle/vehicle_enter.json` | 89 | A가 운전석 옆 0.9 m에서 E → 운전석(서버와 A의 Client가 같다), B가 반대쪽에서 E → 조수석, 차체에서 2.1 m면 아무것도 타지 않음 | ~4 s |
+| `Vehicle/vehicle_drive.json` | 90 | 운전자의 W → 앞으로 가며 빨라지고 탄 사람이 따라감, 조향으로 회전, Space(제동)로 정지 | ~5 s |
+| `Vehicle/vehicle_exit.json` | 89 | 운전자가 E → 운전석 쪽 2 m에 Ground로 섬, 운전석이 비고 자기 Client도 내린 것을 앎 | ~3.5 s |
+| `Vehicle/vehicle_damage.json` | 92 | 차에 앉은 A의 머리(차체 위)를 쏘면 지나감, 실제 사격으로 차체를 쏘면 차량 체력 감소(무기 피해 × 1), A는 그대로, 쏜 사람에게 `HitConfirmed` 없음 | ~8 s |
+| `Vehicle/vehicle_destroy.json` | 92 | 운전자·동승자가 탄 차량 체력 0 → Wrecked, 둘 다 내려지고 각자 25 피해(원인 Explosion), 5 s 뒤 사라짐(Client가 더 받지 않음) | ~8 s |
+| `Vehicle/vehicle_disconnect.json` | 74 | 운전 중 A의 연결이 끊김 → 유예와 동시에 내려짐(운전석 빔), 운전자 없는 차는 제동해 멈춤 → A 재접속, 차 옆에서 걸어서 재개 | ~4.5 s |
+| `Vehicle/vehicle_build_block.json` | 91, 93 | 건설 벽으로 몬 차량이 벽 앞에서 멈춤(통과 없음), 벽은 피해 없음, 차량은 8 m/s 넘는 충돌 피해 | ~5.5 s |
+| `Vehicle/visual_vehicle.json` | 86, 95 | Unity Player: 차량과 "[E] 탑승", 실제 E로 운전석(차량 카메라, 속도·체력 HUD, 타기 소리), 실제 W로 운전, Space로 정지, E로 내림(내리기 소리), 피해(30 % 아래 연기)·파괴(검은 차체, 폭발 소리) 스크린샷 | ~15 s |
 | `Persistence/db_down.json` | 77, 128 | DB 정상 확인 → `stopDb` → 경기 종료 → 저장 3회 실패 후 `db.failed` +1, saved 그대로, 서버 계속, 다음 경기 시작 → `startDb` → 다음 경기 종료 → `db.saved` +1. Docker나 `projecth-mysql` 컨테이너가 없거나 멈춰 있으면 첫 Step에서 나머지를 SKIPPED로 끝낸다(결과 SKIPPED, 종료 코드 0. `--fail-on-skip`이면 1) | 아래 표 참고 |
 
 Stress Test 시나리오(baseline, movement, combat, building, mixed_match, reconnect_churn, final_zone, soak, soak_match_reset)는 아래 "Stress"에 있다.
@@ -486,16 +505,20 @@ Stress Test 시나리오(baseline, movement, combat, building, mixed_match, reco
 | Suite | 내용 | 시간 |
 |---|---|---|
 | `smoke` | connect, move_to, basic_hit | ~16 s |
-| `building` | Phase 13 건설 3개 + Phase 13.5 편집 6개(헤드리스) | ~50 s |
+| `building` | Phase 13 건설 3개 + Phase 13.5 편집 6개(헤드리스). 2026-10-09 9/9 통과 | ~47 s |
 | `pre-push` | §93: connect, move, shoot, pickup, death, reconnect | ~30 s |
-| `squad` | Phase 14 분대 8개(헤드리스, TeamSize 2): duo_basic, dbno, dbno_bleedout, revive, revive_cancel, squad_elimination, reboot, reconnect_dbno. 2026-10-08 8/8 통과 | ~85 s |
-| `loot` | Phase 16 Loot 7개(헤드리스): pickup_drop, chest_open, chest_duplicate_open, chest_loot, ammo_box, supply_drop_spawn, supply_drop_open. Unity 스크린샷 visual_loot(리더가 작성)는 `unity.json`에 넣을 것 | ~50 s |
-| `map` | Phase 15 지도 표시 4개(헤드리스): map_team, ping_world, ping_enemy, ping_rate_limit. 2026-10-08 4/4 통과. Unity 지도 시나리오(minimap_position, map_zone, visual_map)는 Client `/qa/status` 지도 필드가 생긴 뒤 `unity.json`에 들어간다 | ~25 s |
-| `weapons` | Phase 17 무기·투사체 7개(헤드리스): weapon_ar, weapon_shotgun, weapon_sniper, grenade, explosion_falloff, rocket, structure_damage. 2026-10-08 7/7 통과. Unity 스크린샷 visual_weapons(리더가 작성)는 unity.json | ~70 s |
-| `full-regression` | 모든 카테고리. Stress, Persistence, ServerProcess, Recorded 포함 | ~6 min |
+| `squad` | Phase 14 분대 8개(헤드리스, TeamSize 2): duo_basic, dbno, dbno_bleedout, revive, revive_cancel, squad_elimination, reboot, reconnect_dbno. 2026-10-08·2026-10-09 8/8 통과 | ~84 s |
+| `loot` | Phase 16 Loot 7개(헤드리스): pickup_drop, chest_open, chest_duplicate_open, chest_loot, ammo_box, supply_drop_spawn, supply_drop_open. 2026-10-08 7/7 통과. Unity 스크린샷 visual_loot는 `unity.json`에 있다 | ~53 s |
+| `map` | Phase 15 지도 표시 4개(헤드리스): map_team, ping_world, ping_enemy, ping_rate_limit. 2026-10-08 4/4 통과. Unity 지도 시나리오(minimap_position, map_zone, visual_map)는 `unity.json`에 있다 | ~23 s |
+| `weapons` | Phase 17 무기·투사체 7개(헤드리스): weapon_ar, weapon_shotgun, weapon_sniper, grenade, explosion_falloff, rocket, structure_damage. 2026-10-08·2026-10-09 7/7 통과. Unity 스크린샷 visual_weapons는 `unity.json`에 있다 | ~50 s |
+| `vehicle` | Phase 19 차량 8개(헤드리스): vehicle_spawn, vehicle_enter, vehicle_drive, vehicle_exit, vehicle_damage, vehicle_destroy, vehicle_disconnect, vehicle_build_block. 2026-10-08·2026-10-09 8/8 통과. Unity 스크린샷 visual_vehicle은 `unity.json`에 있다 | ~42 s |
+| `unity` | QA-4: 실제 Unity Development Player가 필요한 16개(`--unity-exe`, 잠기지 않은 데스크톱): Smoke/unity_client, UI/kill_feed, Building/unity_build_input·visual_building_edit, Squad/visual_squad, Map/minimap_position·map_zone·visual_map, Loot/visual_loot, Weapons/visual_weapons, Audio 5개, Vehicle/visual_vehicle. 2026-10-08 Phase 19 실행 15/16(audio_footstep 간헐 실패 1번, 다시 3번 통과) | ~3 min 40 s |
+| `full-regression` | Audio를 뺀 모든 카테고리(Audio는 Unity 전용이라 `unity`에만 있다). Stress는 Load 파일 3개만, Persistence, ServerProcess, Recorded 포함. Unity 시나리오는 `--unity-exe`가 없으면 SKIPPED, Manual은 터미널이 없으면 SKIPPED | ~6 min(2026-10-02 측정. Phase 13.5–19 헤드리스 시나리오가 더해져 지금은 약 5분 더 길 것으로 보이며 다시 재지 않았다) |
 | `faults` | QA-3: latency_loss_combat, lag_compensation, network_drop, invalid_packet, input_timeout, shutdown, restart, db_down | ~1 min |
 | `stress` | QA-5 D35: Load 파일 3개(bots_50, load_bots_10, load_bots_50). 같은 이름의 카테고리가 있으므로 `suite:stress`로 부른다. Stress 시나리오는 아래 `stress-*` | ~3.2 min |
 | `stress-quick` 외 6개 | Stress 시나리오 Suite. 아래 "Stress"의 "Suite" | 4.5 min ~ 1 h 이상 |
+
+Phase 13.5–19 Suite(`building`, `squad`, `loot`, `map`, `weapons`, `vehicle`, `unity`)의 시간은 `QA/Reports`에 남은 실제 실행의 벽시계 시간이다(첫 시나리오 시작부터 마지막 시나리오 끝까지, 서버 기동 포함): `weapons`·`building`·`squad`·`vehicle`은 2026-10-09 리뷰 수정 뒤 실행, `loot`·`map`·`unity`는 2026-10-08 실행. Suite JSON의 `description`에 적힌 "about 4 min"(building·squad), "about 2 min"(loot·weapons·vehicle), "about 1 min"(map)은 작성 때의 어림이고 실제보다 길다.
 
 **아직 없는 시나리오와 이유**
 
@@ -560,7 +583,10 @@ dotnet run --project Server/src/ProjectH.QA -- convert-recording rec.jsonl --out
   - 여러 시나리오를 실행하면 가장 큰 값을 돌려준다. 마지막 줄에 결과별 수를 낸다: `8 scenarios: 7 passed, 0 failed, 1 skipped, 0 errors; exit code 0.`
 - **SKIPPED**(QA-3): 환경 때문에 시나리오의 나머지를 할 수 없을 때(예: Docker나 DB 컨테이너가 없음)의 결과다. 실행된 Step은 모두 통과했지만 끝까지 실행된 것은 아니므로 PASSED로 보고하지 않는다. 콘솔 요약 줄, Report 제목, Web UI 배지에 SKIPPED와 이유가 나온다.
 - **Launch 모드**는 서버를 `DOTNET_ENVIRONMENT=Development`로 띄우고, 아래 인자를 준 뒤 시나리오 `server.options`를 붙인다.
-  - `--qa-mode --Server:Port=0 --Qa:Port=0 --Persistence:Enabled=false --Server:AirDrop=false --Server:StartCountdownSeconds=1 --Server:ResultSeconds=1 --Server:LootSeed/ZoneSeed/SpawnSeed=<seed> --Server:ConnectBurstPerIp=1000 --Server:MaxConnectionsPerIp=1000 --Server:AcceptsPerSecond=1000`. 모든 Actor가 127.0.0.1에서 접속하므로 IP당 접속 빈도 제한(기본 20), IP당 동시 연결 수(기본 4)와 전역 수락 빈도(기본 초당 20, 리뷰 수정 A2)가 stress 접속을 거절하지 않게 한다. 제한기는 켜진 채이고 `server.options`로 바꿀 수 있다.
+  - `--qa-mode --Server:Port=0 --Qa:Port=0 --Persistence:Enabled=false --Server:AirDrop=false --Server:StartCountdownSeconds=1 --Server:ResultSeconds=1 --Server:LootSeed/ZoneSeed/SpawnSeed=<seed> --Server:DeterministicSeeds=true --Server:ConnectBurstPerIp=1000 --Server:MaxConnectionsPerIp=1000 --Server:AcceptsPerSecond=1000`, 그리고 `server.options` 뒤에 `--Qa:ParentPid=<QA Tool PID>`(`ServerProcessManager.BuildArguments`).
+  - `DeterministicSeeds=true`(리뷰 수정 C1): 경기 비밀을 0으로 두어 같은 Seed로 다시 돌리면 같은 퍼짐·결과가 나온다.
+  - `Qa:ParentPid`는 시나리오가 바꿀 수 없다. 서버의 QA 감시가 이 프로세스가 사라지면 서버를 멈춰, 정리 없이 죽은 Tool이 서버를 남기지 않는다.
+  - 모든 Actor가 127.0.0.1에서 접속하므로 IP당 접속 빈도 제한(기본 20), IP당 동시 연결 수(기본 4)와 전역 수락 빈도(기본 초당 20, 리뷰 수정 A2)가 stress 접속을 거절하지 않게 한다. 제한기는 켜진 채이고 `server.options`로 바꿀 수 있다.
   - Ready 조건은 `QA_READY` 줄과 `/qa/health`(20 s 이내)다. 고정 sleep을 쓰지 않는다(§81).
   - 끝나면 `/qa/server/stop` → 최대 10 s 종료 대기 → 그래도 남으면 자기 자식 프로세스만 Kill한다.
 - **Ctrl+C**: 현재 Step을 멈추고 Cleanup(Actor 종료, 서버 정지)을 한 뒤 Report를 쓴다.
@@ -716,7 +742,7 @@ Actor(LiteNetLib) ── 127.0.0.1:<proxy> ── UdpFaultProxy ── upstream 
 서버가 보는 것(`Net/NetworkListener`)은 다음과 같다.
 - `unknownId`: 첫 바이트 0xFF → UnknownId.
 - `truncated`: PlayerInput에 개수만 있고 내용이 없음 → Malformed.
-- `oversized`: 3600바이트(MaxPacketSize × 3), 불가능한 입력 개수 → Malformed.
+- `oversized`: 1600바이트(MaxPacketSize + 400, 봇 MTU에서 조각 2개 안), 불가능한 입력 개수 → Malformed.
 - `garbage`: 무작위 바이트. 첫 바이트는 Client→서버 id가 아니다 → UnknownId 또는 WrongDirection.
 - `inputFlood`: 형식은 맞는 입력(Seq 0이라 적용되지 않음)을 한 Tick에 몰아 보낸다 → 초당 한도(SimHz × 2)를 넘는 것은 InputRate.
 
@@ -1169,7 +1195,7 @@ Baseline Player Count 비교(D40 묶음, steady 30 s, `batch-20261002-202122-417
 - **input_timeout**: 8명이 7 s 뒤 같은 1 s 안에 InputTimeout으로 닫혔다(그 Sample Tick max 2.04 ms). 나머지 42명 그대로.
 - **lag_compensation**(Proxy 한 방향 0/50/100/200 ms + 5 ms Jitter, RTT 29/133/224/422 ms): HitConfirmed / 누름(사격·Reload·슬롯 키 포함, warmup부터) = 50명 259/1021, 118/1202, 134/1062, 102/1076; 100명 638/1800, 518/1889, 419/2003, 380/1973. 200 ms Group도 맞혔다. 비율은 두 실행 모두 0 ms Group이 가장 높다(50명 약 25 %, 그 밖 9.5–13 %). Ping 순서대로 낮아진 것은 100명 실행뿐이다(50명에서는 100 ms Group이 50 ms Group보다 높았다).
 - **invalid_packets**: 50명 중 5명이 5/s → 60 s 구간 badPackets 1,370, Kick 80, Rejoin 75; 50/s → 보낸 5,724, Kick 270, Rejoin 265. 100명(10명 50/s) → 보낸 11,441, Kick 540, Rejoin 530, 이때 Tick p99 1.30·max 4.89 ms, GC 4/2/1(할당 출처는 재지 않았다). 표의 Players가 90인 것은 Abuser가 접속 뒤 0.4 s 안에 Kick되고 1 s 뒤 다시 들어와서 5 s Sample 시점에 거의 잡히지 않기 때문이다(Kick·Rejoin 수로 접속은 확인된다). 정상 Player의 Kick·끊김 0.
-- **build_spam**: 15/s(Network 한도 20/s 아래)는 RateLimited가 **0**이었다(OutOfRange 1,807·Occupied 3,300·Ok 51). 서버 코드로 확인: `Match.ProcessBuildRequests`(`Server/src/ProjectH.Server/Game/Match.cs` 536–538행)는 거절된 요청 뒤 `continue`로 다음 요청을 같은 Tick에 처리하고, 최소 간격(`NextBuildTick`)은 배치된(Ok) 요청 뒤에만 건다. 그래서 거절되는 Spam은 8칸 Queue를 채우지 않는다. 40/s는 BuildRate Bad Packet 3,333으로 Kick 180·Rejoin 175, RateLimited 1,523. 두 경우 모두 정상 건설 Group은 계속 놓았다(Ok 716/721, Kick 0).
+- **build_spam**: 15/s(Network 한도 20/s 아래)는 RateLimited가 **0**이었다(OutOfRange 1,807·Occupied 3,300·Ok 51). 서버 코드로 확인: `Match.ProcessBuildRequests`(`Server/src/ProjectH.Server/Game/Match.cs` 853–872행)는 거절된 요청 뒤 `continue`로 다음 요청을 같은 Tick에 처리하고, 최소 간격(`NextBuildTick`)은 배치된(Ok) 요청 뒤에만 건다. 그래서 거절되는 Spam은 8칸 Queue를 채우지 않는다. 40/s는 BuildRate Bad Packet 3,333으로 Kick 180·Rejoin 175, RateLimited 1,523. 두 경우 모두 정상 건설 Group은 계속 놓았다(Ok 716/721, Kick 0).
 - **loot**: 50명 60 s + warmup에 줍기 1,721, Drop 848, 사용 누름 14(100명: 3,411 / 1,666 / 12). 사용이 적은 이유는 재지 않았다(추정: 회복 아이템이 드물고 체력·실드가 이미 차 있는 경우가 많다).
 - **zone**(50명): 바깥 Group 평균 체력 53, 안팎 92, 안쪽 96.7(steady 동안 그대로). 100명도 같은 판정 통과.
 - **network_fault_mixed**: Group RTT 정상 29, 100 ms 236, 200 ms 431, 5 % Loss 65, 복합 280 ms. 아무도 끊기지 않았다. R1 p95 518 ms(50명)는 지연 Group이 끌어올린 값이다.

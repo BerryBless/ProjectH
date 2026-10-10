@@ -1,6 +1,6 @@
 # Battle Royale
 
-Phase 12 기준. 설계 근거와 결정 D1–D15: `Docs/specs/2026-10-01-phase5-battle-royale-design.md`, Phase 6 투입·Zone 변경: `Docs/specs/2026-10-01-phase6-map-design.md`, Phase 12 공중 투입: `Docs/specs/2026-10-02-phase12-deployment-traversal-design.md`. 서버 한 개가 판을 계속 이어서 연다(한 서버 = 여러 판). 패킷은 `Networking.md` "Battle Royale".
+Phase 19 + 리뷰 수정 기준(2026-10-09). 설계 근거와 결정 D1–D15: `Docs/specs/2026-10-01-phase5-battle-royale-design.md`, Phase 6 투입·Zone 변경: `Docs/specs/2026-10-01-phase6-map-design.md`, Phase 12 공중 투입: `Docs/specs/2026-10-02-phase12-deployment-traversal-design.md`, Phase 14 팀·기절: `Docs/specs/2026-10-08-phase14-squad-dbno-design.md`, Phase 15 지도 표시: `Docs/specs/2026-10-08-phase15-map-ping-design.md`, Phase 16 Container·Supply Drop: `Docs/specs/2026-10-08-phase16-loot-containers-design.md`, Phase 17 투사체: `Docs/specs/2026-10-08-phase17-weapons-throwables-design.md`, Phase 18 소리(자기장 경고): `Docs/specs/2026-10-08-phase18-audio-design.md`, Phase 19 차량: `Docs/specs/2026-10-08-phase19-vehicle-design.md`, 리뷰 수정 C1 경기 비밀 시드: `Docs/specs/2026-10-08-review-fixes-design.md`. 서버 한 개가 판을 계속 이어서 연다(한 서버 = 여러 판). 패킷은 `Networking.md` "Battle Royale".
 
 ## 상태 기계 (`MatchFlow`, D1)
 
@@ -10,16 +10,17 @@ stateDiagram-v2
     Starting --> WaitingForPlayers: 접속자 < MinPlayers
     Starting --> Playing: StartCountdownSeconds 경과 (경기 시작 D3)
     Playing --> FinalPhase: Zone 마지막 단계
-    Playing --> Finished: 생존자 ≤ 1
-    FinalPhase --> Finished: 생존자 ≤ 1
+    Playing --> Finished: 남은 팀 ≤ 1
+    FinalPhase --> Finished: 남은 팀 ≤ 1
     Finished --> Closing: ResultSeconds 경과
     Closing --> Starting: 판 재시작 (D13), 접속자 ≥ MinPlayers
     Closing --> WaitingForPlayers: 판 재시작 (D13), 접속자 < MinPlayers
 ```
 
+- 종료 조건은 남은 팀 수(`MatchFlow.TeamsAlive`, `ShouldFinish`)다. Solo(TeamSize 1, 기본)는 한 사람이 한 팀이라 "생존자 ≤ 1"과 같다(아래 "팀 경기").
 - 전환은 Tick 시작에 서버 Tick으로 판정한다. 카운트다운 중 인원이 모자라면 대기로 돌아가고, 다시 모이면 처음부터 센다. `Closing`은 한 Tick 안에서 끝나므로 Client는 보지 못한다(`Round`가 1 오른 `Starting`/`WaitingForPlayers`를 받는다).
 - 서버는 비어서 `WaitingForPlayers`로 시작한다. 운영(`DevRespawn = false`)에서는 월드 아이템이 경기 시작 전까지 없다.
-- `DevRespawn = true`(테스트·개발용)면 상태 기계가 돌지 않는다: 피해 항상, 3초 부활, Loot는 서버 시작 때부터 있고 `LootRespawnSeconds`마다 다시 생긴다(Phase 3·4 규칙). 경기 패킷(`MatchState`·`ZoneState`·`MatchResult`)도 보내지 않아 Client는 Phase 4처럼 동작한다. 경기 중 부활과 Loot 재생성은 `DevRespawn`에서만 있다.
+- `DevRespawn = true`(테스트·개발용)면 상태 기계가 돌지 않는다: 피해 항상, 3초 부활, Loot는 서버 시작 때부터 있고 `LootRespawnSeconds`마다 다시 생긴다(Phase 3·4 규칙). 경기 패킷(`MatchState`·`ZoneState`·`MatchResult`)도 보내지 않아 Client는 Phase 4처럼 동작한다. 경기 중 부활과 Loot 재생성은 `DevRespawn`에서만 있다(팀 경기의 Reboot 재투입은 따로다, `Squad.md` "Reboot Station").
 
 ## 경기 전 (D2)
 
@@ -27,15 +28,19 @@ stateDiagram-v2
 
 ## 경기 시작 (D3) — 한 Tick 안에서
 
+**시드(리뷰 수정 C1):** 이 절의 `SpawnSeed`·`LootSeed`·`ZoneSeed + 판 번호`는 `DeterministicSeeds=true`(시험·QA 재현용, QA 도구가 띄우는 서버)일 때다. 기본(false)은 경기 시작마다 새로 만든 경기 비밀(8 B 난수, 보내지 않는다)에 용도(Loot·Zone·투입 순서·경로)와 판 번호를 섞은 시드(`Match.RoundSeed`)다(`Server.md` 옵션 표).
+
 **Phase 12 순서(`AirDrop`, 기본 켬):**
 1. 수송기 경로를 정해(`DropPlanner`, 시드 `SpawnSeed + 판 번호`, 시작 Tick은 시작하는 Tick + 1) `TransportRoute`로 모두에게 보낸다. `PlayerRespawned`보다 먼저 보낸다.
 2. 모두를 `Transport` 모드로 Respawn한다(`PlayerRespawned.Mode = Transport`, 위치는 경로의 시작점. Seq 유지).
 3. 문을 모두 닫는다(`DoorSet.CloseAll`. 바뀐 `DoorStates`는 그 Tick 끝에 간다).
 4. 자기장을 `Start(route.EndTick)`으로 시작한다. 첫 축소는 경로 끝 + 45초다.
 
+같은 Tick에 두 경우 모두: 새 경기 비밀을 만들고, 대기실의 투사체·차량·지도 표시·분대 상태(소생·기절·스테이션 대기)를 지우고, 참가자를 입장 순서로 팀에 묶고(Phase 14, `Squad.md` "팀"), 채집 대상을 다시 세우고 건설 조각을 지운 뒤, 차량을 생성 지점마다 새로 만든다(Phase 19, `Vehicles.md`). 바닥 Loot를 굴린 뒤 Container 생성·Loot를 따로 둔 시드로 굴리고 Supply Drop 일정을 자기장 시계에 맞춘다(Phase 16, 아래 "Loot Container와 Supply Drop").
+
 `AirDrop=false`(`DevRespawn`이면 항상)면 아래 Phase 6의 투입 지점이다. 인벤토리·월드 아이템·Loot·참가자 확정은 두 경우 모두 같다.
 
-**Phase 6 방식(투입 지점):** 모든 접속자를 투입 지점으로 옮긴다(Phase 6 D9: `DropPoints` 24곳을 시드 `SpawnSeed + 판 번호`로 섞어 플레이어 목록 순서로 배정, 24명을 넘으면 같은 지점의 동쪽·서쪽 3 m. `PlayerRespawned`, Seq 유지) → 인벤토리를 비우고 Health 100·Shield 0 → 월드 아이템을 모두 지운다 → Loot를 시드 `LootSeed + 판 번호`로 새로 굴린다 → 참가자와 생존자 수를 확정하고 처치 수를 0으로 → Zone을 시드 `ZoneSeed + 판 번호`로 시작한다. 판 재시작과 대기는 여전히 중앙 5 m 원이다. (리뷰 수정 C1: `시드 + 판 번호`는 `DeterministicSeeds`일 때다. 기본은 경기 시작마다 만든 경기 비밀에 용도·판 번호를 섞은 시드다, `Server.md` 옵션 표.)
+**Phase 6 방식(투입 지점):** 모든 접속자를 투입 지점으로 옮긴다(Phase 6 D9: `DropPoints` 24곳을 시드 `SpawnSeed + 판 번호`로 섞어 플레이어 목록 순서로 배정, 24명을 넘으면 같은 지점의 동쪽·서쪽 3 m. `PlayerRespawned`, Seq 유지) → 인벤토리를 비우고 Health 100·Shield 0 → 월드 아이템을 모두 지운다 → Loot를 시드 `LootSeed + 판 번호`로 새로 굴린다 → 참가자와 생존자 수를 확정하고 처치 수를 0으로 → Zone을 시드 `ZoneSeed + 판 번호`로 시작한다. 판 재시작과 대기는 여전히 중앙 5 m 원이다. (시드는 위 "시드" 문단을 따른다.)
 
 ## Safe Zone (`SafeZone`, D6–D8)
 
@@ -67,20 +72,20 @@ stateDiagram-v2
 
 ## 사망·순위·승자 (D4, D9, D12)
 
-- 경기 중 사망은 영구적이다. 시체는 남고 가진 것은 떨어지며, 그 Client는 관전자가 된다(처치자 → 좌클릭으로 다음 생존자, 대상이 죽으면 다음 사람. Client가 원격 보간 위치로 그리고 "관전 중: <이름>"을 띄운다. 이름은 `PlayerSpawned.Name`이고, 모르면 "플레이어 <EntityId>").
-- 순위 = 죽은 순간 남은 생존자 수 + 1(`PlayerDied.Placement`). 마지막 생존자가 1위다. 같은 Tick에 남은 사람이 모두 죽으면 그 Tick에 마지막으로 처리된 사람이 1위다(승자는 정확히 한 명).
+- 경기 중 사망은 영구적이다(팀 경기에서는 팀에 서 있는 구성원이 남아 있는 동안 카드와 Reboot Station으로 다시 들어올 수 있다, `Squad.md` "Reboot 카드"). 시체는 남고 가진 것은 떨어지며, 그 Client는 관전자가 된다(처치자 → 좌클릭으로 다음 생존자, 대상이 죽으면 다음 사람. Phase 14 D12: 팀 경기에서는 살아 있는 팀원을 먼저 보고 처치자는 팀이 모두 탈락한 뒤에 본다. Client가 원격 보간 위치로 그리고 "관전 중: <이름>"을 띄운다. 이름은 `PlayerSpawned.Name`이고, 모르면 "플레이어 <EntityId>").
+- 순위 = 죽은 순간 남은 생존자 수 + 1(`PlayerDied.Placement`). 마지막 생존자가 1위다. 같은 Tick에 남은 사람이 모두 죽으면 그 Tick에 마지막으로 처리된 사람이 1위다(승자는 정확히 한 명). 이것은 Solo 규칙이다. 팀 경기(TeamSize ≥ 2)는 순위가 팀 단위다: 팀의 마지막 구성원이 탈락하는 순간 그 팀의 모든 구성원이 그때 남은 팀 수를 배치로 받고, 팀이 살아 있을 때의 `PlayerDied.Placement`는 잠정 값이다. 같은 팀에 서 있는 구성원이 남아 있으면 치명 피해는 탈락이 아니라 기절이다(`Squad.md` "치명 경로 하나", "분대 전멸과 배치").
 - 처치 수는 다른 참가자를 쏴서 죽였을 때만 센다(Zone·낙하·자기 자신은 제외). 판이 시작될 때 0이 된다.
 - **낙하 사망(Phase 12 D10):** 착지 속도 13 m/s를 넘으면 피해가 나고(30 m/s 이상은 100) 체력만 깎는다. 실드는 막지 못한다(Zone과 같다). 피해가 허용될 때만이다(경기 전·결과 화면에서는 없다). 죽으면 처치자 없이 원인 `Fall`(`PlayerDied.Cause = 1`)이고 순위가 있다. Kill Feed는 "낙하 ▸ 이름", 결과 화면은 "탈락 원인: 낙하"다. 자기장·플레이어 사망의 원인은 0이다.
-- 생존자가 1명 이하가 된 Tick에 `Finished`(결과 10초). 접속 중인 참가자마다 `MatchResult`(승자 EntityId, 내 순위, 내 처치 수, 참가자 수). 결과 화면에서는 피해가 없다.
+- 생존자가 1명 이하(팀 경기: 남은 팀이 1개 이하)가 된 Tick에 `Finished`(결과 10초). 접속 중인 참가자마다 `MatchResult`(승자 EntityId, 내 순위, 내 처치 수, 참가자 수. 팀 경기는 순위 = 팀 배치, 참가자 수 = 팀 수). 결과 화면에서는 피해가 없다. `Finished`에 들어가는 Tick에 진행 중인 소생·재투입을 끊고, 투사체를 폭발 없이 지우고, 지도 표시를 지우고, 탄 사람을 내리고 차량을 지운다.
 
 ## 이탈과 합류 (D10)
 
-- 경기 중 이탈은 탈락이다. 인벤토리는 남은 사람들에게 떨어지고 생존자에서 빠진다. 이탈자는 결과를 받지 않고, 1위였던 사람이 이미 나갔으면 승자는 0이다.
+- 경기 중 이탈은 탈락이다. 인벤토리는 남은 사람들에게 떨어지고 생존자에서 빠진다. 이탈자는 결과를 받지 않고, 1위였던 사람이 이미 나갔으면 승자는 0이다. 팀 경기에서 `WinnerId`는 우승 팀에서 경기에 남은 가장 작은 Entity id이고, 우승 팀이 모두 나갔으면 0이다(나간 구성원의 기록도 배치 1을 받는다).
 - 경기 중 들어온 사람은 죽은 상태의 관전자로 합류하고(본인에게 `PlayerDied`), 참가자가 아니라 생존자 수에도 들지 않는다. 다음 판부터 참가한다.
 
 ## 판 재시작 (D13)
 
-`Finished` 10초 뒤 `Closing`: 월드 아이템을 모두 지우고(전원에게 `ItemRemoved`), 모든 접속자를 살려 Spawn에 두고 인벤토리를 비우고, Zone을 끄고, 수송기 경로를 지우고(Phase 12), 판 번호를 올린다 → 인원에 따라 `Starting` 또는 `WaitingForPlayers`.
+`Finished` 10초 뒤 `Closing`: 유예 중인 사람을 내보내고, 월드 아이템을 모두 지우고(전원에게 `ItemRemoved`. 재투입 카드는 그 팀에게만), 투사체(Phase 17)와 차량(Phase 19)을 지우고, 수송기 경로를 지우고(Phase 12), 채집 대상을 다시 세우고 건설 조각을 지우고(Phase 13), 남은 지도 표시를 팀이 지워지기 전에 지우고(Phase 15), Container 마스크와 Supply Drop 목록을 지우고(Phase 16), 분대 상태(기절·소생·스테이션 대기)를 지우고 TeamId를 모두 0으로 되돌린다(Phase 14, 대기실에는 팀이 없다). 모든 접속자를 살려 Spawn에 두고 인벤토리를 비우고, Zone을 끄고, 판 번호를 올린다 → 인원에 따라 `Starting` 또는 `WaitingForPlayers`.
 
 ## Loot Container와 Supply Drop (Phase 16)
 
@@ -88,7 +93,7 @@ Chest·Ammo Box(맵의 고정 34곳)는 경기 시작에 생성 여부와 Loot�
 
 ## 아직 없는 것 (D15)
 
-팀·분대, 기절, 관전자 채팅, 지형 가중 Zone, Zone 경고 음향. Phase 6 D14: 2층 건물, 미니맵. Phase 12 D17: 지도 UI(낙하 지점 고르기. 수송기 경로는 F1 문구와 월드의 수송기로만 보인다)와 새 애니메이션 에셋. (Phase 5 때 "없는 것"이던 비행기·낙하산 투입은 Phase 12에서, 킬로그 UI는 Phase 11에서, 재접속은 Phase 10에서, 전적 저장은 Phase 9에서 생겼다.)
+관전자 채팅, 지형 가중 Zone. Phase 6 D14: 2층 건물(맵 건물은 단층이다. 건설 조각으로는 층을 쌓는다). Phase 12 D17: 지도에서 낙하 지점 고르기(전체 지도는 수송기 경로를 선으로 보여 줄 뿐 지점을 정하지 않는다)와 새 애니메이션 에셋. (Phase 5 때 "없는 것"이던 비행기·낙하산 투입은 Phase 12에서, 킬로그 UI는 Phase 11에서, 재접속은 Phase 10에서, 전적 저장은 Phase 9에서 생겼다. 팀·분대와 기절은 Phase 14(`Squad.md`), 미니맵과 전체 지도는 Phase 15(`Map.md` "지도 UI·Ping"), 자기장 축소 시작 경고음은 Phase 18(`Audio.md`)에서 생겼다.)
 
 ## 팀 경기 (Phase 14)
 
