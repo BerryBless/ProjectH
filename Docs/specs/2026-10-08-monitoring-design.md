@@ -48,6 +48,21 @@
 | D17 | **문서.** `Docs/Monitoring.md`(§85 목차: Architecture, How to Start, Game Server Configuration, Monitoring Server Configuration, Metrics(필드·단위·기준·합산 식), API, Web UI, Security, Adding a New Metric, Known Limitations). `Docs/Server.md` "관측"에 한 줄 포인터. README는 결정·행동 한 줄(`readme-and-docs-style`). 요청서는 `Docs/requests/`, 계획은 `Docs/plans/2026-10-08-monitoring.md`. | §85. | 없음. |
 | D18 | **지금 넣지 않는 것.** DB·장기 저장, Downsampling, SignalR/WebSocket, Alert(Discord/Slack/Email), Web UI 인증·TLS, 여러 Monitoring 인스턴스, Prometheus Export, Match·Player 상세, Fake Data Generator, Mobile UI, Game Server 쪽 재시도 큐. | §73·§74·§80. | 확장 지점: Snapshot 필드(D2), `MetricStore.Add`의 두 번째 Sink(D9), `ServerStatus.Of`의 경고 규칙(D9), `ServersEndpoints`. |
 
+## 구현 중 바뀐 점 (2026-10-08)
+
+| 결정 | 바뀐 내용 | 이유 |
+|---|---|---|
+| D3 Tick 링 | 용량 SimHz × IntervalSeconds → **SimHz × (IntervalSeconds + 1)** | 늦은 Tick이 있으면 창의 첫 Tick이 덮어써져 Max에서 빠졌다(회귀 테스트로 고정). |
+| D3 기한 | "마지막 Publish부터 경과" → **고정 주기 기한**(`nextStats` 방식, 멈춤 뒤에는 한 번만) | 주기마다 0–33 ms씩 늦어져 창이 5.033 s가 됐고, Sender 타이머와 위상이 어긋나 가끔 한 주기를 건너뛰었다. |
+| D3 실패 | Publish 예외를 **Loop 실패**로 센다(`GameLoop.PublishMonitoring`의 try/catch, Stats 구간당 로그 1회). Tick 실패로 세지 않는다 | Tick 실패가 이어지면 경기 리셋, 리셋 3회면 서버가 종료된다. 요청 §7(Monitoring 장애가 Game Server로 전파되면 안 된다). |
+| D5 응답 | Sender는 **응답 본문을 읽지 않는다**(`ResponseHeadersRead`, 상태 코드만). | 리뷰 확정 지적. 잘못된 Endpoint가 큰 본문을 보내면 Game Server가 그것을 버퍼링했다(§7 잘못된 응답). |
+| D5 보호 | `ExecuteAsync`가 `SendAsync`를 한 번 더 감싼다(종료 취소 제외 모든 예외). | 로거 예외가 밖으로 나가면 BackgroundService 기본값(StopHost) 때문에 게임 호스트가 멈춘다. |
+| D8 상태 코드 | 본문을 읽다 Kestrel이 거절하면 **Kestrel의 상태 코드**(400 잘림·깨진 chunked, 408 너무 느림, 413 초과)로 답한다. 선언 길이가 16 KB를 넘으면 Token 검사 전에 413. | 리뷰 확정 지적(모든 경우를 413 "body too large"로 기록했다). |
+| D8 문자 | `Version`·`MatchState`는 **출력 가능한 ASCII**만. 검증에 실패한 ServerId는 로그에 쓰지 않는다. | 리뷰 확정 지적(보낸 문자열로 로그 줄을 위조할 수 있었다). |
+| D11 메모리 경고 | `MemoryWarningBytes` appsettings 기본 **157,286,400 B(150 MB)**, 코드 기본 0 | §90 50명 측정 Working Set 최대 73.1 MB의 약 2배(`Docs/Monitoring.md` "측정"). |
+| D9 등록부 | 변경 없음. 리뷰가 "등록된 ServerId를 지우지 않는다"를 지적했으나 검증에서 기각했다. | MaxServers + 429는 설계된 상한·거절 정책이다(core-rules 8절). 지우면 죽은 서버의 "OFFLINE · last seen"(§43)이 사라진다. Known Limitations에 적었다. |
+| D15 E2E | 16 KB 초과 E2E를 "실제 앱의 Kestrel 본문 한도 = Contract 한도" 테스트로 바꿨다. 413 판정과 순서는 소켓 없는 `IngestEndpointTests`가 고정한다. | Kestrel은 413 뒤 연결을 끊는다(초과 본문을 drain하지 않는다). Windows loopback에서는 응답과 reset이 경쟁해, 약 60회 중 1회는 클라이언트가 자기 Timeout(100 s)까지 기다렸다. |
+
 ## 데이터 흐름
 
 ```text

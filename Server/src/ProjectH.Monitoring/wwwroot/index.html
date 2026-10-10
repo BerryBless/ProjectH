@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ProjectH Monitoring</title>
+  <link rel="stylesheet" href="lib/uPlot.min.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="top">
+    <h1>ProjectH Monitoring</h1>
+    <div id="top-status" class="top-status">
+      <span id="top-server" class="top-server">—</span>
+      <span id="top-state" class="pill">NO DATA</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="servers">
+      <h2>Servers</h2>
+      <ul id="server-list" class="server-list"></ul>
+      <p id="list-error" class="muted"></p>
+    </aside>
+
+    <section class="detail">
+      <div id="offline-banner" class="banner hidden">
+        OFFLINE · last seen <span id="last-seen"></span> — the values below are the last ones received, not current.
+      </div>
+      <div id="warnings" class="warnings hidden"></div>
+
+      <div id="cards" class="cards">
+        <div class="card" data-card="status"><div class="label">Status</div><div class="value" id="c-status">—</div>
+          <div class="sub">Uptime <span id="c-uptime">—</span> · <span id="c-version">—</span></div></div>
+        <div class="card" data-card="players"><div class="label">Players</div><div class="value" id="c-players">—</div>
+          <div class="sub">Peers <span id="c-peers">—</span> · Graced <span id="c-graced">—</span></div></div>
+        <div class="card" data-card="match"><div class="label">Match</div><div class="value" id="c-match">—</div>
+          <div class="sub">Round <span id="c-round">—</span></div></div>
+        <div class="card" data-card="tick"><div class="label">Tick P95</div><div class="value" id="c-tick-p95">—</div>
+          <div class="sub">P50 <span id="c-tick-p50">—</span> · P99 <span id="c-tick-p99">—</span> · Max <span id="c-tick-max">—</span> · <span id="c-tick-samples">—</span> samples</div></div>
+        <div class="card" data-card="cpu"><div class="label">CPU <span class="hint">(process, all cores = 100 %)</span></div><div class="value" id="c-cpu">—</div>
+          <div class="sub">window <span id="c-window">—</span></div></div>
+        <div class="card" data-card="memory"><div class="label">Memory</div><div class="value" id="c-managed">—</div>
+          <div class="sub">Managed · Working Set <span id="c-workingset">—</span> · GC <span id="c-gc">—</span></div></div>
+        <div class="card" data-card="network"><div class="label">Network</div><div class="value" id="c-net-out">—</div>
+          <div class="sub">Send · Receive <span id="c-net-in">—</span> · <span id="c-pkt">—</span></div></div>
+        <div class="card" data-card="errors"><div class="label">Errors (totals)</div><div class="value" id="c-exceptions">—</div>
+          <div class="sub">Exceptions · Invalid packets <span id="c-invalid">—</span> · Disconnects <span id="c-disconnects">—</span></div></div>
+        <div class="card" data-card="db"><div class="label">DB Queue</div><div class="value" id="c-db">—</div>
+          <div class="sub">records waiting / capacity</div></div>
+      </div>
+
+      <div class="charts">
+        <div class="chart"><h3>Tick (ms) — P50 / P95 / P99</h3><div id="chart-tick"></div></div>
+        <div class="chart"><h3>CPU (%) — process</h3><div id="chart-cpu"></div></div>
+        <div class="chart"><h3>Memory (MB) — Managed / Working Set</h3><div id="chart-memory"></div></div>
+        <div class="chart"><h3>Network (KB/s) — Send / Receive</h3><div id="chart-network"></div></div>
+      </div>
+      <p class="muted">Last 5 minutes · list and cards refresh every 2 s, charts every 5 s · times are this browser's local time.</p>
+    </section>
+  </main>
+
+  <script src="lib/uPlot.iife.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

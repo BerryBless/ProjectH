@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using ProjectH.Server.Diagnostics;
 using ProjectH.Server.Game;
 using ProjectH.Server.Game.Items;
+using ProjectH.Server.Monitoring;
 using ProjectH.Server.Net;
 using ProjectH.Server.Persistence;
 using ProjectH.Shared.Protocol;
@@ -140,6 +141,9 @@ public sealed class GameLoop : IDisposable
     // tick attempt (game loop thread only), which the QA metrics ring records.
     private Qa.QaControl? _qa;
     private double _lastTickMs;
+    // Monitoring D3: the collector, attached at construction only when Monitoring:Enabled (null otherwise: one null check
+    // per tick). It runs on this thread and never logs or does I/O; its failures are loop failures, never tick failures.
+    private readonly MonitoringCollector? _monitoring;
 
     // loadout: test seam (D1); null = StartingLoadout.Empty, the production start. dropPoints: test seam (Phase 6 D9);
     // null = the map's DropPoints.All.
@@ -152,12 +156,14 @@ public sealed class GameLoop : IDisposable
     // next to the server (tests). The loop owns it and disposes it.
     // 기능: Game Loop와 NetManager·채널·수신 처리기·첫 경기를 만든다(Phase 15: Marker 채널과 map.json 속도 제한 수치를 넘긴다.
     //   리뷰 수정 A1: 조각 상한 MaxFragments, A5: Build 채널에 building.json 초당 요청 수, A6: 출처를 적는 실패 Ring,
-    //   B1·B3: 서버 키와 데이터그램 인증 계층, MtuOverride = UserMtu).
-    // 입력: options - 서버 설정, data - 게임 데이터, logger - 로그, 나머지 - 위 설명의 테스트용·선택 인자.
+    //   B1·B3: 서버 키와 데이터그램 인증 계층, MtuOverride = UserMtu). Monitoring 수집기가 있으면 붙인다(Monitoring D3).
+    // 입력: options - 서버 설정, data - 게임 데이터, logger - 로그, monitoring - Monitoring 수집기(null = 꺼짐), 나머지 - 위 설명의
+    //   테스트용·선택 인자.
     // 출력: Start 전의 GameLoop.
     public GameLoop(ServerOptions options, GameData data, ILogger logger, StartingLoadout? loadout = null,
         System.Numerics.Vector3[]? dropPoints = null, Action<Persistence.MatchRecord>? matchSink = null,
-        Action? onFatal = null, TimeProvider? time = null, StatsQueryQueue? statsQueries = null, ServerIdentity? identity = null)
+        Action? onFatal = null, TimeProvider? time = null, StatsQueryQueue? statsQueries = null, ServerIdentity? identity = null,
+        MonitoringCollector? monitoring = null)
     {
         string? error = options.Validate();
         if (error != null) throw new ArgumentException(error, nameof(options));
@@ -169,6 +175,7 @@ public sealed class GameLoop : IDisposable
         _dropPoints = dropPoints;
         _matchSink = matchSink;
         _onFatal = onFatal;
+        _monitoring = monitoring;
         _time = time ?? TimeProvider.System;
         _failuresBeforeReset = options.SimHz * FailingSecondsBeforeReset;
         _playerFailureWindowTicks = (long)PlayerFailureWindowSeconds * options.SimHz;
@@ -355,6 +362,7 @@ public sealed class GameLoop : IDisposable
     internal GameData Data => _data;
     internal ServerOptions Options => _options;
     internal ServerStats Stats => _stats;
+    internal MonitoringCollector? Monitoring => _monitoring;
     internal int PeerCount => _peers.Count;
     internal double LastTickMs => _lastTickMs;
 
@@ -451,7 +459,8 @@ public sealed class GameLoop : IDisposable
         _identity.Dispose();
     }
 
-    // 기능: Loop 스레드 본체. 취소될 때까지 SimHz 간격으로 보호된 Tick을 돌리고(치명 상태면 Timestamp만 갱신), 주기마다 Stats·Health를 기록하며, 5 Tick 넘게 밀리면 밀린 Tick을 건너뛴다. 반복 전체가 예외에 보호된다.
+    // 기능: Loop 스레드 본체. 취소될 때까지 SimHz 간격으로 보호된 Tick을 돌리고(치명 상태면 Timestamp만 갱신), Tick 길이를 Stats 링과
+    //   Monitoring 링(켜져 있을 때)에 기록하며, 주기마다 Stats·Health를 기록하고, 5 Tick 넘게 밀리면 밀린 Tick을 건너뛴다. 반복 전체가 예외에 보호된다.
     // 입력: 없음.
     // 출력: 반환값 없음. Stop이 취소하면 돌아온다.
     private void Run()
@@ -475,6 +484,7 @@ public sealed class GameLoop : IDisposable
                 else Volatile.Write(ref _lastTickTimestamp, _time.GetTimestamp());   // idle on purpose until Stop: no stall
                 _lastTickMs = (clock.ElapsedTicks - tickStart) * 1000.0 / Stopwatch.Frequency;
                 _tickMetrics.Record(_lastTickMs);
+                _monitoring?.RecordTick(_lastTickMs);
                 _loopFaultHook?.Invoke();
 
                 if (clock.ElapsedTicks >= nextStats)
@@ -641,7 +651,7 @@ public sealed class GameLoop : IDisposable
 
     // 기능: 한 Tick: 들어온 메시지 처리(Control·Input·Build·Marker 채널, Phase 15 지도 표시 요청 포함), 연결 정리(SweepPeers), 통계 응답 전송,
     //   경기 Tick, 모두 실패한 Tick 기록(리뷰 수정 A6: 출처 둘 이상일 때만 리셋 예약), Health 수치(Phase 14 분대, Phase 15 지도, Phase 16 Loot,
-    //   리뷰 수정 A4 Seq 창 드롭 수치 포함) 갱신, QA 작업.
+    //   리뷰 수정 A4 Seq 창 드롭 수치 포함) 갱신, Monitoring Snapshot(켜져 있을 때 주기마다, 실패는 Tick 실패가 아니라 Loop 실패로 센다), QA 작업.
     // 입력: 없음.
     // 출력: 반환값 없음. 경기 상태가 한 Tick 진행되고 Health 수치가 갱신된다.
     internal void RunTick()
@@ -665,9 +675,39 @@ public sealed class GameLoop : IDisposable
         _health.SetMap(_match.MapCounts());       // Phase 15
         _health.SetLoot(_match.LootCounts());     // Phase 16
         _health.SetInputSeqDrops(_match.InputSeqDrops);   // review fix A4
+        // Monitoring D3: a snapshot every IntervalSeconds into the latest-only slot; MonitoringSender posts it off this thread.
+        if (_monitoring != null && _monitoring.IsDue()) PublishMonitoring();
         // QA-1 D5: last, so QA commands act between ticks on a finished tick. OnTick catches everything itself: a QA
         // failure must never count as a tick failure (that path resets the match).
         _qa?.OnTick(this);
+    }
+
+    // 기능: 이번 Tick이 끝난 상태로 Monitoring Snapshot을 만들어 슬롯에 넣는다. 예외는 여기서 잡아 Loop 실패로 센다(Stats 구간마다 로그 1회).
+    // 입력: 없음(_monitoring이 null이 아닐 때만 부른다).
+    // 출력: 반환값 없음. 슬롯에 새 Snapshot이 들어가거나, 실패하면 LoopFailures가 1 늘어난다.
+    // Request §7: a monitoring fault must not reach the game. Thrown out of RunTick it would be a tick failure, and failing
+    // ticks reset the match (three resets stop the server). Publish moves its deadline first, so a failure repeats at most
+    // once per interval.
+    private void PublishMonitoring()
+    {
+        try
+        {
+            _monitoring!.Publish(new MonitoringSource(_peers.Count, _match.PlayerCount, _match.GracedCount, _match.Flow.State, _match.Flow.Round,
+                _stats.PacketsInTotal, _stats.PacketsOutTotal, _stats.BytesInTotal, _stats.BytesOutTotal, _health));
+        }
+        catch (Exception ex)
+        {
+            _health.AddLoopFailure();
+            if (++_loopFailuresSinceStats != 1) return;
+            try
+            {
+                _logger.LogError(ex, "Building the monitoring snapshot failed; it is skipped this interval (first loop failure of this interval)");
+            }
+            catch
+            {
+                // Counted above; a throwing logger must not turn this into a tick failure.
+            }
+        }
     }
 
     // 기능: Control 채널을 비우며 연결 등록(같은 id의 옛 세션은 떨군다), Join 요청, 연결 종료를 처리한다. 메시지의 Peer 참조가 등록된 것과 다르면 무시한다.

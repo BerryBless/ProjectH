@@ -11,9 +11,11 @@ namespace ProjectH.Server;
 // (server review M1).
 internal static class ServerHost
 {
-    // 기능: 서버 호스트 Builder를 만든다: 실행 폴더를 Content Root로, Console Logger는 가득 차면 버리게, Server·Persistence 옵션 바인딩, 경기 기록 큐·Writer, 통계 조회 큐·서비스, GameServerService 등록(종료 역순이 되게 Writer·통계 서비스를 먼저).
-    // 입력: args - 명령줄 인자(설정 덮어쓰기).
-    // 출력: 아직 Build하지 않은 HostApplicationBuilder.
+    // 기능: 서버 호스트 Builder를 만든다: 실행 폴더를 Content Root로, Console Logger는 가득 차면 버리게, Server·Persistence 옵션 바인딩,
+    //       경기 기록 큐·Writer, 통계 조회 큐·서비스, GameServerService 등록(종료 역순이 되게 Writer·통계 서비스를 먼저),
+    //       Monitoring이 켜져 있으면 그 슬롯과 Sender를 GameServerService 뒤에 등록한다.
+    // 입력: args - 명령줄 인자(--Section:Key=Value로 설정을 덮어쓴다).
+    // 출력: 아직 Build하지 않은 HostApplicationBuilder. Monitoring 설정이 틀리면 InvalidOperationException.
     public static HostApplicationBuilder CreateBuilder(string[] args)
     {
         // Content root = the build output folder, so appsettings.json is found no matter where
@@ -53,6 +55,8 @@ internal static class ServerHost
         builder.Services.AddSingleton(_ => new StatsQueryQueue(StatsQueryQueue.DefaultCapacity));
         builder.Services.AddHostedService<StatsQueryService>();
         builder.Services.AddHostedService<GameServerService>();
+        // Monitoring D5: after the game server, so the sender stops before the game loop (and starts after it).
+        Monitoring.MonitoringSetup.Register(builder);
         return builder;
     }
 }

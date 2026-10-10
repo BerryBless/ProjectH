@@ -25,6 +25,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ProjectH.Shared\ProjectH.Shared.csproj" />
+    <!-- Monitoring D1: the snapshot DTO shared with the monitoring server (no packages, no references). -->
+    <ProjectReference Include="..\ProjectH.Monitoring.Contracts\ProjectH.Monitoring.Contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -225,6 +225,13 @@
   - Snapshot이 곧 Heartbeat다. Game Loop가 멈추면 Snapshot이 끊겨 Offline으로 보인다.
   - 측정해 보니 Tick p95 차이가 같은 조건 두 번의 측정 편차 안이었다(50봇).
 
+### Monitoring Server
+- **행동:** Game Server가 5초마다 Snapshot(Players·Tick P50/P95/P99/Max·CPU·Memory·Network·Error)을 별도 프로세스 Monitoring Server로 보내고, 정적 웹 대시보드에서 본다.
+- **판단:**
+  - Game Loop는 용량 1 슬롯에 쓰기만 하고 전송은 BackgroundService가 2초 Timeout으로 한다. Monitoring Server가 죽거나 느려도 Game Server는 Snapshot 하나만 들고 있고, 로그는 상태가 바뀔 때 한 줄이다.
+  - Snapshot 생성 실패는 Tick 실패가 아니라 Loop 실패로 센다. Tick 실패는 경기 리셋으로 이어지기 때문이다.
+  - 둘은 DTO 프로젝트 하나만 공유한다. DB·알림·인증은 넣지 않았다([Docs/Monitoring.md](Docs/Monitoring.md)).
+
 ## 작업 방식
 
 ```text
