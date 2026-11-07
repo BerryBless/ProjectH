@@ -4,6 +4,30 @@
       "Bash(python -)",
       "Bash(python ../fixeol.py)",
       "Bash(dotnet build *)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)",
+      "Bash(git push origin main:*)",
+      "Bash(git push origin main)",
+      "Bash(git push -u origin main:*)",
+      "Bash(git push -u origin main)",
+      "Bash(gh pr merge:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -I \"${CLAUDE_PROJECT_DIR}/.agents/hooks/protect_main.py\"",
+            "timeout": 15
+          }
+        ]
+      }
     ]
   }
 }
