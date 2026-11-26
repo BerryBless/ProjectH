@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"$(git rev-parse --show-toplevel)/.agents/hooks/protect_main.py\"",
+            "commandWindows": "python -I .agents/hooks/protect_main.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

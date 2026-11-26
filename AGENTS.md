@@ -60,3 +60,14 @@ Lock을 썼다면 Deadlock은 항상 확인한다.
 | 2026-10-02 | Shared 예외에 건설 격자·조각 모양·경사면·충돌 후보 수집·채집 대상 상자 추가 | `game-core-rules` 4절 | 예측과 서버가 같은 조각 충돌을 계산해야 함. 검증·지지·복제 규칙은 서버에만 둠 (Phase 13 D1–D3, D6) |
 | 2026-10-02 | 서버 리뷰 하네스 추가 | `server-review` 스킬, `server-reviewer` 에이전트, `game-dev-orchestrator` description | "서버리뷰" 키워드로 서버 전체 감사(구조 파악 → 6개 영역 리뷰 → 반박 검증 → 보고서). 변경분 점검(game-reviewer)과 구분 |
 | 2026-10-02 | 작업 경로에 QA 도구(`Server/src/ProjectH.QA`, `QA/`)와 서버 QA Control(`Server/src/ProjectH.Server/Qa/`) 추가 | `game-core-rules` 작업 대상 경로 | QA 도구는 봇처럼 Protocol과 QA HTTP로만 통신하는 Client. 서버 QA 코드는 한 폴더에만 두고 Match에 QA 분기를 넣지 않으며, 명령은 GameLoop 스레드에서만 실행 (QA-1, Docs/QA.md) |
+
+## 에이전트 브랜치·PR 규칙 (2026-11-07)
+
+**목표:** 에이전트는 main 에 직접 올리지 않는다. 작업 브랜치 → push → Pull Request 로 올리고, **머지는 사용자만 GitHub 에서 한다.**
+
+1. **작업 시작 전** `git branch --show-current` 를 확인한다. `main` 이면 파일을 고치기 전에 `git switch -c agent/<작업요약-영문-소문자>` 로 작업 브랜치를 만든다. 브랜치 생성은 커밋 하네스(github-push / commit-push 등) 밖의 "작업 시작" 단계다. 이후 커밋·push 는 기존 규칙대로 **현재 브랜치에만** 한다.
+2. `agent/*` 브랜치에 upstream 이 없으면 `git push -u origin <브랜치>` 로 올린다. 이 경우는 사용자에게 묻지 않는다.
+3. push 뒤 `gh pr create --base main --title "<커밋 제목>" --body "<본문>"` 으로 PR 을 연다(이미 열려 있으면 생략). PR 본문과 커밋 본문에 `Prompt: <사용자 요청 문장>`, 변경 요약, 검증 명령·결과를 적는다. PR 링크를 사용자에게 보고하고 끝낸다.
+4. **금지:** main 에서의 commit·push, main 으로의 push, `git merge` 로 main 에 합치기, force push, `gh pr merge`. 머지는 사용자가 한다.
+5. **강제 수단:** PreToolUse 훅 `.agents/hooks/protect_main.py` (Claude Code: `.claude/settings.json`, Codex: `.codex/hooks.json`) 와 `.claude/settings.json` 의 deny 규칙이 4번을 차단한다. 훅이 막으면 우회하거나 끄지 말고 1번으로 돌아간다.
+6. 이 절은 이 파일의 다른 커밋·push 규칙보다 우선한다. 충돌하는 문장은 "현재 브랜치가 `agent/*` 일 때 기존 규칙을 적용한다" 로 읽는다.
